@@ -1,3 +1,4 @@
+import json
 from decimal import Decimal
 
 import pytest
@@ -47,11 +48,24 @@ def test_empty_trade_metrics_are_defined_without_fake_performance() -> None:
     metrics = calculate_trade_metrics((), initial_equity=Decimal("100"))
 
     assert metrics.trade_count == 0
-    assert metrics.win_rate == Decimal("0")
+    assert metrics.win_rate is None
+    assert metrics.average_win is None
+    assert metrics.average_loss is None
+    assert metrics.expectancy is None
     assert metrics.profit_factor is None
     assert metrics.sharpe is None
     assert metrics.sortino is None
     assert metrics.max_drawdown == Decimal("0")
+    assert metrics.ruined is False
+    assert metrics.undefined_metrics == {
+        "win_rate": "zero_trades",
+        "average_win": "no_winning_trades",
+        "average_loss": "no_losing_trades",
+        "expectancy": "zero_trades",
+        "profit_factor": "zero_trades",
+        "sharpe": "insufficient_samples",
+        "sortino": "insufficient_samples",
+    }
 
 
 @pytest.mark.parametrize(
@@ -88,11 +102,108 @@ def test_metrics_reject_non_finite_initial_equity(initial_equity) -> None:
 
 
 @pytest.mark.parametrize("terminal_pnl", (Decimal("-100"), Decimal("-101")))
-def test_metrics_fail_clearly_when_cumulative_equity_is_not_positive(terminal_pnl) -> None:
+def test_total_account_loss_is_reported_as_ruin_not_a_crash(terminal_pnl) -> None:
     trades = (
         TradeOutcome(gross_pnl=terminal_pnl, notional=Decimal("100")),
         TradeOutcome(gross_pnl=Decimal("1"), notional=Decimal("100")),
     )
 
-    with pytest.raises(ValueError, match="cumulative equity must remain positive"):
-        calculate_trade_metrics(trades, initial_equity=Decimal("100"))
+    metrics = calculate_trade_metrics(trades, initial_equity=Decimal("100"))
+
+    assert metrics.ruined is True
+    assert metrics.max_drawdown == Decimal("1")
+    assert metrics.sharpe is None
+    assert metrics.sortino is None
+    assert metrics.undefined_metrics["sharpe"] == "account_ruined"
+    assert metrics.undefined_metrics["sortino"] == "account_ruined"
+
+
+def test_metrics_never_divide_by_a_zero_or_negative_drawdown_peak() -> None:
+    # Ruin on the very first trade: equity hits zero immediately, so peak
+    # tracking must stop safely instead of dividing by a non-positive peak.
+    trades = (TradeOutcome(gross_pnl=Decimal("-100"), notional=Decimal("100")),)
+
+    metrics = calculate_trade_metrics(trades, initial_equity=Decimal("100"))
+
+    assert metrics.ruined is True
+    assert metrics.max_drawdown == Decimal("1")
+
+
+def test_zero_wins_leaves_average_win_undefined_but_average_loss_defined() -> None:
+    trades = (
+        TradeOutcome(gross_pnl=Decimal("-5"), notional=Decimal("100")),
+        TradeOutcome(gross_pnl=Decimal("-3"), notional=Decimal("100")),
+    )
+
+    metrics = calculate_trade_metrics(trades, initial_equity=Decimal("100"))
+
+    assert metrics.win_rate == Decimal("0")
+    assert metrics.average_win is None
+    assert metrics.average_loss == Decimal("4")
+    assert metrics.undefined_metrics["average_win"] == "no_winning_trades"
+    # gross_loss is nonzero here, so profit_factor is well-defined (zero
+    # gross profit over nonzero gross loss), unlike the "no losses" case.
+    assert metrics.profit_factor == Decimal("0")
+    assert "profit_factor" not in metrics.undefined_metrics
+    # expectancy stays well-defined: the zero win-rate weight zeroes out the
+    # undefined average_win term instead of propagating it.
+    assert metrics.expectancy == Decimal("-4")
+
+
+def test_zero_losses_leaves_average_loss_undefined_and_profit_factor_undefined() -> None:
+    trades = (
+        TradeOutcome(gross_pnl=Decimal("5"), notional=Decimal("100")),
+        TradeOutcome(gross_pnl=Decimal("3"), notional=Decimal("100")),
+    )
+
+    metrics = calculate_trade_metrics(trades, initial_equity=Decimal("100"))
+
+    assert metrics.win_rate == Decimal("1")
+    assert metrics.average_loss is None
+    assert metrics.profit_factor is None
+    assert metrics.undefined_metrics["average_loss"] == "no_losing_trades"
+    assert metrics.undefined_metrics["profit_factor"] == "no_losing_trades"
+    assert metrics.expectancy == Decimal("4")
+
+
+def test_single_sample_returns_are_insufficient_for_sharpe_and_sortino() -> None:
+    trades = (TradeOutcome(gross_pnl=Decimal("5"), notional=Decimal("100")),)
+
+    metrics = calculate_trade_metrics(trades, initial_equity=Decimal("100"))
+
+    assert metrics.sharpe is None
+    assert metrics.sortino is None
+    assert metrics.undefined_metrics["sharpe"] == "insufficient_samples"
+    assert metrics.undefined_metrics["sortino"] == "insufficient_samples"
+
+
+def test_zero_variance_returns_leave_sharpe_and_sortino_undefined() -> None:
+    # Equal per-trade RETURNS (not equal PnL): 5/100 == 5.25/105 == 0.05, so
+    # the return series has zero variance even though equity compounds.
+    trades = (
+        TradeOutcome(gross_pnl=Decimal("5"), notional=Decimal("100")),
+        TradeOutcome(gross_pnl=Decimal("5.25"), notional=Decimal("100")),
+    )
+
+    metrics = calculate_trade_metrics(trades, initial_equity=Decimal("100"))
+
+    assert metrics.sharpe is None
+    assert metrics.sortino is None
+    assert metrics.undefined_metrics["sharpe"] == "zero_variance"
+    assert metrics.undefined_metrics["sortino"] == "no_downside_returns"
+
+
+def test_undefined_metrics_summary_serializes_to_clean_json_without_nan_or_infinity() -> None:
+    metrics = calculate_trade_metrics((), initial_equity=Decimal("100"))
+
+    payload = json.dumps(metrics.to_dict(), allow_nan=False, sort_keys=True)
+    decoded = json.loads(payload)
+
+    assert decoded["win_rate"] is None
+    assert decoded["profit_factor"] is None
+    assert decoded["sharpe"] is None
+    assert decoded["sortino"] is None
+    assert decoded["ruined"] is False
+    assert decoded["undefined_metrics"]["win_rate"] == "zero_trades"
+    assert "NaN" not in payload
+    assert "Infinity" not in payload

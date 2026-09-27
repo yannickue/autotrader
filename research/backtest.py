@@ -45,6 +45,7 @@ class BacktestResult:
             },
             separators=(",", ":"),
             sort_keys=True,
+            allow_nan=False,
         )
 
 

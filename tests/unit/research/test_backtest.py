@@ -77,7 +77,9 @@ def test_backtest_event_normalizes_aware_timestamps_to_utc() -> None:
     assert event.available_at.tzinfo is UTC
 
 
-@pytest.mark.parametrize("price", (Decimal("0"), Decimal("-1"), Decimal("NaN"), Decimal("Infinity")))
+@pytest.mark.parametrize(
+    "price", (Decimal("0"), Decimal("-1"), Decimal("NaN"), Decimal("Infinity"))
+)
 def test_backtest_event_rejects_non_positive_or_non_finite_price(price) -> None:
     with pytest.raises(ValueError, match="price must be finite and positive"):
         BacktestEvent(

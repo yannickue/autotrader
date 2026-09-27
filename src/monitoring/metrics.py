@@ -4,6 +4,7 @@ from dataclasses import asdict, dataclass
 from decimal import Decimal
 
 ZERO = Decimal("0")
+ONE = Decimal("1")
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -41,14 +42,16 @@ class TradeOutcome:
 @dataclass(frozen=True, slots=True, kw_only=True)
 class TradeMetrics:
     trade_count: int
-    win_rate: Decimal
-    average_win: Decimal
-    average_loss: Decimal
-    expectancy: Decimal
+    win_rate: Decimal | None
+    average_win: Decimal | None
+    average_loss: Decimal | None
+    expectancy: Decimal | None
     profit_factor: Decimal | None
     sharpe: Decimal | None
     sortino: Decimal | None
     max_drawdown: Decimal
+    ruined: bool
+    undefined_metrics: dict[str, str]
     turnover: Decimal
     fees: Decimal
     spread: Decimal
@@ -56,29 +59,56 @@ class TradeMetrics:
     funding: Decimal
     net_pnl: Decimal
 
-    def to_dict(self) -> dict[str, int | str | None]:
-        return {
-            key: value if isinstance(value, int) else (None if value is None else str(value))
-            for key, value in asdict(self).items()
-        }
+    def to_dict(self) -> dict[str, int | str | bool | dict[str, str] | None]:
+        result: dict[str, int | str | bool | dict[str, str] | None] = {}
+        for key, value in asdict(self).items():
+            if isinstance(value, bool | int | dict):
+                result[key] = value
+            elif value is None:
+                result[key] = None
+            else:
+                result[key] = str(value)
+        return result
 
 
-def _risk_adjusted_ratios(returns: tuple[Decimal, ...]) -> tuple[Decimal | None, Decimal | None]:
+def _risk_adjusted_ratios(
+    returns: tuple[Decimal, ...],
+) -> tuple[Decimal | None, Decimal | None, dict[str, str]]:
+    reasons: dict[str, str] = {}
     if len(returns) < 2:
-        return None, None
+        reasons["sharpe"] = "insufficient_samples"
+        reasons["sortino"] = "insufficient_samples"
+        return None, None, reasons
+
     count = Decimal(len(returns))
     mean = sum(returns, ZERO) / count
     variance = sum(((value - mean) ** 2 for value in returns), ZERO) / count
-    sharpe = None if variance == ZERO else mean / variance.sqrt() * count.sqrt()
+    if variance == ZERO:
+        sharpe = None
+        reasons["sharpe"] = "zero_variance"
+    else:
+        sharpe = mean / variance.sqrt() * count.sqrt()
+
     downside_variance = sum((min(value, ZERO) ** 2 for value in returns), ZERO) / count
-    sortino = None if downside_variance == ZERO else mean / downside_variance.sqrt() * count.sqrt()
-    return sharpe, sortino
+    if downside_variance == ZERO:
+        sortino = None
+        reasons["sortino"] = "no_downside_returns"
+    else:
+        sortino = mean / downside_variance.sqrt() * count.sqrt()
+
+    return sharpe, sortino, reasons
 
 
 def calculate_trade_metrics(
     trades: tuple[TradeOutcome, ...], *, initial_equity: Decimal
 ) -> TradeMetrics:
-    """Calculate cost-aware metrics without annualization assumptions."""
+    """Calculate cost-aware metrics without annualization assumptions.
+
+    Metrics that are mathematically undefined (zero trades, zero wins/losses,
+    zero gross loss, insufficient or zero-variance samples, or total account
+    ruin) are reported as ``None`` with a matching entry in
+    ``undefined_metrics`` explaining why, instead of a fake zero/NaN/inf.
+    """
 
     if not initial_equity.is_finite():
         raise ValueError("initial_equity must be finite")
@@ -86,34 +116,72 @@ def calculate_trade_metrics(
         raise ValueError("initial_equity must be positive")
 
     net_pnls = tuple(trade.net_pnl for trade in trades)
-    cumulative_equity = initial_equity
-    for pnl in net_pnls:
-        cumulative_equity += pnl
-        if cumulative_equity <= ZERO:
-            raise ValueError("cumulative equity must remain positive")
-
+    count = len(trades)
     wins = tuple(pnl for pnl in net_pnls if pnl > ZERO)
     losses = tuple(pnl for pnl in net_pnls if pnl < ZERO)
-    count = len(trades)
-    win_rate = Decimal(len(wins)) / Decimal(count) if count else ZERO
-    average_win = sum(wins, ZERO) / Decimal(len(wins)) if wins else ZERO
-    average_loss = -sum(losses, ZERO) / Decimal(len(losses)) if losses else ZERO
-    expectancy = win_rate * average_win - (Decimal("1") - win_rate) * average_loss
+
+    undefined_metrics: dict[str, str] = {}
+
+    if count == 0:
+        win_rate = None
+        undefined_metrics["win_rate"] = "zero_trades"
+    else:
+        win_rate = Decimal(len(wins)) / Decimal(count)
+
+    if wins:
+        average_win = sum(wins, ZERO) / Decimal(len(wins))
+    else:
+        average_win = None
+        undefined_metrics["average_win"] = "no_winning_trades"
+
+    if losses:
+        average_loss = -sum(losses, ZERO) / Decimal(len(losses))
+    else:
+        average_loss = None
+        undefined_metrics["average_loss"] = "no_losing_trades"
+
+    if count == 0:
+        expectancy = None
+        undefined_metrics["expectancy"] = "zero_trades"
+    else:
+        weighted_win = average_win if average_win is not None else ZERO
+        weighted_loss = average_loss if average_loss is not None else ZERO
+        expectancy = win_rate * weighted_win - (ONE - win_rate) * weighted_loss
+
     gross_profit = sum(wins, ZERO)
     gross_loss = -sum(losses, ZERO)
-    profit_factor = gross_profit / gross_loss if gross_loss else None
+    if gross_loss == ZERO:
+        profit_factor = None
+        undefined_metrics["profit_factor"] = "zero_trades" if count == 0 else "no_losing_trades"
+    else:
+        profit_factor = gross_profit / gross_loss
 
     equity = initial_equity
     peak = initial_equity
     max_drawdown = ZERO
     returns: list[Decimal] = []
+    ruined = False
     for pnl in net_pnls:
         returns.append(pnl / equity)
         equity += pnl
+        if equity <= ZERO:
+            ruined = True
+            max_drawdown = ONE
+            break
         peak = max(peak, equity)
+        if peak <= ZERO:
+            raise ValueError("drawdown peak must remain positive")
         drawdown = (peak - equity) / peak
         max_drawdown = max(max_drawdown, drawdown)
-    sharpe, sortino = _risk_adjusted_ratios(tuple(returns))
+
+    if ruined:
+        sharpe = None
+        sortino = None
+        undefined_metrics["sharpe"] = "account_ruined"
+        undefined_metrics["sortino"] = "account_ruined"
+    else:
+        sharpe, sortino, risk_reasons = _risk_adjusted_ratios(tuple(returns))
+        undefined_metrics.update(risk_reasons)
 
     return TradeMetrics(
         trade_count=count,
@@ -125,6 +193,8 @@ def calculate_trade_metrics(
         sharpe=sharpe,
         sortino=sortino,
         max_drawdown=max_drawdown,
+        ruined=ruined,
+        undefined_metrics=undefined_metrics,
         turnover=sum((abs(trade.notional) for trade in trades), ZERO),
         fees=sum((trade.fees for trade in trades), ZERO),
         spread=sum((trade.spread for trade in trades), ZERO),

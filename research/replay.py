@@ -24,6 +24,7 @@ class ReplaySummary:
             },
             separators=(",", ":"),
             sort_keys=True,
+            allow_nan=False,
         )
 
 

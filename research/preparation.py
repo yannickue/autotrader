@@ -1,7 +1,7 @@
 """Dependency-light preparation contracts for optional research engines."""
 
-from dataclasses import dataclass
 from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any
 
 from research.immutability import freeze

@@ -53,6 +53,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             {"metrics": metrics.to_dict(), "split": args.split},
             separators=(",", ":"),
             sort_keys=True,
+            allow_nan=False,
         )
     )
     return 0
