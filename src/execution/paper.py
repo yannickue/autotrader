@@ -72,6 +72,16 @@ class PaperExecutionEngine:
         self._requests: dict[str, SubmitResult] = {}
         self._client_id_owner: dict[str, str] = {}
         self._decision_usage: dict[str, str] = {}
+        # decision_id -> risk-approved quantity, recorded once at the first
+        # submit() that consumes it. decision_id -> cumulative filled
+        # quantity across EVERY order in that decision's replacement chain
+        # (cancel_replace() reuses the original's decision_id for the
+        # replacement, and the original order's own `.quantity` is never
+        # reduced, so a per-order fill cap alone cannot catch a late fill on
+        # a replaced order plus a fill on its replacement together
+        # exceeding what risk approved).
+        self._decision_approved_quantity: dict[str, Decimal] = {}
+        self._decision_filled_quantity: dict[str, Decimal] = {}
         self._seen_fill_keys: set[tuple[str, str]] = set()
         self.audit_log: list[dict[str, Any]] = []
 
@@ -198,6 +208,7 @@ class PaperExecutionEngine:
         self._orders[order.client_order_id] = order
         self._client_id_owner[order.client_order_id] = request.request_id
         self._decision_usage[decision.decision_id] = order.client_order_id
+        self._decision_approved_quantity.setdefault(decision.decision_id, decision.quantity)
         self._transition(order, OrderStatus.ACCEPTED, now)
         self._log("submit_accepted", client_order_id=order.client_order_id)
 
@@ -520,6 +531,28 @@ class PaperExecutionEngine:
             self._halt(HaltCode.OVERFILL, f"order {order.client_order_id} would overfill")
             return
 
+        # Decision-level cumulative cap, in addition to the per-order cap
+        # above. cancel_replace() gives a replacement the same decision_id
+        # as the order it replaces, but never reduces the original's own
+        # `.quantity` -- so a late fill on a replaced (CANCELED) original
+        # plus a fill on its replacement can each individually pass the
+        # per-order check above while together exceeding what risk
+        # approved for that decision. Only non-reduce-only fills consume
+        # this cap: reduce-only fills (manual, or a protective STOP/
+        # TAKE_PROFIT child sharing the entry's decision_id) reduce
+        # exposure rather than using the entry's approval, and are already
+        # separately capped by `_reduce_only_allowed_quantity` above.
+        if not order.reduce_only:
+            approved = self._decision_approved_quantity.get(order.decision_id, order.quantity)
+            already_filled = self._decision_filled_quantity.get(order.decision_id, ZERO)
+            if already_filled + quantity > approved:
+                self._halt(
+                    HaltCode.OVERFILL,
+                    f"decision {order.decision_id} would overfill across replacement chain "
+                    f"(order {order.client_order_id})",
+                )
+                return
+
         applied = self.portfolio.apply_fill(
             Fill(
                 fill_id=fill_id,
@@ -532,6 +565,11 @@ class PaperExecutionEngine:
         )
         if not applied:
             return  # duplicate fill id: no-op, never double count
+
+        if not order.reduce_only:
+            self._decision_filled_quantity[order.decision_id] = (
+                self._decision_filled_quantity.get(order.decision_id, ZERO) + quantity
+            )
 
         total_notional = order.avg_fill_price * order.filled_quantity + price * quantity
         order.filled_quantity += quantity
@@ -819,6 +857,12 @@ class PaperExecutionEngine:
                 for request_id, result in sorted(self._requests.items())
             },
             "decision_usage": dict(sorted(self._decision_usage.items())),
+            "decision_approved_quantity": {
+                k: str(v) for k, v in sorted(self._decision_approved_quantity.items())
+            },
+            "decision_filled_quantity": {
+                k: str(v) for k, v in sorted(self._decision_filled_quantity.items())
+            },
             "client_id_owner": dict(sorted(self._client_id_owner.items())),
             "seen_fill_keys": sorted(f"{a}::{b}" for a, b in self._seen_fill_keys),
             "orders": {
@@ -860,6 +904,12 @@ class PaperExecutionEngine:
         self.mode = EngineMode(checkpoint["mode"])
         self.halt_reason = checkpoint["halt_reason"]
         self._decision_usage = dict(checkpoint["decision_usage"])
+        self._decision_approved_quantity = {
+            k: Decimal(v) for k, v in checkpoint["decision_approved_quantity"].items()
+        }
+        self._decision_filled_quantity = {
+            k: Decimal(v) for k, v in checkpoint["decision_filled_quantity"].items()
+        }
         self._client_id_owner = dict(checkpoint["client_id_owner"])
         self._seen_fill_keys = {
             (a, b) for a, b in (pair.split("::", 1) for pair in checkpoint["seen_fill_keys"])

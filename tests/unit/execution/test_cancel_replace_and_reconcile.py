@@ -227,6 +227,92 @@ def test_reduce_only_cancel_replace_still_allowed_while_halted(engine, now):
     assert result.accepted is True
 
 
+def test_late_fill_on_replaced_order_plus_replacement_fill_cannot_exceed_approved_size(
+    engine, now
+):
+    """Regression for an independently confirmed review finding: cancel_replace()
+    gives the replacement the original's remaining quantity but never reduces
+    the original order's own `.quantity` field. report_fill() has no
+    is_terminal() guard, so a late fill on the CANCELED original plus a fill
+    on its replacement could each pass the per-order overfill check
+    individually while together exceeding what the risk decision approved --
+    violating EXECUTION_CONTRACT.md's "does not... increase approved size"."""
+    _rest_limit(engine, now, quantity="2")  # decision-1 approves exactly 2
+
+    replace_result = engine.cancel_replace("client-1", "client-1-r1", now, new_price=Decimal("98"))
+    assert replace_result.accepted is True
+
+    # Late fill on the now-CANCELED original: within the decision's approved
+    # total (0 + 2 <= 2), so this one legitimately books.
+    engine.report_fill("client-1", "late-trade", Decimal("99"), Decimal("2"), now)
+    assert engine.mode == EngineMode.READY
+    assert engine.portfolio.positions[INSTRUMENT].quantity == Decimal("2")
+
+    # A further fill on the replacement would push cumulative fills for
+    # decision-1 to 4, double the approved 2 -- must halt, not silently book.
+    engine.report_fill("client-1-r1", "trade-2", Decimal("98"), Decimal("2"), now)
+    assert engine.mode == EngineMode.HALTED
+    assert engine.halt_reason is not None and "OVERFILL" in engine.halt_reason
+    # position must still reflect only the first, legitimate fill
+    assert engine.portfolio.positions[INSTRUMENT].quantity == Decimal("2")
+
+
+def test_decision_level_cap_does_not_penalize_normal_single_order_fills(engine, now):
+    """Sanity check: the new decision-level cap must not interfere with the
+    ordinary case of one order (no cancel/replace) filling up to its full
+    approved quantity, possibly via multiple partial fills."""
+    decision = make_decision(decision_id="d-normal", quantity="3")
+    request = make_request(
+        request_id="r-normal", risk_decision_id="d-normal", client_order_id="c-normal",
+        quantity="3",
+    )
+    result = engine.submit(request, decision, make_quote(), now)
+    assert result.accepted is True
+
+    event1 = TradeEvent(
+        instrument=INSTRUMENT, timestamp=now, trade_id="t1", price=Decimal("100"),
+        quantity=Decimal("2"),
+    )
+    engine.on_trade(event1, now)
+    event2 = TradeEvent(
+        instrument=INSTRUMENT, timestamp=now, trade_id="t2", price=Decimal("100"),
+        quantity=Decimal("1"),
+    )
+    engine.on_trade(event2, now)
+
+    assert engine.mode == EngineMode.READY
+    assert engine._orders["c-normal"].filled_quantity == Decimal("3")
+
+
+def test_protective_stop_fill_not_double_counted_against_entry_decision_cap(engine, now):
+    """A protective STOP order shares its parent entry's decision_id but is
+    reduce_only=True; its fill closes exposure and must not be checked
+    against (or consume) the entry decision's approved-quantity cap, which
+    would otherwise immediately look "overfilled" the moment the position
+    that was just opened gets closed by its own stop."""
+    decision = make_decision(decision_id="d-entry", quantity="1", stop_price="90")
+    request = make_request(
+        request_id="r-entry", risk_decision_id="d-entry", client_order_id="c-entry",
+        quantity="1",
+    )
+    engine.submit(request, decision, make_quote(), now)  # MARKET order, fills immediately
+
+    assert engine.mode == EngineMode.READY
+    stop_order = engine._orders["c-entry:stop"]
+    assert stop_order.reduce_only is True
+    assert stop_order.decision_id == "d-entry"
+
+    # Trade crosses the stop trigger -> stop fills, closing the position.
+    event = TradeEvent(
+        instrument=INSTRUMENT, timestamp=now, trade_id="t-stop", price=Decimal("89"),
+        quantity=Decimal("1"),
+    )
+    engine.on_trade(event, now)
+
+    assert engine.mode == EngineMode.READY  # must NOT have halted as a false OVERFILL
+    assert engine.portfolio.positions[INSTRUMENT].quantity == Decimal("0")
+
+
 def test_unknown_order_fill_report_halts(engine, now):
     engine.report_fill("no-such-order", "t1", Decimal("100"), Decimal("1"), now)
     assert engine.mode == EngineMode.HALTED
