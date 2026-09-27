@@ -824,6 +824,21 @@ class PaperExecutionEngine:
             role=original.role,
             parent_client_order_id=original.parent_client_order_id,
             replaces_client_order_id=client_order_id,
+            # Regression: these were silently dropped, defaulting to None/empty
+            # on the replacement. For an ENTRY order this meant a
+            # cancel/replace before fill silently produced a position with NO
+            # protective stop/take-profit at all once the replacement filled
+            # (trigger_price/take_profit_price lost). For a STOP/TAKE_PROFIT
+            # order, the replacement's trigger_price=None made the very next
+            # crossing trade hit `_try_cross_protective`'s
+            # `assert order.trigger_price is not None` and HALT with
+            # INTERNAL_ERROR -- a confusing failure mode for what is really
+            # "this order lost its trigger price on replace", and the
+            # position was left unprotected in the meantime regardless.
+            trigger_price=original.trigger_price,
+            take_profit_price=original.take_profit_price,
+            trailing_policy=original.trailing_policy,
+            metadata=original.metadata,
         )
         self._orders[new_client_order_id] = replacement
         self._client_id_owner[new_client_order_id] = original.request_id
@@ -831,6 +846,19 @@ class PaperExecutionEngine:
         self._log(
             "replacement_accepted", client_order_id=new_client_order_id, replaces=client_order_id
         )
+
+        # Re-link the OCO relationship both ways: the replacement takes over
+        # the original's sibling link, and the sibling's own back-reference
+        # (which still points at the now-CANCELED original) is repointed at
+        # the replacement -- otherwise the sibling filling first would try
+        # to OCO-cancel a dead order id and the surviving replacement would
+        # never get canceled, leaving both a stop and a take-profit
+        # resting on the same position simultaneously.
+        if original.oco_sibling_id:
+            replacement.oco_sibling_id = original.oco_sibling_id
+            sibling = self._orders.get(original.oco_sibling_id)
+            if sibling is not None and not sibling.is_terminal():
+                sibling.oco_sibling_id = new_client_order_id
 
         return CancelReplaceResult(
             accepted=True,

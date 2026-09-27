@@ -356,3 +356,99 @@ def test_checkpoint_export_is_deterministic_for_identical_state(engine, now):
     a = engine.export_checkpoint()
     b = engine.export_checkpoint()
     assert a == b
+
+
+def test_cancel_replace_of_unfilled_entry_preserves_protective_prices(engine, now):
+    """Regression: cancel_replace() dropped trigger_price/take_profit_price
+    on the replacement. For an ENTRY order replaced before it fills, this
+    meant the position opened with NO protective stop/take-profit at all
+    once the replacement filled -- silently, no error, no halt."""
+    decision = make_decision(quantity="1", stop_price="90")
+    request = make_request(
+        order_type=OrderType.LIMIT, time_in_force=TimeInForce.GTC, limit_price="99",
+        quantity="1", metadata={"take_profit": Decimal("120")},
+    )
+    engine.submit(request, decision, make_quote(), now)
+    assert engine._orders["client-1"].status == OrderStatus.ACCEPTED  # resting, unfilled
+
+    result = engine.cancel_replace("client-1", "client-1-r1", now, new_price=Decimal("98"))
+    assert result.accepted is True
+    replacement = engine._orders["client-1-r1"]
+    assert replacement.trigger_price == Decimal("90")
+    assert replacement.take_profit_price == Decimal("120")
+
+    # Fill the replacement -> protective stop/take-profit must now be created.
+    event = TradeEvent(
+        instrument=INSTRUMENT, timestamp=now, trade_id="t1", price=Decimal("98"),
+        quantity=Decimal("1"),
+    )
+    engine.on_trade(event, now)
+    assert replacement.status == OrderStatus.FILLED
+    assert "client-1-r1:stop" in engine._orders
+    assert "client-1-r1:take_profit" in engine._orders
+    assert engine._orders["client-1-r1:stop"].trigger_price == Decimal("90")
+
+
+def test_cancel_replace_of_resting_stop_preserves_trigger_price(engine, now):
+    """Regression: replacing an already-resting protective STOP order lost
+    its trigger_price on the replacement (defaulted to None), so the very
+    next crossing trade hit `_try_cross_protective`'s
+    `assert order.trigger_price is not None` and HALTed with
+    INTERNAL_ERROR -- a confusing failure mode, with the position left
+    unprotected regardless."""
+    decision = make_decision(quantity="1", stop_price="90")
+    request = make_request(quantity="1", metadata={"take_profit": Decimal("120")})
+    engine.submit(request, decision, make_quote(), now)  # MARKET order, fills immediately
+
+    stop = engine._orders["client-1:stop"]
+    tp = engine._orders["client-1:take_profit"]
+    assert stop.trigger_price == Decimal("90")
+    assert stop.oco_sibling_id == tp.client_order_id
+
+    result = engine.cancel_replace(
+        "client-1:stop", "client-1:stop-r1", now, new_price=Decimal("91")
+    )
+    assert result.accepted is True
+    replacement = engine._orders["client-1:stop-r1"]
+    assert replacement.trigger_price == Decimal("90")  # preserved, not lost
+    assert replacement.role == stop.role
+
+    # The OCO link is re-pointed both ways: the take-profit's sibling now
+    # points at the replacement stop, not the dead original.
+    assert replacement.oco_sibling_id == tp.client_order_id
+    assert tp.oco_sibling_id == "client-1:stop-r1"
+
+    # A crossing trade must fill the replacement normally -- no assertion
+    # error, no false INTERNAL_ERROR halt.
+    event = TradeEvent(
+        instrument=INSTRUMENT, timestamp=now, trade_id="t1", price=Decimal("89"),
+        quantity=Decimal("1"),
+    )
+    engine.on_trade(event, now)
+    assert engine.mode == EngineMode.READY
+    assert replacement.status == OrderStatus.FILLED
+    # OCO cancel now correctly hits the take-profit sibling via the
+    # re-pointed link.
+    assert tp.status == OrderStatus.CANCELED
+
+
+def test_cancel_replace_stop_then_take_profit_fills_cancels_replacement_stop(engine, now):
+    """The other direction of the OCO re-link: after replacing the stop,
+    filling the (unchanged) take-profit sibling must cancel the
+    *replacement* stop, not silently no-op against the dead original."""
+    decision = make_decision(quantity="1", stop_price="90")
+    request = make_request(quantity="1", metadata={"take_profit": Decimal("120")})
+    engine.submit(request, decision, make_quote(), now)
+
+    tp = engine._orders["client-1:take_profit"]
+    engine.cancel_replace("client-1:stop", "client-1:stop-r1", now, new_price=Decimal("91"))
+    replacement_stop = engine._orders["client-1:stop-r1"]
+
+    event = TradeEvent(
+        instrument=INSTRUMENT, timestamp=now, trade_id="t1", price=Decimal("121"),
+        quantity=Decimal("1"),
+    )
+    engine.on_trade(event, now)
+
+    assert tp.status == OrderStatus.FILLED
+    assert replacement_stop.status == OrderStatus.CANCELED
