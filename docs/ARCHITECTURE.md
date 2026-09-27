@@ -73,9 +73,19 @@ adapter, state-recovery, and performance regression evidence before adoption.
 
 Not in V1: dashboards, deep learning, reinforcement learning, options, or multiple brokers.
 
+## Sprint 1 development venue
+
+- Public market data: Binance USD-M perpetuals; no private credentials.
+- Execution: NautilusTrader Sandbox or a deterministic Nautilus-compatible simulator only.
+- Simulated account: 500 USDT starting equity.
+- Instrument identity and precision remain Binance-compatible.
+- Live execution, exchange API keys, and real orders remain disabled.
+- The 20x ceiling is a hard maximum, never a default or confidence-derived target.
+
 ## Open decisions
 
-1. Venue and account model (spot, linear perpetual, or inverse perpetual).
+1. Production venue and account model beyond Sprint 1's Binance USD-M linear-perpetual paper
+   boundary.
 2. Canonical instrument identifier and contract-size normalization.
 3. Market-data staleness thresholds by feed and strategy horizon.
 4. Portfolio exposure, correlation, daily-loss, and drawdown defaults.
@@ -83,4 +93,3 @@ Not in V1: dashboards, deep learning, reinforcement learning, options, or multip
 6. Execution latency/error budgets and clock-synchronization requirements.
 7. Authentication and replay protection for optional TradingView alerts.
 8. Criteria and target date for evaluating NautilusTrader 2.0.
-

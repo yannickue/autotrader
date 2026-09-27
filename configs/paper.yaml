@@ -1,8 +1,20 @@
 schema_version: 1
 mode: paper
-venue: UNDECIDED
+venue: BINANCE
 order_submission_enabled: true
 live_credentials_allowed: false
+market_data:
+  provider: BINANCE_USDM
+  public_only: true
+execution:
+  backend: nautilus_sandbox
+  real_order_submission_enabled: false
+  reconcile_before_new_exposure: true
+  reject_stale_signals: true
+  reject_stale_market_data: true
+account:
+  starting_balance: 500
+  currency: USDT
 universe:
   minimum_markets: 20
   maximum_markets: 100
@@ -10,8 +22,3 @@ risk:
   max_leverage: 3
   require_protective_stop: true
   fail_closed: true
-execution:
-  reconcile_before_new_exposure: true
-  reject_stale_signals: true
-  reject_stale_market_data: true
-

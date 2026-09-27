@@ -1,9 +1,18 @@
 schema_version: 1
 mode: live
-venue: UNDECIDED
+venue: BINANCE
 order_submission_enabled: false
 live_credentials_allowed: false
 requires_explicit_operator_approval: true
+market_data:
+  provider: BINANCE_USDM
+  public_only: true
+execution:
+  backend: disabled
+  real_order_submission_enabled: false
+  reconcile_before_new_exposure: true
+  reject_stale_signals: true
+  reject_stale_market_data: true
 universe:
   minimum_markets: 20
   maximum_markets: 100
@@ -11,8 +20,3 @@ risk:
   max_leverage: 2
   require_protective_stop: true
   fail_closed: true
-execution:
-  reconcile_before_new_exposure: true
-  reject_stale_signals: true
-  reject_stale_market_data: true
-
