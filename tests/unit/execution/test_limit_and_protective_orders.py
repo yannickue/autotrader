@@ -3,6 +3,7 @@ from decimal import Decimal
 from execution.events import TradeEvent
 from execution.models import OrderSide, OrderType, TimeInForce
 from execution.orders import FixedDistanceTrailingStop, OrderStatus
+from execution.paper import EngineMode
 
 from .conftest import INSTRUMENT, make_decision, make_quote, make_request
 
@@ -212,6 +213,63 @@ def test_take_profit_fill_then_later_crossing_stop_trade_does_not_flip_position(
     assert stop.status == OrderStatus.CANCELED  # never resurrected
     assert stop.filled_quantity == Decimal("0")
     assert engine.portfolio.positions[INSTRUMENT].quantity == Decimal("0")  # never flips short
+
+
+def test_protective_stop_does_not_expire_like_a_normal_resting_order(engine, now):
+    """Regression: on_time()'s age-based expiry (max_order_age = 30 min, for
+    cleaning up entry limit orders that never filled) applied uniformly to
+    ALL non-terminal orders, including protective STOP/TAKE_PROFIT children.
+    A stop resting for longer than max_order_age silently went EXPIRED with
+    no halt/reduce, leaving an OPEN position unprotected -- violating
+    EXECUTION_CONTRACT.md: "Stops must be acknowledged or an equivalent
+    deterministic contingency must be active; otherwise the system reduces
+    or halts exposure." A protective order's correct lifecycle is to stay
+    active for as long as the position it guards is open, not to go stale
+    on the same clock as an unfilled entry order."""
+    from datetime import timedelta
+
+    decision = make_decision(quantity="1", stop_price="90")
+    request = make_request(quantity="1", metadata={"take_profit": Decimal("120")})
+    engine.submit(request, decision, make_quote(), now)
+
+    stop = engine._orders["client-1:stop"]
+    tp = engine._orders["client-1:take_profit"]
+    assert stop.status == OrderStatus.ACCEPTED
+    assert tp.status == OrderStatus.ACCEPTED
+
+    much_later = now + timedelta(hours=6)  # far past max_order_age (30 min)
+    engine.on_time(much_later)
+
+    assert stop.status == OrderStatus.ACCEPTED  # still resting, protecting the position
+    assert tp.status == OrderStatus.ACCEPTED
+    assert engine.mode == EngineMode.READY  # no false halt either
+
+    # The stop must still be live: a later crossing trade fills it normally.
+    event = TradeEvent(
+        instrument=INSTRUMENT, timestamp=much_later, trade_id="t1",
+        price=Decimal("89"), quantity=Decimal("1"),
+    )
+    engine.on_trade(event, much_later)
+    assert stop.status == OrderStatus.FILLED
+    assert engine.portfolio.positions[INSTRUMENT].quantity == Decimal("0")
+
+
+def test_entry_limit_order_still_expires_normally(engine, now):
+    """The fix must not blanket-exempt every order from expiry -- only
+    protective STOP/TAKE_PROFIT children. An ordinary unfilled entry limit
+    order must still expire after max_order_age, same as before."""
+    from datetime import timedelta
+
+    decision = make_decision()
+    request = make_request(
+        order_type=OrderType.LIMIT, time_in_force=TimeInForce.GTC,
+        limit_price="99", side=OrderSide.BUY,
+    )
+    engine.submit(request, decision, make_quote(), now)
+
+    later = now + timedelta(hours=1)
+    engine.on_time(later)
+    assert engine._orders["client-1"].status == OrderStatus.EXPIRED
 
 
 def test_trailing_stop_only_tightens_for_long_position(engine, now):

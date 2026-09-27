@@ -16,7 +16,7 @@ Paper only — live order submission stays disabled.
 | Research | sprint1/research | COMPLETE, MERGED | 54 passed |
 | Risk | sprint1/risk | COMPLETE, MERGED; CODEX_REVIEW_PENDING | 80 passed |
 | Execution | sprint1/execution | COMPLETE (paper only), MERGED; CODEX_REVIEW_PENDING | 90 passed |
-| Integration | sprint1/integration | All modules + paper pipeline + E2E merged | 263 passed, 1 skipped; E2E 15/15 |
+| Integration | sprint1/integration | All modules + paper pipeline + E2E merged | 265 passed, 1 skipped; E2E 15/15 |
 
 ## Active tasks
 
@@ -43,6 +43,7 @@ is logged as `Lead (direct)`.
 | E3. Fix: `cancel_replace()` now respects engine mode (was missing entirely; could open new exposure while HALTED) | Sonnet builder (Lead, direct) | `tests/unit/execution/test_cancel_replace_and_reconcile.py` | DONE, merged (2 new tests) |
 | G1. Codex independent review of remaining HIGH Finding #1 (late fill exceeds approved size) | Codex, provider=openai, actual model=`gpt-5.6-sol`, tier=STANDARD, effort=high, delegated=yes | why this route: model-availability probe (empirical, not hardcoded) found `gpt-6-astra`=STRONGEST_AVAILABLE and `gpt-5.6-sol`=STANDARD actually reachable on this ChatGPT account, `gpt-6-sol`/`gpt-6-luna` rejected by the API despite being listed in the model catalog; policy for an already-reproduced HIGH bug is STANDARD+HIGH first, STRONGEST_AVAILABLE reserved for the final full-diff audit or a genuinely unresolved conflict | review result: CONFIRMED, with an independent correction verified by Lead: `report_fill()`/`cancel_replace()` are called from nowhere in `src/` (grep-verified), so today this is reachable only through the engine's public API/tests, not the live pipeline — severity kept HIGH regardless since `EXECUTION_CONTRACT.md` assigns cancel/replace and fill-reporting to this engine as owned responsibilities, and it becomes live-reachable the moment a venue adapter is wired |
 | G2. Fix: decision-level cumulative fill cap across an order's cancel/replace chain (HIGH Finding #1) | Sonnet builder (Lead, direct) | `tests/unit/execution/test_cancel_replace_and_reconcile.py` (4 new tests: repro/fix, normal-flow sanity check, protective-stop non-double-counting), full suite + ruff + compileall | DONE, merged. test result: 263 passed, 1 skipped (was 260); ruff clean; compileall clean |
+| H. Fix: protective STOP/TAKE_PROFIT orders no longer expire via `on_time()`'s age-based cleanup (HIGH Finding #2) | Sonnet builder (Lead, direct — small, well-scoped); Codex review deferred (usage-limited again after task G1, per explicit instruction not to wait on it) | `tests/unit/execution/test_limit_and_protective_orders.py` (2 new tests: repro/fix + a sanity check that ordinary entry-order expiry still works), full suite + ruff + compileall | DONE, merged. why this route: no existing contract or config defines a "reduce" mechanism anywhere in this codebase — every other safety-invariant violation halts (OVERFILL, UNKNOWN_ORDER, RECONCILIATION_MISMATCH, INTERNAL_ERROR); inventing a new auto-reduce behavior here would be exactly the kind of "invent whether the correct response should be reduce/halt" the task instructions warned against, so the minimal, precedent-consistent, non-inventive fix is exempting protective orders from a staleness-cleanup mechanism clearly designed for unfilled entry orders, not open-ended position protection. test result: 265 passed, 1 skipped (was 263); ruff clean; compileall clean. review result: NOT YET independently reviewed by Codex (deferred, see Blockers) |
 | F. SPRINT1_FINAL_REPORT.md | Lead (direct) — all facts already held; hand-off would cost as much as writing | per-area test counts | DONE |
 
 No Opus agent used by this project's own sessions; the *external* AI Workstation Core session that
@@ -94,34 +95,46 @@ contracts only, each independently reproduced its findings with small scripts ag
   regression test (`test_protective_stop_fill_not_double_counted_against_entry_decision_cap`)
   locks this in. Both new dicts are included in `export_checkpoint`/`import_checkpoint` so the cap
   survives a restart. 4 new tests.
+- **[HIGH] Execution — protective stop/take-profit orders expired like normal resting orders.**
+  `on_time()`'s age-based cleanup (`max_order_age` = 30 min, meant for unfilled entry limit
+  orders going stale) applied uniformly to every non-terminal order, including STOP/TAKE_PROFIT
+  children — after 30 minutes a protective stop silently went `EXPIRED` with no halt/reduce,
+  leaving an OPEN position unprotected. Violates `EXECUTION_CONTRACT.md`: "Stops must be
+  acknowledged or an equivalent deterministic contingency must be active; otherwise the system
+  reduces or halts exposure." Not independently reviewed by Codex yet (usage-limited again — see
+  task H, Blockers). Fixed: `on_time()` now skips orders with `role in (ChildRole.STOP,
+  ChildRole.TAKE_PROFIT)` entirely — their correct lifecycle is to stay active for as long as the
+  position they guard is open, not to go stale on the entry-order clock. Explicit removal paths
+  (OCO-sibling cancel on fill, position-flat cancel inside `_apply_fill`'s reduce-only branch)
+  already handle real cleanup, so this does not create orphaned orders. Chose "exempt from
+  expiry" over inventing a "reduce" mechanism because no "reduce" precedent exists anywhere in
+  this codebase — every other safety-invariant violation halts; inventing new auto-reduce
+  behavior here would have been exactly the "invent whether the correct response should be
+  reduce/halt" the task instructions warned against. 2 new tests (repro/fix, plus confirming
+  ordinary entry-order expiry still works unchanged).
 
 **NOT fixed this run — prioritized backlog, highest severity first:**
 
-1. **[HIGH] Execution — stop/take-profit orders expire like normal resting orders.**
-   `src/execution/paper.py:368` (`on_time`): after `max_order_age` (30 min) a protective stop
-   silently goes `EXPIRED` and the position is left unprotected with no halt/reduce, contradicting
-   `EXECUTION_CONTRACT.md`'s "otherwise the system reduces or halts exposure". Needs: exempt
-   protective orders from age-based expiry, or re-arm/halt on expiry.
-2. **[HIGH] Execution — cancel/replace drops protective-order linkage.** Replacing an entry order
+1. **[HIGH] Execution — cancel/replace drops protective-order linkage.** Replacing an entry order
    loses its future stop; replacing a stop order loses its trigger price (next matching trade
    raises `INTERNAL_ERROR` and halts, with the position already unprotected). Needs: carry
    stop/take-profit/OCO/trailing fields through cancel/replace, and a real "move stop" path (today
    `new_price` only edits the limit price).
-3. **[MEDIUM] Execution — fills after a stop reaches a final state leave the position
+2. **[MEDIUM] Execution — fills after a stop reaches a final state leave the position
    unprotected.** `_ensure_protective` never re-creates/resizes protection once the linked stop is
    terminal (e.g. reduce-only close cancels the stop, then a late partial fill on the original
    entry re-opens exposure with nothing guarding it).
-4. **[MEDIUM] Execution — duplicate-trade dedup key omits the instrument**, so identical trade
+3. **[MEDIUM] Execution — duplicate-trade dedup key omits the instrument**, so identical trade
    ids on two different instruments collide and the second trade is dropped as a duplicate
    (`src/execution/paper.py:385`).
-5. **[MEDIUM] Execution — `import_checkpoint` restores straight into `READY`**, skipping
+4. **[MEDIUM] Execution — `import_checkpoint` restores straight into `READY`**, skipping
    `RECONCILING`, contradicting `EXECUTION_CONTRACT.md`'s explicit startup/reconnect requirement.
    The existing chaos test hides this by setting mode by hand after restore.
-6. **[MEDIUM] Execution — pipeline slippage guard never actually rejects anything**
+5. **[MEDIUM] Execution — pipeline slippage guard never actually rejects anything**
    (`src/pipeline/paper.py:239`): the reference price it compares against is derived from the same
    quote that sets the fill price, so the computed deviation always equals the fixed
    `slippage_bps` constant. Needs a real independent reference price.
-7. **[OPEN QUESTION — do not silently fix] Risk — sizing/cap math uses `request.entry_price`
+6. **[OPEN QUESTION — do not silently fix] Risk — sizing/cap math uses `request.entry_price`
    throughout (leverage cap, gross/net capacity, instrument notional, liquidity), only comparing
    market bid/ask for the spread check.** A caller-supplied entry price far from the market
    (repro: SELL request `entry=10` against market `bid/ask=99/101`) is approved at a computed
@@ -130,13 +143,13 @@ contracts only, each independently reproduced its findings with small scripts ag
    "size from `max(entry, executable_price)`" is a contract decision (tolerance value, reject vs.
    clamp) this project's own `docs/OPEN_QUESTIONS.md` preamble says must not be silently decided by
    whoever finds it — added as `OPEN_QUESTIONS` item 23 below instead of patched.
-8. **[LOW]** Risk: reservation is stored before the decision object is built (engine.py ~468 vs.
+7. **[LOW]** Risk: reservation is stored before the decision object is built (engine.py ~468 vs.
    470-496); an exception in between would leak a reservation. `_reject` also isn't robust to a
    caller passing a non-enum `side`.
-9. **[LOW]** Risk: Decimal rounding at the leverage re-check (engine.py ~459-465) can raise
+8. **[LOW]** Risk: Decimal rounding at the leverage re-check (engine.py ~459-465) can raise
     `RuntimeError` on an epsilon-level overshoot, halting the engine (denial-of-service) rather
     than returning a normal `EXPOSURE_LIMIT` rejection.
-10. **[LOW, not a safety issue]** Execution: paper fills are optimistic — stops fill exactly at
+9. **[LOW, not a safety issue]** Execution: paper fills are optimistic — stops fill exactly at
     the trigger price even on a gap-through trade, and a single trade print's quantity can be
     consumed by multiple resting orders at once. Affects backtest/paper realism, not live safety
     (live submission stays disabled regardless).
@@ -156,13 +169,15 @@ scratchpad — copy into this repo's `scripts/` if they need to survive that ses
 
 ## Next decision
 
-HIGH Finding #1 (late fill exceeds approved size) is now DONE (task G1/G2 above). Continue with
-the remaining backlog in severity order: item 1 (stop/TP expiry leaves position unprotected),
-then item 2 (cancel/replace drops protective-order linkage) — both HIGH and directly touch
-position-safety correctness; do these before any new feature work. One finding at a time:
-reproduce → regression test → minimal fix → targeted tests → subsystem tests → ledger update.
-Item 7 needs an explicit policy decision (see `docs/OPEN_QUESTIONS.md` #23) before it can be
-coded — do not guess a tolerance value.
+HIGH Finding #1 (late fill exceeds approved size) and HIGH Finding #2 (protective stop/TP expiry
+unprotected) are now DONE (tasks G1/G2, H above). One HIGH finding remains: backlog item 1
+(cancel/replace drops protective-order linkage) — do this before any new feature work. One
+finding at a time: reproduce → regression test → minimal fix → targeted tests → subsystem tests →
+ledger update. Item 6 needs an explicit policy decision (see `docs/OPEN_QUESTIONS.md` #23) before
+it can be coded — do not guess a tolerance value. Finding #1 got an independent Codex review
+(task G1); Finding #2's fix has NOT (Codex was usage-limited again when it came up, per explicit
+instruction not to wait on it) — get that review in before or alongside the final full-diff audit,
+not skip it silently.
 
 After all three HIGH findings are fixed: full pytest + ruff + compileall, then one final Codex
 independent review of the complete resulting diff (STRONGEST_AVAILABLE = `gpt-6-astra` empirically

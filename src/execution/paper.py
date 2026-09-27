@@ -380,6 +380,20 @@ class PaperExecutionEngine:
         for order in list(self._orders.values()):
             if order.is_terminal():
                 continue
+            if order.role in (ChildRole.STOP, ChildRole.TAKE_PROFIT):
+                # Regression: max_order_age exists to clean up entry limit
+                # orders that never filled (a stale signal). Applying the
+                # same clock to protective STOP/TAKE_PROFIT children let a
+                # stop silently EXPIRE with no halt/reduce after 30 minutes,
+                # leaving an OPEN position unprotected --
+                # EXECUTION_CONTRACT.md requires "an equivalent
+                # deterministic contingency must be active" for as long as
+                # the position it guards is open, not just for
+                # max_order_age. Removal already happens through explicit
+                # paths (OCO-sibling cancel on fill, position-flat cancel
+                # in _apply_fill's reduce-only branch), so exempting them
+                # here does not leave true orphans.
+                continue
             if now - order.created_at > self.config.max_order_age:
                 self._transition(order, OrderStatus.EXPIRED, now)
                 self._log("order_expired", client_order_id=order.client_order_id)
