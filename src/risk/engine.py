@@ -180,6 +180,7 @@ class RiskEngine:
                 decision_id=decision_id,
                 request_id=request_id,
                 instrument=instrument,
+                side=side,
                 now=now,
                 reason_code=rejection.reason_code,
                 reason=rejection.reason,
@@ -190,6 +191,7 @@ class RiskEngine:
                 decision_id=decision_id,
                 request_id=request_id,
                 instrument=instrument,
+                side=side,
                 now=now,
                 reason_code=RiskReason.RISK_ERROR,
                 reason=f"unexpected error: {exc}",
@@ -251,6 +253,7 @@ class RiskEngine:
             stop_price=None,
             metadata={
                 "reduce_only": True,
+                "side": side.value,
                 "account_state_version": account.state_version,
             },
         )
@@ -261,6 +264,7 @@ class RiskEngine:
         decision_id: str,
         request_id: str,
         instrument: str,
+        side: RiskSide,
         now: datetime,
         reason_code: RiskReason | str,
         reason: str,
@@ -280,7 +284,7 @@ class RiskEngine:
             max_leverage=MAX_SYSTEM_LEVERAGE,
             risk_budget=ZERO,
             stop_price=None,
-            metadata={"reduce_only": True},
+            metadata={"reduce_only": True, "side": side.value},
         )
 
     # -- main evaluation ------------------------------------------------------
@@ -307,7 +311,7 @@ class RiskEngine:
             max_leverage=MAX_SYSTEM_LEVERAGE,
             risk_budget=ZERO,
             stop_price=None,
-            metadata={},
+            metadata={"side": request.side.value},
         )
 
     def _evaluate_inner(
@@ -479,6 +483,7 @@ class RiskEngine:
             stop_price=request.stop_price,
             metadata={
                 "policy_id": policy.policy_id,
+                "side": request.side.value,
                 "account_state_version": account.state_version,
                 "runtime_state_version": runtime.state_version,
                 "effective_risk_fraction": str(effective_risk_fraction),

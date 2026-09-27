@@ -677,3 +677,29 @@ def test_reduce_only_reports_zero_exposure_increasing_notional() -> None:
     assert decision.approved
     assert decision.quantity == Decimal("0.5")
     assert decision.notional == Decimal("0")
+
+
+def test_every_decision_records_the_approved_side_for_execution_binding() -> None:
+    engine = RiskEngine(_policy())
+    long_decision = _evaluate(engine, request=_request(signal_id="s-long"))
+    short_decision = _evaluate(
+        engine,
+        request=_request(signal_id="s-short", side=RiskSide.SELL, stop_price=Decimal("105")),
+    )
+    rejected = _evaluate(engine, request=_request(signal_id="s-bad", stop_price=Decimal("101")))
+    reduce = engine.evaluate_reduce_only(
+        request_id="exit-2",
+        instrument="BTCUSDT-PERP",
+        side=RiskSide.SELL,
+        quantity=Decimal("1"),
+        account=_account(positions={"BTCUSDT-PERP": Decimal("1")}),
+        runtime=_runtime(),
+        now=NOW,
+    )
+
+    assert long_decision.metadata["side"] == "buy"
+    assert short_decision.approved and short_decision.metadata["side"] == "sell"
+    assert rejected.metadata["side"] == "buy"
+    assert reduce.metadata["side"] == "sell"
+    assert reduce.metadata["reduce_only"] is True
+    assert long_decision.metadata.get("reduce_only") is not True
