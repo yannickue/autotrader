@@ -74,3 +74,30 @@ records and resolves them here.
     invent while fixing a bug. See DEVELOPMENT_LEDGER.md's "Independent review findings" item 8
     for the full repro and analysis. Sprint 1 leaves `request.entry_price` as the sole sizing
     input until this is decided.
+24. `RiskEngine.evaluate_reduce_only()` (added to fix a reduce-only-can-flip-past-flat bug,
+    2026-09-27) reserves quantity per decision_id the same way `evaluate()` already did, released
+    via `RiskEngine.release(decision_id)`. For the main `evaluate()` path, `src/pipeline/paper.py`
+    already calls `release()` on every terminal execution outcome (fill/cancel/reject). No
+    equivalent caller exists for `evaluate_reduce_only()` at all — it currently has zero callers
+    anywhere in `src/` (grep-verified), since Sprint 1 has no exit engine yet (strategies emit
+    entries only, per `SPRINT1_FINAL_REPORT.md`'s "Remaining stubs"). Confirmed by independent
+    review, 2026-09-27: calling `evaluate_reduce_only()` directly and never releasing it leaves a
+    stale reservation that can block a later, legitimate reduce-only request for the same
+    instrument. This is not a bug in currently-wired code (there is no wiring yet) but a
+    **contract requirement for whoever builds the exit engine**: it MUST call
+    `risk_engine.release(decision.decision_id)` on every terminal outcome of a reduce-only order,
+    mirroring exactly what `src/pipeline/paper.py`'s entry path already does. Not implemented now
+    because there is no real caller to wire it into yet — do not invent one.
+25. `PaperExecutionEngine.cancel_replace()`'s `new_price` parameter lets a caller reprice a
+    resting limit order to anything (no bounds check), while the ORIGINAL risk-approved leverage/
+    notional/gross-net-exposure caps were computed against the ORIGINAL `entry_price`. Confirmed
+    by independent review, 2026-09-27: repricing a small approved order to a price orders of
+    magnitude away, then letting a crossing trade fill it, produces real notional far beyond what
+    risk approved — `cancel_replace()` only bounds *quantity* (`CANCEL_REPLACE_EXCEEDS_REMAINING`),
+    never price/notional. What the correct bound should be is undecided: reject any repriced fill
+    whose notional would exceed what was originally approved for that decision (mirroring the new
+    decision-level fill-quantity cap), require the caller to obtain a fresh risk decision for any
+    non-trivial reprice, or bound the allowed price deviation directly. Not implemented now — this
+    is a contract decision (which bound, what tolerance), not something to guess while fixing a
+    bug. See `DEVELOPMENT_LEDGER.md`'s "Independent review findings" (final Codex review,
+    2026-09-27) for the full repro.

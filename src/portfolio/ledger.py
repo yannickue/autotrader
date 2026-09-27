@@ -36,6 +36,14 @@ class Portfolio:
         self._positions: dict[str, _Position] = {}
         self._seen_fill_ids: set[str] = set()
 
+    def has_fill(self, fill_id: str) -> bool:
+        """True if `fill_id` has already been applied (or would be a no-op
+        duplicate if applied again). Lets a caller check for a duplicate
+        fill BEFORE running its own pre-conditions (e.g. an exposure cap),
+        instead of discovering the duplicate only after already evaluating
+        them against an already-counted quantity."""
+        return fill_id in self._seen_fill_ids
+
     def apply_fill(self, fill: Fill) -> bool:
         """Apply a fill to the ledger. Returns False (no-op) for a duplicate fill_id."""
         if not _is_finite_decimal(fill.quantity) or fill.quantity <= ZERO:

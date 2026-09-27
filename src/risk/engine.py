@@ -130,20 +130,22 @@ class RiskEngine:
         decision_id = f"risk:{request.signal_id}"
         cached = self._decisions.get(decision_id)
         if cached is not None:
-            if cached.approved and (
-                self._halted or runtime.kill_switch or runtime.mode == RuntimeMode.HALTED
-            ):
-                # Fail-closed: the engine has halted since this decision was
-                # approved. Do not silently re-hand out a stale approval —
-                # the stored decision stays in the audit trail unchanged,
-                # but a caller re-querying it now gets a fresh rejection.
-                return self._reject(
-                    decision_id=decision_id,
-                    request=request,
-                    reason_code=RiskReason.HALTED,
-                    reason="engine halted since this decision was approved; "
-                    "cached approval withheld",
-                )
+            if cached.approved:
+                not_ready = self._readiness_rejection(runtime)
+                if not_ready is not None:
+                    # Fail-closed: the engine's readiness has degraded since
+                    # this decision was approved (halted, kill-switched,
+                    # DEGRADED/RECONCILING mode, or risk_ready=False). Do not
+                    # silently re-hand out a stale approval — the stored
+                    # decision stays in the audit trail unchanged, but a
+                    # caller re-querying it now gets a fresh rejection.
+                    return self._reject(
+                        decision_id=decision_id,
+                        request=request,
+                        reason_code=not_ready,
+                        reason="engine readiness degraded since this decision was approved; "
+                        "cached approval withheld",
+                    )
             return cached
 
         try:
@@ -345,6 +347,21 @@ class RiskEngine:
             metadata={"side": request.side.value},
         )
 
+    def _readiness_rejection(self, runtime: RuntimeRiskState) -> RiskReason | None:
+        """Returns the reason a fresh evaluation would reject on right now
+        due to halt/runtime state, or None if none applies. Shared between
+        the fresh-evaluation path and the cache-hit path in `evaluate()` so
+        a cached APPROVED decision cannot be handed back stale: it must be
+        re-checked against every readiness predicate a fresh call would
+        use, not just the halt-specific subset (self._halted / kill_switch
+        / mode==HALTED) -- DEGRADED, RECONCILING, or risk_ready=False must
+        withhold a cached approval too."""
+        if self._halted or runtime.kill_switch or runtime.mode == RuntimeMode.HALTED:
+            return RiskReason.HALTED
+        if runtime.mode != RuntimeMode.READY or not runtime.risk_ready:
+            return RiskReason.RUNTIME_NOT_READY
+        return None
+
     def _evaluate_inner(
         self,
         *,
@@ -358,11 +375,9 @@ class RiskEngine:
     ) -> RiskDecision:
         policy = self._policy
 
-        if self._halted or runtime.kill_switch or runtime.mode == RuntimeMode.HALTED:
-            raise RiskRejection(RiskReason.HALTED)
-
-        if runtime.mode != RuntimeMode.READY or not runtime.risk_ready:
-            raise RiskRejection(RiskReason.RUNTIME_NOT_READY)
+        not_ready = self._readiness_rejection(runtime)
+        if not_ready is not None:
+            raise RiskRejection(not_ready)
 
         if not account.known:
             raise RiskRejection(RiskReason.ACCOUNT_UNKNOWN)

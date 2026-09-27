@@ -14,9 +14,9 @@ Paper only — live order submission stays disabled.
 | Data | sprint1/data | COMPLETE, MERGED to integration | 23 passed, 1 skipped (live network) |
 | Strategy | sprint1/strategy | COMPLETE, MERGED to integration | 22 passed |
 | Research | sprint1/research | COMPLETE, MERGED | 54 passed |
-| Risk | sprint1/risk | COMPLETE, MERGED; reviewed (isolated Claude, 2 bugs fixed); full-diff Codex review still owed | 75 passed (unit + property) |
-| Execution | sprint1/execution | COMPLETE (paper only), MERGED; reviewed (isolated Claude + 1 scoped Codex review, 4 bugs fixed); full-diff Codex review still owed | 76 passed (unit + chaos) |
-| Integration | sprint1/integration | All modules + paper pipeline + E2E merged | 268 passed, 1 skipped; E2E 15/15 |
+| Risk | sprint1/risk | COMPLETE, MERGED; reviewed (isolated Claude + final Codex full-diff, `gpt-6-astra`/STRONGEST_AVAILABLE/HIGH); 3 bugs fixed | 76 passed (unit + property) |
+| Execution | sprint1/execution | COMPLETE (paper only), MERGED; reviewed (isolated Claude + 1 scoped Codex review + final Codex full-diff); 10 bugs fixed | 81 passed (unit + chaos) |
+| Integration | sprint1/integration | All modules + paper pipeline + E2E merged | 274 passed, 1 skipped; E2E 15/15 |
 
 ## Active tasks
 
@@ -45,6 +45,8 @@ is logged as `Lead (direct)`.
 | G2. Fix: decision-level cumulative fill cap across an order's cancel/replace chain (HIGH Finding #1) | Sonnet builder (Lead, direct) | `tests/unit/execution/test_cancel_replace_and_reconcile.py` (4 new tests: repro/fix, normal-flow sanity check, protective-stop non-double-counting), full suite + ruff + compileall | DONE, merged. test result: 263 passed, 1 skipped (was 260); ruff clean; compileall clean |
 | H. Fix: protective STOP/TAKE_PROFIT orders no longer expire via `on_time()`'s age-based cleanup (HIGH Finding #2) | Sonnet builder (Lead, direct — small, well-scoped); Codex review deferred (usage-limited again after task G1, per explicit instruction not to wait on it) | `tests/unit/execution/test_limit_and_protective_orders.py` (2 new tests: repro/fix + a sanity check that ordinary entry-order expiry still works), full suite + ruff + compileall | DONE, merged. why this route: no existing contract or config defines a "reduce" mechanism anywhere in this codebase — every other safety-invariant violation halts (OVERFILL, UNKNOWN_ORDER, RECONCILIATION_MISMATCH, INTERNAL_ERROR); inventing a new auto-reduce behavior here would be exactly the kind of "invent whether the correct response should be reduce/halt" the task instructions warned against, so the minimal, precedent-consistent, non-inventive fix is exempting protective orders from a staleness-cleanup mechanism clearly designed for unfilled entry orders, not open-ended position protection. test result: 265 passed, 1 skipped (was 263); ruff clean; compileall clean. review result: NOT YET independently reviewed by Codex (deferred, see Blockers) |
 | I. Fix: `cancel_replace()` now preserves trigger_price/take_profit_price/trailing_policy/metadata and re-links OCO siblings bidirectionally (HIGH Finding #3) | Sonnet builder (Lead, direct — small, well-scoped); Codex review deferred (still usage-limited) | `tests/unit/execution/test_cancel_replace_and_reconcile.py` (4 new tests: unfilled-entry replace preserves protective prices, resting-stop replace preserves trigger price + OCO re-link both directions, take-profit-fills-cancels-replacement-stop), full suite + ruff + compileall | DONE, merged. why this route: smallest correct state-transition fix per task instructions — copy the dropped fields, repoint the OCO back-reference on the surviving sibling, no new order-graph concept, no "move stop via new_price" feature added (that was a separate enhancement suggestion, not this bug). Verified fail-first: confirmed both new "preserves" tests fail against the pre-fix code (stashed and re-ran) before restoring the fix. test result: 268 passed, 1 skipped (was 265); ruff clean; compileall clean. review result: NOT YET independently reviewed by Codex |
+| J. Final Codex independent review of the complete resulting diff (all 6 fixes since `068c3c8`, `src/risk/engine.py` + `src/execution/paper.py`) | Codex, provider=openai, actual model=`gpt-6-astra`, tier=STRONGEST_AVAILABLE, effort=high, delegated=yes | why this route: task instructions require STRONGEST_AVAILABLE+HIGH for the final full-diff gate; model availability re-probed empirically right before this call (not assumed from the earlier usage-limit state) — `gpt-6-astra` responded, confirming the limit had reset | review result: CONFIRMED 7 HIGH + 2 MEDIUM findings despite 268/1 passing at the time. Verified every finding independently by direct code read (not trusted blindly) — see "Independent review findings" below for the full classification |
+| K. Fix 6 of the 9 final-review findings (2 regressions in this session's own G2/E2 fixes, 1 pre-existing dedup-ordering bug exposed by G2, 2 pre-existing protective-order/replacement-chain bugs, 1 pre-existing kill-switch gap on the trade-crossing fill path, 1 pre-existing checkpoint-compat bug, 1 pre-existing client-id-collision bug) | Sonnet builder (Lead, direct) | 6 new regression tests across `tests/unit/risk/test_engine.py` and `tests/unit/execution/*.py`, each verified fail-first (stashed the fix, confirmed the test fails, restored), full suite + ruff + compileall | DONE, merged. test result: 274 passed, 1 skipped (was 268); ruff clean; compileall clean. 2 findings deferred to `OPEN_QUESTIONS.md` (#24 reduce-only release has no real caller yet; #25 cancel_replace repricing bypasses risk approval — contract decisions, not bugs to silently patch) |
 | F. SPRINT1_FINAL_REPORT.md | Lead (direct) — all facts already held; hand-off would cost as much as writing | per-area test counts | DONE |
 
 No Opus agent used by this project's own sessions; the *external* AI Workstation Core session that
@@ -130,6 +132,80 @@ contracts only, each independently reproduced its findings with small scripts ag
   fail-first (stashed the fix, confirmed 2 of the new tests failed against the old code, restored
   the fix).
 
+## Final Codex full-diff review findings (2026-09-27, task J/K)
+
+STRONGEST_AVAILABLE (`gpt-6-astra`), effort=high, reviewing the complete diff since `068c3c8`
+across `src/risk/engine.py` and `src/execution/paper.py` (all 6 fixes above). Returned 7 HIGH + 2
+MEDIUM findings against 268/1 passing tests — a reminder that a green suite does not mean a diff
+is complete. Every finding was independently verified by direct code read before any fix (Phase B:
+do not change code merely because Codex reports something).
+
+**CONFIRMED and fixed this run** (6 findings, each with its own regression test, each verified
+fail-first):
+
+- **[HIGH, regression in this session's own G2 fix] Execution — a late fill on a replaced
+  (terminal) order correctly respected the new decision-level cap but then returned before ever
+  reaching the ENTRY protective-order sync**, so the exposure it legitimately added had NO
+  protective stop/take-profit created for it at all. Fixed: the terminal-order early-return path
+  in `_apply_fill` now still calls `_sync_protective_orders` for `ChildRole.ENTRY` orders.
+- **[HIGH, pre-existing, exposed by this session's earlier Finding #3 fix] Execution —
+  `_sync_protective_orders`/`_ensure_protective` looked protective children up by a fixed
+  deterministic id (`f"{entry_id}:{role}"`), not by following the cancel/replace chain.** Once a
+  stop/take-profit had been replaced, a later entry fill's protective-sync call operated on the
+  dead (terminal, but still dict-present) original instead of the live replacement — silently
+  failing to resize it and re-pointing the OCO sibling link back at the dead order, undoing this
+  session's own Finding #3 fix. Fixed: added `_resolve_live_order()`, which follows
+  `replaced_by_client_order_id` to the current head of a replacement chain; both
+  `_ensure_protective`'s get-or-create/resize logic and `_sync_protective_orders`'s OCO re-link now
+  use it instead of a raw dict lookup.
+- **[HIGH, regression in this session's own E2 fix] Risk — the cached-approval-after-halt fix only
+  re-checked the three halt-specific predicates** (`self._halted` / `kill_switch` /
+  `mode==HALTED`), missing every other readiness predicate a fresh `evaluate()` call would use —
+  `DEGRADED` mode, `RECONCILING` mode, or `risk_ready=False` all still let a stale cached approval
+  through. Fixed: extracted a shared `_readiness_rejection(runtime)` helper used by both the fresh
+  path (`_evaluate_inner`) and the cache-hit path, covering the full readiness check, not a subset.
+- **[HIGH, pre-existing, exposed by this session's earlier Finding #1 fix] Execution — the new
+  decision-level cumulative fill cap ran BEFORE `portfolio.apply_fill`'s own duplicate-fill-id
+  dedup**, so the exact same real-world fill reported twice through two different paths
+  (`on_trade`'s crossing loop and `report_fill`, whose outer dedup keys have different shapes and
+  never collide with each other) was double-counted against the cap and could trigger a false
+  `OVERFILL` halt even though the portfolio itself would have correctly no-op'd the duplicate.
+  Fixed: added `Portfolio.has_fill(fill_id)` (a read-only existence check) and call it at the very
+  top of `_apply_fill`, before any cap logic.
+- **[HIGH, pre-existing, core to this session's kill-switch theme] Execution — nothing ever
+  checked `self.mode` before APPLYING a fill from an ordinary crossing trade event or
+  `report_fill()`.** `submit()` and `cancel_replace()` both correctly block while not `READY`, but
+  an already-resting non-reduce-only order could still open/increase exposure via `on_trade()`
+  while `HALTED` — the kill switch stopped new *submissions* but not fills on orders already
+  resting. Fixed: `_apply_fill` now defers (does not apply, order stays resting, no re-halt) a
+  non-reduce-only fill while `self.mode is not EngineMode.READY`, mirroring the exact
+  reduce-only-still-allowed-while-halted exception `submit()`/`cancel_replace()` already use.
+- **[MEDIUM, pre-existing] Execution — `import_checkpoint` indexed the two new decision-tracking
+  maps directly** (`checkpoint["decision_approved_quantity"]`), so restoring any checkpoint
+  captured before this session's Finding #1 fix (i.e. any real historical checkpoint) would raise
+  `KeyError` on restart. Fixed: `.get(..., {})` instead of direct indexing.
+- **[HIGH, pre-existing] Execution — `cancel_replace()` had no uniqueness check on
+  `new_client_order_id`** — assigning `self._orders[new_client_order_id] = replacement`
+  unconditionally meant a caller-supplied id colliding with an existing unrelated order silently
+  overwrote and lost that order from tracking entirely, no error. Fixed: reject with
+  `DUPLICATE_CONFLICT` if `new_client_order_id` is already a known order.
+
+**CONFIRMED but deferred — no concrete fix target, filed as `OPEN_QUESTIONS.md` #24/#25 instead of
+guessed:**
+
+- **[HIGH-adjacent, not currently reachable] Risk — `evaluate_reduce_only()`'s reservation has no
+  release wiring anywhere.** `RiskEngine.release()` frees it, but nothing in `src/` calls
+  `evaluate_reduce_only()` at all (grep-verified) — Sprint 1 has no exit engine yet. A stale
+  reservation could block a later legitimate reduce-only request once a real caller exists. Filed
+  as a contract requirement for whoever builds the exit engine (`OPEN_QUESTIONS.md` #24), not
+  fixed now since there is no real integration point to fix.
+- **[HIGH, genuine open policy question] Execution — `cancel_replace()`'s `new_price` has no bound
+  relative to the decision's originally-approved economics.** A caller can reprice a small approved
+  order to an arbitrary price and a later crossing trade fills at real notional far beyond what
+  risk approved; only *quantity* is bounded on replace. What the correct bound should be (reject
+  vs. require fresh risk re-approval vs. a deviation tolerance) is a contract decision, filed as
+  `OPEN_QUESTIONS.md` #25.
+
 **NOT fixed this run — prioritized backlog, highest severity first:**
 
 1. **[MEDIUM] Execution — fills after a stop reaches a final state leave the position
@@ -172,37 +248,31 @@ scratchpad — copy into this repo's `scripts/` if they need to survive that ses
 
 ## Blockers
 
-- Codex hit a second usage limit shortly after task G1; reset time unknown, not re-probed since
-  (explicit instruction: don't wait on it / don't retry). Not a hard blocker — fixes proceeded on
-  Sonnet alone for Findings #2 and #3. The originally-scheduled 19:05 full-diff review never ran.
-  **Owed before `sprint1-rc1` is tagged:** a single STRONGEST_AVAILABLE+HIGH independent Codex
-  review of the complete resulting diff (all three HIGH fixes together), which also serves as the
-  deferred review for Findings #2 and #3 individually.
+- None currently. Codex's usage limit (hit twice earlier this session) had reset by the time the
+  final full-diff review was attempted — re-probed empirically (a trivial `gpt-6-astra` call)
+  rather than assumed, per explicit instruction not to hardcode model/availability assumptions.
 - uv-managed Python 3.12 install on this host is broken; tests run with `trader/.venv` (3.12.14).
 
 ## Next decision
 
-All three HIGH findings from the independent review are now DONE (tasks G1/G2, H, I above):
-late fill exceeding approved size, protective stop/TP expiry leaving a position unprotected, and
-cancel/replace dropping protective-order linkage. 268 passed, 1 skipped; ruff clean; compileall
-clean.
+All three original HIGH findings (late fill exceeding approved size, protective stop/TP expiry,
+cancel/replace dropping protective linkage) AND the final full-diff Codex review's 6 confirmed,
+fixable findings are now DONE. 274 passed, 1 skipped; ruff clean; compileall clean. This closes
+out the independent-review cycle for this diff — `sprint1-rc1` can be tagged.
 
-**Not yet done — do this next, in order:**
-1. Probe Codex availability again (empirically, e.g. a trivial `gpt-6-astra` call — do not assume
-   the earlier usage limit has reset, and do not hardcode a model name if the catalog has moved).
-   If available: run ONE STRONGEST_AVAILABLE+HIGH independent review of the full diff since
-   `bootstrap-v0.1` across `src/risk`, `src/execution`, `src/portfolio`, `src/pipeline` and their
-   tests, contracts-scoped as before. Classify every finding (CONFIRMED/DUPLICATE/NOT
-   REPRODUCIBLE/DESIGN QUESTION) the same way this run did; do not silently fix anything it finds
-   without that classification step.
-2. If Codex is still unavailable: do not block indefinitely — say so plainly in the next report
-   rather than tagging `sprint1-rc1` as if the review happened.
-3. Only after that review is clean (or its findings are triaged and any HIGH/CRITICAL ones fixed)
-   should `sprint1-rc1` be tagged.
-4. Then work the remaining MEDIUM/LOW backlog (items 1-4 above) before any new feature work.
-   Item 5 needs an explicit policy decision (see `docs/OPEN_QUESTIONS.md` #23) before it can be
-   coded — do not guess a tolerance value.
-5. Only after that should the "Opportunity Scanner" milestone from `SPRINT1_FINAL_REPORT.md`
-   start.
+**Not yet done — next highest-value work, in order:**
+1. Two contract decisions are now blocking further safety hardening, both filed rather than
+   guessed: `OPEN_QUESTIONS.md` #23 (risk sizing trusts `request.entry_price` without comparing to
+   market), #24 (reduce-only reservation release has no caller — needs to be a hard requirement
+   when the exit engine is built), #25 (`cancel_replace` repricing bypasses risk approval bounds).
+   None of these have a concrete fix target without a policy decision from the person who owns
+   these contracts — do not guess.
+2. Remaining MEDIUM/LOW backlog below (items 1-4), lower priority than the contract decisions
+   above since none are currently reachable via the live pipeline or are safety-critical.
+3. Only after the OPEN_QUESTIONS above are resolved (or explicitly deferred by the contract owner)
+   should the "Opportunity Scanner" milestone from `SPRINT1_FINAL_REPORT.md` start — per the
+   session's own priority order (correctness → risk/safety → tests → backtest/execution
+   reliability → features), an undecided risk-sizing/repricing gap outranks new product work.
 
-Live trading stays hard-disabled regardless of test/review outcomes.
+Live trading stays hard-disabled regardless of test/review outcomes. Passing tests and clean
+reviews do not by themselves mean the system is ready for real-money trading.

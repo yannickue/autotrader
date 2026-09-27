@@ -523,6 +523,37 @@ class PaperExecutionEngine:
     def _apply_fill(
         self, order: Order, *, fill_id: str, price: Decimal, quantity: Decimal, now: datetime
     ) -> None:
+        # Regression: a duplicate fill_id (e.g. the same underlying trade
+        # reported once via on_trade()'s crossing path and again via
+        # report_fill(), which use different outer dedup key shapes) used to
+        # reach the per-order/decision cap checks below BEFORE
+        # portfolio.apply_fill's own fill_id dedup ran, so its quantity
+        # could be counted a second time against those caps and trigger a
+        # false OVERFILL halt -- even though the portfolio itself would
+        # have correctly treated it as a no-op. Check first.
+        if self.portfolio.has_fill(fill_id):
+            return
+
+        # Regression: submit() and cancel_replace() both check self.mode
+        # before letting a NEW order/replacement through, but nothing
+        # anywhere checked it before APPLYING a fill from an ordinary
+        # crossing trade event or report_fill() -- so an already-resting
+        # non-reduce-only order could still open/increase exposure while
+        # HALTED (or RECONCILING/DEGRADED). Reduce-only fills (manual
+        # closes, or protective STOP/TAKE_PROFIT children) keep the same
+        # exception submit()/cancel_replace() already grant them while
+        # HALTED specifically, since they can only shrink exposure. The
+        # fill is simply not applied yet (order stays resting) rather than
+        # triggering another halt -- the engine is already not READY.
+        if not order.reduce_only and self.mode is not EngineMode.READY:
+            self._log(
+                "fill_deferred_not_ready",
+                client_order_id=order.client_order_id,
+                fill_id=fill_id,
+                mode=str(self.mode),
+            )
+            return
+
         if order.reduce_only:
             # Fail-closed, venue-like cap: a reduce-only order (manual or a
             # protective STOP/TAKE_PROFIT child) can never sell/buy more than
@@ -592,9 +623,18 @@ class PaperExecutionEngine:
         )
 
         if order.is_terminal():
-            # Late fill arriving after a terminal transition: booked at most once,
-            # status must never regress from its terminal value.
+            # Late fill arriving after a terminal transition (e.g. the
+            # original half of a cancel/replace pair): booked at most once,
+            # status must never regress from its terminal value. This fill
+            # already increased real exposure above (portfolio.apply_fill
+            # ran before this check) -- for an ENTRY order that means
+            # protective orders must still be created/updated for it here.
+            # Regression: this used to return before ever reaching the
+            # ENTRY sync below, so a late fill on a canceled entry opened
+            # real exposure with NO protective stop/take-profit at all.
             self._log("late_fill_booked", client_order_id=order.client_order_id, fill_id=fill_id)
+            if order.role is ChildRole.ENTRY:
+                self._sync_protective_orders(order, now)
             return
 
         target = (
@@ -681,15 +721,42 @@ class PaperExecutionEngine:
                 now,
             )
 
-        stop_id = self._child_id(entry, ChildRole.STOP)
-        tp_id = self._child_id(entry, ChildRole.TAKE_PROFIT)
-        if stop_id in self._orders and tp_id in self._orders:
-            self._orders[stop_id].oco_sibling_id = tp_id
-            self._orders[tp_id].oco_sibling_id = stop_id
+        stop = self._resolve_live_order(self._child_id(entry, ChildRole.STOP))
+        tp = self._resolve_live_order(self._child_id(entry, ChildRole.TAKE_PROFIT))
+        if stop is not None and tp is not None:
+            stop.oco_sibling_id = tp.client_order_id
+            tp.oco_sibling_id = stop.client_order_id
 
     @staticmethod
     def _child_id(entry: Order, role: ChildRole) -> str:
         return f"{entry.client_order_id}:{role}"
+
+    def _resolve_live_order(self, order_id: str) -> Order | None:
+        """Follow `replaced_by_client_order_id` from `order_id` to the live
+        (or last-known) descendant of a cancel/replace chain.
+
+        Regression: `_ensure_protective`/`_sync_protective_orders` looked
+        protective children up by their fixed deterministic id
+        (f"{entry_id}:{role}") directly. Once that id had been
+        cancel_replace()'d, the deterministic id still existed in
+        `self._orders` but as a terminal (CANCELED) order -- the live
+        replacement lives under a *different* id. Looking it up directly
+        meant a later entry fill's resize/OCO-relink silently operated on
+        the dead original (a no-op, since it's terminal) instead of the
+        live replacement, undoing cancel_replace()'s own OCO relink and
+        leaving the replacement's size stale.
+        """
+        order = self._orders.get(order_id)
+        seen: set[str] = set()
+        while order is not None and order.replaced_by_client_order_id:
+            if order.client_order_id in seen:
+                break  # defensive: never loop forever on a corrupt chain
+            seen.add(order.client_order_id)
+            next_order = self._orders.get(order.replaced_by_client_order_id)
+            if next_order is None:
+                break
+            order = next_order
+        return order
 
     def _ensure_protective(
         self,
@@ -701,7 +768,7 @@ class PaperExecutionEngine:
         now: datetime,
     ) -> None:
         child_id = self._child_id(entry, role)
-        existing = self._orders.get(child_id)
+        existing = self._resolve_live_order(child_id)
         if existing is None:
             child = Order(
                 client_order_id=child_id,
@@ -790,6 +857,21 @@ class PaperExecutionEngine:
                 status=original.status,
                 reject_code=RejectCode.NOT_READY,
                 reason=f"engine mode is {self.mode}",
+            )
+
+        # Regression: no uniqueness check on new_client_order_id existed at
+        # all -- if it happened to match an existing order's id, that order
+        # was silently overwritten in `self._orders` (plain dict
+        # assignment) and vanished from tracking entirely, with no error.
+        existing_new_id_owner = self._orders.get(new_client_order_id)
+        if existing_new_id_owner is not None:
+            return CancelReplaceResult(
+                accepted=False,
+                original_client_order_id=client_order_id,
+                new_client_order_id=None,
+                status=original.status,
+                reject_code=RejectCode.DUPLICATE_CONFLICT,
+                reason=f"new_client_order_id {new_client_order_id!r} is already in use",
             )
 
         remaining = original.remaining_quantity
@@ -946,11 +1028,15 @@ class PaperExecutionEngine:
         self.mode = EngineMode(checkpoint["mode"])
         self.halt_reason = checkpoint["halt_reason"]
         self._decision_usage = dict(checkpoint["decision_usage"])
+        # .get(..., {}) rather than direct indexing: a checkpoint captured
+        # before these two maps existed (any real historical checkpoint, or
+        # one from before this fix) has no such keys at all, and must still
+        # import instead of raising KeyError on restart.
         self._decision_approved_quantity = {
-            k: Decimal(v) for k, v in checkpoint["decision_approved_quantity"].items()
+            k: Decimal(v) for k, v in checkpoint.get("decision_approved_quantity", {}).items()
         }
         self._decision_filled_quantity = {
-            k: Decimal(v) for k, v in checkpoint["decision_filled_quantity"].items()
+            k: Decimal(v) for k, v in checkpoint.get("decision_filled_quantity", {}).items()
         }
         self._client_id_owner = dict(checkpoint["client_id_owner"])
         self._seen_fill_keys = {

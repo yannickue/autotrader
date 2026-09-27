@@ -622,6 +622,31 @@ def test_cached_approval_not_honored_after_halt() -> None:
     assert engine._decisions[first.decision_id].approved is True
 
 
+def test_cached_approval_not_honored_when_runtime_degrades_without_halting() -> None:
+    """Regression confirmed by independent Codex review: the earlier fix for
+    the cached-approval-survives-halt bug only re-checked the three
+    halt-specific predicates (self._halted / kill_switch / mode==HALTED),
+    missing every OTHER way a fresh evaluate() would reject on readiness --
+    DEGRADED mode, RECONCILING mode, or risk_ready=False. A cached approval
+    queried again under any of those states was still silently returned."""
+    engine = RiskEngine(_policy())
+    first = _evaluate(engine)
+    assert first.approved is True
+    engine.release(first.decision_id)
+
+    for degraded_runtime in (
+        _runtime(mode=RuntimeMode.DEGRADED),
+        _runtime(mode=RuntimeMode.RECONCILING),
+        _runtime(risk_ready=False),
+    ):
+        result = _evaluate(engine, runtime=degraded_runtime)
+        assert result.approved is False, f"expected rejection for {degraded_runtime}"
+        assert result.reason_code == RiskReason.RUNTIME_NOT_READY
+
+    # Original decision in the audit trail remains untouched throughout.
+    assert engine._decisions[first.decision_id].approved is True
+
+
 # -- construction invariants -----------------------------------------------------
 
 

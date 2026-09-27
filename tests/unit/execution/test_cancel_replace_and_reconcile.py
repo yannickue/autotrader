@@ -452,3 +452,67 @@ def test_cancel_replace_stop_then_take_profit_fills_cancels_replacement_stop(eng
 
     assert tp.status == OrderStatus.FILLED
     assert replacement_stop.status == OrderStatus.CANCELED
+
+
+def test_late_fill_on_replaced_entry_still_creates_protective_orders(engine, now):
+    """Regression confirmed by independent Codex review: the decision-level
+    fill cap fix (Finding #1) correctly bounds a late fill on a replaced
+    (terminal) entry order, but _apply_fill returned before ever reaching
+    the ENTRY protective-sync call -- so exposure increased with NO
+    protective stop/take-profit at all."""
+    decision = make_decision(quantity="1", stop_price="90")
+    request = make_request(
+        order_type=OrderType.LIMIT, time_in_force=TimeInForce.GTC, limit_price="99",
+        quantity="1", metadata={"take_profit": Decimal("120")},
+    )
+    engine.submit(request, decision, make_quote(), now)
+    engine.cancel_replace("client-1", "client-1-r1", now, new_price=Decimal("98"))
+
+    # Late fill on the now-CANCELED original -- within the approved decision
+    # total, so it legitimately books and increases real exposure.
+    engine.report_fill("client-1", "late-trade", Decimal("99"), Decimal("1"), now)
+
+    assert engine.mode == EngineMode.READY
+    assert engine.portfolio.positions[INSTRUMENT].quantity == Decimal("1")
+    assert "client-1:stop" in engine._orders
+    assert "client-1:take_profit" in engine._orders
+    assert engine._orders["client-1:stop"].trigger_price == Decimal("90")
+
+
+def test_replaced_stop_gets_resized_and_relinked_on_later_partial_fill(engine, now):
+    """Regression confirmed by independent Codex review: _sync_protective_orders
+    and _ensure_protective looked protective children up by their fixed
+    deterministic id (f"{entry_id}:stop"), not by following the
+    replacement chain. After cancel_replace()'d the stop, a later partial
+    fill of the entry re-ran _sync_protective_orders, which resized/
+    relinked the dead original id instead of the live replacement --
+    leaving the replacement stop's quantity stale and re-pointing the
+    take-profit's OCO link back at the dead original."""
+    decision = make_decision(quantity="2", stop_price="90")
+    request = make_request(quantity="2", metadata={"take_profit": Decimal("120")})
+    engine.submit(request, decision, make_quote(), now)  # MARKET, fills fully at qty=2
+
+    stop = engine._orders["client-1:stop"]
+    tp = engine._orders["client-1:take_profit"]
+    assert stop.quantity == Decimal("2")
+
+    result = engine.cancel_replace(
+        "client-1:stop", "client-1:stop-r1", now, new_price=Decimal("91")
+    )
+    assert result.accepted is True
+    replacement = engine._orders["client-1:stop-r1"]
+    assert replacement.quantity == Decimal("2")
+
+    # Re-run protective sync the way a later partial fill of the entry
+    # would (same entry, same filled_quantity -- simulates the sync call
+    # that used to corrupt the live replacement's linkage).
+    engine._sync_protective_orders(engine._orders["client-1"], now)
+
+    # The dead original must NOT be resurrected/resized.
+    assert stop.is_terminal()
+    assert stop.quantity == Decimal("2")  # untouched
+    # The live replacement keeps its size and gets the OCO link, not the
+    # dead original.
+    assert replacement.quantity == Decimal("2")
+    assert replacement.oco_sibling_id == tp.client_order_id
+    assert tp.oco_sibling_id == "client-1:stop-r1"

@@ -105,6 +105,91 @@ def test_duplicate_trade_event_is_noop(engine, now):
     assert order.filled_quantity == Decimal("1")
 
 
+def test_duplicate_fill_across_on_trade_and_report_fill_does_not_false_halt(engine, now):
+    """Regression confirmed by independent Codex review: on_trade()'s outer
+    dedup key is ("trade", trade_id), report_fill()'s is (client_order_id,
+    trade_id) -- different shapes that never collide with each other. Both
+    construct the same fill_id (f"{client_order_id}:{trade_id}") and
+    reach _apply_fill(), whose per-order/decision-level cap checks used to
+    run BEFORE portfolio.apply_fill's own fill_id dedup -- so the exact
+    same real-world fill, reported twice through these two different
+    paths, was double-counted against the caps and could trigger a false
+    OVERFILL halt even though the portfolio itself would have correctly
+    no-op'd the second report."""
+    decision = make_decision(quantity="1")
+    request = make_request(
+        order_type=OrderType.LIMIT, time_in_force=TimeInForce.GTC,
+        limit_price="99", side=OrderSide.BUY, quantity="1",
+    )
+    engine.submit(request, decision, make_quote(), now)
+
+    event = TradeEvent(
+        instrument=INSTRUMENT, timestamp=now, trade_id="t1",
+        price=Decimal("98"), quantity=Decimal("1"),
+    )
+    engine.on_trade(event, now)  # fills via the ordinary crossing path
+    assert engine._orders["client-1"].filled_quantity == Decimal("1")
+
+    # The exact same trade, reported again through the venue-fill hook.
+    engine.report_fill("client-1", "t1", Decimal("98"), Decimal("1"), now)
+
+    assert engine.mode == EngineMode.READY  # no false OVERFILL halt
+    assert engine._orders["client-1"].filled_quantity == Decimal("1")  # not double-booked
+
+
+def test_halted_engine_does_not_fill_resting_non_reduce_only_order_via_trade_event(engine, now):
+    """Regression confirmed by independent Codex review: submit() and
+    cancel_replace() both check self.mode, but nothing checked it before
+    APPLYING a fill from an ordinary crossing trade event -- an already
+    resting non-reduce-only order could still open new exposure while
+    HALTED. The kill switch must be absolute: it should stop existing
+    resting orders from generating new exposure too, not just block new
+    submissions."""
+    decision = make_decision(quantity="1")
+    request = make_request(
+        order_type=OrderType.LIMIT, time_in_force=TimeInForce.GTC,
+        limit_price="99", side=OrderSide.BUY, quantity="1",
+    )
+    engine.submit(request, decision, make_quote(), now)
+
+    engine.reconcile({"orders": {"ghost": {}}, "positions": {}}, now)
+    assert engine.mode == EngineMode.HALTED
+
+    event = TradeEvent(
+        instrument=INSTRUMENT, timestamp=now, trade_id="t1",
+        price=Decimal("98"), quantity=Decimal("1"),
+    )
+    engine.on_trade(event, now)
+
+    assert engine._orders["client-1"].filled_quantity == Decimal("0")  # fill deferred
+    assert engine._orders["client-1"].status == OrderStatus.ACCEPTED  # still resting
+    assert engine.portfolio.positions.get(INSTRUMENT) is None or (
+        engine.portfolio.positions[INSTRUMENT].quantity == Decimal("0")
+    )
+
+
+def test_halted_engine_still_fills_reduce_only_protective_stop_via_trade_event(engine, now):
+    """The other half of the same fix: reduce-only fills (protective stops
+    closing exposure) must keep working while HALTED -- they can only
+    shrink risk, matching the existing submit()/cancel_replace() policy."""
+    decision = make_decision(quantity="1", stop_price="90")
+    request = make_request(quantity="1")
+    engine.submit(request, decision, make_quote(), now)  # MARKET, fills immediately
+    stop = engine._orders["client-1:stop"]
+
+    engine.reconcile({"orders": {"ghost": {}}, "positions": {}}, now)
+    assert engine.mode == EngineMode.HALTED
+
+    event = TradeEvent(
+        instrument=INSTRUMENT, timestamp=now, trade_id="t1",
+        price=Decimal("89"), quantity=Decimal("1"),
+    )
+    engine.on_trade(event, now)
+
+    assert stop.status == OrderStatus.FILLED
+    assert engine.portfolio.positions[INSTRUMENT].quantity == Decimal("0")
+
+
 def test_stale_resting_order_expires(engine, now):
     from datetime import timedelta
 
