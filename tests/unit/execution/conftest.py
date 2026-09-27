@@ -77,6 +77,8 @@ def make_decision(
     reduce_only=False,
     metadata=None,
 ) -> RiskDecision:
+    if not approved:  # risk contract: rejections carry zero quantity/notional/leverage
+        quantity = "0"
     meta: dict = {"side": side, "reduce_only": reduce_only}
     if metadata:
         meta.update(metadata)
@@ -89,7 +91,7 @@ def make_decision(
         reason="ok",
         quantity=Decimal(quantity),
         notional=Decimal(quantity) * Decimal("100"),
-        leverage=Decimal("1"),
+        leverage=Decimal("1") if approved else Decimal("0"),
         max_leverage=Decimal("5"),
         risk_budget=Decimal("1000"),
         stop_price=Decimal(stop_price) if stop_price is not None else None,
