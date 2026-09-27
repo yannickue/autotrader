@@ -1,0 +1,223 @@
+{
+  "accepted_long": {
+    "evidence": {
+      "execution_reject_code": null,
+      "execution_status": "filled",
+      "gross_notional": "18877.531",
+      "position_qty": "183.277",
+      "qty_before": "0",
+      "risk_reason": null,
+      "scenario": "accepted_long",
+      "signal_id": "momentum-v1:b0cd544bd97fb2ef6480b651f5556d65ce1d73ff289e02f8a0e98c1adff64615"
+    },
+    "result": "PASS"
+  },
+  "accepted_short": {
+    "evidence": {
+      "execution_reject_code": null,
+      "execution_status": "filled",
+      "gross_notional": "18857.576",
+      "position_qty": "-194.408",
+      "qty_before": "0",
+      "risk_reason": null,
+      "scenario": "accepted_short",
+      "signal_id": "momentum-v1:b62aa2b06414b3b26150b4ae21b8dbd3aab4508c9f35c5ba67e04092cf7933c3"
+    },
+    "result": "PASS"
+  },
+  "account_unknown": {
+    "evidence": {
+      "execution_reject_code": null,
+      "execution_status": null,
+      "gross_notional": "0",
+      "position_qty": "0",
+      "risk_reason": "ACCOUNT_UNKNOWN",
+      "scenario": "account_unknown",
+      "signal_id": "sig:BTCUSDT-PERP:long:2026-01-01T12:00:00+00:00"
+    },
+    "result": "PASS"
+  },
+  "duplicate_fill": {
+    "evidence": {
+      "gross_notional": "100",
+      "qty_after_duplicate_report": "1",
+      "qty_after_duplicate_trade": "1",
+      "qty_after_first_trade": "1",
+      "qty_after_report_fill": "1",
+      "scenario": "duplicate_fill"
+    },
+    "result": "PASS"
+  },
+  "duplicate_request": {
+    "evidence": {
+      "first": {
+        "execution_reject_code": null,
+        "execution_status": "filled",
+        "gross_notional": "18877.531",
+        "position_qty": "183.277",
+        "risk_reason": null,
+        "scenario": "duplicate_request_first",
+        "signal_id": "momentum-v1:b0cd544bd97fb2ef6480b651f5556d65ce1d73ff289e02f8a0e98c1adff64615"
+      },
+      "qty_after_resubmit": "183.277",
+      "resubmit_status": "filled",
+      "scenario": "duplicate_request",
+      "second": {
+        "execution_reject_code": null,
+        "execution_status": "filled",
+        "gross_notional": "18877.531",
+        "position_qty": "183.277",
+        "risk_reason": null,
+        "scenario": "duplicate_request_second",
+        "signal_id": "momentum-v1:b0cd544bd97fb2ef6480b651f5556d65ce1d73ff289e02f8a0e98c1adff64615"
+      }
+    },
+    "result": "PASS"
+  },
+  "execution_cannot_bypass_risk": {
+    "evidence": {
+      "mismatch_id_reject": "RISK_MISMATCH",
+      "mismatch_side_reject": "RISK_MISMATCH",
+      "none_decision_reject": "RISK_NOT_APPROVED",
+      "over_size_reject": "EXCEEDS_APPROVED_SIZE",
+      "position_qty": "0",
+      "rejected_decision_reject": "RISK_NOT_APPROVED",
+      "scenario": "execution_cannot_bypass_risk"
+    },
+    "result": "PASS"
+  },
+  "exposure_limit_blocks_second_long": {
+    "evidence": {
+      "gross_after_first": "1000",
+      "gross_after_second": "1049.900",
+      "max_gross_notional": "1050",
+      "qty1": "10",
+      "qty2_added": "0.499",
+      "scenario": "exposure_limit_blocks_second_long",
+      "second_signal_risk_reason": null,
+      "second_signal_stage": "executed"
+    },
+    "result": "PASS"
+  },
+  "gross_exposure_marked_after_open": {
+    "evidence": {
+      "gross_notional": "18877.531",
+      "latest_last": "103",
+      "qty": "183.277",
+      "scenario": "gross_exposure_marked_after_open"
+    },
+    "result": "PASS"
+  },
+  "halt": {
+    "evidence": {
+      "execution_engine_halted": {
+        "gross_notional_after": "0",
+        "gross_notional_before": "0",
+        "label": "execution_engine_halted",
+        "position_qty_after": "0",
+        "position_qty_before": "0",
+        "result": {
+          "risk_reason": "ACCOUNT_UNRECONCILED",
+          "stage": "risk_rejected"
+        }
+      },
+      "execution_engine_halted_direct_submit": {
+        "gross_notional_after": "0",
+        "gross_notional_before": "0",
+        "label": "execution_engine_halted_direct_submit",
+        "position_qty_after": "0",
+        "position_qty_before": "0",
+        "result": {
+          "accepted": false,
+          "execution_reject_code": "NOT_READY"
+        }
+      },
+      "risk_engine_halt": {
+        "gross_notional_after": "0",
+        "gross_notional_before": "0",
+        "label": "risk_engine_halt",
+        "position_qty_after": "0",
+        "position_qty_before": "0",
+        "result": {
+          "risk_reason": "HALTED",
+          "stage": "risk_rejected"
+        }
+      },
+      "runtime_kill_switch": {
+        "gross_notional_after": "0",
+        "gross_notional_before": "0",
+        "label": "runtime_kill_switch",
+        "position_qty_after": "0",
+        "position_qty_before": "0",
+        "result": {
+          "risk_reason": "HALTED",
+          "stage": "risk_rejected"
+        }
+      },
+      "scenario": "halt"
+    },
+    "result": "PASS"
+  },
+  "invalid_stop": {
+    "evidence": {
+      "scenario": "invalid_stop",
+      "stop_equals_entry_reason": "INVALID_STOP",
+      "wrong_side_reason": "INVALID_STOP"
+    },
+    "result": "PASS"
+  },
+  "leverage_cap": {
+    "evidence": {
+      "account_leverage_after_first": "20",
+      "account_leverage_after_second": "20",
+      "decision1_binding_constraint": "leverage_cap",
+      "decision1_leverage": "20",
+      "raised_over_20x_policy": true,
+      "scenario": "leverage_cap",
+      "second_signal_stage": "risk_rejected"
+    },
+    "result": "PASS"
+  },
+  "metrics_json_serializable": {
+    "evidence": {
+      "json_length": 197,
+      "net_pnl": "4.75900",
+      "scenario": "metrics_json_serializable",
+      "trade_count": 1
+    },
+    "result": "PASS"
+  },
+  "nan_inf_rejected": {
+    "evidence": {
+      "market_snapshot_rejects_nan": true,
+      "position_qty": "0",
+      "risk_decision_reason": "INVALID_INPUT",
+      "scenario": "nan_inf_rejected"
+    },
+    "result": "PASS"
+  },
+  "risk_reject_wide_spread": {
+    "evidence": {
+      "execution_reject_code": null,
+      "execution_status": null,
+      "gross_notional": "0",
+      "position_qty": "0",
+      "risk_reason": "SPREAD_TOO_WIDE",
+      "scenario": "risk_reject_wide_spread",
+      "signal_id": "sig:BTCUSDT-PERP:long:2026-01-01T12:00:00+00:00"
+    },
+    "result": "PASS"
+  },
+  "stale_signal": {
+    "evidence": {
+      "execution_reject_code": null,
+      "execution_status": null,
+      "gross_notional": "0",
+      "position_qty": "0",
+      "risk_reason": "SIGNAL_STALE",
+      "scenario": "stale_signal",
+      "signal_id": "sig:BTCUSDT-PERP:long:2026-01-01T11:50:00+00:00"
+    },
+    "result": "PASS"
+  }
+}
