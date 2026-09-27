@@ -71,6 +71,12 @@ class RiskEngine:
         self._decisions: dict[str, RiskDecision] = {}
         # decision_id -> (side, abs_notional, signed_notional)
         self._reservations: dict[str, tuple[RiskSide, Decimal, Decimal]] = {}
+        # decision_id -> (instrument, quantity); tracks reduce-only requests
+        # that have been approved but not yet released (filled/canceled), so
+        # concurrent reduce-only requests against the same position can't
+        # jointly reduce past zero and flip it (RISK_CONTRACT.md: reduce-only
+        # can never increase absolute or directional exposure).
+        self._reduce_only_reservations: dict[str, tuple[str, Decimal]] = {}
 
     # -- halt management -------------------------------------------------
 
@@ -101,6 +107,13 @@ class RiskEngine:
     def release(self, decision_id: str) -> None:
         """Idempotent release of a reservation (fill-applied or cancel)."""
         self._reservations.pop(decision_id, None)
+        self._reduce_only_reservations.pop(decision_id, None)
+
+    def _reserved_reduce_only_quantity(self, instrument: str) -> Decimal:
+        return sum(
+            (qty for inst, qty in self._reduce_only_reservations.values() if inst == instrument),
+            ZERO,
+        )
 
     # -- public API ---------------------------------------------------------
 
@@ -117,6 +130,20 @@ class RiskEngine:
         decision_id = f"risk:{request.signal_id}"
         cached = self._decisions.get(decision_id)
         if cached is not None:
+            if cached.approved and (
+                self._halted or runtime.kill_switch or runtime.mode == RuntimeMode.HALTED
+            ):
+                # Fail-closed: the engine has halted since this decision was
+                # approved. Do not silently re-hand out a stale approval —
+                # the stored decision stays in the audit trail unchanged,
+                # but a caller re-querying it now gets a fresh rejection.
+                return self._reject(
+                    decision_id=decision_id,
+                    request=request,
+                    reason_code=RiskReason.HALTED,
+                    reason="engine halted since this decision was approved; "
+                    "cached approval withheld",
+                )
             return cached
 
         try:
@@ -232,8 +259,12 @@ class RiskEngine:
         position_side = RiskSide.BUY if position > 0 else RiskSide.SELL
         if side == position_side:
             raise RiskRejection(RiskReason.SIDE_MISMATCH)
-        if quantity > abs(position):
+
+        already_reserved = self._reserved_reduce_only_quantity(instrument)
+        if quantity + already_reserved > abs(position):
             raise RiskRejection(RiskReason.QUANTITY_INVALID)
+
+        self._reduce_only_reservations[decision_id] = (instrument, quantity)
 
         # Reduce-only never adds exposure; the exposure-increasing notional is zero.
         notional = ZERO

@@ -564,6 +564,64 @@ def test_reduce_only_rejects_quantity_exceeding_position() -> None:
     assert decision.reason_code == RiskReason.QUANTITY_INVALID
 
 
+def test_reduce_only_concurrent_requests_cannot_jointly_flip_position() -> None:
+    """Regression for a review finding: two separate reduce-only requests
+    against the same long position, each individually <= the position, were
+    both approved because each was checked in isolation against the same
+    static account snapshot -- their combined quantity could flip the
+    position net short. RISK_CONTRACT.md: reduce-only can never increase
+    absolute or directional exposure."""
+    engine = RiskEngine(_policy())
+    account = _account(positions={"BTCUSDT-PERP": Decimal("1")})
+
+    first = engine.evaluate_reduce_only(
+        request_id="flip-1", instrument="BTCUSDT-PERP", side=RiskSide.SELL,
+        quantity=Decimal("1"), account=account, runtime=_runtime(), now=NOW,
+    )
+    assert first.approved is True
+
+    # Second reduce-only SELL of 1, same still-long account snapshot (as if
+    # the first fill hasn't been applied to `account` yet) -- must now be
+    # rejected because 1 (already reserved) + 1 (this request) > position of 1.
+    second = engine.evaluate_reduce_only(
+        request_id="flip-2", instrument="BTCUSDT-PERP", side=RiskSide.SELL,
+        quantity=Decimal("1"), account=account, runtime=_runtime(), now=NOW,
+    )
+    assert second.approved is False
+    assert second.reason_code == RiskReason.QUANTITY_INVALID
+
+    # Releasing the first reservation (e.g. it was canceled, never filled)
+    # frees capacity for a new reduce-only request.
+    engine.release(first.decision_id)
+    third = engine.evaluate_reduce_only(
+        request_id="flip-3", instrument="BTCUSDT-PERP", side=RiskSide.SELL,
+        quantity=Decimal("1"), account=account, runtime=_runtime(), now=NOW,
+    )
+    assert third.approved is True
+
+
+def test_cached_approval_not_honored_after_halt() -> None:
+    """Regression for a review finding: evaluate() caches decisions by
+    decision_id for idempotency, but was returning a cached APPROVED
+    decision verbatim even after the engine halted following that
+    approval -- a caller re-querying the same signal_id post-halt got a
+    stale approval instead of the fail-closed rejection the contract
+    requires once the engine is degraded."""
+    engine = RiskEngine(_policy())
+    first = _evaluate(engine)
+    assert first.approved is True
+
+    engine.halt("kill switch tripped")
+    engine.release(first.decision_id)
+
+    second = _evaluate(engine)  # same signal_id -> same decision_id, cache hit
+    assert second.approved is False
+    assert second.reason_code == RiskReason.HALTED
+
+    # The original decision in the audit trail is untouched.
+    assert engine._decisions[first.decision_id].approved is True
+
+
 # -- construction invariants -----------------------------------------------------
 
 

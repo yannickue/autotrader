@@ -176,6 +176,57 @@ def test_non_reduce_only_submit_rejected_while_halted(engine, now):
     assert result.reject_code == RejectCode.NOT_READY
 
 
+def test_non_reduce_only_cancel_replace_rejected_while_halted(engine, now):
+    """Regression for a review finding: cancel_replace() had no mode check
+    at all (unlike submit()), so replacing a resting order while HALTED
+    still created a new ACCEPTED order -- including a non-reduce-only
+    replacement, which opens new exposure and bypasses the halt entirely."""
+    _rest_limit(engine, now, quantity="3")
+
+    engine.reconcile({"orders": {"ghost": {}}, "positions": {}}, now)
+    assert engine.mode == EngineMode.HALTED
+
+    result = engine.cancel_replace("client-1", "client-1-r1", now, new_price=Decimal("97"))
+    assert result.accepted is False
+    assert result.reject_code == RejectCode.NOT_READY
+    # the original order must still be resting, untouched, and no
+    # replacement should have been created
+    assert engine._orders["client-1"].status == OrderStatus.ACCEPTED
+    assert "client-1-r1" not in engine._orders
+
+
+def test_reduce_only_cancel_replace_still_allowed_while_halted(engine, now):
+    """A reduce-only order's cancel/replace can only shrink exposure, so it
+    stays allowed while HALTED -- mirrors submit()'s existing policy."""
+    open_decision = make_decision(decision_id="d-open", quantity="2")
+    open_request = make_request(
+        request_id="r-open", risk_decision_id="d-open", client_order_id="c-open", quantity="2"
+    )
+    engine.submit(open_request, open_decision, make_quote(), now)
+
+    close_decision = make_decision(
+        decision_id="d-close", quantity="1", side="sell", reduce_only=True
+    )
+    close_request = make_request(
+        request_id="r-close",
+        risk_decision_id="d-close",
+        client_order_id="c-close",
+        order_type=OrderType.LIMIT,
+        time_in_force=TimeInForce.GTC,
+        limit_price="99",
+        side=OrderSide.SELL,
+        quantity="1",
+        reduce_only=True,
+    )
+    engine.submit(close_request, close_decision, make_quote(), now)
+
+    engine.reconcile({"orders": {"ghost": {}}, "positions": {}}, now)
+    assert engine.mode == EngineMode.HALTED
+
+    result = engine.cancel_replace("c-close", "c-close-r1", now, new_price=Decimal("98"))
+    assert result.accepted is True
+
+
 def test_unknown_order_fill_report_halts(engine, now):
     engine.report_fill("no-such-order", "t1", Decimal("100"), Decimal("1"), now)
     assert engine.mode == EngineMode.HALTED

@@ -722,6 +722,24 @@ class PaperExecutionEngine:
                 reason="original order not found or already terminal",
             )
 
+        # Regression: unlike submit(), this had no mode check at all, so a
+        # cancel/replace while HALTED (or RECONCILING) could still create a
+        # new ACCEPTED order -- including a non-reduce-only replacement that
+        # opens new exposure -- bypassing the halt entirely. Apply the same
+        # policy submit() uses: reduce-only replacements may still proceed
+        # (they can only shrink exposure), anything else is rejected.
+        if self.mode is not EngineMode.READY and not (
+            self.mode is EngineMode.HALTED and original.reduce_only
+        ):
+            return CancelReplaceResult(
+                accepted=False,
+                original_client_order_id=client_order_id,
+                new_client_order_id=None,
+                status=original.status,
+                reject_code=RejectCode.NOT_READY,
+                reason=f"engine mode is {self.mode}",
+            )
+
         remaining = original.remaining_quantity
         requested_qty = new_quantity if new_quantity is not None else remaining
         if requested_qty > remaining:
