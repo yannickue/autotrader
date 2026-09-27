@@ -16,6 +16,7 @@ version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
     { name = "nautilus-trader" },
+    { name = "pyarrow" },
 ]
 
 [package.dev-dependencies]
@@ -25,7 +26,10 @@ dev = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "nautilus-trader", specifier = "==1.231.0" }]
+requires-dist = [
+    { name = "nautilus-trader", specifier = "==1.231.0" },
+    { name = "pyarrow", specifier = "==25.0.1" },
+]
 
 [package.metadata.requires-dev]
 dev = [
