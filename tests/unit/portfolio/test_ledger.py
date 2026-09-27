@@ -120,6 +120,43 @@ def test_gross_net_and_instrument_notionals():
     assert p.instrument_notionals == {"AAA": Decimal("200"), "BBB": Decimal("-50")}
 
 
+def test_gross_and_net_notional_use_avg_entry_price_when_unmarked_long():
+    p = Portfolio(starting_balance=Decimal("10000"))
+    p.apply_fill(make_fill("f1", qty="2", price="100"))
+    # never marked -- must NOT be skipped / contribute zero exposure
+    assert p.gross_notional == Decimal("200")
+    assert p.net_notional == Decimal("200")
+    assert p.instrument_notionals == {"BTCUSDT-PERP": Decimal("200")}
+
+
+def test_gross_and_net_notional_use_avg_entry_price_when_unmarked_short():
+    p = Portfolio(starting_balance=Decimal("10000"))
+    p.apply_fill(make_fill("f1", side=OrderSide.SELL, qty="3", price="50"))
+    assert p.gross_notional == Decimal("150")
+    assert p.net_notional == Decimal("-150")
+    assert p.instrument_notionals == {"BTCUSDT-PERP": Decimal("-150")}
+
+
+def test_notionals_switch_to_mark_price_once_marked():
+    p = Portfolio(starting_balance=Decimal("10000"))
+    p.apply_fill(make_fill("f1", qty="2", price="100"))
+    assert p.gross_notional == Decimal("200")  # avg-entry fallback
+    p.mark("BTCUSDT-PERP", Decimal("110"))
+    assert p.gross_notional == Decimal("220")  # now uses the mark
+    assert p.net_notional == Decimal("220")
+    assert p.instrument_notionals == {"BTCUSDT-PERP": Decimal("220")}
+
+
+def test_flat_position_contributes_zero_notional_even_if_marked():
+    p = Portfolio(starting_balance=Decimal("10000"))
+    p.apply_fill(make_fill("f1", qty="1", price="100"))
+    p.apply_fill(make_fill("f2", side=OrderSide.SELL, qty="1", price="110"))
+    p.mark("BTCUSDT-PERP", Decimal("200"))
+    assert p.gross_notional == Decimal("0")
+    assert p.net_notional == Decimal("0")
+    assert p.instrument_notionals == {}
+
+
 def test_reject_non_finite_or_non_positive_price_and_qty():
     p = Portfolio(starting_balance=Decimal("10000"))
     with pytest.raises(ValueError):

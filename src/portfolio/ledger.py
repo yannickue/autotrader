@@ -85,6 +85,21 @@ class Portfolio:
         position = self._positions.setdefault(instrument, _Position())
         position.mark_price = price
 
+    def _exposure_price(self, position: _Position) -> Decimal:
+        """Price used for exposure/notional reporting.
+
+        Fail-closed: an open position must always contribute non-zero
+        exposure, even before it has been marked (e.g. immediately after a
+        fill, before the next mark() call). Uses the live mark when present;
+        otherwise falls back to the position's average entry price. Never
+        skips a non-zero-quantity position and never reports it as 0 --
+        gross/net/leverage capacity checks in the risk engine consume these
+        numbers, so silently under-reporting exposure would fail open.
+        Note: apply_fill() never sets/overwrites mark_price itself (only
+        mark() does), so a fill can never clobber a newer, already-set mark.
+        """
+        return position.mark_price if position.mark_price is not None else position.avg_entry_price
+
     @property
     def realized_pnl(self) -> Decimal:
         return self._realized_pnl
@@ -115,26 +130,26 @@ class Portfolio:
     def gross_notional(self) -> Decimal:
         total = ZERO
         for position in self._positions.values():
-            if position.mark_price is None:
+            if position.quantity == ZERO:
                 continue
-            total += abs(position.quantity) * position.mark_price
+            total += abs(position.quantity) * self._exposure_price(position)
         return total
 
     @property
     def net_notional(self) -> Decimal:
         total = ZERO
         for position in self._positions.values():
-            if position.mark_price is None:
+            if position.quantity == ZERO:
                 continue
-            total += position.quantity * position.mark_price
+            total += position.quantity * self._exposure_price(position)
         return total
 
     @property
     def instrument_notionals(self) -> dict[str, Decimal]:
         return {
-            instrument: position.quantity * position.mark_price
+            instrument: position.quantity * self._exposure_price(position)
             for instrument, position in self._positions.items()
-            if position.mark_price is not None
+            if position.quantity != ZERO
         }
 
     @property
