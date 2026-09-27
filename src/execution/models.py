@@ -44,4 +44,3 @@ class ExecutionRequest:
     def __post_init__(self) -> None:
         if self.order_type is OrderType.LIMIT and self.limit_price is None:
             raise ValueError("limit_price is required for limit orders")
-
