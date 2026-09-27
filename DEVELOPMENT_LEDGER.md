@@ -38,7 +38,7 @@ is logged as `Lead (direct)`.
 | D2. Pipeline marks positions; binding 20x leverage evidence; HALT evidence | Sonnet builder (E2E owner) | integration | DONE |
 | D3. Remove 2% tolerance from gross-cap E2E assertion | Lead (direct) — one-line test edit | integration | DONE |
 | E. Independent review of Risk/Execution/E2E diffs | Codex (scheduled 19:05, diffs + contracts only) | findings verified by tests | CODEX_REVIEW_PENDING |
-| F. SPRINT1_FINAL_REPORT.md | Sonnet builder (from ledger + test output) | none | after D |
+| F. SPRINT1_FINAL_REPORT.md | Lead (direct) — all facts already held; hand-off would cost as much as writing | per-area test counts | DONE |
 
 No Opus agent used; escalation criteria not met.
 
