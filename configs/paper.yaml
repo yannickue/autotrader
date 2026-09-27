@@ -1,0 +1,17 @@
+schema_version: 1
+mode: paper
+venue: UNDECIDED
+order_submission_enabled: true
+live_credentials_allowed: false
+universe:
+  minimum_markets: 20
+  maximum_markets: 100
+risk:
+  max_leverage: 3
+  require_protective_stop: true
+  fail_closed: true
+execution:
+  reconcile_before_new_exposure: true
+  reject_stale_signals: true
+  reject_stale_market_data: true
+
