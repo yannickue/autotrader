@@ -231,10 +231,10 @@ def test_reduce_only_same_direction_is_violation(engine, now):
     assert result.reject_code == RejectCode.REDUCE_ONLY_VIOLATION
 
 
-def test_engine_not_ready_rejects_non_reduce_only(config, portfolio, now):
+def test_engine_not_ready_rejects_non_reduce_only(config, portfolio, cost_schedule, now):
     from execution.paper import PaperExecutionEngine
 
-    eng = PaperExecutionEngine(config, portfolio)  # still RECONCILING
+    eng = PaperExecutionEngine(config, portfolio, cost_schedule)  # still RECONCILING
     decision = make_decision()
     request = make_request()
     result = eng.submit(request, decision, make_quote(), now)

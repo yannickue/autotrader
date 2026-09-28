@@ -6,6 +6,7 @@ from decimal import Decimal
 
 import pytest
 
+from costs.models import VenueCostSchedule
 from data.models import DataQuality, MarketSnapshot
 from execution.events import TradeEvent
 from execution.models import ExecutionRequest, OrderSide, OrderType, TimeInForce
@@ -84,9 +85,17 @@ def make_request(**overrides) -> ExecutionRequest:
     return ExecutionRequest(**fields)
 
 
+def make_cost_schedule() -> VenueCostSchedule:
+    return VenueCostSchedule(
+        venue="test-venue",
+        maker_fee_rate=Decimal("0.0002"),
+        taker_fee_rate=Decimal("0.0005"),
+    )
+
+
 def new_ready_engine() -> tuple[PaperExecutionEngine, Portfolio]:
     portfolio = Portfolio(starting_balance=Decimal("100000"))
-    engine = PaperExecutionEngine(make_config(), portfolio)
+    engine = PaperExecutionEngine(make_config(), portfolio, make_cost_schedule())
     engine.reconcile({"orders": {}, "positions": {}}, NOW)
     return engine, portfolio
 
@@ -157,7 +166,7 @@ def test_restart_mid_partial_fill_preserves_open_order_and_position():
 
     # Simulate a process restart: brand-new engine sharing the same durable
     # portfolio state, importing the checkpoint, then re-reconciling.
-    restarted = PaperExecutionEngine(make_config(), portfolio)
+    restarted = PaperExecutionEngine(make_config(), portfolio, make_cost_schedule())
     restarted.import_checkpoint(checkpoint)
     restarted.mode = EngineMode.RECONCILING
 

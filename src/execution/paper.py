@@ -5,13 +5,15 @@ transitions are driven by explicitly supplied requests, quotes, and trade events
 with an injected clock (`now`), never by wall-clock reads.
 """
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal
 from enum import StrEnum
 from typing import Any
 
+from costs.engine import calculate_fill_fee
+from costs.models import LiquidityRole, VenueCostSchedule
 from data.models import DataQuality, MarketSnapshot
 from execution.events import TradeEvent
 from execution.models import ExecutionRequest, OrderSide, OrderType, TimeInForce
@@ -52,6 +54,31 @@ class ExecutionConfig:
     slippage_bps: Decimal
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class FillEvent:
+    """Observable record of one real (non-duplicate) fill applied to the portfolio.
+
+    Fired synchronously from `_apply_fill`, after `Portfolio.apply_fill`
+    returns `True`, to whatever `PaperExecutionEngine.fill_listener` is set
+    to. This is how a caller (e.g. `PaperTradingPipeline`, or a later exit
+    engine) observes the ACTUAL fill price/fee/liquidity-role instead of
+    inferring them from the quote-side reference price used to build the
+    request.
+    """
+
+    fill_id: str
+    client_order_id: str
+    decision_id: str
+    instrument: str
+    side: OrderSide
+    quantity: Decimal
+    price: Decimal
+    fee: Decimal
+    liquidity_role: LiquidityRole
+    reduce_only: bool
+    timestamp: datetime
+
+
 def _is_utc(ts: datetime) -> bool:
     return ts.tzinfo is not None and ts.utcoffset() == timedelta(0)
 
@@ -63,9 +90,18 @@ def _finite_positive(value: Decimal | None) -> bool:
 
 
 class PaperExecutionEngine:
-    def __init__(self, config: ExecutionConfig, portfolio: Portfolio) -> None:
+    def __init__(
+        self,
+        config: ExecutionConfig,
+        portfolio: Portfolio,
+        cost_schedule: VenueCostSchedule,
+        *,
+        fill_listener: Callable[[FillEvent], None] | None = None,
+    ) -> None:
         self.config = config
         self.portfolio = portfolio
+        self._cost_schedule = cost_schedule
+        self.fill_listener = fill_listener
         self.mode: EngineMode = EngineMode.RECONCILING
         self.halt_reason: str | None = None
         self._orders: dict[str, Order] = {}
@@ -372,6 +408,9 @@ class PaperExecutionEngine:
             price=fill_price,
             quantity=order.quantity,
             now=now,
+            # MARKET orders always remove liquidity: they execute immediately
+            # against whatever is resting on the book.
+            liquidity_role=LiquidityRole.TAKER,
         )
 
     # -- resting order / trade event processing --------------------------
@@ -449,6 +488,10 @@ class PaperExecutionEngine:
             price=order.limit_price,
             quantity=fill_qty,
             now=now,
+            # A resting entry LIMIT crossed by an incoming trade print was
+            # providing liquidity (it sat on the book waiting), so it earns
+            # the maker rate.
+            liquidity_role=LiquidityRole.MAKER,
         )
 
     def _try_cross_protective(
@@ -468,12 +511,21 @@ class PaperExecutionEngine:
         fill_qty = min(order.remaining_quantity, event.quantity)
         if fill_qty <= ZERO:
             return
+        # Liquidity-role mapping for protective children (both are modeled
+        # internally as LIMIT orders, but their real-market semantics
+        # differ): a STOP triggers stop-market semantics once the trigger
+        # price trades through -- it removes liquidity like a market order,
+        # so it is TAKER. A TAKE_PROFIT is a resting limit order sitting on
+        # the book ahead of price reaching it, so it is MAKER, exactly like
+        # any other crossed resting limit.
+        liquidity_role = LiquidityRole.TAKER if is_stop else LiquidityRole.MAKER
         self._apply_fill(
             order,
             fill_id=f"{order.client_order_id}:{event.trade_id}",
             price=order.trigger_price,
             quantity=fill_qty,
             now=now,
+            liquidity_role=liquidity_role,
         )
         if order.status is OrderStatus.FILLED and order.oco_sibling_id:
             sibling = self._orders.get(order.oco_sibling_id)
@@ -521,7 +573,14 @@ class PaperExecutionEngine:
             )
 
     def _apply_fill(
-        self, order: Order, *, fill_id: str, price: Decimal, quantity: Decimal, now: datetime
+        self,
+        order: Order,
+        *,
+        fill_id: str,
+        price: Decimal,
+        quantity: Decimal,
+        now: datetime,
+        liquidity_role: LiquidityRole,
     ) -> None:
         # Regression: a duplicate fill_id (e.g. the same underlying trade
         # reported once via on_trade()'s crossing path and again via
@@ -598,6 +657,11 @@ class PaperExecutionEngine:
                 )
                 return
 
+        fee = calculate_fill_fee(
+            notional=price * quantity,
+            liquidity_role=liquidity_role,
+            schedule=self._cost_schedule,
+        )
         applied = self.portfolio.apply_fill(
             Fill(
                 fill_id=fill_id,
@@ -605,11 +669,29 @@ class PaperExecutionEngine:
                 side=order.side,
                 quantity=quantity,
                 price=price,
+                fee=fee,
                 timestamp=now,
             )
         )
         if not applied:
             return  # duplicate fill id: no-op, never double count
+
+        if self.fill_listener is not None:
+            self.fill_listener(
+                FillEvent(
+                    fill_id=fill_id,
+                    client_order_id=order.client_order_id,
+                    decision_id=order.decision_id,
+                    instrument=order.instrument,
+                    side=order.side,
+                    quantity=quantity,
+                    price=price,
+                    fee=fee,
+                    liquidity_role=liquidity_role,
+                    reduce_only=order.reduce_only,
+                    timestamp=now,
+                )
+            )
 
         if not order.reduce_only:
             self._decision_filled_quantity[order.decision_id] = (
@@ -697,6 +779,10 @@ class PaperExecutionEngine:
                 price=price,
                 quantity=quantity,
                 now=now,
+                # Externally reported fill of unknown origin (chaos-test
+                # hook): the conservative, higher-fee choice since we cannot
+                # tell whether this order added or removed liquidity.
+                liquidity_role=LiquidityRole.TAKER,
             )
         except Exception as exc:
             self._halt(HaltCode.INTERNAL_ERROR, f"exception applying reported fill: {exc}")

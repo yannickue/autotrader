@@ -127,8 +127,8 @@ def test_reconcile_halts_on_unknown_external_order(engine, now):
     assert engine.mode == EngineMode.HALTED
 
 
-def test_reconcile_halts_on_position_mismatch(config, portfolio, now):
-    engine = PaperExecutionEngine(config, portfolio)
+def test_reconcile_halts_on_position_mismatch(config, portfolio, cost_schedule, now):
+    engine = PaperExecutionEngine(config, portfolio, cost_schedule)
     engine.reconcile({"orders": {}, "positions": {INSTRUMENT: "5"}}, now)
     assert engine.mode == EngineMode.HALTED
 
@@ -331,7 +331,7 @@ def test_export_import_checkpoint_roundtrip(engine, now):
 
     checkpoint = engine.export_checkpoint()
 
-    restored = PaperExecutionEngine(engine.config, engine.portfolio)
+    restored = PaperExecutionEngine(engine.config, engine.portfolio, engine._cost_schedule)
     restored.import_checkpoint(checkpoint)
 
     assert restored.export_checkpoint() == checkpoint

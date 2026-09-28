@@ -3,6 +3,7 @@ from decimal import Decimal
 
 import pytest
 
+from costs.models import VenueCostSchedule
 from data.models import DataQuality, MarketSnapshot
 from execution.models import ExecutionRequest, OrderSide, OrderType, TimeInForce
 from execution.paper import ExecutionConfig, PaperExecutionEngine
@@ -37,8 +38,19 @@ def portfolio() -> Portfolio:
 
 
 @pytest.fixture
-def engine(config, portfolio, now) -> PaperExecutionEngine:
-    eng = PaperExecutionEngine(config, portfolio)
+def cost_schedule() -> VenueCostSchedule:
+    # Distinct, nonzero maker/taker rates so tests can assert on which one
+    # was actually charged for a given fill's liquidity role.
+    return VenueCostSchedule(
+        venue="test-venue",
+        maker_fee_rate=Decimal("0.0002"),
+        taker_fee_rate=Decimal("0.0005"),
+    )
+
+
+@pytest.fixture
+def engine(config, portfolio, cost_schedule, now) -> PaperExecutionEngine:
+    eng = PaperExecutionEngine(config, portfolio, cost_schedule)
     eng.reconcile({"orders": {}, "positions": {}}, now)
     return eng
 

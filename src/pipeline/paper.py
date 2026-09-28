@@ -24,10 +24,19 @@ from decimal import Decimal
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Protocol
 
+from costs.engine import calculate_trade_costs
+from costs.models import (
+    CostBreakdown,
+    CostCalculationRequest,
+    InstrumentClass,
+    LiquidityRole,
+    TradeSide,
+    VenueCostSchedule,
+)
 from data.models import MarketSnapshot
 from execution.models import ExecutionRequest, OrderSide, OrderType, TimeInForce
 from execution.orders import TERMINAL_STATUSES, OrderStatus, RejectCode, SubmitResult
-from execution.paper import PaperExecutionEngine
+from execution.paper import FillEvent, PaperExecutionEngine
 from monitoring.metrics import TradeOutcome, calculate_trade_metrics
 from portfolio.ledger import Portfolio
 from risk.engine import RiskEngine
@@ -78,11 +87,29 @@ class PipelineOutcome:
 
 @dataclass(slots=True)
 class _TradeAccumulator:
-    """Running notional/fees for one instrument's currently-open position."""
+    """Running notional/fees for one instrument's currently-open position.
+
+    Also separately tracks entry-side and exit-side fill notional/quantity
+    (and the quote-side "expected" reference price at each fill) so that,
+    once the position fully closes, a reporting-only `CostBreakdown` can be
+    attributed via `costs.engine.calculate_trade_costs`. This is pure
+    bookkeeping alongside the existing realized-PnL-based `notional`/`fees`
+    tracking -- it never feeds back into `TradeOutcome` or the portfolio.
+    """
 
     notional: Decimal
     fees: Decimal
     realized_at_open: Decimal
+    open_time: datetime
+    position_side: TradeSide | None = None
+    entry_bid: Decimal | None = None
+    entry_ask: Decimal | None = None
+    entry_notional: Decimal = ZERO
+    entry_quantity: Decimal = ZERO
+    entry_expected_notional: Decimal = ZERO
+    exit_notional: Decimal = ZERO
+    exit_quantity: Decimal = ZERO
+    exit_expected_notional: Decimal = ZERO
 
 
 @dataclass(kw_only=True)
@@ -94,6 +121,7 @@ class PaperTradingPipeline:
     portfolio: Portfolio
     instrument_limits: Mapping[str, InstrumentRiskLimits]
     leverage_cap: Decimal
+    cost_schedule: VenueCostSchedule
 
     _peak_equity: Decimal = field(init=False, default=ZERO)
     _initial_equity: Decimal = field(init=False, default=ZERO)
@@ -102,11 +130,23 @@ class PaperTradingPipeline:
     _trade_accum: dict[str, _TradeAccumulator] = field(init=False, default_factory=dict)
     _stage_counts: dict[str, int] = field(init=False, default_factory=dict)
     _reason_counts: dict[str, int] = field(init=False, default_factory=dict)
+    _cost_attributions: list[CostBreakdown] = field(init=False, default_factory=list)
+    _pending_fills: list[FillEvent] = field(init=False, default_factory=list)
 
     def __post_init__(self) -> None:
         equity = self.portfolio.equity
         self._initial_equity = equity
         self._peak_equity = equity if equity > ZERO else ZERO
+        # Observe the actual fill price/fee for every real fill the
+        # execution engine applies (G4 fix: `_record_fill` used to reuse the
+        # quote-side reference price instead of the real fill price). This
+        # engine instance is owned exclusively by this pipeline instance in
+        # every constructed harness, so overwriting any prior listener here
+        # is safe and intentional.
+        self.execution_engine.fill_listener = self._on_fill
+
+    def _on_fill(self, event: FillEvent) -> None:
+        self._pending_fills.append(event)
 
     # -- public API ---------------------------------------------------
 
@@ -242,6 +282,7 @@ class PaperTradingPipeline:
         before_qty = self._position_qty(instrument)
         realized_before = self.portfolio.realized_pnl
         fees_before = self.portfolio.fees
+        self._pending_fills.clear()
 
         result = self.execution_engine.submit(request, decision, latest, now)
 
@@ -249,15 +290,42 @@ class PaperTradingPipeline:
             after_qty = self._position_qty(instrument)
             realized_after = self.portfolio.realized_pnl
             fees_after = self.portfolio.fees
+
+            # G4 fix: use the ACTUAL fill price (from the fill_listener hook
+            # `_on_fill` populated during `submit()` above), not the
+            # quote-side reference price (`entry_price`) the request was
+            # built from. `submit()` for a MARKET order is fully
+            # synchronous and produces exactly one fill here (no partial
+            # fills for MARKET orders in this engine), but this still
+            # quantity-weights defensively across every fill this call
+            # produced instead of assuming exactly one.
+            own_fills = [
+                f for f in self._pending_fills if f.client_order_id == request.client_order_id
+            ]
+            if own_fills:
+                fill_notional = sum((f.price * f.quantity for f in own_fills), ZERO)
+                fill_quantity = sum((f.quantity for f in own_fills), ZERO)
+                actual_fill_price = fill_notional / fill_quantity
+            else:
+                # Defensive fallback only: should not happen when status is
+                # FILLED/PARTIALLY_FILLED, since `_apply_fill` always fires
+                # the listener before transitioning to a filled status.
+                actual_fill_price = entry_price
+
             self._record_fill(
                 instrument=instrument,
-                fill_price=entry_price,
+                fill_price=actual_fill_price,
+                expected_price=entry_price,
+                quote_bid=latest.bid,
+                quote_ask=latest.ask,
                 before_qty=before_qty,
                 after_qty=after_qty,
                 realized_before=realized_before,
                 realized_after=realized_after,
                 fees_before=fees_before,
                 fees_after=fees_after,
+                order_side=order_side,
+                now=now,
             )
             self._update_peak_equity()
 
@@ -309,6 +377,7 @@ class PaperTradingPipeline:
             "consecutive_losses": self._consecutive_losses,
             "stage_counts": dict(self._stage_counts),
             "reason_counts": dict(self._reason_counts),
+            "cost_attributions": list(self._cost_attributions),
         }
 
     # -- internal helpers -----------------------------------------------
@@ -324,7 +393,20 @@ class PaperTradingPipeline:
             reconciled=self.execution_engine.mode.value == "ready",
             equity=self.portfolio.equity,
             peak_equity=self._peak_equity,
-            realized_pnl_today=self.portfolio.realized_pnl,
+            # G3 fix: `equity` above is already net of fees
+            # (`Portfolio.equity` = starting_balance + realized_pnl - fees +
+            # unrealized), but `realized_pnl_today` was gross of fees --
+            # once real per-fill fees exist (this slice), the daily-loss
+            # check in RiskEngine would under-count losses driven purely by
+            # fees. Sprint 1 has no authoritative UTC daily-reset boundary
+            # yet (docs/OPEN_QUESTIONS.md #13, unresolved): `realized_pnl`
+            # itself is already all-time cumulative, not reset daily, and
+            # "today" is a misnomer carried over from that open question.
+            # Consistent with that existing (lack of) windowing, this
+            # subtracts the same all-time cumulative `portfolio.fees`
+            # rather than inventing a new, separate daily-fee-reset
+            # mechanism that nothing else in the codebase has yet.
+            realized_pnl_today=self.portfolio.realized_pnl - self.portfolio.fees,
             unrealized_pnl=unrealized_total,
             gross_notional=self.portfolio.gross_notional,
             net_notional=self.portfolio.net_notional,
@@ -355,34 +437,58 @@ class PaperTradingPipeline:
         *,
         instrument: str,
         fill_price: Decimal,
+        expected_price: Decimal,
+        quote_bid: Decimal,
+        quote_ask: Decimal,
         before_qty: Decimal,
         after_qty: Decimal,
         realized_before: Decimal,
         realized_after: Decimal,
         fees_before: Decimal,
         fees_after: Decimal,
+        order_side: OrderSide,
+        now: datetime,
     ) -> None:
         filled_quantity = abs(after_qty - before_qty)
         if filled_quantity == ZERO:
             return  # duplicate/no-op fill: nothing new to attribute
 
         accumulator = self._trade_accum.get(instrument)
-        if before_qty == ZERO and accumulator is None:
+        if accumulator is None:
+            # Either a fresh position opening from flat, or a position that
+            # was already open before this pipeline instance observed it
+            # (e.g. imported checkpoint): either way, open a fresh
+            # accumulator anchored to the current realized PnL so we never
+            # invent a phantom trade.
             accumulator = _TradeAccumulator(
-                notional=ZERO, fees=ZERO, realized_at_open=realized_before
-            )
-            self._trade_accum[instrument] = accumulator
-        elif accumulator is None:
-            # Position was already open before this pipeline instance observed
-            # it (e.g. imported checkpoint): open a fresh accumulator anchored
-            # to the current realized PnL so we never invent a phantom trade.
-            accumulator = _TradeAccumulator(
-                notional=ZERO, fees=ZERO, realized_at_open=realized_before
+                notional=ZERO,
+                fees=ZERO,
+                realized_at_open=realized_before,
+                open_time=now,
+                position_side=TradeSide.LONG if order_side is OrderSide.BUY else TradeSide.SHORT,
+                entry_bid=quote_bid,
+                entry_ask=quote_ask,
             )
             self._trade_accum[instrument] = accumulator
 
         accumulator.notional += filled_quantity * fill_price
         accumulator.fees += fees_after - fees_before
+
+        # Cost-attribution (reporting only) bookkeeping: classify this fill
+        # as adding to (entry-side) or reducing (exit-side) the position's
+        # absolute size, quantity-weighting the actual fill price and the
+        # quote-side "expected" reference price separately. See
+        # `_TradeAccumulator`'s docstring -- this never feeds back into
+        # `TradeOutcome`/`realized_pnl`, only into the `CostBreakdown` built
+        # below once the position fully closes.
+        if abs(after_qty) >= abs(before_qty):
+            accumulator.entry_notional += filled_quantity * fill_price
+            accumulator.entry_quantity += filled_quantity
+            accumulator.entry_expected_notional += filled_quantity * expected_price
+        else:
+            accumulator.exit_notional += filled_quantity * fill_price
+            accumulator.exit_quantity += filled_quantity
+            accumulator.exit_expected_notional += filled_quantity * expected_price
 
         if after_qty == ZERO:
             gross_pnl = realized_after - accumulator.realized_at_open
@@ -392,11 +498,73 @@ class PaperTradingPipeline:
                 fees=accumulator.fees,
             )
             self._trade_outcomes.append(outcome)
+            self._attribute_costs(
+                instrument=instrument,
+                accumulator=accumulator,
+                exit_bid=quote_bid,
+                exit_ask=quote_ask,
+                now=now,
+            )
             del self._trade_accum[instrument]
             if outcome.net_pnl < ZERO:
                 self._consecutive_losses += 1
             else:
                 self._consecutive_losses = 0
+
+    def _attribute_costs(
+        self,
+        *,
+        instrument: str,
+        accumulator: _TradeAccumulator,
+        exit_bid: Decimal,
+        exit_ask: Decimal,
+        now: datetime,
+    ) -> None:
+        """Build a reporting-only `CostBreakdown` for a just-closed trade.
+
+        Never subtracted from `TradeOutcome`/portfolio PnL (Q-C1,
+        docs/OPEN_QUESTIONS.md #25) -- purely additive attribution exposed
+        via `metrics()["cost_attributions"]`. Skipped (not an error) when
+        the accumulator has no clean entry+exit vwap to price (e.g. a
+        position that flipped through zero without ever fully closing via
+        this pipeline's own fills, or a checkpoint-imported position with
+        an incomplete entry side).
+        """
+        if (
+            accumulator.entry_quantity <= ZERO
+            or accumulator.exit_quantity <= ZERO
+            or accumulator.position_side is None
+        ):
+            return
+
+        entry_vwap = accumulator.entry_notional / accumulator.entry_quantity
+        exit_vwap = accumulator.exit_notional / accumulator.exit_quantity
+        expected_entry_vwap = accumulator.entry_expected_notional / accumulator.entry_quantity
+        expected_exit_vwap = accumulator.exit_expected_notional / accumulator.exit_quantity
+        quantity = min(accumulator.entry_quantity, accumulator.exit_quantity)
+
+        request = CostCalculationRequest(
+            trade_id=f"{instrument}:{accumulator.open_time.isoformat()}:{now.isoformat()}",
+            instrument=instrument,
+            instrument_class=InstrumentClass.PERPETUAL,
+            side=accumulator.position_side,
+            # Round-trip attribution mixes maker/taker fills across the
+            # trade's life; TAKER is the conservative reporting-only
+            # default (per Slice 2 plan).
+            liquidity_role=LiquidityRole.TAKER,
+            quantity=quantity,
+            entry_price=entry_vwap,
+            exit_price=exit_vwap,
+            expected_entry_price=expected_entry_vwap,
+            expected_exit_price=expected_exit_vwap,
+            entry_bid=accumulator.entry_bid,
+            entry_ask=accumulator.entry_ask,
+            exit_bid=exit_bid,
+            exit_ask=exit_ask,
+            holding_period=now - accumulator.open_time,
+        )
+        breakdown = calculate_trade_costs(request, self.cost_schedule)
+        self._cost_attributions.append(breakdown)
 
     def _finish(
         self,

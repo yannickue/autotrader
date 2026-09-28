@@ -88,18 +88,27 @@ def _gross_pnl(request: CostCalculationRequest) -> Decimal:
     return (request.entry_price - request.exit_price) * request.quantity
 
 
+def _fee_rate(liquidity_role: LiquidityRole, schedule: VenueCostSchedule) -> Decimal:
+    if liquidity_role is LiquidityRole.MAKER:
+        return schedule.maker_fee_rate
+    return schedule.taker_fee_rate
+
+
 def _exchange_fee(
     request: CostCalculationRequest,
     schedule: VenueCostSchedule,
     entry_notional: Decimal,
     exit_notional: Decimal,
 ) -> Decimal:
-    rate = (
-        schedule.maker_fee_rate
-        if request.liquidity_role is LiquidityRole.MAKER
-        else schedule.taker_fee_rate
-    )
+    rate = _fee_rate(request.liquidity_role, schedule)
     return rate * (entry_notional + exit_notional)
+
+
+def _commission_for_notional(schedule: VenueCostSchedule, notional: Decimal) -> Decimal:
+    raw = schedule.commission_rate * notional + schedule.commission_fixed
+    if schedule.commission_minimum is not None and raw < schedule.commission_minimum:
+        return schedule.commission_minimum
+    return raw
 
 
 def _commission(
@@ -107,10 +116,29 @@ def _commission(
     entry_notional: Decimal,
     exit_notional: Decimal,
 ) -> Decimal:
-    raw = schedule.commission_rate * (entry_notional + exit_notional) + schedule.commission_fixed
-    if schedule.commission_minimum is not None and raw < schedule.commission_minimum:
-        return schedule.commission_minimum
-    return raw
+    return _commission_for_notional(schedule, entry_notional + exit_notional)
+
+
+def calculate_fill_fee(
+    *,
+    notional: Decimal,
+    liquidity_role: LiquidityRole,
+    schedule: VenueCostSchedule,
+) -> Decimal:
+    """Price the exchange fee + commission for a single fill.
+
+    Unlike `calculate_trade_costs` (round-trip: entry + exit), this prices
+    exactly one fill's notional -- used by `PaperExecutionEngine` to debit a
+    real per-fill fee into the portfolio ledger at the moment each fill is
+    applied. Shares `_fee_rate`/`_commission_for_notional` with
+    `calculate_trade_costs` so the two never diverge on how a fee/commission
+    is computed.
+    """
+    if not notional.is_finite() or notional < 0:
+        raise ValueError("notional must be finite and non-negative")
+    exchange_fee = _fee_rate(liquidity_role, schedule) * notional
+    commission = _commission_for_notional(schedule, notional)
+    return exchange_fee + commission
 
 
 def _spread_cost(

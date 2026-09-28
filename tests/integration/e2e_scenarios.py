@@ -16,6 +16,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
+from costs.models import VenueCostSchedule
 from data.binance_usdm import InstrumentRules
 from data.models import DataQuality, MarketSnapshot
 from execution.events import TradeEvent
@@ -157,6 +158,23 @@ def build_universe(instrument: str = INSTRUMENT) -> frozenset[str]:
     return frozenset(candidate.rules.instrument for candidate in selected)
 
 
+def make_cost_schedule(**overrides: Any) -> VenueCostSchedule:
+    """Zero-fee default: existing e2e scenarios assert exact realized PnL/
+    equity/notional numbers computed before per-fill fees existed (Slice 2).
+    Zero fees keep every one of those assertions correct and unweakened;
+    the nonzero-fee paths (fee debited into equity, daily-loss tripped by
+    fees alone, G4 actual-fill-price bookkeeping) are exercised by the
+    dedicated unit tests in tests/unit/execution and tests/unit/pipeline
+    instead, which construct their own nonzero schedules deliberately."""
+    values: dict[str, Any] = dict(
+        venue="test-venue",
+        maker_fee_rate=Decimal("0"),
+        taker_fee_rate=Decimal("0"),
+    )
+    values.update(overrides)
+    return VenueCostSchedule(**values)
+
+
 def make_runtime(**overrides: Any) -> RuntimeRiskState:
     values: dict[str, Any] = dict(
         state_version="runtime-1", mode=RuntimeMode.READY, risk_ready=True, kill_switch=False
@@ -174,6 +192,7 @@ class Harness:
     execution_engine: PaperExecutionEngine
     portfolio: Portfolio
     pipeline: PaperTradingPipeline
+    cost_schedule: VenueCostSchedule
 
 
 def build_harness(
@@ -183,6 +202,7 @@ def build_harness(
     limits: InstrumentRiskLimits | None = None,
     leverage_cap: Decimal = Decimal("10"),
     exec_config: ExecutionConfig | None = None,
+    cost_schedule: VenueCostSchedule | None = None,
 ) -> Harness:
     policy = policy or make_policy()
     limits = limits or make_limits()
@@ -196,8 +216,9 @@ def build_harness(
         max_slippage_bps=Decimal("100"),
         slippage_bps=Decimal("2"),
     )
+    cost_schedule = cost_schedule or make_cost_schedule()
     portfolio = Portfolio(starting_balance=starting_balance)
-    execution_engine = PaperExecutionEngine(exec_config, portfolio)
+    execution_engine = PaperExecutionEngine(exec_config, portfolio, cost_schedule)
     execution_engine.reconcile({"orders": {}, "positions": {}}, NOW)
     pipeline = PaperTradingPipeline(
         risk_engine=risk_engine,
@@ -205,6 +226,7 @@ def build_harness(
         portfolio=portfolio,
         instrument_limits={limits.instrument: limits},
         leverage_cap=leverage_cap,
+        cost_schedule=cost_schedule,
     )
     return Harness(
         policy=policy,
@@ -214,6 +236,7 @@ def build_harness(
         execution_engine=execution_engine,
         portfolio=portfolio,
         pipeline=pipeline,
+        cost_schedule=cost_schedule,
     )
 
 
