@@ -3,7 +3,7 @@ from decimal import Decimal
 
 import pytest
 
-from costs.models import VenueCostSchedule
+from costs.models import CostConfidence, InstrumentClass, VenueCostSchedule
 from data.models import DataQuality, MarketSnapshot
 from execution.models import ExecutionRequest, OrderSide, OrderType, TimeInForce
 from execution.paper import ExecutionConfig, PaperExecutionEngine
@@ -43,6 +43,8 @@ def cost_schedule() -> VenueCostSchedule:
     # was actually charged for a given fill's liquidity role.
     return VenueCostSchedule(
         venue="test-venue",
+        instrument_class=InstrumentClass.PERPETUAL,
+        cost_confidence=CostConfidence.ESTIMATED,
         maker_fee_rate=Decimal("0.0002"),
         taker_fee_rate=Decimal("0.0005"),
     )

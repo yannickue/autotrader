@@ -6,7 +6,7 @@ from decimal import Decimal
 
 import pytest
 
-from costs.models import VenueCostSchedule
+from costs.models import CostConfidence, InstrumentClass, VenueCostSchedule
 from data.models import DataQuality, MarketSnapshot
 from execution.events import TradeEvent
 from execution.models import ExecutionRequest, OrderSide, OrderType, TimeInForce
@@ -88,6 +88,8 @@ def make_request(**overrides) -> ExecutionRequest:
 def make_cost_schedule() -> VenueCostSchedule:
     return VenueCostSchedule(
         venue="test-venue",
+        instrument_class=InstrumentClass.PERPETUAL,
+        cost_confidence=CostConfidence.ESTIMATED,
         maker_fee_rate=Decimal("0.0002"),
         taker_fee_rate=Decimal("0.0005"),
     )

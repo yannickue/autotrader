@@ -10,6 +10,7 @@ from decimal import Decimal
 from costs.models import (
     CostBreakdown,
     CostCalculationRequest,
+    CostConfidence,
     InstrumentClass,
     LiquidityRole,
     TradeSide,
@@ -31,7 +32,14 @@ def calculate_trade_costs(
     credit and is therefore added back), so a trade with positive
     `gross_pnl` whose costs exceed it correctly produces a negative
     `net_pnl`.
+
+    Raises `ValueError` (fail closed) when `request.instrument_class` does
+    not match `schedule.instrument_class` -- a schedule built for one asset
+    class (e.g. Sprint 1's crypto-shaped perpetual defaults) must never be
+    silently reused to price a different one (e.g. a CFD instrument).
     """
+    _require_matching_instrument_class(request, schedule)
+
     entry_notional = request.quantity * request.entry_price
     exit_notional = request.quantity * request.exit_price
 
@@ -67,6 +75,7 @@ def calculate_trade_costs(
 
     return CostBreakdown(
         trade_id=request.trade_id,
+        cost_confidence=schedule.overall_confidence(),
         gross_pnl=gross_pnl,
         exchange_fee=exchange_fee,
         commission=commission,
@@ -80,6 +89,30 @@ def calculate_trade_costs(
         funding_or_swap=funding_or_swap,
         net_pnl=net_pnl,
     )
+
+
+def _require_matching_instrument_class(
+    request: CostCalculationRequest,
+    schedule: VenueCostSchedule,
+) -> None:
+    if request.instrument_class is not schedule.instrument_class:
+        raise ValueError(
+            f"instrument_class mismatch: request {request.trade_id!r} is "
+            f"{request.instrument_class} but schedule {schedule.venue!r} is configured for "
+            f"{schedule.instrument_class} -- a cost schedule built for one venue/asset class "
+            "must never be silently reused to price a different one"
+        )
+
+
+def is_safe_for_risk_decisions(breakdown: CostBreakdown) -> bool:
+    """Whether `breakdown` is safe to use for anything that affects real
+    risk (sizing, PnL-based halts, live cost attribution), as opposed to
+    reporting-only display.
+
+    `UNKNOWN` confidence means at least one contributing cost component had
+    no data at all and must not be silently treated as a verified zero.
+    """
+    return breakdown.cost_confidence is not CostConfidence.UNKNOWN
 
 
 def _gross_pnl(request: CostCalculationRequest) -> Decimal:

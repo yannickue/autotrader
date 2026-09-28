@@ -16,7 +16,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
-from costs.models import VenueCostSchedule
+from costs.models import CostConfidence, InstrumentClass, VenueCostSchedule
 from data.binance_usdm import InstrumentRules
 from data.models import DataQuality, MarketSnapshot
 from execution.events import TradeEvent
@@ -170,6 +170,8 @@ def make_cost_schedule(**overrides: Any) -> VenueCostSchedule:
     instead, which construct their own nonzero schedules deliberately."""
     values: dict[str, Any] = dict(
         venue="test-venue",
+        instrument_class=InstrumentClass.PERPETUAL,
+        cost_confidence=CostConfidence.ESTIMATED,
         maker_fee_rate=Decimal("0"),
         taker_fee_rate=Decimal("0"),
     )

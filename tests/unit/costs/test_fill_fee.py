@@ -5,12 +5,14 @@ from decimal import Decimal
 import pytest
 
 from costs.engine import calculate_fill_fee
-from costs.models import LiquidityRole, VenueCostSchedule
+from costs.models import CostConfidence, InstrumentClass, LiquidityRole, VenueCostSchedule
 
 
 def _schedule(**changes: object) -> VenueCostSchedule:
     defaults: dict[str, object] = {
         "venue": "test-venue",
+        "instrument_class": InstrumentClass.PERPETUAL,
+        "cost_confidence": CostConfidence.ESTIMATED,
         "maker_fee_rate": Decimal("0.0002"),
         "taker_fee_rate": Decimal("0.0005"),
     }

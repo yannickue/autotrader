@@ -6,6 +6,7 @@ import pytest
 from costs.engine import calculate_trade_costs
 from costs.models import (
     CostCalculationRequest,
+    CostConfidence,
     InstrumentClass,
     LiquidityRole,
     TradeSide,
@@ -16,6 +17,8 @@ from costs.models import (
 def _schedule(**changes: object) -> VenueCostSchedule:
     defaults: dict[str, object] = {
         "venue": "test-venue",
+        "instrument_class": InstrumentClass.SPOT,
+        "cost_confidence": CostConfidence.ESTIMATED,
         "maker_fee_rate": Decimal("0.0002"),
         "taker_fee_rate": Decimal("0.0005"),
     }
@@ -172,6 +175,7 @@ def test_slippage_cost_falls_back_to_schedule_bps_when_no_expected_price() -> No
 
 def test_funding_cost_accrues_per_completed_interval_for_perpetual_long() -> None:
     schedule = _schedule(
+        instrument_class=InstrumentClass.PERPETUAL,
         funding_rate_long_per_interval=Decimal("0.0001"),
         funding_interval=timedelta(hours=8),
     )
@@ -192,6 +196,7 @@ def test_funding_cost_accrues_per_completed_interval_for_perpetual_long() -> Non
 
 def test_funding_cost_does_not_accrue_for_partial_interval() -> None:
     schedule = _schedule(
+        instrument_class=InstrumentClass.PERPETUAL,
         funding_rate_long_per_interval=Decimal("0.0001"),
         funding_interval=timedelta(hours=8),
     )
@@ -210,7 +215,9 @@ def test_funding_cost_does_not_accrue_for_partial_interval() -> None:
 
 
 def test_swap_cost_prorates_over_days_for_cfd_short() -> None:
-    schedule = _schedule(swap_rate_short_per_day=Decimal("0.0002"))
+    schedule = _schedule(
+        instrument_class=InstrumentClass.CFD, swap_rate_short_per_day=Decimal("0.0002")
+    )
     request = _request(
         instrument_class=InstrumentClass.CFD,
         side=TradeSide.SHORT,
@@ -312,6 +319,7 @@ def test_positive_gross_pnl_with_costs_exceeding_it_is_reported_as_net_negative(
     it, so net_pnl must be negative even though gross_pnl is positive.
     """
     schedule = _schedule(
+        instrument_class=InstrumentClass.PERPETUAL,
         maker_fee_rate=Decimal("0.001"),
         taker_fee_rate=Decimal("0.001"),
         commission_rate=Decimal("0.0005"),
@@ -366,3 +374,42 @@ def test_request_rejects_crossed_entry_quote() -> None:
 def test_request_rejects_negative_holding_period() -> None:
     with pytest.raises(ValueError, match="holding_period cannot be negative"):
         _request(holding_period=timedelta(hours=-1))
+
+
+# --- instrument_class cross-check (request vs. schedule) ----------------------------
+
+
+def test_mismatched_instrument_class_raises_value_error() -> None:
+    schedule = _schedule(instrument_class=InstrumentClass.PERPETUAL)
+    request = _request(instrument_class=InstrumentClass.CFD)
+
+    with pytest.raises(ValueError, match="instrument_class mismatch"):
+        calculate_trade_costs(request, schedule)
+
+
+def test_matched_cfd_request_against_cfd_schedule_computes_normally() -> None:
+    schedule = _schedule(
+        instrument_class=InstrumentClass.CFD,
+        maker_fee_rate=Decimal("0"),
+        taker_fee_rate=Decimal("0"),
+        commission_rate=Decimal("0.0001"),
+        swap_rate_long_per_day=Decimal("0.00002"),
+    )
+    request = _request(
+        instrument_class=InstrumentClass.CFD,
+        side=TradeSide.LONG,
+        quantity=Decimal("1"),
+        entry_price=Decimal("1000"),
+        exit_price=Decimal("1010"),
+        holding_period=timedelta(days=1),
+    )
+
+    result = calculate_trade_costs(request, schedule)
+
+    assert result.gross_pnl == Decimal("10")
+    assert result.commission == Decimal("0.201")  # 0.0001 * (1000 + 1010)
+    assert result.funding_or_swap == Decimal("0.02")  # 0.00002 * 1000 * 1 day
+    assert result.net_pnl == (
+        result.gross_pnl - result.fees - result.spread_cost - result.slippage_cost
+        - result.funding_or_swap
+    )
