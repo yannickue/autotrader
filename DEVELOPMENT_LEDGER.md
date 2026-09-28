@@ -390,3 +390,22 @@ integration surface verified green, not just new tests.
 
 Next: Slice 2 (fees/cost model wired into execution fills + pipeline loss accounting fix, per
 AUDITOR's G3 finding that daily-loss currently ignores fees).
+
+## 2026-09-28 — Integration Slice 2: fees wired into execution, G3/G4 fixed
+
+TASK: Wire src/costs into execution fills; fix AUDITOR-found G3 (daily-loss check ignored fees)
+and G4 (_record_fill used quote price, not actual fill price).
+MODEL: Sonnet BUILDER (direct checkout, fully-specified plan from AUDITOR), Sonnet 5 (Lead)
+review + docs/EXECUTION_CONTRACT.md update + commit.
+RESULT: See commit `7fb53fa`. New `calculate_fill_fee`, PaperExecutionEngine now requires a
+VenueCostSchedule and debits a real per-fill fee with an explicit maker/taker mapping; new
+FillEvent/fill_listener hook; realized_pnl_today now net of fees; reporting-only cost
+attribution never feeds the ledger; funding stays estimate-only per confirmed Q-C1.
+Builder finding: Sprint 1 has no UTC daily-reset boundary at all yet (OPEN_QUESTIONS #13,
+still open) -- realized_pnl_today was already all-time cumulative before this fix, so the fee
+term was made consistent with that rather than inventing new daily windowing.
+TESTS: 428 passed, 1 skipped (was 409/1); ruff clean; compileall clean. Full execution/pipeline/
+portfolio/property/integration surface verified.
+
+Next: Slice 3 (exit engine wiring into the pipeline -- the largest remaining slice, per the
+AUDITOR plan's Q-X0/X1/X2/X3 decisions already resolved in OPEN_QUESTIONS #25).
