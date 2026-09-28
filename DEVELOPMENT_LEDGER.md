@@ -468,3 +468,23 @@ duplicate an order/fill, repeat a TP tranche, lose an open position, forget stop
 create phantom exposure. This closes out Phase A; after it, per explicit user instruction, move
 directly to ActivTrades MT5 -> InstrumentSpec -> CFD data ingestion -> DAX/NASDAQ/WTI research
 vertical slice, not further infrastructure.
+
+## 2026-09-28 — Integration Slice 4a: persistence store v2 + engine export/import
+
+TASK: Build the persistence foundation (store schema v2, transactional single-commit-point
+primitive, RiskEngine/PaperExecutionEngine export/import) that Slice 4b wires into the live
+pipeline's actual crash-recovery flow.
+MODEL: Sonnet BUILDER (direct checkout, AUDITOR-informed spec), Sonnet 5 (Lead) review + commit.
+RESULT: See commit `087dcee`. New SQLiteStore.transaction()/write_snapshot()/component_state;
+fills replay in true insertion order; RiskEngine.export_state()/import_state(). Builder verified
+(not assumed) two real AUDITOR-flagged findings and fixed both: import_checkpoint() restored
+persisted `mode` verbatim (a READY checkpoint resumed straight back into READY, violating
+"restart always enters RECONCILING") -- now forces RECONCILING except HALTED-stays-HALTED;
+export_checkpoint() never emitted order.updated_at at all.
+TESTS: 473 passed, 1 skipped (was 453/1); ruff clean; compileall clean.
+
+Next: Slice 4b -- wire persistence into the pipeline's actual crash/restart flow, with the
+user-specified required crash-boundary tests (before order persistence, order created but not
+filled, fill received before portfolio checkpoint, after partial TP, after stop update, during
+restart/reconciliation). Recovery must never duplicate an order/fill, repeat a TP tranche, lose
+an open position, forget stop state, or create phantom exposure. This is the final Phase A slice.
