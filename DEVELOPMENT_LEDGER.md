@@ -409,3 +409,29 @@ portfolio/property/integration surface verified.
 
 Next: Slice 3 (exit engine wiring into the pipeline -- the largest remaining slice, per the
 AUDITOR plan's Q-X0/X1/X2/X3 decisions already resolved in OPEN_QUESTIONS #25).
+
+## 2026-09-28 — Integration Slice 3a: pipeline background-event passthroughs + gross_pnl leak fix
+
+TASK: Add pipeline entry points for execution's on_trade/on_time/report_fill (G1: previously
+zero callers anywhere in src/, meaning protective stops never triggered).
+MODEL: Sonnet BUILDER (direct checkout), Sonnet 5 (Lead) review + independent fix for a
+finding the builder surfaced but correctly left out of scope.
+RESULT: See commit `f8e34e8`. New process_trade_event/process_time_tick/process_reported_fill
++ _reconcile_background_fills, all routing through the same _record_fill accounting as
+process(). Builder found and clearly flagged (did not fix, correctly out of orchestration-only
+scope) a real pre-existing Slice 2 bug: gross_pnl was computed as an open-vs-close anchor diff
+against the GLOBAL portfolio.realized_pnl counter, which would leak cross-instrument PnL if
+two instruments' closes landed in one reconciliation batch -- not reachable via any real call
+path yet, but a landmine for Slice 3b's multi-position exit-engine ticks. Lead fixed directly:
+gross_pnl is now a per-fill accumulated realized_pnl_delta on _TradeAccumulator, mirroring how
+fees was already correctly tracked, immune to interleaving. Test updated from "pins the known
+bug" to "asserts the fix."
+TESTS: 433 passed, 1 skipped (was 428/1); ruff clean; compileall clean.
+
+Next: Slice 3b (exit engine wiring). User has added explicit acceptance requirements: full
+lifecycle coverage through REAL execution (initial stop, full TP, partial TP, MULTIPLE TP
+stages, trailing, break-even, time exit, reversal exit, emergency exit, remaining-position
+state after partial, deterministic exit priority, exit idempotency). Multiple TP stages is a
+real gap versus the current src/exits/ design (single partial-then-runner only) -- this slice
+must extend ExitPolicy/ExitEngine for configurable TP1/TP2/.../runner stages before wiring, per
+the master directive's own explicit requirement (section 37), not scope creep.
