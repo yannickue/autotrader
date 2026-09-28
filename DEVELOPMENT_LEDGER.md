@@ -488,3 +488,40 @@ user-specified required crash-boundary tests (before order persistence, order cr
 filled, fill received before portfolio checkpoint, after partial TP, after stop update, during
 restart/reconciliation). Recovery must never duplicate an order/fill, repeat a TP tranche, lose
 an open position, forget stop state, or create phantom exposure. This is the final Phase A slice.
+
+## 2026-09-28 — PHASE A COMPLETE
+
+TASK: Slice 4b (persistence wired into pipeline + crash/restart recovery), then the complete
+Phase A gate per explicit user instruction.
+MODEL: Sonnet BUILDER (direct checkout, large safety-critical spec), Sonnet 5 (Lead) thorough
+review of the recovery/cross-check/orphan-handling logic + docs updates + commit.
+RESULT: See commits `dadae16` (Slice 4b) and `d59840d` (docs). Single-commit-point persistence
+(one transaction per pipeline call, covering all mutable state + that call's fills together);
+recover_pipeline() replays fills from scratch and cross-checks against persisted rows rather
+than trusting them, halting on any disagreement; orphan reservations released and audited;
+missing reservations halt; execution never resumes READY on restart; a weak, explicitly-labeled
+paper self-check reconcile() is the only path back to READY. Seven dedicated crash-boundary
+tests prove: before-persist (clean slate), resting-unfilled-order survives restart, fill-before
+-checkpoint (pre-fill state + exactly-once redrive), partial-TP persisted vs. un-persisted
+(exact stage restoration vs. correct re-fire), stop-ratchet never regresses to less protective,
+corrupted store halts safely and reproducibly.
+
+COMPLETE PHASE A GATE (per explicit instruction): full suite 480 passed/1 skipped; ruff clean;
+compileall clean; integration 17 passed/1 skipped; property 1 passed; recovery 7 passed; chaos
+7 passed. "Liveness tests" in the sense of the later master directive (DAX/NASDAQ/WTI synthetic
+scenarios) don't yet apply -- no CFD instrument model exists yet (that's Priority 2+); the
+existing 15-scenario E2E suite (tests/integration/e2e_scenarios.py) already proves valid trades
+execute end-to-end for the current crypto-paper system and is included in the integration count
+above.
+
+**PHASE A (realism gaps) IS NOW COMPLETE**: transaction costs (A1), exit engine incl.
+multi-stage take-profit (A2), persistence/recovery (A3), margin wiring (A4), clock/latency/
+health (A5), all wired into the live pipeline/risk/execution, fee-aware daily loss, restart
+safety. OPEN_QUESTIONS #22, #23, #24, #25 all resolved this session. Two real pre-existing bugs
+found and fixed along the way: gross_pnl cross-instrument leak (Slice 3a) and
+restart-resumes-READY/missing-updated_at (Slice 4a).
+
+Per explicit user instruction: next work moves directly to ActivTrades MT5 -> InstrumentSpec ->
+CFD data ingestion -> FeatureRegistry -> OpportunityScanner -> simple Regime Engine -> Momentum/
+Breakout/Pullback validation on DAX/NASDAQ/WTI -> VectorBT screening -> Nautilus replay -> OOS/
+walk-forward -> ALPHA VIABILITY REPORT V1. Not further infrastructure unless a blocker is found.
