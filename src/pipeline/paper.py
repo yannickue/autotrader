@@ -34,6 +34,7 @@ from costs.models import (
     VenueCostSchedule,
 )
 from data.models import MarketSnapshot
+from execution.events import TradeEvent
 from execution.models import ExecutionRequest, OrderSide, OrderType, TimeInForce
 from execution.orders import TERMINAL_STATUSES, OrderStatus, RejectCode, SubmitResult
 from execution.paper import FillEvent, PaperExecutionEngine
@@ -71,6 +72,15 @@ class PipelineStage(StrEnum):
     RISK_REJECTED = "risk_rejected"
     EXECUTION_REJECTED = "execution_rejected"
     EXECUTED = "executed"
+    # Slice 3a (G1 fix): reached by process_trade_event()/process_time_tick()/
+    # process_reported_fill() -- the background-event counterparts of
+    # EXECUTED/NO_SIGNAL above. These are not driven by a new trading
+    # signal (no universe/risk gating), only by an execution-engine-side
+    # event (a trade print, a clock tick, or an externally reported fill),
+    # so they get their own stage values rather than reusing EXECUTED/
+    # NO_SIGNAL, which both imply a signal was evaluated.
+    EXECUTION_EVENT_FILLED = "execution_event_filled"
+    EXECUTION_EVENT_NO_FILL = "execution_event_no_fill"
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -99,7 +109,17 @@ class _TradeAccumulator:
 
     notional: Decimal
     fees: Decimal
-    realized_at_open: Decimal
+    # Sum of this instrument's OWN per-fill realized-pnl deltas
+    # (realized_after - realized_before for each of ITS OWN fills),
+    # accumulated fill-by-fill exactly like `fees` above -- never a
+    # start-of-position-vs-end-of-position anchor diff against the global
+    # `portfolio.realized_pnl` counter. `portfolio.realized_pnl` is a
+    # cross-instrument cumulative sum, so an anchor diffed across a wide
+    # open-to-close window would silently fold in any OTHER instrument's
+    # realized PnL that landed on that same global counter in between.
+    # Per-fill accumulation is immune to that regardless of how many other
+    # instruments' fills interleave, or how many events apart open/close are.
+    realized_pnl_delta: Decimal
     open_time: datetime
     position_side: TradeSide | None = None
     entry_bid: Decimal | None = None
@@ -132,11 +152,28 @@ class PaperTradingPipeline:
     _reason_counts: dict[str, int] = field(init=False, default_factory=dict)
     _cost_attributions: list[CostBreakdown] = field(init=False, default_factory=list)
     _pending_fills: list[FillEvent] = field(init=False, default_factory=list)
+    # fill_id -> (realized_pnl delta, fees delta) attributable to exactly
+    # that one fill, captured synchronously in `_on_fill` from a running
+    # global anchor (`_last_realized_pnl`/`_last_fees`). `portfolio.
+    # realized_pnl`/`fees` are portfolio-wide cumulative counters, not
+    # per-instrument, so a single before/after snapshot taken around a
+    # whole on_trade()/on_time()/report_fill() call cannot be safely split
+    # across instruments when more than one instrument's fills land in
+    # that same call -- this per-fill delta is what makes that split exact
+    # (see `_reconcile_background_fills`). `process()`'s own submit()-driven
+    # single-instrument path does not need this (it still uses its own
+    # before/after snapshot), but every fill still populates this dict for
+    # consistency; unused entries are cleared alongside `_pending_fills`.
+    _fill_deltas: dict[str, tuple[Decimal, Decimal]] = field(init=False, default_factory=dict)
+    _last_realized_pnl: Decimal = field(init=False, default=ZERO)
+    _last_fees: Decimal = field(init=False, default=ZERO)
 
     def __post_init__(self) -> None:
         equity = self.portfolio.equity
         self._initial_equity = equity
         self._peak_equity = equity if equity > ZERO else ZERO
+        self._last_realized_pnl = self.portfolio.realized_pnl
+        self._last_fees = self.portfolio.fees
         # Observe the actual fill price/fee for every real fill the
         # execution engine applies (G4 fix: `_record_fill` used to reuse the
         # quote-side reference price instead of the real fill price). This
@@ -146,6 +183,14 @@ class PaperTradingPipeline:
         self.execution_engine.fill_listener = self._on_fill
 
     def _on_fill(self, event: FillEvent) -> None:
+        realized_now = self.portfolio.realized_pnl
+        fees_now = self.portfolio.fees
+        self._fill_deltas[event.fill_id] = (
+            realized_now - self._last_realized_pnl,
+            fees_now - self._last_fees,
+        )
+        self._last_realized_pnl = realized_now
+        self._last_fees = fees_now
         self._pending_fills.append(event)
 
     # -- public API ---------------------------------------------------
@@ -283,6 +328,7 @@ class PaperTradingPipeline:
         realized_before = self.portfolio.realized_pnl
         fees_before = self.portfolio.fees
         self._pending_fills.clear()
+        self._fill_deltas.clear()
 
         result = self.execution_engine.submit(request, decision, latest, now)
 
@@ -360,6 +406,113 @@ class PaperTradingPipeline:
         """
         return self.execution_engine.submit(request, decision, quote, now)
 
+    # -- background execution-engine event passthroughs ------------------
+    #
+    # Slice 3a (G1 fix): `PaperExecutionEngine.on_trade()`, `on_time()`, and
+    # `report_fill()` previously had zero callers anywhere in `src/` --
+    # only `submit()` was ever called (from `process()` above). That meant
+    # the protective STOP/TAKE_PROFIT child orders `submit()` creates
+    # alongside every entry could never actually trigger: nothing fed a
+    # subsequent trade event or time tick into the execution engine after
+    # the initial entry. These three methods make those paths reachable.
+    #
+    # They are orchestration passthroughs only -- the accounting
+    # consequences of a fill are identical regardless of whether it
+    # arrived via submit(), on_trade(), on_time(), or report_fill(), so
+    # all three route through the same `_reconcile_background_fills` /
+    # `_record_fill` treatment `process()` already uses for its own entry
+    # fill, rather than inventing new treatment. Unlike `process()`, none
+    # of these are gated behind a universe/signal/risk check: they are
+    # driven by execution-engine-side events, not new trading signals, and
+    # must stay callable at any time so `_consecutive_losses`/daily-loss
+    # risk inputs/peak-equity stay correct regardless of which path closed
+    # a position.
+
+    def process_trade_event(self, *, event: TradeEvent, now: datetime) -> PipelineOutcome:
+        """Feed one `TradeEvent` into `execution_engine.on_trade()` and
+        reconcile whatever fills it produces (e.g. a resting entry LIMIT
+        crossing, or a protective STOP/TAKE_PROFIT triggering)."""
+        before_positions = self._position_snapshot()
+        self._pending_fills.clear()
+        self._fill_deltas.clear()
+
+        self.execution_engine.on_trade(event, now)
+
+        filled = self._reconcile_background_fills(before_positions=before_positions, now=now)
+        return self._finish(
+            self._background_stage(filled),
+            signal_id=None,
+            risk_reason=None,
+            execution_status=None,
+            execution_reject_code=None,
+            position_after=self._position_qty(event.instrument),
+        )
+
+    def process_time_tick(self, *, now: datetime) -> PipelineOutcome:
+        """Feed one clock tick into `execution_engine.on_time()` and
+        reconcile whatever fills it produces.
+
+        Note: the real `PaperExecutionEngine.on_time(self, now: datetime)`
+        signature takes no `instrument` (it walks every open order across
+        every instrument, expiring stale entry LIMIT orders per
+        `config.max_order_age` -- protective STOP/TAKE_PROFIT children are
+        explicitly exempted from expiry, see `on_time`'s own docstring), so
+        this passthrough has no `instrument` parameter either; a background
+        clock tick is never scoped to one instrument in this engine. Order
+        expiry alone never produces a fill, so this will typically reconcile
+        zero fills -- that is the expected, safe no-op case, not an error.
+        """
+        before_positions = self._position_snapshot()
+        self._pending_fills.clear()
+        self._fill_deltas.clear()
+
+        self.execution_engine.on_time(now)
+
+        filled = self._reconcile_background_fills(before_positions=before_positions, now=now)
+        return self._finish(
+            self._background_stage(filled),
+            signal_id=None,
+            risk_reason=None,
+            execution_status=None,
+            execution_reject_code=None,
+            position_after=None,
+        )
+
+    def process_reported_fill(
+        self,
+        *,
+        client_order_id: str,
+        trade_id: str,
+        price: Decimal,
+        quantity: Decimal,
+        now: datetime,
+    ) -> PipelineOutcome:
+        """Feed one externally reported fill into
+        `execution_engine.report_fill()` and reconcile whatever fill it
+        produces (chaos-test hook; mirrors `tests/chaos/test_execution_chaos.py`'s
+        direct-engine usage of the same call)."""
+        before_positions = self._position_snapshot()
+        self._pending_fills.clear()
+        self._fill_deltas.clear()
+
+        self.execution_engine.report_fill(client_order_id, trade_id, price, quantity, now)
+
+        filled = self._reconcile_background_fills(before_positions=before_positions, now=now)
+        return self._finish(
+            self._background_stage(filled),
+            signal_id=None,
+            risk_reason=None,
+            execution_status=None,
+            execution_reject_code=None,
+            position_after=None,
+        )
+
+    @staticmethod
+    def _background_stage(filled: bool) -> PipelineStage:
+        if filled:
+            return PipelineStage.EXECUTION_EVENT_FILLED
+        return PipelineStage.EXECUTION_EVENT_NO_FILL
+
     def metrics(self) -> dict[str, Any]:
         trade_metrics = calculate_trade_metrics(
             tuple(self._trade_outcomes), initial_equity=self._initial_equity
@@ -427,6 +580,97 @@ class PaperTradingPipeline:
         view = self.portfolio.positions.get(instrument)
         return view.quantity if view is not None else ZERO
 
+    def _position_snapshot(self) -> dict[str, Decimal]:
+        """Every currently-known instrument's position quantity, captured
+        immediately before a background execution-engine call whose fills
+        may land on any instrument (unlike `process()`, which only ever
+        touches the one instrument its own signal/history is for)."""
+        return {
+            instrument: view.quantity for instrument, view in self.portfolio.positions.items()
+        }
+
+    def _reconcile_background_fills(
+        self, *, before_positions: dict[str, Decimal], now: datetime
+    ) -> bool:
+        """Reconcile every fill `on_trade()`/`on_time()`/`report_fill()`
+        produced (`_pending_fills`) into the same `_record_fill` accounting
+        `process()` uses for its own submit()-driven entry fill.
+
+        Unlike `process()` (exactly one instrument, exactly one `submit()`
+        call), a single background call can in principle produce fills
+        across multiple instruments and multiple orders. Each fill is
+        replayed through `_record_fill` individually, in the exact order
+        the engine produced it, with a per-instrument running position
+        quantity and a per-fill realized-pnl/fees delta (`_fill_deltas`,
+        populated by `_on_fill`) -- not a single global before/after
+        snapshot of `portfolio.realized_pnl`/`fees` taken around the whole
+        call, since those are portfolio-wide cumulative counters that
+        cannot be safely split across instruments once more than one
+        instrument's fills interleave within the same call. This is what
+        lets two different instruments filled within one call each get
+        their own correct before/after quantities and realized/fee deltas
+        rather than double-counting or misattributing a shared global
+        delta.
+
+        Background fills have no quote-side reference price/bid/ask of
+        their own (only `FillEvent.price`), unlike `process()`'s
+        quote-driven entry -- the fill price itself is used as a
+        zero-spread stand-in for `expected_price`/quote bid/ask. This only
+        ever affects the reporting-only `CostBreakdown` attribution
+        (`docs/EXECUTION_CONTRACT.md`), never `TradeOutcome`/realized PnL.
+
+        Returns True if at least one fill was reconciled (False is a safe
+        no-op: no phantom `TradeOutcome`, no accounting side effects).
+        """
+        if not self._pending_fills:
+            return False
+
+        running_qty = dict(before_positions)
+        running_realized = self.portfolio.realized_pnl
+        running_fees = self.portfolio.fees
+        # Walk backwards from the current (post-call) totals to the
+        # absolute realized/fees anchor immediately before the FIRST
+        # pending fill, so absolute per-fill before/after values can be
+        # reconstructed walking forward, in original order, below.
+        for fill in reversed(self._pending_fills):
+            realized_delta, fees_delta = self._fill_deltas.get(fill.fill_id, (ZERO, ZERO))
+            running_realized -= realized_delta
+            running_fees -= fees_delta
+
+        for fill in self._pending_fills:
+            instrument = fill.instrument
+            before_qty = running_qty.get(instrument, ZERO)
+            signed_delta = fill.quantity if fill.side is OrderSide.BUY else -fill.quantity
+            after_qty = before_qty + signed_delta
+            running_qty[instrument] = after_qty
+
+            realized_delta, fees_delta = self._fill_deltas.get(fill.fill_id, (ZERO, ZERO))
+            realized_before = running_realized
+            fees_before = running_fees
+            running_realized += realized_delta
+            running_fees += fees_delta
+
+            self._record_fill(
+                instrument=instrument,
+                fill_price=fill.price,
+                expected_price=fill.price,
+                quote_bid=fill.price,
+                quote_ask=fill.price,
+                before_qty=before_qty,
+                after_qty=after_qty,
+                realized_before=realized_before,
+                realized_after=running_realized,
+                fees_before=fees_before,
+                fees_after=running_fees,
+                order_side=fill.side,
+                now=now,
+            )
+
+        self._pending_fills.clear()
+        self._fill_deltas.clear()
+        self._update_peak_equity()
+        return True
+
     def _update_peak_equity(self) -> None:
         equity = self.portfolio.equity
         if equity > self._peak_equity:
@@ -463,7 +707,7 @@ class PaperTradingPipeline:
             accumulator = _TradeAccumulator(
                 notional=ZERO,
                 fees=ZERO,
-                realized_at_open=realized_before,
+                realized_pnl_delta=ZERO,
                 open_time=now,
                 position_side=TradeSide.LONG if order_side is OrderSide.BUY else TradeSide.SHORT,
                 entry_bid=quote_bid,
@@ -473,6 +717,7 @@ class PaperTradingPipeline:
 
         accumulator.notional += filled_quantity * fill_price
         accumulator.fees += fees_after - fees_before
+        accumulator.realized_pnl_delta += realized_after - realized_before
 
         # Cost-attribution (reporting only) bookkeeping: classify this fill
         # as adding to (entry-side) or reducing (exit-side) the position's
@@ -491,7 +736,7 @@ class PaperTradingPipeline:
             accumulator.exit_expected_notional += filled_quantity * expected_price
 
         if after_qty == ZERO:
-            gross_pnl = realized_after - accumulator.realized_at_open
+            gross_pnl = accumulator.realized_pnl_delta
             outcome = TradeOutcome(
                 gross_pnl=gross_pnl,
                 notional=accumulator.notional,
