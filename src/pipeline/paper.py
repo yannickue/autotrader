@@ -20,9 +20,10 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
+from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import Any, Protocol
 
 from costs.engine import calculate_trade_costs
 from costs.models import (
@@ -36,7 +37,14 @@ from costs.models import (
 from data.models import MarketSnapshot
 from execution.events import TradeEvent
 from execution.models import ExecutionRequest, OrderSide, OrderType, TimeInForce
-from execution.orders import TERMINAL_STATUSES, HaltCode, OrderStatus, RejectCode, SubmitResult
+from execution.orders import (
+    TERMINAL_STATUSES,
+    HaltCode,
+    Order,
+    OrderStatus,
+    RejectCode,
+    SubmitResult,
+)
 from execution.paper import EngineMode, FillEvent, PaperExecutionEngine
 from exits.engine import ExitEngine, apply_evaluation
 from exits.models import (
@@ -46,9 +54,23 @@ from exits.models import (
     ExitPosition,
     ExitReason,
     PositionSide,
+    StopStage,
 )
 from monitoring.metrics import TradeOutcome, calculate_trade_metrics
+from persistence.models import (
+    FillRecord,
+    HaltStateRecord,
+    OrderRecord,
+    PortfolioStateRecord,
+    PositionRecord,
+    ReconciliationStateRecord,
+    ReduceOnlyReservationRecord,
+    ReservationRecord,
+    StateSnapshot,
+)
+from persistence.store import SQLiteStore
 from portfolio.ledger import Portfolio
+from portfolio.models import Fill
 from risk.engine import RiskEngine
 from risk.models import (
     AccountRiskState,
@@ -60,9 +82,6 @@ from risk.models import (
     RuntimeRiskState,
 )
 from signals.models import Direction, Signal
-
-if TYPE_CHECKING:
-    from datetime import datetime
 
 ZERO = Decimal("0")
 
@@ -185,6 +204,16 @@ class PaperTradingPipeline:
     cost_schedule: VenueCostSchedule
     exit_engine: ExitEngine
 
+    # Slice 4b (persistence integration): optional durable store. `None`
+    # (the default) preserves every existing caller/test/harness exactly --
+    # no persistence occurs, `_persist()` is a no-op. When set, every public
+    # mutating entry point (`process`, `process_exits`, `process_trade_event`,
+    # `process_time_tick`, `process_reported_fill`) durably snapshots state
+    # at the very end of its work (see `_persist()`), on EVERY return path
+    # (not only the "happy path"), since even an early return can have
+    # mutated mark prices, exit-managed positions, or reservations.
+    store: SQLiteStore | None = None
+
     # instrument -> the ExitPosition currently under exit management. Only
     # ever populated by this pipeline's own entry path (`_open_exit_position`,
     # called from `_record_fill` when an entry fill opens a position from
@@ -219,6 +248,19 @@ class PaperTradingPipeline:
     _last_realized_pnl: Decimal = field(init=False, default=ZERO)
     _last_fees: Decimal = field(init=False, default=ZERO)
 
+    # Slice 4b: every real fill observed since the last `_persist()` call,
+    # regardless of which internal code path produced it. Deliberately
+    # SEPARATE from `_pending_fills` above: `_pending_fills` is cleared and
+    # repopulated at specific points inside `process()`/`_evaluate_exit()`
+    # for THEIR OWN accounting purposes (and is left untouched, i.e. stale,
+    # on no-op branches that never reach a `submit()` call) -- it is not a
+    # reliable "fills produced by this call" signal for persistence. This
+    # list is only ever appended to (by `_on_fill`) and drained by
+    # `_persist()` itself, so it always holds exactly the fills observed
+    # since the last successful persist, independent of which branch of
+    # which method produced them.
+    _persist_pending_fills: list[FillEvent] = field(init=False, default_factory=list)
+
     def __post_init__(self) -> None:
         equity = self.portfolio.equity
         self._initial_equity = equity
@@ -243,6 +285,7 @@ class PaperTradingPipeline:
         self._last_realized_pnl = realized_now
         self._last_fees = fees_now
         self._pending_fills.append(event)
+        self._persist_pending_fills.append(event)
 
     # -- public API ---------------------------------------------------
 
@@ -260,6 +303,7 @@ class PaperTradingPipeline:
             # No market data at all: nothing to check the universe against.
             return self._finish(
                 PipelineStage.NO_SIGNAL,
+                now=now,
                 signal_id=None,
                 risk_reason=None,
                 execution_status=None,
@@ -311,6 +355,7 @@ class PaperTradingPipeline:
                 # fresh entry may be considered is the NEXT process() call.
                 return self._finish(
                     PipelineStage.SIGNAL_REVERSAL_EXIT,
+                    now=now,
                     signal_id=signal.signal_id if signal is not None else None,
                     risk_reason=None,
                     execution_status=None,
@@ -321,6 +366,7 @@ class PaperTradingPipeline:
         if instrument not in universe:
             return self._finish(
                 PipelineStage.NOT_IN_UNIVERSE,
+                now=now,
                 signal_id=None,
                 risk_reason=None,
                 execution_status=None,
@@ -333,6 +379,7 @@ class PaperTradingPipeline:
         if signal is None:
             return self._finish(
                 PipelineStage.NO_SIGNAL,
+                now=now,
                 signal_id=None,
                 risk_reason=None,
                 execution_status=None,
@@ -348,6 +395,7 @@ class PaperTradingPipeline:
             # `_exit_positions` and this branch is correctly skipped.
             return self._finish(
                 PipelineStage.POSITION_ALREADY_OPEN,
+                now=now,
                 signal_id=signal.signal_id,
                 risk_reason=None,
                 execution_status=None,
@@ -377,6 +425,7 @@ class PaperTradingPipeline:
             # never be sized, regardless of what the strategy proposes.
             return self._finish(
                 PipelineStage.RISK_REJECTED,
+                now=now,
                 signal_id=signal.signal_id,
                 risk_reason=RiskReason.INVALID_INPUT.value,
                 execution_status=None,
@@ -406,6 +455,7 @@ class PaperTradingPipeline:
             )
             return self._finish(
                 PipelineStage.RISK_REJECTED,
+                now=now,
                 signal_id=signal.signal_id,
                 risk_reason=risk_reason,
                 execution_status=None,
@@ -496,6 +546,7 @@ class PaperTradingPipeline:
         stage = PipelineStage.EXECUTED if result.accepted else PipelineStage.EXECUTION_REJECTED
         return self._finish(
             stage,
+            now=now,
             signal_id=signal.signal_id,
             risk_reason=None,
             execution_status=result.status,
@@ -539,7 +590,7 @@ class PaperTradingPipeline:
         instrument = snapshot.instrument
         self.portfolio.mark(instrument, snapshot.last)
         self._update_peak_equity()
-        return self._evaluate_exit(
+        result = self._evaluate_exit(
             instrument=instrument,
             snapshot=snapshot,
             runtime=runtime,
@@ -547,6 +598,13 @@ class PaperTradingPipeline:
             now=now,
             signal_reversal=False,
         )
+        # Slice 4b: this method does not funnel through `_finish()` (it
+        # returns `_evaluate_exit`'s own `ExitStepResult`/`None` directly),
+        # so it is responsible for calling `_persist()` itself at the very
+        # end of its work -- on every path, including the `None` no-op
+        # (which can still follow a real `portfolio.mark()` call above).
+        self._persist(now=now)
+        return result
 
     # -- background execution-engine event passthroughs ------------------
     #
@@ -583,6 +641,7 @@ class PaperTradingPipeline:
         filled = self._reconcile_background_fills(before_positions=before_positions, now=now)
         return self._finish(
             self._background_stage(filled),
+            now=now,
             signal_id=None,
             risk_reason=None,
             execution_status=None,
@@ -613,6 +672,7 @@ class PaperTradingPipeline:
         filled = self._reconcile_background_fills(before_positions=before_positions, now=now)
         return self._finish(
             self._background_stage(filled),
+            now=now,
             signal_id=None,
             risk_reason=None,
             execution_status=None,
@@ -642,6 +702,7 @@ class PaperTradingPipeline:
         filled = self._reconcile_background_fills(before_positions=before_positions, now=now)
         return self._finish(
             self._background_stage(filled),
+            now=now,
             signal_id=None,
             risk_reason=None,
             execution_status=None,
@@ -1293,10 +1354,153 @@ class PaperTradingPipeline:
         breakdown = calculate_trade_costs(request, self.cost_schedule)
         self._cost_attributions.append(breakdown)
 
+    # -- persistence (Slice 4b) -------------------------------------------
+    #
+    # Single commit point: builds ONE `store.write_snapshot(...)` call
+    # (itself one `store.transaction()`) covering every mutable-state table
+    # PLUS this call's newly observed fills, so "the fills this call
+    # produced were durably recorded" and "the rest of this call's state was
+    # snapshotted" commit or roll back together atomically. `None` `store`
+    # (the default for every pre-existing caller/test) makes this a no-op.
+
+    def _persist(self, *, now: datetime) -> None:
+        if self.store is None:
+            return
+
+        positions = tuple(
+            PositionRecord(
+                instrument=instrument,
+                quantity=view.quantity,
+                avg_entry_price=view.avg_entry_price,
+                mark_price=view.mark_price,
+                updated_at=now,
+            )
+            for instrument, view in self.portfolio.positions.items()
+        )
+        orders = tuple(
+            _order_record(order, now) for order in self.execution_engine.orders.values()
+        )
+
+        risk_state = self.risk_engine.export_state()
+        reservations = tuple(
+            ReservationRecord(
+                decision_id=decision_id,
+                side=payload["side"],
+                abs_notional=Decimal(payload["abs_notional"]),
+                signed_notional=Decimal(payload["signed_notional"]),
+                updated_at=now,
+            )
+            for decision_id, payload in risk_state["reservations"].items()
+        )
+        reduce_only_reservations = tuple(
+            ReduceOnlyReservationRecord(
+                decision_id=decision_id,
+                instrument=payload["instrument"],
+                quantity=Decimal(payload["quantity"]),
+                updated_at=now,
+            )
+            for decision_id, payload in risk_state["reduce_only_reservations"].items()
+        )
+
+        portfolio_snapshot = self.portfolio.export_state()
+        portfolio_state = PortfolioStateRecord(
+            starting_balance=Decimal(portfolio_snapshot["starting_balance"]),
+            realized_pnl=Decimal(portfolio_snapshot["realized_pnl"]),
+            fees=Decimal(portfolio_snapshot["fees"]),
+            updated_at=now,
+        )
+
+        # Two DIFFERENT halts, deliberately split across the store's two
+        # singleton rows rather than sharing one ambiguous row (flagged by
+        # the original design analysis as ambiguous in the v2 schema):
+        # `risk_engine`'s own kill-switch-style HALT (`halt_state`) is not
+        # the same thing as `execution_engine.mode`/`halt_reason`
+        # (`reconciliation_state`) -- either can be true independent of the
+        # other (e.g. risk can HALT without execution ever having halted,
+        # and vice versa: execution can be RECONCILING/HALTED on a fresh
+        # engine that risk never touched).
+        halt_state = HaltStateRecord(
+            halted=self.risk_engine.halted,
+            reason=self.risk_engine.halt_reason,
+            updated_at=now,
+        )
+        execution_mode = self.execution_engine.mode
+        reconciliation_state = ReconciliationStateRecord(
+            mode=str(execution_mode),
+            reconciled=execution_mode is EngineMode.READY,
+            mismatch_reason=self.execution_engine.halt_reason,
+            # Paper has no independently-timestamped "last reconciled with
+            # the venue" event; using `now` whenever the engine currently
+            # reports READY is a reasonable proxy (recover_pipeline's own
+            # weak self-check reconcile() call is what actually produces a
+            # READY mode after a restart) -- documented as an approximation,
+            # not a claim of a real venue reconciliation timestamp.
+            last_reconciled_at=now if execution_mode is EngineMode.READY else None,
+            updated_at=now,
+        )
+
+        component_state = {
+            # The FULL `export_checkpoint()` (including its own "orders" key)
+            # is stored verbatim here, not just the parts not already
+            # covered by the typed `orders` table. Deliberate: recovery
+            # restores execution state via
+            # `execution_engine.import_checkpoint(component_state["execution"])`
+            # -- the already-tested, single existing deserialization path --
+            # rather than hand-reconstructing `Order` objects a second time
+            # from the typed `orders` table rows, which would duplicate
+            # logic and risk the two representations silently drifting. The
+            # typed `orders` table is still populated (below, from the same
+            # live `execution_engine.orders` view) for schema-intended
+            # typed-query/tooling access; it is simply not what recovery
+            # itself reads back from.
+            "execution": self.execution_engine.export_checkpoint(),
+            "pipeline": {
+                "peak_equity": str(self._peak_equity),
+                "initial_equity": str(self._initial_equity),
+                "consecutive_losses": self._consecutive_losses,
+                "trade_outcomes": [
+                    {
+                        "gross_pnl": str(outcome.gross_pnl),
+                        "notional": str(outcome.notional),
+                        "fees": str(outcome.fees),
+                    }
+                    for outcome in self._trade_outcomes
+                ],
+                "stage_counts": dict(self._stage_counts),
+                "reason_counts": dict(self._reason_counts),
+                # `_cost_attributions` is deliberately NOT persisted: it is
+                # reporting-only (never feeds back into TradeOutcome/
+                # portfolio PnL/risk/exposure -- see `_attribute_costs`
+                # docstring), so losing it across a crash is strictly lower
+                # stakes than losing any risk/position/exposure state, and
+                # skipping it keeps every snapshot smaller and simpler.
+            },
+            "exits": {
+                instrument: _exit_position_payload(position)
+                for instrument, position in self._exit_positions.items()
+            },
+        }
+
+        fills = tuple(_fill_record(event) for event in self._persist_pending_fills)
+
+        self.store.write_snapshot(
+            positions=positions,
+            orders=orders,
+            reservations=reservations,
+            reduce_only_reservations=reduce_only_reservations,
+            portfolio_state=portfolio_state,
+            halt_state=halt_state,
+            reconciliation_state=reconciliation_state,
+            component_state=component_state,
+            fills=fills,
+        )
+        self._persist_pending_fills.clear()
+
     def _finish(
         self,
         stage: PipelineStage,
         *,
+        now: datetime,
         signal_id: str | None,
         risk_reason: str | None,
         execution_status: OrderStatus | None,
@@ -1306,6 +1510,17 @@ class PaperTradingPipeline:
         self._stage_counts[stage.value] = self._stage_counts.get(stage.value, 0) + 1
         if risk_reason is not None:
             self._reason_counts[risk_reason] = self._reason_counts.get(risk_reason, 0) + 1
+        # Slice 4b: single choke point for every return path of process(),
+        # process_trade_event(), process_time_tick(), and
+        # process_reported_fill() (every one of them returns via `_finish`),
+        # so persistence happens at the very end of each call regardless of
+        # which stage it reached -- including early-return stages
+        # (NOT_IN_UNIVERSE, NO_SIGNAL, POSITION_ALREADY_OPEN, ...) that can
+        # still have mutated mark prices, exit-managed positions, or
+        # reservations before returning. `process_exits()` does not funnel
+        # through `_finish` (it returns `_evaluate_exit`'s `ExitStepResult`
+        # directly), so it calls `_persist()` itself at its own end.
+        self._persist(now=now)
         return PipelineOutcome(
             stage=stage,
             signal_id=signal_id,
@@ -1314,4 +1529,436 @@ class PaperTradingPipeline:
             execution_reject_code=execution_reject_code,
             position_after=position_after,
         )
+
+
+# -- persistence helpers (module-level; Slice 4b) --------------------------
+
+
+def _order_record(order: Order, now: datetime) -> OrderRecord:
+    """Build a persistence.models.OrderRecord from a live execution.orders.Order."""
+    return OrderRecord(
+        client_order_id=order.client_order_id,
+        request_id=order.request_id,
+        decision_id=order.decision_id,
+        instrument=order.instrument,
+        side=str(order.side),
+        order_type=str(order.order_type),
+        time_in_force=str(order.time_in_force),
+        quantity=order.quantity,
+        limit_price=order.limit_price,
+        reduce_only=order.reduce_only,
+        created_at=order.created_at,
+        status=str(order.status),
+        filled_quantity=order.filled_quantity,
+        avg_fill_price=order.avg_fill_price,
+        role=str(order.role),
+        parent_client_order_id=order.parent_client_order_id,
+        oco_sibling_id=order.oco_sibling_id,
+        replaces_client_order_id=order.replaces_client_order_id,
+        replaced_by_client_order_id=order.replaced_by_client_order_id,
+        trigger_price=order.trigger_price,
+        take_profit_price=order.take_profit_price,
+        updated_at=order.updated_at if order.updated_at is not None else order.created_at,
+        metadata=dict(order.metadata),
+    )
+
+
+def _fill_record(event: FillEvent) -> FillRecord:
+    """Build a persistence.models.FillRecord from an observed FillEvent.
+
+    applied_at mirrors timestamp: this pipeline has no separate
+    observed-at clock distinct from the injected now the fill was produced
+    under, unlike a real venue where a fill trade timestamp and the local
+    application time can differ.
+    """
+    return FillRecord(
+        fill_id=event.fill_id,
+        instrument=event.instrument,
+        side=str(event.side),
+        quantity=event.quantity,
+        price=event.price,
+        fee=event.fee,
+        timestamp=event.timestamp,
+        applied_at=event.timestamp,
+    )
+
+
+def _exit_position_payload(position: ExitPosition) -> dict[str, Any]:
+    """JSON-serializable payload for one ExitPosition, for component_state["exits"]."""
+    return {
+        "position_id": position.position_id,
+        "instrument": position.instrument,
+        "side": position.side.value,
+        "entry_price": str(position.entry_price),
+        "quantity": str(position.quantity),
+        "initial_stop_price": str(position.initial_stop_price),
+        "current_stop_price": str(position.current_stop_price),
+        "stop_stage": position.stop_stage.value,
+        "high_water_mark": (
+            str(position.high_water_mark) if position.high_water_mark is not None else None
+        ),
+        "fixed_target_price": (
+            str(position.fixed_target_price) if position.fixed_target_price is not None else None
+        ),
+        "opened_at": position.opened_at.isoformat(),
+        "realized_partial_quantity": str(position.realized_partial_quantity),
+        "stages_completed": position.stages_completed,
+        "pending_close_request_id": position.pending_close_request_id,
+    }
+
+
+def _exit_position_from_payload(payload: Mapping[str, Any]) -> ExitPosition:
+    """Inverse of _exit_position_payload."""
+    return ExitPosition(
+        position_id=payload["position_id"],
+        instrument=payload["instrument"],
+        side=PositionSide(payload["side"]),
+        entry_price=Decimal(payload["entry_price"]),
+        quantity=Decimal(payload["quantity"]),
+        initial_stop_price=Decimal(payload["initial_stop_price"]),
+        current_stop_price=Decimal(payload["current_stop_price"]),
+        stop_stage=StopStage(payload["stop_stage"]),
+        high_water_mark=(
+            Decimal(payload["high_water_mark"]) if payload["high_water_mark"] is not None else None
+        ),
+        fixed_target_price=(
+            Decimal(payload["fixed_target_price"])
+            if payload["fixed_target_price"] is not None
+            else None
+        ),
+        opened_at=datetime.fromisoformat(payload["opened_at"]),
+        realized_partial_quantity=Decimal(payload["realized_partial_quantity"]),
+        stages_completed=payload["stages_completed"],
+        pending_close_request_id=payload["pending_close_request_id"],
+    )
+
+
+def _cross_check_replay(replay_portfolio: Portfolio, snapshot: StateSnapshot) -> str | None:
+    """Compare a from-scratch fill-replayed Portfolio against persisted rows.
+
+    Returns a human-readable mismatch description, or None if everything
+    agrees. This is recover_pipeline's primary defense against any
+    crash-boundary leaving inconsistent state: replay is trusted as the
+    ground truth derivation (rebuilt fill-by-fill from the append-only,
+    fill_id-deduplicated fills table), and persisted positions/
+    portfolio_state rows are trusted only insofar as they agree with it.
+    """
+    if snapshot.portfolio_state is not None:
+        if replay_portfolio.realized_pnl != snapshot.portfolio_state.realized_pnl:
+            return (
+                "realized_pnl mismatch: replayed="
+                f"{replay_portfolio.realized_pnl} persisted={snapshot.portfolio_state.realized_pnl}"
+            )
+        if replay_portfolio.fees != snapshot.portfolio_state.fees:
+            return (
+                f"fees mismatch: replayed={replay_portfolio.fees} "
+                f"persisted={snapshot.portfolio_state.fees}"
+            )
+
+    persisted_positions = {p.instrument: p for p in snapshot.positions}
+    replayed_positions = replay_portfolio.positions
+    instruments = set(persisted_positions) | set(replayed_positions)
+    for instrument in sorted(instruments):
+        persisted_qty = (
+            persisted_positions[instrument].quantity if instrument in persisted_positions else ZERO
+        )
+        replayed_qty = (
+            replayed_positions[instrument].quantity if instrument in replayed_positions else ZERO
+        )
+        if persisted_qty != replayed_qty:
+            return (
+                f"position quantity mismatch for {instrument}: "
+                f"replayed={replayed_qty} persisted={persisted_qty}"
+            )
+        if replayed_qty != ZERO:
+            persisted_avg = (
+                persisted_positions[instrument].avg_entry_price
+                if instrument in persisted_positions
+                else ZERO
+            )
+            replayed_avg = replayed_positions[instrument].avg_entry_price
+            if persisted_avg != replayed_avg:
+                return (
+                    f"avg_entry_price mismatch for {instrument}: "
+                    f"replayed={replayed_avg} persisted={persisted_avg}"
+                )
+    return None
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class PipelineRecoveryResult:
+    """Outcome of recover_pipeline().
+
+    ok=False means recovery could not safely proceed -- the store itself
+    failed SQLiteStore.recover(), a component_state payload failed to
+    parse, a from-scratch fills replay disagreed with persisted state, or a
+    non-terminal non-reduce-only order was found with no matching risk
+    reservation. In every ok=False case the returned pipeline's
+    risk_engine is halted AND its execution_engine.mode is forced to
+    EngineMode.HALTED, so it is guaranteed unable to accept any new
+    exposure regardless of what a caller does with it next.
+    """
+
+    ok: bool
+    halted: bool
+    orphan_reservations_released: tuple[str, ...] = ()
+    mismatch_detail: str | None = None
+
+
+def _halt_recovery(
+    *, risk_engine: RiskEngine, execution_engine: PaperExecutionEngine, reason: str
+) -> None:
+    risk_engine.halt(reason)
+    execution_engine.mode = EngineMode.HALTED
+    execution_engine.halt_reason = reason
+
+
+def recover_pipeline(
+    *,
+    store: SQLiteStore,
+    risk_engine: RiskEngine,
+    execution_engine: PaperExecutionEngine,
+    portfolio: Portfolio,
+    exit_engine: ExitEngine,
+    instrument_limits: Mapping[str, InstrumentRiskLimits],
+    leverage_cap: Decimal,
+    cost_schedule: VenueCostSchedule,
+    now: datetime,
+) -> tuple[PaperTradingPipeline, PipelineRecoveryResult]:
+    """Reconstruct a PaperTradingPipeline from store's persisted state.
+
+    Takes FRESH, not-yet-populated risk_engine/execution_engine/portfolio/
+    exit_engine instances and populates them from store. Never trusts
+    persisted positions/portfolio_state rows blindly: they are
+    cross-checked (_cross_check_replay) against a from-scratch replay of
+    every persisted fill (in true chronological/insertion order) applied to
+    a brand-new Portfolio, and any disagreement is a HALT, not a silent
+    "trust whichever" choice.
+
+    Fail-closed at every step: a store.recover() failure, a component_state
+    parse failure, a replay/persisted mismatch, or an orphaned-exposure
+    order/reservation inconsistency each independently HALT both
+    risk_engine and execution_engine and return
+    PipelineRecoveryResult(ok=False, halted=True, ...) -- never a
+    best-effort partial recovery. execution_engine.mode never
+    auto-advances past RECONCILING to READY on its own; the one exception
+    is this function's own final, explicitly-weak paper self-check
+    reconcile() call (see below), which is NOT a claim of real venue
+    reconciliation.
+    """
+    result = store.recover()
+    if not result.ok:
+        reason = f"PERSISTENCE_RECOVERY_FAILED: {result.error}"
+        _halt_recovery(risk_engine=risk_engine, execution_engine=execution_engine, reason=reason)
+        pipeline = PaperTradingPipeline(
+            risk_engine=risk_engine,
+            execution_engine=execution_engine,
+            portfolio=portfolio,
+            instrument_limits=instrument_limits,
+            leverage_cap=leverage_cap,
+            cost_schedule=cost_schedule,
+            exit_engine=exit_engine,
+            store=store,
+        )
+        return pipeline, PipelineRecoveryResult(ok=False, halted=True, mismatch_detail=result.error)
+
+    snapshot = result.snapshot
+    if snapshot is None:  # pragma: no cover - RecoveryResult invariant: ok=True implies snapshot
+        raise AssertionError("store.recover() returned ok=True with snapshot=None")
+
+    starting_balance = (
+        snapshot.portfolio_state.starting_balance
+        if snapshot.portfolio_state is not None
+        else Decimal(portfolio.export_state()["starting_balance"])
+    )
+    replay_portfolio = Portfolio(starting_balance=starting_balance)
+    for fill_record in snapshot.fills:
+        replay_portfolio.apply_fill(
+            Fill(
+                fill_id=fill_record.fill_id,
+                instrument=fill_record.instrument,
+                side=OrderSide(fill_record.side),
+                quantity=fill_record.quantity,
+                price=fill_record.price,
+                fee=fill_record.fee,
+                timestamp=fill_record.timestamp,
+            )
+        )
+
+    mismatch = _cross_check_replay(replay_portfolio, snapshot)
+    if mismatch is not None:
+        reason = f"PERSISTENCE_RECOVERY_MISMATCH: {mismatch}"
+        _halt_recovery(risk_engine=risk_engine, execution_engine=execution_engine, reason=reason)
+        pipeline = PaperTradingPipeline(
+            risk_engine=risk_engine,
+            execution_engine=execution_engine,
+            portfolio=portfolio,
+            instrument_limits=instrument_limits,
+            leverage_cap=leverage_cap,
+            cost_schedule=cost_schedule,
+            exit_engine=exit_engine,
+            store=store,
+        )
+        return pipeline, PipelineRecoveryResult(ok=False, halted=True, mismatch_detail=mismatch)
+
+    # Replay agreed with the persisted rows: adopt the replayed (now
+    # verified-consistent) state as the caller portfolio's real state,
+    # then restore the last-observed mark prices from the persisted
+    # positions rows (mark price is not derivable from fills alone, and
+    # is non-critical to solvency -- the next tick re-marks it anyway).
+    portfolio.import_state(replay_portfolio.export_state())
+    for position_record in snapshot.positions:
+        if position_record.mark_price is not None:
+            portfolio.mark(position_record.instrument, position_record.mark_price)
+
+    try:
+        execution_component = store.get_component_state("execution")
+        pipeline_component = store.get_component_state("pipeline")
+        exits_component = store.get_component_state("exits")
+    except Exception as exc:
+        # Fail-closed: a corrupt component_state payload is exactly as
+        # unsafe here as a corrupt typed row would have been inside
+        # store.recover() itself.
+        reason = f"PERSISTENCE_RECOVERY_FAILED: component_state failed to parse: {exc}"
+        _halt_recovery(risk_engine=risk_engine, execution_engine=execution_engine, reason=reason)
+        pipeline = PaperTradingPipeline(
+            risk_engine=risk_engine,
+            execution_engine=execution_engine,
+            portfolio=portfolio,
+            instrument_limits=instrument_limits,
+            leverage_cap=leverage_cap,
+            cost_schedule=cost_schedule,
+            exit_engine=exit_engine,
+            store=store,
+        )
+        return pipeline, PipelineRecoveryResult(ok=False, halted=True, mismatch_detail=reason)
+
+    if execution_component is not None:
+        # Already forces RECONCILING (or stays HALTED if persisted HALTED) --
+        # see PaperExecutionEngine.import_checkpoint's own docstring. Never
+        # weakened here.
+        execution_engine.import_checkpoint(execution_component)
+    # else: never persisted (crash before the very first _persist() call)
+    # -- execution_engine stays at its constructor default (RECONCILING,
+    # no orders), which is exactly correct for that case.
+
+    risk_state = {
+        "halted": snapshot.halt_state.halted if snapshot.halt_state is not None else False,
+        "halt_reason": snapshot.halt_state.reason if snapshot.halt_state is not None else None,
+        "reservations": {
+            r.decision_id: {
+                "side": r.side,
+                "abs_notional": str(r.abs_notional),
+                "signed_notional": str(r.signed_notional),
+            }
+            for r in snapshot.reservations
+        },
+        "reduce_only_reservations": {
+            r.decision_id: {"instrument": r.instrument, "quantity": str(r.quantity)}
+            for r in snapshot.reduce_only_reservations
+        },
+    }
+    risk_engine.import_state(risk_state)
+
+    pipeline = PaperTradingPipeline(
+        risk_engine=risk_engine,
+        execution_engine=execution_engine,
+        portfolio=portfolio,
+        instrument_limits=instrument_limits,
+        leverage_cap=leverage_cap,
+        cost_schedule=cost_schedule,
+        exit_engine=exit_engine,
+        store=store,
+    )
+
+    if exits_component is not None:
+        for instrument, payload in exits_component.items():
+            pipeline._exit_positions[instrument] = _exit_position_from_payload(payload)
+
+    if pipeline_component is not None:
+        pipeline._peak_equity = Decimal(pipeline_component["peak_equity"])
+        pipeline._initial_equity = Decimal(pipeline_component["initial_equity"])
+        pipeline._consecutive_losses = pipeline_component["consecutive_losses"]
+        pipeline._trade_outcomes = [
+            TradeOutcome(
+                gross_pnl=Decimal(entry["gross_pnl"]),
+                notional=Decimal(entry["notional"]),
+                fees=Decimal(entry["fees"]),
+            )
+            for entry in pipeline_component["trade_outcomes"]
+        ]
+        pipeline._stage_counts = dict(pipeline_component["stage_counts"])
+        pipeline._reason_counts = dict(pipeline_component["reason_counts"])
+    # else: never persisted -- __post_init__ already derived sane
+    # from-current-portfolio defaults (_initial_equity/_peak_equity), and
+    # _consecutive_losses/_trade_outcomes/_stage_counts/_reason_counts
+    # correctly stay at their empty dataclass defaults.
+
+    # -- reservation/order consistency check --------------------------------
+    orders_by_decision: dict[str, list[Order]] = {}
+    for order in execution_engine.orders.values():
+        orders_by_decision.setdefault(order.decision_id, []).append(order)
+
+    reserved_decision_ids = set(risk_engine.export_state()["reservations"])
+    orphans: list[str] = []
+    for decision_id in sorted(reserved_decision_ids):
+        associated = [o for o in orders_by_decision.get(decision_id, []) if not o.reduce_only]
+        if not associated or all(o.is_terminal() for o in associated):
+            # A reservation whose non-reduce-only order(s) are all terminal
+            # (or there never was one) can never be filled against again --
+            # an orphan, safe to release, but never silently: recorded in
+            # the returned RecoveryResult as an explicit audit entry.
+            risk_engine.release(decision_id)
+            orphans.append(decision_id)
+
+    missing_reservation: list[str] = []
+    for decision_id, orders_for_decision in sorted(orders_by_decision.items()):
+        open_non_reduce_only = [
+            o for o in orders_for_decision if not o.reduce_only and not o.is_terminal()
+        ]
+        if open_non_reduce_only and decision_id not in reserved_decision_ids:
+            missing_reservation.append(decision_id)
+
+    if missing_reservation:
+        reason = (
+            "PERSISTENCE_RECOVERY_ORPHAN_EXPOSURE: non-terminal, non-reduce-only order(s) for "
+            f"decision(s) {sorted(missing_reservation)} have no matching risk reservation after "
+            "recovery -- exposure may exist that risk never approved, or the approval was lost"
+        )
+        _halt_recovery(risk_engine=risk_engine, execution_engine=execution_engine, reason=reason)
+        return pipeline, PipelineRecoveryResult(
+            ok=False,
+            halted=True,
+            orphan_reservations_released=tuple(orphans),
+            mismatch_detail=reason,
+        )
+
+    # -- weak paper self-check reconciliation --------------------------------
+    # Paper trading has no independent venue to reconcile against. Using the
+    # now-verified persisted/replayed positions as a self-check "venue"
+    # snapshot satisfies reconcile()'s existing mechanical gate (local ==
+    # "venue" by construction) so execution_engine.mode can advance out of
+    # RECONCILING -- this is explicitly NOT real venue reconciliation, only
+    # documented parity with PaperExecutionEngine.reconcile()'s expected
+    # input shape, matching the original design analysis's recommendation
+    # for paper. A persisted HALTED execution mode is left untouched (the
+    # `is EngineMode.RECONCILING` guard below only ever fires for
+    # RECONCILING, never for HALTED) -- never silently auto-recovered by a
+    # restart alone.
+    if execution_engine.mode is EngineMode.RECONCILING:
+        venue_state = {
+            "orders": {
+                client_id: True
+                for client_id, order in execution_engine.orders.items()
+                if not order.is_terminal()
+            },
+            "positions": {
+                instrument: str(view.quantity) for instrument, view in portfolio.positions.items()
+            },
+        }
+        execution_engine.reconcile(venue_state, now)
+
+    return pipeline, PipelineRecoveryResult(
+        ok=True, halted=False, orphan_reservations_released=tuple(orphans)
+    )
 

@@ -1050,6 +1050,19 @@ class PaperExecutionEngine:
         order.updated_at = now
         self._log("transition", client_order_id=order.client_order_id, status=str(target))
 
+    # -- read-only views ---------------------------------------------------
+
+    @property
+    def orders(self) -> Mapping[str, Order]:
+        """Read-only view of every tracked order (open and terminal), keyed
+        by client_order_id. Added for the persistence integration slice,
+        which needs typed (Decimal/enum/datetime, not string-serialized)
+        access to order state alongside the already-serialized
+        `export_checkpoint()`, without duplicating a second order-shape
+        reconstruction. Callers must not mutate the returned mapping's
+        `Order` objects."""
+        return self._orders
+
     # -- checkpointing ---------------------------------------------------
 
     def export_checkpoint(self) -> dict[str, Any]:

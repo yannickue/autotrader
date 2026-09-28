@@ -96,6 +96,14 @@ class RiskEngine:
     def halted(self) -> bool:
         return self._halted
 
+    @property
+    def halt_reason(self) -> str | None:
+        """Mirrors `PaperExecutionEngine.halt_reason`'s public naming so a
+        caller (e.g. the persistence integration slice) can read/persist
+        either engine's halt reason uniformly without reaching into a
+        private attribute."""
+        return self._halt_reason
+
     def halt(self, reason: str) -> None:
         self._halted = True
         self._halt_reason = reason

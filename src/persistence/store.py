@@ -254,6 +254,7 @@ class SQLiteStore:
         halt_state: HaltStateRecord | None = None,
         reconciliation_state: ReconciliationStateRecord | None = None,
         component_state: Mapping[str, dict[str, Any]] | None = None,
+        fills: Iterable[FillRecord] = (),
     ) -> None:
         """Atomically replace the full set of mutable-state tables in ONE commit.
 
@@ -262,8 +263,7 @@ class SQLiteStore:
         fill's several individual writes (order, reservation, position,
         portfolio state, ...) are applied one at a time and the process dies
         mid-sequence is instead replaced together here, inside one
-        `transaction()`. `fills` is deliberately excluded -- it stays
-        append-only via `record_fill()`, never replaced wholesale.
+        `transaction()`.
 
         `positions`/`orders`/`reservations`/`reduce_only_reservations` are
         always fully replaced (existing rows deleted first, so this is the
@@ -272,6 +272,16 @@ class SQLiteStore:
         singleton rows: passing `None` leaves that row untouched, passing a
         record replaces it. `component_state`, when given (not `None`), fully
         replaces the entire component_state table with the given mapping.
+
+        `fills` (Slice 4b): `fills` itself stays append-only -- these rows are
+        never deleted/replaced wholesale like the tables above -- but passing
+        the current call's newly observed fills here records them (via
+        `record_fill`'s own idempotent `INSERT OR IGNORE`) INSIDE the same
+        transaction as the rest of this snapshot, so "this fill was recorded"
+        and "the rest of this call's state was snapshotted" commit or roll
+        back together atomically. A caller with no new fills for this call
+        (the common case) passes nothing and gets exactly the pre-Slice-4b
+        behavior.
         """
         with self.transaction():
             self._conn.execute("DELETE FROM positions")
@@ -296,6 +306,8 @@ class SQLiteStore:
                 self._conn.execute("DELETE FROM component_state")
                 for component, payload in component_state.items():
                     self.set_component_state(component, payload)
+            for fill in fills:
+                self.record_fill(fill)
 
     # -- writes (all idempotent: same primary key overwrites, not duplicates) --
 
