@@ -34,6 +34,36 @@ data-quality/staleness/invalid-input checks before the reference price is ever c
 
 Resolves `docs/OPEN_QUESTIONS.md` #23 (2026-09-28).
 
+## Margin and liquidation safety
+
+After sizing (which needs quantity/notional) and before the reservation is written, every approval
+also passes a margin/liquidation-safety check (`MarginEngine.evaluate_stop_safety`, `src/margin/`):
+the request's stop must clear the estimated liquidation price, buffered by a configured venue
+uncertainty margin, by at least a configured minimum distance. Both the buffer
+(`RiskPolicy.liquidation_uncertainty_buffer_bps`) and the minimum distance
+(`RiskPolicy.min_stop_liquidation_distance_bps`) are required, fail-closed configuration — never
+optional/None-means-disabled. The liquidation estimate uses `risk_reference_price`, never
+`request.entry_price`, consistent with "Risk reference price" above.
+
+The leverage fed into the liquidation estimate is `account_gross_leverage_after` — the account-wide
+cross-margin worst case after this fill — not per-decision leverage and not the strictest
+configured cap (`docs/OPEN_QUESTIONS.md` #25, Q-M1). Per-instrument maintenance-margin-rate
+assumptions live on `InstrumentRiskLimits.maintenance_margin_rate`.
+
+A rejection here (`MARGIN_STOP_TOO_CLOSE_TO_LIQUIDATION` or `MARGIN_STOP_BEYOND_LIQUIDATION`)
+leaves no reservation behind. An approval's metadata records
+`liquidation_estimate_buffered`/`stop_liquidation_distance_bps` and always marks
+`liquidation_is_estimate: True` — this is a simplified isolated-margin approximation, never an
+exact venue computation (see `src/margin/engine.py` module docstring for the exact formula and its
+known omissions: fees, funding accrual, mark-price basis, tiered margin schedules, ADL/insurance
+fund mechanics).
+
+`_stop_distance` also validates the stop is on the correct side of `risk_reference_price`, not just
+`request.entry_price` — a stop between the two would otherwise pass validation yet trigger
+immediately once sizing/margin math switches to the reference price.
+
+Resolves `docs/OPEN_QUESTIONS.md` #25 Q-M1 (2026-09-28).
+
 ## Leverage
 
 The system ceiling is 20x; each environment, venue, instrument, strategy, and account may configure

@@ -110,6 +110,7 @@ def make_limits(**overrides: Any) -> InstrumentRiskLimits:
         min_notional=Decimal("10"),
         max_notional=Decimal("1000000"),
         max_spread_bps=Decimal("250"),
+        maintenance_margin_rate=Decimal("0.005"),
     )
     values.update(overrides)
     return InstrumentRiskLimits(**values)

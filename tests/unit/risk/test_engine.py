@@ -47,6 +47,7 @@ def _limits(**changes: object) -> InstrumentRiskLimits:
         "min_notional": Decimal("10"),
         "max_notional": Decimal("4000"),
         "max_spread_bps": Decimal("250"),
+        "maintenance_margin_rate": Decimal("0.005"),
     }
     values.update(changes)
     return InstrumentRiskLimits(**values)
@@ -410,6 +411,29 @@ def test_invalid_stop_sell_rejects() -> None:
     assert decision.reason_code == RiskReason.INVALID_STOP
 
 
+def test_invalid_stop_between_reference_price_and_entry_price_for_buy_rejects() -> None:
+    """A stop can pass the entry_price-only check yet still sit on the wrong
+    side of the real executable risk_reference_price -- it would trigger
+    immediately once sizing/margin math switches to that reference price
+    (docs/RISK_CONTRACT.md "Risk reference price"). Uses a wide market so a
+    BUY entry_price above the reference price still clears the dynamic
+    deviation tolerance, isolating this new reference-price-side check from
+    the pre-existing entry_price-side one."""
+    wide_instrument = _limits(max_spread_bps=Decimal("3000"), max_notional=Decimal("100000"))
+    wide_snapshot = _snapshot(bid=Decimal("90"), ask=Decimal("110"), volatility=Decimal("0.05"))
+    # reference_price = ask(110) + 5bps slippage = 110.055; entry_price=115 is
+    # comfortably inside this market's deviation tolerance. stop_price=112
+    # sits between reference_price(110.055) and entry_price(115): the OLD
+    # check (stop_price >= entry_price only) would pass this (112 < 115).
+    decision = _evaluate(
+        RiskEngine(_policy()),
+        request=_request(side=RiskSide.BUY, entry_price=Decimal("115"), stop_price=Decimal("112")),
+        snapshot=wide_snapshot,
+        instrument=wide_instrument,
+    )
+    assert decision.reason_code == RiskReason.INVALID_STOP
+
+
 def test_volatility_too_high_rejects() -> None:
     policy = _policy(max_volatility=Decimal("0.01"))
     decision = _evaluate(RiskEngine(policy), snapshot=_snapshot(volatility=Decimal("0.05")))
@@ -464,6 +488,83 @@ def test_size_below_minimum_rejects() -> None:
     assert decision.reason_code == RiskReason.SIZE_BELOW_MINIMUM
     assert decision.quantity == 0
     assert decision.notional == 0
+
+
+# -- margin/liquidation safety (docs/OPEN_QUESTIONS.md #25, Q-M1) --------------
+
+
+def _high_leverage_setup(**request_changes: object) -> tuple[RiskEngine, dict[str, object]]:
+    """Shared config that drives sizing to bind on the leverage_cap candidate
+    at ~20x, so MarginEngine.evaluate_stop_safety sees a real (non-degenerate)
+    buffered liquidation price instead of the near-zero one the default,
+    heavily-under-leveraged happy-path fixtures produce."""
+    engine = RiskEngine(
+        _policy(
+            risk_fraction=Decimal("1"),
+            max_leverage=Decimal("20"),
+            max_gross_notional=Decimal("50000"),
+            max_net_notional=Decimal("50000"),
+        )
+    )
+    kwargs: dict[str, object] = {
+        "instrument": _limits(max_leverage=Decimal("20"), max_notional=Decimal("50000")),
+        "account": _account(leverage_cap=Decimal("20")),
+        "request": _request(available_liquidity_notional=Decimal("1000000"), **request_changes),
+    }
+    return engine, kwargs
+
+
+def test_margin_check_rejects_stop_beyond_liquidation_and_leaves_no_reservation() -> None:
+    # Default request stop_price=95 sits below the ~97 buffered liquidation
+    # price this leverage/maintenance-rate combination produces -> beyond
+    # liquidation for a LONG.
+    engine, kwargs = _high_leverage_setup()
+
+    decision = _evaluate(engine, **kwargs)
+
+    assert decision.approved is False
+    assert decision.reason_code == RiskReason.MARGIN_STOP_BEYOND_LIQUIDATION
+    assert decision.quantity == Decimal("0")
+    assert decision.notional == Decimal("0")
+    # No reservation was left behind by the rejected decision.
+    assert engine._reserved_gross == Decimal("0")
+    assert engine._reserved_net == Decimal("0")
+
+
+def test_margin_check_approves_when_stop_is_safely_clear_of_liquidation() -> None:
+    engine, kwargs = _high_leverage_setup(stop_price=Decimal("99"))
+
+    decision = _evaluate(engine, **kwargs)
+
+    assert decision.approved is True
+    assert decision.reason_code == RiskReason.APPROVED
+    assert decision.metadata["liquidation_is_estimate"] is True
+    assert "liquidation_estimate_buffered" in decision.metadata
+    assert Decimal(decision.metadata["stop_liquidation_distance_bps"]) >= Decimal("100")
+    # The reservation was written, proving the margin check ran and passed
+    # before the reservation write.
+    assert engine._reserved_gross == decision.notional
+
+
+def test_margin_engine_value_error_halts_fail_closed() -> None:
+    """A ValueError from MarginEngine's own input validation means every
+    input reaching it should already have been validated as finite/positive
+    by this point in `_evaluate_inner` -- so it signals a genuine bug and
+    must fall through to the existing fail-closed `except Exception` path in
+    `evaluate()`, never be caught/downgraded to a plain rejection."""
+    engine = RiskEngine(_policy())
+
+    class _BoomMargin:
+        def evaluate_stop_safety(self, **kwargs: object) -> None:
+            raise ValueError("boom: invalid margin inputs")
+
+    engine._margin = _BoomMargin()
+
+    decision = _evaluate(engine)
+
+    assert decision.approved is False
+    assert decision.reason_code == RiskReason.RISK_ERROR
+    assert engine.halted is True
 
 
 # -- hooks ---------------------------------------------------------------------

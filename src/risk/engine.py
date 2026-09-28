@@ -6,6 +6,13 @@ from datetime import datetime, timedelta
 from decimal import ROUND_DOWN, Decimal
 
 from data.models import DataQuality, MarketSnapshot
+from margin.engine import MarginEngine
+from margin.models import (
+    MaintenanceMarginPolicy,
+    MarginPositionSide,
+    MarginSafetyReason,
+    VenueUncertaintyBuffer,
+)
 from risk.models import (
     MAX_SYSTEM_LEVERAGE,
     AccountRiskState,
@@ -66,6 +73,10 @@ class RiskEngine:
     def __init__(self, policy: RiskPolicy, hooks: Sequence[RiskHook] | None = None) -> None:
         self._policy = policy
         self._hooks: tuple[RiskHook, ...] = tuple(hooks) if hooks else ()
+        # Stateless (see margin.engine module docstring), so constructing it
+        # internally is safe -- no caller ever needs to inject a different
+        # instance since it has no configuration of its own.
+        self._margin = MarginEngine()
         self._halted = False
         self._halt_reason: str | None = None
         self._decisions: dict[str, RiskDecision] = {}
@@ -425,7 +436,7 @@ class RiskEngine:
         if deviation_bps > deviation_tolerance_bps:
             raise RiskRejection(RiskReason.ENTRY_PRICE_DEVIATION)
 
-        stop_distance = self._stop_distance(request)
+        stop_distance = self._stop_distance(request, reference_price)
 
         if policy.max_volatility is not None:
             if snapshot.volatility is None:
@@ -504,6 +515,45 @@ class RiskEngine:
         if quantity < instrument.min_quantity or notional < instrument.min_notional:
             raise RiskRejection(RiskReason.SIZE_BELOW_MINIMUM)
 
+        leverage = notional / account.equity
+        if leverage > max_leverage:
+            raise RuntimeError("computed leverage exceeds max_leverage")
+        gross_after_fill = account.gross_notional + reserved_gross + notional
+        account_gross_leverage_after = gross_after_fill / account.equity
+        if account_gross_leverage_after > max_leverage:
+            raise RuntimeError("account gross leverage after fill exceeds max_leverage")
+
+        # Margin/liquidation-safety check (docs/OPEN_QUESTIONS.md #25, Q-M1):
+        # must run after sizing (needs quantity/notional/leverage) and before
+        # the reservation write below, so a rejection here never leaves a
+        # reservation behind. Uses account_gross_leverage_after -- the
+        # account-wide cross-margin worst case -- per the confirmed policy
+        # decision, never per-decision leverage or the strictest configured
+        # cap. entry_price is risk_reference_price, never request.entry_price.
+        margin_side = (
+            MarginPositionSide.LONG if request.side == RiskSide.BUY else MarginPositionSide.SHORT
+        )
+        margin_estimate = self._margin.evaluate_stop_safety(
+            side=margin_side,
+            entry_price=reference_price,
+            stop_price=request.stop_price,
+            leverage=account_gross_leverage_after,
+            maintenance_policy=MaintenanceMarginPolicy(
+                maintenance_margin_rate=instrument.maintenance_margin_rate
+            ),
+            uncertainty_buffer=VenueUncertaintyBuffer(
+                buffer_bps=policy.liquidation_uncertainty_buffer_bps
+            ),
+            min_required_distance_bps=policy.min_stop_liquidation_distance_bps,
+        )
+        if not margin_estimate.safe:
+            margin_reason_code = (
+                RiskReason.MARGIN_STOP_BEYOND_LIQUIDATION
+                if margin_estimate.reason_code == MarginSafetyReason.STOP_BEYOND_LIQUIDATION
+                else RiskReason.MARGIN_STOP_TOO_CLOSE_TO_LIQUIDATION
+            )
+            raise RiskRejection(margin_reason_code)
+
         for hook in self._hooks:
             context = RiskHookContext(
                 request=request,
@@ -516,14 +566,6 @@ class RiskEngine:
             hook_reason = hook(context)
             if hook_reason is not None:
                 raise RiskRejection(f"HOOK:{hook_reason}")
-
-        leverage = notional / account.equity
-        if leverage > max_leverage:
-            raise RuntimeError("computed leverage exceeds max_leverage")
-        gross_after_fill = account.gross_notional + reserved_gross + notional
-        account_gross_leverage_after = gross_after_fill / account.equity
-        if account_gross_leverage_after > max_leverage:
-            raise RuntimeError("account gross leverage after fill exceeds max_leverage")
 
         signed_notional = notional if request.side == RiskSide.BUY else -notional
         self._reservations[decision_id] = (request.side, notional, signed_notional)
@@ -556,6 +598,11 @@ class RiskEngine:
                 "risk_reference_price": str(reference_price),
                 "entry_price_deviation_bps": str(deviation_bps),
                 "entry_price_deviation_tolerance_bps": str(deviation_tolerance_bps),
+                "liquidation_estimate_buffered": str(
+                    margin_estimate.liquidation_estimate.buffered_liquidation_price
+                ),
+                "stop_liquidation_distance_bps": str(margin_estimate.distance_bps),
+                "liquidation_is_estimate": True,
             },
         )
 
@@ -574,12 +621,17 @@ class RiskEngine:
         buffer = snapshot.bid * policy.reference_price_slippage_bps / TEN_THOUSAND
         return snapshot.bid - buffer
 
-    def _stop_distance(self, request: PositionSizingRequest) -> Decimal:
+    def _stop_distance(self, request: PositionSizingRequest, reference_price: Decimal) -> Decimal:
+        # A stop must sit on the correct side of BOTH the strategy-supplied
+        # entry_price AND the real executable risk_reference_price -- a stop
+        # between the two could pass the entry_price-only check yet still
+        # trigger immediately once sizing/margin math switches to the
+        # reference price (docs/RISK_CONTRACT.md "Risk reference price").
         if request.side == RiskSide.BUY:
-            if request.stop_price >= request.entry_price:
+            if request.stop_price >= request.entry_price or request.stop_price >= reference_price:
                 raise RiskRejection(RiskReason.INVALID_STOP)
         else:
-            if request.stop_price <= request.entry_price:
+            if request.stop_price <= request.entry_price or request.stop_price <= reference_price:
                 raise RiskRejection(RiskReason.INVALID_STOP)
         return abs(request.entry_price - request.stop_price)
 

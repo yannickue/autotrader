@@ -49,6 +49,8 @@ class RiskReason(StrEnum):
     EXPOSURE_LIMIT = "EXPOSURE_LIMIT"
     SIZE_BELOW_MINIMUM = "SIZE_BELOW_MINIMUM"
     RISK_ERROR = "RISK_ERROR"
+    MARGIN_STOP_TOO_CLOSE_TO_LIQUIDATION = "MARGIN_STOP_TOO_CLOSE_TO_LIQUIDATION"
+    MARGIN_STOP_BEYOND_LIQUIDATION = "MARGIN_STOP_BEYOND_LIQUIDATION"
 
     # Reduce-only specific
     NO_POSITION = "NO_POSITION"
@@ -101,6 +103,13 @@ class RiskPolicy:
     reference_price_min_tolerance_bps: Decimal = Decimal("20")
     reference_price_spread_tolerance_multiplier: Decimal = Decimal("2")
     reference_price_volatility_tolerance_multiplier: Decimal = Decimal("2")
+    # -- margin/liquidation-safety contract (docs/OPEN_QUESTIONS.md #25, Q-M1) ---
+    # Both are required, fail-closed configuration (never None-means-disabled):
+    # liquidation_uncertainty_buffer_bps pads MarginEngine's simplified liquidation
+    # estimate toward entry (conservative direction); min_stop_liquidation_distance_bps
+    # is the minimum clearance a stop must keep from that buffered estimate.
+    liquidation_uncertainty_buffer_bps: Decimal = Decimal("50")
+    min_stop_liquidation_distance_bps: Decimal = Decimal("100")
 
     def __post_init__(self) -> None:
         _validate_leverage_ceiling(self.max_leverage, "max_leverage")
@@ -127,6 +136,8 @@ class RiskPolicy:
             "reference_price_min_tolerance_bps",
             "reference_price_spread_tolerance_multiplier",
             "reference_price_volatility_tolerance_multiplier",
+            "liquidation_uncertainty_buffer_bps",
+            "min_stop_liquidation_distance_bps",
         ):
             value = getattr(self, name)
             if not value.is_finite() or value < 0:
@@ -142,9 +153,18 @@ class InstrumentRiskLimits:
     min_notional: Decimal
     max_notional: Decimal
     max_spread_bps: Decimal
+    # Per-instrument maintenance-margin-rate assumption fed into
+    # margin.models.MaintenanceMarginPolicy for the liquidation-safety check
+    # (docs/OPEN_QUESTIONS.md #25, Q-M1) -- venue/instrument-specific, so it
+    # lives here rather than on the shared RiskPolicy.
+    maintenance_margin_rate: Decimal
 
     def __post_init__(self) -> None:
         _validate_leverage_ceiling(self.max_leverage, "max_leverage")
+        if not self.maintenance_margin_rate.is_finite() or not (
+            Decimal("0") <= self.maintenance_margin_rate < Decimal("1")
+        ):
+            raise ValueError("maintenance_margin_rate must be finite and in [0, 1)")
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

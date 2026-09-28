@@ -49,6 +49,7 @@ def _limits(**changes: object) -> InstrumentRiskLimits:
         "min_notional": Decimal("1"),
         "max_notional": Decimal("4000"),
         "max_spread_bps": Decimal("250"),
+        "maintenance_margin_rate": Decimal("0.005"),
     }
     values.update(changes)
     return InstrumentRiskLimits(**values)
