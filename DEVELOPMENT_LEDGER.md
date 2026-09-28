@@ -525,3 +525,26 @@ Per explicit user instruction: next work moves directly to ActivTrades MT5 -> In
 CFD data ingestion -> FeatureRegistry -> OpportunityScanner -> simple Regime Engine -> Momentum/
 Breakout/Pullback validation on DAX/NASDAQ/WTI -> VectorBT screening -> Nautilus replay -> OOS/
 walk-forward -> ALPHA VIABILITY REPORT V1. Not further infrastructure unless a blocker is found.
+
+## 2026-09-29 — CFD/MT5 foundation: InstrumentSpec, data ingestion, cost safety, scaffolding
+
+TASK: Priority 1-4 credential-free foundation for the CFD/ActivTrades/MT5 expansion, per the
+post-Phase-A master directive's "prepare everything possible now" mandate.
+MODEL: 2x Sonnet BUILDER (parallel, independent tracks), Sonnet 5 (Lead) review + lint fixes +
+commit.
+WHY: Both tracks are standalone, fully fixture-testable without a live MT5 connection or
+credentials, and independent of each other (data/instrument model vs. cost-schedule safety +
+scaffolding) -- routed as ordinary well-specified BUILDER tasks.
+RESULT: See commit `052a8cc`. `src/instruments/` (InstrumentSpec, symbol discovery/matching),
+`src/data/` extensions (provenance, Parquet store, quality checks), `src/costs/` hardened
+against silent cross-venue schedule reuse (new required `instrument_class`/`cost_confidence`,
+`calculate_trade_costs` now raises on a mismatch), `MetaTrader5` dependency added and verified
+importable on this host, `.env.example`/`PENDING_USER_INPUT.md`/`src/adapters/config.py`/four
+script skeletons.
+TESTS: 562 passed, 1 skipped (was 480/1); ruff clean; compileall clean.
+
+Next: MT5 adapter itself (`src/adapters/activtrades_mt5/`), now that `InstrumentSpec` exists as
+a stable contract to convert raw MT5 data into. Read-side first (typed wrappers around
+initialize/account_info/symbols_get/symbol_info/copy_rates/copy_ticks/order_calc_margin/
+order_calc_profit/order_check), connection/health state machine, mock MT5 client for testing
+(no real terminal in this environment). Write-side interface prepared but disabled by default.
