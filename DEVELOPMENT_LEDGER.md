@@ -353,3 +353,25 @@ Phase A wave 1 (A1 costs, A2 exits, A3 persistence, A4 margin) is now complete. 
 modules are wired into `src/pipeline`/`src/execution`/`src/risk` yet. Next: integration step
 (Lead, not delegated -- touches the shared pipeline/risk/execution files) wiring all four in, plus
 Phase A5 (clock/latency/health) and the two exit-engine test-coverage gaps above.
+
+## 2026-09-28 — Phase A5: clock/latency/health (Phase A complete)
+
+TASK: Clock/Latency/Health monitoring (A5).
+MODEL: Sonnet BUILDER (direct checkout), Sonnet 5 (Lead) for review.
+RESULT: `src/health/` added -- clock drift, market-data/signal staleness, heartbeat
+HEALTHY/STALE/DISCONNECTED classification, p50/p95/p99 pipeline-stage latency (nearest-rank,
+exact recorded samples), and a pure `HealthEngine.evaluate()` aggregate with
+`HealthAssessment.block_new_exposure`. See commit `e054d2f`.
+TESTS: 405 passed, 1 skipped (was 357/1); ruff clean; compileall clean.
+
+**Phase A (realism gaps) is now complete: A1 costs, A2 exits, A3 persistence, A4 margin, A5
+health -- five standalone, independently-tested modules, none yet wired into the live
+pipeline/risk/execution.** An AUDITOR (Opus) pass is in progress analyzing the integration plan
+for all five, given the financial-correctness and architectural stakes of touching the shared
+`src/pipeline/paper.py`, `src/risk/engine.py`, and `src/execution/paper.py` -- per this project's
+own CLAUDE.md model-routing rule that architecture/financial-critical decisions with multiple
+plausible interpretations should get AUDITOR-level analysis before a BUILDER implements them.
+
+Next: review the AUDITOR integration plan, then implement the wiring in reviewable slices (one
+module at a time, targeted tests green before the next), then proceed to Phase B (Opportunity
+Scanner) per the sprint brief's ordering.
