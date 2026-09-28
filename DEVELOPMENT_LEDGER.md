@@ -375,3 +375,18 @@ plausible interpretations should get AUDITOR-level analysis before a BUILDER imp
 Next: review the AUDITOR integration plan, then implement the wiring in reviewable slices (one
 module at a time, targeted tests green before the next), then proceed to Phase B (Opportunity
 Scanner) per the sprint brief's ordering.
+
+## 2026-09-28 — Integration Slice 1: margin wired into RiskEngine
+
+TASK: Wire src/margin into RiskEngine per the AUDITOR integration plan and user's confirmed
+Q-M1 decision (account_gross_leverage_after).
+MODEL: Sonnet BUILDER (direct checkout, fully-specified plan from AUDITOR), Sonnet 5 (Lead)
+review + docs/RISK_CONTRACT.md update + commit.
+RESULT: See commit `dfedac9`. Margin-safety check runs after sizing, before reservation write;
+_stop_distance also validates against risk_reference_price now. New RiskPolicy/
+InstrumentRiskLimits config (fail-closed, required, never optional).
+TESTS: 409 passed, 1 skipped (was 405/1); ruff clean; compileall clean. Full risk/property/
+integration surface verified green, not just new tests.
+
+Next: Slice 2 (fees/cost model wired into execution fills + pipeline loss accounting fix, per
+AUDITOR's G3 finding that daily-loss currently ignores fees).
