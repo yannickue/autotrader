@@ -92,7 +92,35 @@ records and resolves them here.
     `risk_engine.release(decision.decision_id)` on every terminal outcome of a reduce-only order,
     mirroring exactly what `src/pipeline/paper.py`'s entry path already does. Not implemented now
     because there is no real caller to wire it into yet — do not invent one.
-25. `PaperExecutionEngine.cancel_replace()`'s `new_price` parameter lets a caller reprice a
+25. **RESOLVED 2026-09-28 (Phase A integration policy decisions).** An AUDITOR (Opus) integration
+    plan for wiring `src/costs`, `src/exits`, `src/persistence`, `src/margin` into
+    `src/pipeline/paper.py` / `src/risk/engine.py` / `src/execution/paper.py` surfaced six genuine
+    policy decisions, resolved by the user as follows (implementation follows in sequential
+    slices; see DEVELOPMENT_LEDGER.md):
+    - **Margin leverage input (Q-M1):** the liquidation-safety check
+      (`MarginEngine.evaluate_stop_safety`) uses `account_gross_leverage_after` (the account-wide
+      cross-margin worst case already computed in `RiskEngine._evaluate_inner`), not
+      per-decision leverage or the strictest configured cap.
+    - **Pyramiding/reversal (Q-X1):** one open position per instrument. No new entry while a
+      position is open on that instrument; an opposite-direction signal is a reversal trigger for
+      the exit engine (closes the position) and never flips it through zero in the same tick.
+    - **Reduce-only during HALT (Q-X2):** allowed, except when the halt itself means account
+      state is unreliable (a reconciliation mismatch or an unrecognized/unknown order) — matches
+      `docs/ARCHITECTURE.md`'s existing "reduce-only allowed in HALTED/DEGRADED when account state
+      is known" language.
+    - **Halt/kill-switch flattening (Q-X3):** no automatic flattening. A halt means
+      NO_NEW_EXPOSURE only; existing positions stay open under normal exit management. The exit
+      engine's forced-emergency-close path stays reserved for stale/invalid market data, not for
+      every halt.
+    - **Funding cost (Q-C1):** reported/estimated in `CostBreakdown` only, never debited into
+      realized PnL — the `floor(holding/interval) * rate` approximation is known-imprecise
+      relative to how real perpetual funding is actually paid (only at the funding timestamp).
+    - **Exit engine vs. execution ownership (Q-X0):** the exit engine is a decision layer (like a
+      strategy) that emits reduce-only intent through risk; execution keeps mechanically managing
+      a protective STOP order at the original invalidation level as a hard backstop. Neither
+      module's existing responsibilities are redesigned.
+
+26. `PaperExecutionEngine.cancel_replace()`'s `new_price` parameter lets a caller reprice a
     resting limit order to anything (no bounds check), while the ORIGINAL risk-approved leverage/
     notional/gross-net-exposure caps were computed against the ORIGINAL `entry_price`. Confirmed
     by independent review, 2026-09-27: repricing a small approved order to a price orders of
