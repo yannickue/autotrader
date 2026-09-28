@@ -410,6 +410,21 @@ class RiskEngine:
         if spread_bps > instrument.max_spread_bps:
             raise RiskRejection(RiskReason.SPREAD_TOO_WIDE)
 
+        reference_price = self._reference_price(side=request.side, snapshot=snapshot, policy=policy)
+        if reference_price <= 0:
+            raise RiskRejection(RiskReason.INVALID_INPUT)
+        volatility_bps = (snapshot.volatility or ZERO) * TEN_THOUSAND
+        deviation_tolerance_bps = max(
+            policy.reference_price_min_tolerance_bps,
+            policy.reference_price_spread_tolerance_multiplier * spread_bps,
+            policy.reference_price_volatility_tolerance_multiplier * volatility_bps,
+        )
+        deviation_bps = (
+            abs(request.entry_price - reference_price) / reference_price * TEN_THOUSAND
+        )
+        if deviation_bps > deviation_tolerance_bps:
+            raise RiskRejection(RiskReason.ENTRY_PRICE_DEVIATION)
+
         stop_distance = self._stop_distance(request)
 
         if policy.max_volatility is not None:
@@ -463,11 +478,11 @@ class RiskEngine:
             policy.reduce_risk_multiplier if reduce_risk else Decimal("1")
         )
         risk_budget = account.equity * effective_risk_fraction
-        round_trip_cost = request.entry_price * policy.estimated_cost_bps * 2 / TEN_THOUSAND
+        round_trip_cost = reference_price * policy.estimated_cost_bps * 2 / TEN_THOUSAND
         per_unit_loss = stop_distance + round_trip_cost
         qty_risk = risk_budget / per_unit_loss
 
-        entry = request.entry_price
+        entry = reference_price
         candidates: dict[str, Decimal] = {
             "risk_budget": qty_risk,
             "leverage_cap": max_leverage * account.equity / entry,
@@ -538,8 +553,26 @@ class RiskEngine:
                 "spread_bps": str(spread_bps),
                 "per_unit_loss": str(per_unit_loss),
                 "account_gross_leverage_after": str(account_gross_leverage_after),
+                "risk_reference_price": str(reference_price),
+                "entry_price_deviation_bps": str(deviation_bps),
+                "entry_price_deviation_tolerance_bps": str(deviation_tolerance_bps),
             },
         )
+
+    def _reference_price(
+        self, *, side: RiskSide, snapshot: MarketSnapshot, policy: RiskPolicy
+    ) -> Decimal:
+        """Authoritative executable-market reference price for sizing/exposure math.
+
+        Never `request.entry_price` (docs/OPEN_QUESTIONS.md #23): ask + slippage
+        buffer for BUY, bid - slippage buffer for SELL. `entry_price` remains
+        strategy intent only, validated against this reference elsewhere.
+        """
+        if side == RiskSide.BUY:
+            buffer = snapshot.ask * policy.reference_price_slippage_bps / TEN_THOUSAND
+            return snapshot.ask + buffer
+        buffer = snapshot.bid * policy.reference_price_slippage_bps / TEN_THOUSAND
+        return snapshot.bid - buffer
 
     def _stop_distance(self, request: PositionSizingRequest) -> Decimal:
         if request.side == RiskSide.BUY:

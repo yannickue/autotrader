@@ -1294,7 +1294,14 @@ def scenario_metrics_json_serializable() -> dict[str, Any]:
     # constraint for both legs, and each snapshot's `liquidity` field is set
     # to request exactly one unit -- everything else (risk budget, leverage,
     # notional caps) is left generous so it never binds instead.
+    #
+    # Sizing keys off the risk_reference_price (ask + slippage buffer for a
+    # BUY, bid - slippage buffer for a SELL; see RiskPolicy
+    # reference_price_slippage_bps), never the raw bid/ask, so the requested
+    # liquidity notional must match that reference price exactly for the
+    # binding quantity to land on precisely `target_quantity`.
     policy = make_policy(risk_fraction=Decimal("1"), liquidity_fraction=Decimal("1"))
+    _slippage_fraction = policy.reference_price_slippage_bps / Decimal("10000")
     limits = make_limits(max_notional=Decimal("100000000"), max_leverage=Decimal("20"))
     h = build_harness(
         starting_balance=Decimal("1000000"),
@@ -1317,7 +1324,7 @@ def scenario_metrics_json_serializable() -> dict[str, Any]:
         bid=open_snapshot.bid,
         ask=open_snapshot.ask,
         last=open_snapshot.last,
-        liquidity=open_snapshot.ask * target_quantity,
+        liquidity=open_snapshot.ask * (Decimal("1") + _slippage_fraction) * target_quantity,
     )
     open_outcome = h.pipeline.process(
         history=(open_snapshot,),
@@ -1336,7 +1343,7 @@ def scenario_metrics_json_serializable() -> dict[str, Any]:
         bid=Decimal("104.9"),
         ask=Decimal("105.1"),
         last=Decimal("105"),
-        liquidity=Decimal("104.9") * target_quantity,
+        liquidity=Decimal("104.9") * (Decimal("1") - _slippage_fraction) * target_quantity,
     )
     close_signal = make_signal(
         direction=Direction.SHORT,

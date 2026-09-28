@@ -137,14 +137,17 @@ def test_sizes_linear_usdm_by_risk_and_rounds_down_to_step() -> None:
 
     assert decision.approved is True
     assert decision.reason_code is RiskReason.APPROVED
-    # risk_budget=10, per_unit_loss=5 + 100*10*2/10000=5.2 -> qty_risk=1.923...
+    # risk_reference_price = ask(101) + 5bps slippage = 101.0505 (BUY uses ask, not entry_price=100)
+    # per_unit_loss = stop_distance(5) + 101.0505*10*2/10000=0.202101 -> per_unit_loss=5.202101
+    # risk_budget=10 -> qty_risk=1.92234... rounds down to step 0.1 -> 1.9
     assert decision.quantity == Decimal("1.9")
-    assert decision.notional == Decimal("190.0")
+    assert decision.notional == Decimal("191.99595")
     assert decision.risk_budget == Decimal("10.00")
     assert decision.max_leverage == Decimal("5")
-    assert decision.leverage == Decimal("0.19")
+    assert decision.leverage == Decimal("0.19199595")
     assert decision.stop_price == Decimal("95")
     assert decision.metadata["binding_constraint"] == "risk_budget"
+    assert decision.metadata["risk_reference_price"] == "101.0505"
 
 
 def test_confidence_never_influences_sizing() -> None:
@@ -314,6 +317,79 @@ def test_spread_too_wide_rejects() -> None:
     wide = _snapshot(bid=Decimal("90"), ask=Decimal("110"))
     decision = _evaluate(RiskEngine(_policy()), snapshot=wide)
     assert decision.reason_code == RiskReason.SPREAD_TOO_WIDE
+
+
+def test_reference_price_uses_ask_for_buy_not_entry_price() -> None:
+    """BUY sizing must key off ask + slippage, never request.entry_price."""
+    decision = _evaluate(
+        RiskEngine(_policy()),
+        request=_request(side=RiskSide.BUY, entry_price=Decimal("100"), stop_price=Decimal("95")),
+        snapshot=_snapshot(bid=Decimal("99"), ask=Decimal("101")),
+    )
+    assert decision.approved is True
+    # ask(101) + 5bps slippage buffer = 101.0505, never entry_price=100.
+    assert decision.metadata["risk_reference_price"] == "101.0505"
+    assert decision.notional == Decimal("1.9") * Decimal("101.0505")
+
+
+def test_reference_price_uses_bid_for_sell_not_entry_price() -> None:
+    """SELL sizing must key off bid - slippage, never request.entry_price."""
+    decision = _evaluate(
+        RiskEngine(_policy()),
+        request=_request(side=RiskSide.SELL, entry_price=Decimal("100"), stop_price=Decimal("105")),
+        snapshot=_snapshot(bid=Decimal("99"), ask=Decimal("101")),
+    )
+    assert decision.approved is True
+    # bid(99) - 5bps slippage buffer = 98.9505, never entry_price=100.
+    assert decision.metadata["risk_reference_price"] == "98.9505"
+
+
+def test_entry_price_far_from_market_rejects_sell_low_ball_entry() -> None:
+    """Regression for docs/OPEN_QUESTIONS.md #23: a SELL request quoting entry_price=10
+    against a market trading at bid/ask=99/101 must be rejected outright, never approved
+    at a computed leverage that looks safe only because sizing trusted the bogus entry
+    price instead of the real executable market price."""
+    decision = _evaluate(
+        RiskEngine(_policy()),
+        request=_request(side=RiskSide.SELL, entry_price=Decimal("10"), stop_price=Decimal("110")),
+        snapshot=_snapshot(bid=Decimal("99"), ask=Decimal("101")),
+    )
+    assert decision.approved is False
+    assert decision.reason_code == RiskReason.ENTRY_PRICE_DEVIATION
+    assert decision.quantity == Decimal("0")
+    assert decision.notional == Decimal("0")
+
+
+def test_entry_price_far_from_market_rejects_buy_high_ball_entry() -> None:
+    decision = _evaluate(
+        RiskEngine(_policy()),
+        request=_request(side=RiskSide.BUY, entry_price=Decimal("1000"), stop_price=Decimal("900")),
+        snapshot=_snapshot(bid=Decimal("99"), ask=Decimal("101")),
+    )
+    assert decision.approved is False
+    assert decision.reason_code == RiskReason.ENTRY_PRICE_DEVIATION
+
+
+def test_entry_price_deviation_tolerance_widens_with_spread_and_volatility() -> None:
+    """A wider market (wide spread, high volatility) tolerates a proportionally larger
+    entry_price deviation before rejecting, since the dynamic tolerance is derived from
+    the floor, the current spread, and the current volatility -- never a single fixed
+    global bps constant."""
+    wide_instrument = _limits(
+        max_spread_bps=Decimal("3000"), max_notional=Decimal("100000")
+    )
+    wide_snapshot = _snapshot(bid=Decimal("90"), ask=Decimal("110"), volatility=Decimal("0.05"))
+    # reference_price = ask(110) + 5bps slippage ~= 110.055; deviation from entry_price=95
+    # is ~1368bps, comfortably inside this market's ~4000bps spread/volatility-derived
+    # tolerance even though it is far above the 20bps floor.
+    decision = _evaluate(
+        RiskEngine(_policy()),
+        request=_request(side=RiskSide.BUY, entry_price=Decimal("95"), stop_price=Decimal("80")),
+        snapshot=wide_snapshot,
+        instrument=wide_instrument,
+    )
+    assert decision.approved is True
+    assert decision.metadata["entry_price_deviation_tolerance_bps"] != "20"
 
 
 def test_invalid_stop_buy_rejects() -> None:

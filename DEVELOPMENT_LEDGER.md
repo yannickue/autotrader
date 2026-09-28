@@ -276,3 +276,31 @@ out the independent-review cycle for this diff — `sprint1-rc1` can be tagged.
 
 Live trading stays hard-disabled regardless of test/review outcomes. Passing tests and clean
 reviews do not by themselves mean the system is ready for real-money trading.
+
+## 2026-09-28 — risk_reference_price contract fix (OPEN_QUESTIONS #23)
+
+TASK: Implement the user-decided policy for OPEN_QUESTIONS.md #23 (risk sizing trusted
+`request.entry_price` directly, letting an off-market entry price bypass leverage/exposure caps).
+MODEL: Sonnet 5 (Lead), direct implementation — user fully specified the policy in chat, so this
+was implementation of a fully-specified contract decision, not an open root-cause/architecture
+question; no delegation needed (context already loaded from reading the affected files).
+WHY: User explicitly requested this fix before Phase A4 (margin/liquidation safety) could
+meaningfully build on risk sizing.
+RESULT: Added `RiskEngine._reference_price` (ask+slippage for BUY, bid-slippage for SELL) as the
+sole input to sizing/exposure/leverage math; added `ENTRY_PRICE_DEVIATION` rejection with a
+dynamic tolerance (floor / spread multiple / volatility multiple, `RiskPolicy.reference_price_*`
+fields). Updated `docs/RISK_CONTRACT.md` and marked `docs/OPEN_QUESTIONS.md` #23 RESOLVED. Added
+regression tests reproducing the original SELL entry=10 vs bid/ask=99/101 bug and proving it now
+rejects (`tests/unit/risk/test_engine.py`), plus BUY-side and tolerance-widening cases. Fixed one
+pre-existing test's hardcoded notional (now correctly reflects the executable reference price
+instead of the raw entry price) and the E2E `scenario_metrics_json_serializable` fixture's
+liquidity-notional math (had to account for the new slippage buffer to keep hitting an exact
+target quantity).
+TESTS: 279 passed, 1 skipped (was 274/1); ruff clean; compileall clean; all 15 E2E scenarios pass.
+
+Items #24 (reduce-only reservation release — contract requirement for the exit engine, not a bug
+in currently-wired code) and #25 (`cancel_replace` repricing bound) remain open; #24 will be
+addressed directly when the Exit Engine (Phase A2) is built, per its own filed requirement.
+
+Next: proceed to Phase A (cost model, exit engine, persistence/recovery, margin/liquidation,
+clock/latency) per the sprint brief, now unblocked.

@@ -63,17 +63,21 @@ records and resolves them here.
 22. The durable checkpoint/event-journal storage backend is not selected. Sprint 1 can prove
     deterministic export/import but must not claim crash durability or external exactly-once
     guarantees.
-23. Risk sizing (leverage cap, gross/net capacity, instrument notional, liquidity) is computed
-    entirely from `request.entry_price`; only the spread check compares against market bid/ask.
-    An entry price far from the market (found in independent review, 2026-09-27: SELL request
-    `entry=10` vs. market `bid/ask=99/101`) is approved at a computed leverage far under the
-    configured cap, while the real notional at actual fill price would exceed it. Two candidate
-    resolutions were identified — reject when entry deviates from the executable market price
-    (ask for BUY, bid for SELL) beyond a tolerance, or size from `max(entry, executable_price)`
-    — but the tolerance value and reject-vs-clamp choice are a contract decision, not something to
-    invent while fixing a bug. See DEVELOPMENT_LEDGER.md's "Independent review findings" item 8
-    for the full repro and analysis. Sprint 1 leaves `request.entry_price` as the sole sizing
-    input until this is decided.
+23. **RESOLVED 2026-09-28.** Risk sizing (leverage cap, gross/net capacity, instrument notional,
+    liquidity) was computed entirely from `request.entry_price`; only the spread check compared
+    against market bid/ask. An entry price far from the market (found in independent review,
+    2026-09-27: SELL request `entry=10` vs. market `bid/ask=99/101`) was approved at a computed
+    leverage far under the configured cap, while the real notional at actual fill price would
+    exceed it. User-decided policy: introduce a canonical `risk_reference_price` (ask + slippage
+    buffer for BUY, bid - slippage buffer for SELL) that becomes authoritative for sizing,
+    exposure, leverage, margin, and liquidation-distance math; `request.entry_price` remains
+    strategy intent only and is validated against `risk_reference_price` with a dynamic tolerance
+    (floor, spread multiple, volatility multiple — never one fixed global bps constant),
+    rejecting with `ENTRY_PRICE_DEVIATION` beyond tolerance and fail-closed on missing/stale/
+    invalid market data. Implemented in `src/risk/engine.py` (`RiskEngine._reference_price`) and
+    `src/risk/models.py` (`RiskPolicy.reference_price_*` fields); see `docs/RISK_CONTRACT.md`
+    "Risk reference price" and regression tests in `tests/unit/risk/test_engine.py`
+    (`test_entry_price_far_from_market_rejects_*`).
 24. `RiskEngine.evaluate_reduce_only()` (added to fix a reduce-only-can-flip-past-flat bug,
     2026-09-27) reserves quantity per decision_id the same way `evaluate()` already did, released
     via `RiskEngine.release(decision_id)`. For the main `evaluate()` path, `src/pipeline/paper.py`

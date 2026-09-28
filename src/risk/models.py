@@ -38,6 +38,7 @@ class RiskReason(StrEnum):
     DATA_STALE = "DATA_STALE"
     SIGNAL_STALE = "SIGNAL_STALE"
     SPREAD_TOO_WIDE = "SPREAD_TOO_WIDE"
+    ENTRY_PRICE_DEVIATION = "ENTRY_PRICE_DEVIATION"
     INVALID_STOP = "INVALID_STOP"
     VOLATILITY_TOO_HIGH = "VOLATILITY_TOO_HIGH"
     DATA_MISSING = "DATA_MISSING"
@@ -89,6 +90,17 @@ class RiskPolicy:
     reduce_risk_drawdown_fraction: Decimal = Decimal("0.5")
     reduce_risk_daily_loss_fraction: Decimal = Decimal("0.5")
     reduce_risk_after_losses: int = 2
+    # -- risk_reference_price contract (docs/OPEN_QUESTIONS.md #23) --------
+    # Sizing, exposure caps, leverage, margin, and liquidation-distance math must
+    # use the executable market reference price (ask for BUY, bid for SELL) plus
+    # a slippage buffer, never the strategy-supplied request.entry_price
+    # directly. request.entry_price is validated against that reference with a
+    # dynamic tolerance (never a single fixed global bps constant) derived from
+    # a configured floor, the current spread, and the current volatility.
+    reference_price_slippage_bps: Decimal = Decimal("5")
+    reference_price_min_tolerance_bps: Decimal = Decimal("20")
+    reference_price_spread_tolerance_multiplier: Decimal = Decimal("2")
+    reference_price_volatility_tolerance_multiplier: Decimal = Decimal("2")
 
     def __post_init__(self) -> None:
         _validate_leverage_ceiling(self.max_leverage, "max_leverage")
@@ -110,6 +122,15 @@ class RiskPolicy:
             raise ValueError("loss-count limits must be at least 1")
         if self.max_data_age <= timedelta(0) or self.max_signal_age <= timedelta(0):
             raise ValueError("max_data_age and max_signal_age must be positive")
+        for name in (
+            "reference_price_slippage_bps",
+            "reference_price_min_tolerance_bps",
+            "reference_price_spread_tolerance_multiplier",
+            "reference_price_volatility_tolerance_multiplier",
+        ):
+            value = getattr(self, name)
+            if not value.is_finite() or value < 0:
+                raise ValueError(f"{name} must be finite and non-negative")
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

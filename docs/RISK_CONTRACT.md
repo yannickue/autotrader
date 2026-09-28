@@ -15,6 +15,25 @@ reason code/text, quantity, notional, selected leverage, configured maximum leve
 stop price, and audit metadata. Rejections use zero exposure-increasing quantity/notional in the
 serialized boundary message.
 
+## Risk reference price
+
+`PositionSizingRequest.entry_price` is strategy intent only. It is never used directly for
+position sizing, exposure caps, leverage, margin, or liquidation-distance math. Risk instead
+derives a `risk_reference_price` from the current market: the ask plus a configurable slippage
+buffer for a BUY, the bid minus that buffer for a SELL (`RiskPolicy.reference_price_slippage_bps`).
+All quantity/notional/leverage computation uses `risk_reference_price`.
+
+`entry_price` is validated against `risk_reference_price` with a dynamic tolerance — never a
+single fixed global basis-point constant — computed as the maximum of a configured floor
+(`reference_price_min_tolerance_bps`), a multiple of the current spread
+(`reference_price_spread_tolerance_multiplier`), and a multiple of the current volatility
+(`reference_price_volatility_tolerance_multiplier`). Exceeding that tolerance rejects the request
+with `ENTRY_PRICE_DEVIATION`. If the market data needed to compute the reference price is missing,
+stale, invalid, or non-finite, the request is rejected fail-closed by the existing
+data-quality/staleness/invalid-input checks before the reference price is ever computed.
+
+Resolves `docs/OPEN_QUESTIONS.md` #23 (2026-09-28).
+
 ## Leverage
 
 The system ceiling is 20x; each environment, venue, instrument, strategy, and account may configure
