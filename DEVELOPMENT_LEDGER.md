@@ -435,3 +435,36 @@ state after partial, deterministic exit priority, exit idempotency). Multiple TP
 real gap versus the current src/exits/ design (single partial-then-runner only) -- this slice
 must extend ExitPolicy/ExitEngine for configurable TP1/TP2/.../runner stages before wiring, per
 the master directive's own explicit requirement (section 37), not scope creep.
+
+## 2026-09-28 — Integration Slice 3b: multi-stage TP + exit engine wired (Phase A integration ~90% done)
+
+TASK: Extend exit engine for multi-stage TP (real gap vs. master directive section 37), then wire
+into the live pipeline per confirmed Q-X0-X3 decisions, with full lifecycle coverage through real
+execution per user's explicit acceptance requirements.
+MODEL: Sonnet BUILDER (direct checkout, large two-part task with a detailed AUDITOR-informed
+spec), Sonnet 5 (Lead) review + docs updates (ARCHITECTURE.md component boundaries, RISK_CONTRACT.md
+reduce-only reservations section, OPEN_QUESTIONS #24 resolved) + commit.
+RESULT: See commit `d6e5ab4`. TakeProfitStage ladder (strictly increasing, validated), one
+position per instrument enforced, reversal-not-flip on opposing signal, reduce-only allowed
+during non-unreliable halts, no auto-flatten on halt/kill-switch, notify_terminal->release()
+wired for every terminal outcome.
+TESTS: 453 passed, 1 skipped (was 433/1); ruff clean; compileall clean. Full exits/pipeline/
+risk/execution/chaos/integration/property surface verified, covering all 12 user-specified
+lifecycle scenarios (stop, full/partial/multi-stage TP, trailing, break-even, time exit,
+reversal, emergency, idempotency, halt behavior, one-position-per-instrument).
+
+Judgement calls flagged by builder, accepted: INTERNAL_ERROR added to the "account state
+unreliable" halt-code set (fail-closed on ambiguity, beyond Q-X2's two named codes);
+malformed-stop fail-closed path halts the risk engine rather than fabricating an emergency
+execution request (no real market/runtime context available at that call site); background-fill
+-opened positions (via on_trade/report_fill bypassing process()) are not yet exit-managed --
+confirmed low-risk since all current entries are MARKET orders filled synchronously in submit(),
+never via a resting LIMIT crossing.
+
+Next: Slice 4 (persistence + recovery). User-specified required crash-boundary tests: before
+order persistence, order created but not filled, fill received before portfolio checkpoint,
+after partial TP, after stop update, during restart/reconciliation. Recovery must never
+duplicate an order/fill, repeat a TP tranche, lose an open position, forget stop state, or
+create phantom exposure. This closes out Phase A; after it, per explicit user instruction, move
+directly to ActivTrades MT5 -> InstrumentSpec -> CFD data ingestion -> DAX/NASDAQ/WTI research
+vertical slice, not further infrastructure.
