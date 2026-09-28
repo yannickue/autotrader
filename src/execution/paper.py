@@ -1105,13 +1105,27 @@ class PaperExecutionEngine:
                         if order.take_profit_price is not None
                         else None
                     ),
+                    "updated_at": order.updated_at.isoformat() if order.updated_at else None,
                 }
                 for client_id, order in sorted(self._orders.items())
             },
         }
 
     def import_checkpoint(self, checkpoint: Mapping[str, Any]) -> None:
-        self.mode = EngineMode(checkpoint["mode"])
+        # Fail-closed restart semantics (EXECUTION_CONTRACT.md /
+        # RISK_CONTRACT.md: "Restart/reconnect enters RECONCILING"; venue
+        # orders, fills, balances, and positions must be compared with local
+        # state before new exposure is permitted). A checkpoint's persisted
+        # `mode` is NEVER restored verbatim: a persisted READY (or STARTING/
+        # RECONCILING) always resumes as RECONCILING so `reconcile()` must
+        # run again before any new order is accepted; a persisted HALTED
+        # stays HALTED (never silently downgraded/auto-recovered by a
+        # restart alone -- that still requires an explicit operator/reconcile
+        # path).
+        persisted_mode = EngineMode(checkpoint["mode"])
+        self.mode = (
+            EngineMode.HALTED if persisted_mode is EngineMode.HALTED else EngineMode.RECONCILING
+        )
         self.halt_reason = checkpoint["halt_reason"]
         self._decision_usage = dict(checkpoint["decision_usage"])
         # .get(..., {}) rather than direct indexing: a checkpoint captured
@@ -1165,6 +1179,16 @@ class PaperExecutionEngine:
                 else None,
                 take_profit_price=(
                     Decimal(payload["take_profit_price"]) if payload["take_profit_price"] else None
+                ),
+                # .get(..., None): a checkpoint captured before this field
+                # existed has no such key; fall back to created_at rather
+                # than leaving updated_at as None (Order's own dataclass
+                # default), which would otherwise silently discard the
+                # order's real last-transition timestamp on every restart.
+                updated_at=(
+                    datetime.fromisoformat(payload["updated_at"])
+                    if payload.get("updated_at")
+                    else datetime.fromisoformat(payload["created_at"])
                 ),
             )
             self._orders[client_id] = order

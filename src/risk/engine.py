@@ -1,9 +1,10 @@
 """Deterministic, fail-closed position sizing and gating for linear USD-M instruments."""
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import ROUND_DOWN, Decimal
+from typing import Any
 
 from data.models import DataQuality, MarketSnapshot
 from margin.engine import MarginEngine
@@ -125,6 +126,66 @@ class RiskEngine:
             (qty for inst, qty in self._reduce_only_reservations.values() if inst == instrument),
             ZERO,
         )
+
+    # -- checkpointing ---------------------------------------------------
+
+    def export_state(self) -> dict[str, Any]:
+        """Serialize the risk-capacity/halt state a restart must restore.
+
+        Deliberately does NOT include `_decisions` (the full per-signal
+        decision audit cache): a replayed signal after restart just
+        re-evaluates fresh against current market/account state (it is not
+        idempotency-critical the way reservations are), and execution's own
+        request-id dedup (`PaperExecutionEngine._requests`) still catches a
+        duplicate submit independently. Matches
+        `PaperExecutionEngine.export_checkpoint()`'s naming convention: plain
+        JSON-compatible types only (`str` for every `Decimal`, `.value` for
+        every enum), sorted keys for deterministic output.
+        """
+        return {
+            "halted": self._halted,
+            "halt_reason": self._halt_reason,
+            "reservations": {
+                decision_id: {
+                    "side": side.value,
+                    "abs_notional": str(abs_notional),
+                    "signed_notional": str(signed_notional),
+                }
+                for decision_id, (side, abs_notional, signed_notional) in sorted(
+                    self._reservations.items()
+                )
+            },
+            "reduce_only_reservations": {
+                decision_id: {"instrument": instrument, "quantity": str(quantity)}
+                for decision_id, (instrument, quantity) in sorted(
+                    self._reduce_only_reservations.items()
+                )
+            },
+        }
+
+    def import_state(self, state: Mapping[str, Any]) -> None:
+        """Restore state previously produced by `export_state()`.
+
+        Feeds back into real risk-capacity math immediately: an imported
+        reservation is included in `_reserved_gross`/`_reserved_net` (and
+        therefore in `evaluate()`'s exposure-limit checks) exactly like one
+        created by a live `evaluate()` call, since both are read from the
+        same `_reservations` dict.
+        """
+        self._halted = bool(state["halted"])
+        self._halt_reason = state["halt_reason"]
+        self._reservations = {
+            decision_id: (
+                RiskSide(payload["side"]),
+                Decimal(payload["abs_notional"]),
+                Decimal(payload["signed_notional"]),
+            )
+            for decision_id, payload in state.get("reservations", {}).items()
+        }
+        self._reduce_only_reservations = {
+            decision_id: (payload["instrument"], Decimal(payload["quantity"]))
+            for decision_id, payload in state.get("reduce_only_reservations", {}).items()
+        }
 
     # -- public API ---------------------------------------------------------
 

@@ -437,3 +437,216 @@ def test_reopen_without_any_corruption_recovers_ok(db_path: Path) -> None:
     store2.close()
 
     assert result.ok is True
+
+
+def test_recover_rejects_a_v1_stamped_database(db_path: Path) -> None:
+    """A database written by the v1 schema must be rejected fail-closed by
+    the v2 store, never silently reinterpreted/upgraded/guessed at."""
+    store1 = SQLiteStore(db_path)
+    store1.upsert_position(_position())
+    store1.close()
+
+    raw = sqlite3.connect(db_path)
+    try:
+        raw.execute("UPDATE meta SET value = '1' WHERE key = 'state_format_version'")
+        raw.commit()
+    finally:
+        raw.close()
+
+    store2 = SQLiteStore(db_path)
+    result = store2.recover()
+    store2.close()
+
+    assert result.ok is False
+    assert result.snapshot is None
+    assert result.details["found_version"] == "1"
+    assert result.details["expected_version"] == STATE_FORMAT_VERSION == "2"
+
+
+# -- transaction() ------------------------------------------------------------
+
+
+def test_transaction_commits_all_writes_together(store: SQLiteStore) -> None:
+    with store.transaction():
+        store.upsert_position(_position(instrument="A"))
+        store.upsert_position(_position(instrument="B"))
+    positions = {p.instrument for p in store.list_positions()}
+    assert positions == {"A", "B"}
+
+
+def test_transaction_rollback_leaves_zero_trace_of_partial_write(
+    store: SQLiteStore, db_path: Path
+) -> None:
+    class _Boom(Exception):
+        pass
+
+    with pytest.raises(_Boom), store.transaction():
+        store.upsert_position(_position(instrument="A"))
+        store.upsert_order(_order(client_order_id="co-partial"))
+        raise _Boom("simulated crash mid-transaction")
+
+    # Query via the store's own connection...
+    assert store.list_positions() == []
+    assert store.get_order("co-partial") is None
+
+    # ...and independently via a raw connection, to rule out any
+    # store-level caching masking an actually-committed row.
+    raw = sqlite3.connect(db_path)
+    try:
+        assert raw.execute("SELECT COUNT(*) FROM positions").fetchone()[0] == 0
+        assert raw.execute("SELECT COUNT(*) FROM orders").fetchone()[0] == 0
+    finally:
+        raw.close()
+
+
+# -- write_snapshot() ----------------------------------------------------------
+
+
+def test_write_snapshot_atomically_replaces_all_mutable_tables_in_one_commit(
+    store: SQLiteStore,
+) -> None:
+    # Seed an "old" snapshot.
+    store.write_snapshot(
+        positions=[_position(instrument="OLD")],
+        orders=[_order(client_order_id="old-order")],
+        reservations=[_reservation(decision_id="old-dec")],
+        reduce_only_reservations=[_reduce_only_reservation(decision_id="old-ro-dec")],
+        portfolio_state=_portfolio_state(realized_pnl=Decimal("1")),
+        halt_state=_halt_state(halted=False),
+        reconciliation_state=_reconciliation_state(),
+        component_state={"execution": {"seen": ["a"]}},
+    )
+
+    # Replace it wholesale with a "new" snapshot in one call/commit.
+    store.write_snapshot(
+        positions=[_position(instrument="NEW")],
+        orders=[_order(client_order_id="new-order")],
+        reservations=[_reservation(decision_id="new-dec")],
+        reduce_only_reservations=[_reduce_only_reservation(decision_id="new-ro-dec")],
+        portfolio_state=_portfolio_state(realized_pnl=Decimal("2")),
+        halt_state=_halt_state(halted=True, reason="halted for test"),
+        reconciliation_state=_reconciliation_state(mode="reconciling", reconciled=False),
+        component_state={"execution": {"seen": ["b"]}},
+    )
+
+    assert [p.instrument for p in store.list_positions()] == ["NEW"]
+    assert [o.client_order_id for o in store.list_orders()] == ["new-order"]
+    assert [r.decision_id for r in store.list_reservations()] == ["new-dec"]
+    assert [r.decision_id for r in store.list_reduce_only_reservations()] == ["new-ro-dec"]
+    portfolio = store.get_portfolio_state()
+    assert portfolio is not None and portfolio.realized_pnl == Decimal("2")
+    halt = store.get_halt_state()
+    assert halt is not None and halt.halted is True
+    assert store.get_component_state("execution") == {"seen": ["b"]}
+
+
+def test_write_snapshot_never_starts_when_argument_construction_raises(
+    store: SQLiteStore,
+) -> None:
+    """If building the immutable records to pass into write_snapshot raises
+    (before write_snapshot is ever called), the old snapshot must remain
+    completely intact -- the transaction never started at all."""
+    store.write_snapshot(
+        positions=[_position(instrument="OLD")],
+        orders=[_order(client_order_id="old-order")],
+    )
+
+    with pytest.raises(ValueError):
+        bad_orders = [
+            _order(client_order_id="ok-order"),
+            _order(client_order_id="bad-order", quantity=Decimal("-1")),  # raises in __post_init__
+        ]
+        store.write_snapshot(positions=[_position(instrument="NEW")], orders=bad_orders)
+
+    # write_snapshot was never reached: the OLD snapshot is untouched.
+    assert [p.instrument for p in store.list_positions()] == ["OLD"]
+    assert [o.client_order_id for o in store.list_orders()] == ["old-order"]
+
+
+def test_write_snapshot_rolls_back_if_a_record_raises_mid_iteration(store: SQLiteStore) -> None:
+    """A generator that raises partway through iteration inside
+    write_snapshot's own loop must roll back everything written so far in
+    that call, leaving the prior snapshot intact -- proving the atomicity
+    guarantee holds even when the failure happens inside the transaction,
+    not merely before it starts."""
+    store.write_snapshot(positions=[_position(instrument="OLD")])
+
+    class _Boom(Exception):
+        pass
+
+    def _positions_then_boom():
+        yield _position(instrument="NEW-1")
+        yield _position(instrument="NEW-2")
+        raise _Boom("simulated failure while assembling the snapshot")
+
+    with pytest.raises(_Boom):
+        store.write_snapshot(positions=_positions_then_boom())
+
+    assert [p.instrument for p in store.list_positions()] == ["OLD"]
+
+
+def test_write_snapshot_leaves_fills_untouched(store: SQLiteStore) -> None:
+    store.record_fill(_fill(fill_id="fill-keep"))
+    store.write_snapshot(positions=[_position(instrument="NEW")])
+    assert [f.fill_id for f in store.list_fills()] == ["fill-keep"]
+
+
+# -- component_state ------------------------------------------------------------
+
+
+def test_component_state_round_trips_arbitrary_json_serializable_dicts(store: SQLiteStore) -> None:
+    payload = {
+        "seen_fill_keys": ["a::b", "c::d"],
+        "decision_approved_quantity": {"dec-1": "1.5"},
+        "nested": {"a": [1, 2, {"b": True}]},
+        "null_field": None,
+    }
+    store.set_component_state("execution_engine", payload)
+    assert store.get_component_state("execution_engine") == payload
+    assert store.get_component_state("unknown_component") is None
+
+
+def test_component_state_upsert_replaces_not_duplicates(store: SQLiteStore) -> None:
+    store.set_component_state("risk_engine", {"halted": False})
+    store.set_component_state("risk_engine", {"halted": True, "reason": "kill switch"})
+    assert store.get_component_state("risk_engine") == {"halted": True, "reason": "kill switch"}
+
+
+# -- OrderRecord.metadata --------------------------------------------------------
+
+
+def test_order_metadata_round_trips(store: SQLiteStore) -> None:
+    order = _order(metadata={"reference_price": "100.5", "note": "entry"})
+    store.upsert_order(order)
+    fetched = store.get_order("co-1")
+    assert fetched is not None
+    assert fetched.metadata == {"reference_price": "100.5", "note": "entry"}
+    assert store.list_orders() == [order]
+
+
+def test_order_metadata_defaults_to_empty_dict(store: SQLiteStore) -> None:
+    store.upsert_order(_order())
+    fetched = store.get_order("co-1")
+    assert fetched is not None
+    assert fetched.metadata == {}
+
+
+# -- fills replay in insertion (rowid) order, not lexicographic fill_id order ---
+
+
+def test_fills_replay_in_insertion_order_not_lexicographic_fill_id_order(
+    store: SQLiteStore,
+) -> None:
+    # "b-fill" sorts BEFORE "z-fill" lexicographically too, so pick ids that
+    # actually invert under the two orderings: insert "z-fill" first, then
+    # "a-fill" -- lexicographic order would put a-fill first; insertion
+    # (rowid) order must keep z-fill first.
+    store.record_fill(_fill(fill_id="z-fill", timestamp=NOW, applied_at=NOW))
+    store.record_fill(_fill(fill_id="a-fill", timestamp=LATER, applied_at=LATER))
+
+    assert [f.fill_id for f in store.list_fills()] == ["z-fill", "a-fill"]
+
+    result = store.recover()
+    assert result.ok is True
+    assert result.snapshot is not None
+    assert [f.fill_id for f in result.snapshot.fills] == ["z-fill", "a-fill"]

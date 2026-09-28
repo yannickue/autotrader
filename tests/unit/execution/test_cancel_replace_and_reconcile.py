@@ -2,7 +2,7 @@ from decimal import Decimal
 
 from execution.events import TradeEvent
 from execution.models import OrderSide, OrderType, TimeInForce
-from execution.orders import OrderStatus, RejectCode
+from execution.orders import HaltCode, OrderStatus, RejectCode
 from execution.paper import EngineMode, PaperExecutionEngine
 
 from .conftest import INSTRUMENT, make_decision, make_quote, make_request
@@ -334,12 +334,20 @@ def test_export_import_checkpoint_roundtrip(engine, now):
     restored = PaperExecutionEngine(engine.config, engine.portfolio, engine._cost_schedule)
     restored.import_checkpoint(checkpoint)
 
-    assert restored.export_checkpoint() == checkpoint
+    # The live engine was READY when checkpointed, but a restart must never
+    # resume straight into READY -- import_checkpoint always forces
+    # RECONCILING (unless the persisted mode was HALTED, which stays HALTED).
+    assert checkpoint["mode"] == str(EngineMode.READY)
+    assert restored.mode == EngineMode.RECONCILING
+
+    restored_checkpoint = restored.export_checkpoint()
+    assert {k: v for k, v in restored_checkpoint.items() if k != "mode"} == {
+        k: v for k, v in checkpoint.items() if k != "mode"
+    }
     assert "client-1:stop" in restored._orders
     assert "client-1:take_profit" in restored._orders
 
-    # restart flow: RECONCILING then reconcile against matching venue snapshot
-    restored.mode = EngineMode.RECONCILING
+    # restart flow: reconcile against matching venue snapshot
     venue_orders = {cid: {} for cid, o in restored._orders.items() if not o.is_terminal()}
     venue_positions = {
         instrument: str(view.quantity) for instrument, view in restored.portfolio.positions.items()
@@ -356,6 +364,82 @@ def test_checkpoint_export_is_deterministic_for_identical_state(engine, now):
     a = engine.export_checkpoint()
     b = engine.export_checkpoint()
     assert a == b
+
+
+def test_restart_never_resumes_ready_regardless_of_persisted_mode(engine, now):
+    """A restored engine must always require reconciliation before new
+    exposure is permitted (EXECUTION_CONTRACT.md), never silently resume
+    READY straight from a checkpoint -- regardless of what mode was
+    persisted at checkpoint time."""
+    for persisted_mode in (EngineMode.STARTING, EngineMode.RECONCILING, EngineMode.READY):
+        engine.mode = persisted_mode
+        checkpoint = engine.export_checkpoint()
+        restored = PaperExecutionEngine(engine.config, engine.portfolio, engine._cost_schedule)
+        restored.import_checkpoint(checkpoint)
+        assert restored.mode == EngineMode.RECONCILING, persisted_mode
+
+
+def test_restart_preserves_halted_mode(engine, now):
+    """A HALTED checkpoint must stay HALTED on restart -- a restart alone
+    must never silently downgrade/auto-recover a halt."""
+    engine._halt(HaltCode.INTERNAL_ERROR, "test halt")
+    checkpoint = engine.export_checkpoint()
+    assert checkpoint["mode"] == str(EngineMode.HALTED)
+
+    restored = PaperExecutionEngine(engine.config, engine.portfolio, engine._cost_schedule)
+    restored.import_checkpoint(checkpoint)
+    assert restored.mode == EngineMode.HALTED
+    assert restored.halt_reason == checkpoint["halt_reason"]
+
+
+def test_checkpoint_round_trips_order_updated_at(engine, now):
+    decision = make_decision(quantity="1", stop_price="90")
+    request = make_request(quantity="1")
+    engine.submit(request, decision, make_quote(), now)
+    order = engine._orders["client-1"]
+    assert order.updated_at == now  # sanity: the live order really has this set
+
+    checkpoint = engine.export_checkpoint()
+    assert checkpoint["orders"]["client-1"]["updated_at"] == now.isoformat()
+
+    restored = PaperExecutionEngine(engine.config, engine.portfolio, engine._cost_schedule)
+    restored.import_checkpoint(checkpoint)
+    assert restored._orders["client-1"].updated_at == now
+
+
+def test_checkpoint_exports_every_dedup_map(engine, now):
+    """Every internal dedup map the engine relies on to reject a replayed
+    request/fill as a duplicate after restart must survive a checkpoint
+    round-trip -- a restart must never silently lose duplicate protection."""
+    decision = make_decision(quantity="1")
+    request = make_request(quantity="1")
+    engine.submit(request, decision, make_quote(), now)
+
+    checkpoint = engine.export_checkpoint()
+    for key in (
+        "requests",
+        "decision_usage",
+        "decision_approved_quantity",
+        "decision_filled_quantity",
+        "client_id_owner",
+        "seen_fill_keys",
+        "orders",
+    ):
+        assert key in checkpoint, key
+
+    assert checkpoint["requests"]["request-1"]["client_order_id"] == "client-1"
+    assert checkpoint["decision_usage"]["decision-1"] == "client-1"
+    assert checkpoint["decision_approved_quantity"]["decision-1"] == "1"
+    assert checkpoint["client_id_owner"]["client-1"] == "request-1"
+
+    restored = PaperExecutionEngine(engine.config, engine.portfolio, engine._cost_schedule)
+    restored.import_checkpoint(checkpoint)
+
+    # Re-submitting the exact same (already-consumed) request after restart
+    # must return the identical remembered result, not process it anew.
+    duplicate_result = restored.submit(request, decision, make_quote(), now)
+    original_result = engine.submit(request, decision, make_quote(), now)
+    assert duplicate_result == original_result
 
 
 def test_cancel_replace_of_unfilled_entry_preserves_protective_prices(engine, now):

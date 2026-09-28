@@ -89,6 +89,9 @@ class OrderRecord:
     trigger_price: Decimal | None = None
     take_profit_price: Decimal | None = None
     updated_at: datetime
+    # Arbitrary engine-supplied metadata (e.g. {"reference_price": ...}) that
+    # doesn't fit a typed column. Must be JSON-serializable; stored as JSON.
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         _require_nonempty(self.client_order_id, "client_order_id")

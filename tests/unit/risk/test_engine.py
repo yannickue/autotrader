@@ -963,3 +963,110 @@ def test_every_decision_records_the_approved_side_for_execution_binding() -> Non
     assert reduce.metadata["side"] == "sell"
     assert reduce.metadata["reduce_only"] is True
     assert long_decision.metadata.get("reduce_only") is not True
+
+
+# -- export_state / import_state (Slice 4a persistence foundation) --------------
+
+
+def test_export_import_state_round_trips_reservations_with_decimal_precision() -> None:
+    engine = RiskEngine(_policy())
+    decision = _evaluate(engine, request=_request(signal_id="s1"))
+    assert decision.approved is True
+
+    state = engine.export_state()
+    # Decimal precision must not be lost to float anywhere in the round trip.
+    assert state["reservations"][decision.decision_id]["abs_notional"] == str(decision.notional)
+
+    restored = RiskEngine(_policy())
+    restored.import_state(state)
+
+    assert restored._reservations == engine._reservations
+    for _, abs_notional, signed_notional in restored._reservations.values():
+        assert isinstance(abs_notional, Decimal)
+        assert isinstance(signed_notional, Decimal)
+
+
+def test_export_import_state_round_trips_reduce_only_reservations() -> None:
+    engine = RiskEngine(_policy())
+    account = _account(positions={"BTCUSDT-PERP": Decimal("2")})
+    engine.evaluate_reduce_only(
+        request_id="r1",
+        instrument="BTCUSDT-PERP",
+        side=RiskSide.SELL,
+        quantity=Decimal("0.75"),
+        account=account,
+        runtime=_runtime(),
+        now=NOW,
+    )
+
+    state = engine.export_state()
+    assert state["reduce_only_reservations"]["reduce-only:r1"] == {
+        "instrument": "BTCUSDT-PERP",
+        "quantity": "0.75",
+    }
+
+    restored = RiskEngine(_policy())
+    restored.import_state(state)
+    assert restored._reduce_only_reservations == {
+        "reduce-only:r1": ("BTCUSDT-PERP", Decimal("0.75"))
+    }
+    for _, quantity in restored._reduce_only_reservations.values():
+        assert isinstance(quantity, Decimal)
+
+
+def test_export_import_state_round_trips_halt_state() -> None:
+    engine = RiskEngine(_policy())
+    engine.halt("kill switch tripped")
+    state = engine.export_state()
+    assert state["halted"] is True
+    assert state["halt_reason"] == "kill switch tripped"
+
+    restored = RiskEngine(_policy())
+    restored.import_state(state)
+    assert restored.halted is True
+    assert restored._halt_reason == "kill switch tripped"
+
+    # A non-halted engine round-trips the same way.
+    engine2 = RiskEngine(_policy())
+    restored2 = RiskEngine(_policy())
+    restored2.halt("stale")  # prove import_state overwrites, not just sets True
+    restored2.import_state(engine2.export_state())
+    assert restored2.halted is False
+    assert restored2._halt_reason is None
+
+
+def test_imported_reservation_feeds_real_capacity_math_not_just_dict_round_trip() -> None:
+    """An imported reservation must actually reduce remaining exposure
+    capacity for a SUBSEQUENT evaluate() call -- not merely be readable back
+    out of the dict. Uses a tight max_gross_notional so a fresh reservation
+    that isn't counted would wrongly approve, while one that is counted
+    correctly gets rejected on exposure grounds."""
+    policy = _policy(max_gross_notional=Decimal("150"))
+    source = RiskEngine(policy)
+    first = _evaluate(source, request=_request(signal_id="first"))
+    assert first.approved is True
+    assert source._reserved_gross == first.notional
+
+    restored = RiskEngine(policy)
+    restored.import_state(source.export_state())
+    assert restored._reserved_gross == first.notional
+
+    # A second request against an account that reports zero gross_notional
+    # (i.e. the venue/portfolio doesn't yet know about the first trade) must
+    # still be constrained by the imported reservation, proving it feeds
+    # `_reserved_gross`/exposure-limit math on `restored`, not just a copied
+    # dict nobody reads.
+    account_after = _account(gross_notional=Decimal("0"))
+    second = _evaluate(
+        restored, request=_request(signal_id="second"), account=account_after
+    )
+    assert second.approved is False
+    assert second.reason_code in (RiskReason.EXPOSURE_LIMIT, RiskReason.SIZE_BELOW_MINIMUM)
+
+    # Sanity: the SAME request against a twin engine that never imported the
+    # reservation is not blocked by exposure the same way (proves the
+    # rejection above is caused by the imported reservation, not some other
+    # policy limit baked into the fixtures).
+    twin = RiskEngine(policy)
+    twin_second = _evaluate(twin, request=_request(signal_id="second"), account=account_after)
+    assert twin_second.approved is True

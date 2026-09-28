@@ -22,11 +22,15 @@ the caller must treat state as ambiguous and HALT rather than guess.
 
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
+from collections.abc import Iterable, Iterator, Mapping
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
+from typing import Any
 
 from persistence.models import (
     FillRecord,
@@ -43,7 +47,12 @@ from persistence.models import (
 
 # Bumped whenever the on-disk row shapes change in a way that would make an
 # older/newer reader misinterpret data instead of failing loudly.
-STATE_FORMAT_VERSION = "1"
+#
+# v2 (Slice 4a): added `orders.metadata` (JSON), added `component_state`
+# table, and fills are now ordered by insertion (`rowid`) rather than the
+# lexicographic `fill_id` sort a v1 reader would use -- a v1-stamped database
+# is rejected by `recover()` below rather than silently reinterpreted.
+STATE_FORMAT_VERSION = "2"
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -81,7 +90,8 @@ CREATE TABLE IF NOT EXISTS orders (
     replaced_by_client_order_id TEXT,
     trigger_price TEXT,
     take_profit_price TEXT,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    metadata TEXT NOT NULL DEFAULT '{}'
 );
 
 CREATE TABLE IF NOT EXISTS fills (
@@ -139,6 +149,11 @@ CREATE TABLE IF NOT EXISTS halt_state (
     halted INTEGER NOT NULL,
     reason TEXT,
     updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS component_state (
+    component TEXT PRIMARY KEY,
+    payload TEXT NOT NULL
 );
 """
 
@@ -207,6 +222,81 @@ class SQLiteStore:
     def __exit__(self, *exc_info: object) -> None:
         self.close()
 
+    # -- transactions --------------------------------------------------------
+
+    @contextmanager
+    def transaction(self) -> Iterator[sqlite3.Connection]:
+        """Group multiple writes into a single atomic commit.
+
+        `BEGIN IMMEDIATE` on enter (acquires the write lock up front, so a
+        concurrent writer fails fast rather than deadlocking mid-transaction),
+        `COMMIT` on clean exit, `ROLLBACK` (then re-raise) on any exception.
+        Nesting is not supported -- callers must not call `transaction()`
+        again while already inside one.
+        """
+        self._conn.execute("BEGIN IMMEDIATE")
+        try:
+            yield self._conn
+        except BaseException:
+            self._conn.execute("ROLLBACK")
+            raise
+        else:
+            self._conn.execute("COMMIT")
+
+    def write_snapshot(
+        self,
+        *,
+        positions: Iterable[PositionRecord] = (),
+        orders: Iterable[OrderRecord] = (),
+        reservations: Iterable[ReservationRecord] = (),
+        reduce_only_reservations: Iterable[ReduceOnlyReservationRecord] = (),
+        portfolio_state: PortfolioStateRecord | None = None,
+        halt_state: HaltStateRecord | None = None,
+        reconciliation_state: ReconciliationStateRecord | None = None,
+        component_state: Mapping[str, dict[str, Any]] | None = None,
+    ) -> None:
+        """Atomically replace the full set of mutable-state tables in ONE commit.
+
+        This is the single-commit-point primitive a caller (e.g. the pipeline's
+        crash-recovery wiring) builds on: every table that can go torn if a
+        fill's several individual writes (order, reservation, position,
+        portfolio state, ...) are applied one at a time and the process dies
+        mid-sequence is instead replaced together here, inside one
+        `transaction()`. `fills` is deliberately excluded -- it stays
+        append-only via `record_fill()`, never replaced wholesale.
+
+        `positions`/`orders`/`reservations`/`reduce_only_reservations` are
+        always fully replaced (existing rows deleted first, so this is the
+        new complete set, not a merge) -- pass the full current set, not a
+        delta. `portfolio_state`/`halt_state`/`reconciliation_state` are
+        singleton rows: passing `None` leaves that row untouched, passing a
+        record replaces it. `component_state`, when given (not `None`), fully
+        replaces the entire component_state table with the given mapping.
+        """
+        with self.transaction():
+            self._conn.execute("DELETE FROM positions")
+            self._conn.execute("DELETE FROM orders")
+            self._conn.execute("DELETE FROM reservations")
+            self._conn.execute("DELETE FROM reduce_only_reservations")
+            for position in positions:
+                self.upsert_position(position)
+            for order in orders:
+                self.upsert_order(order)
+            for reservation in reservations:
+                self.upsert_reservation(reservation)
+            for reduce_only_reservation in reduce_only_reservations:
+                self.upsert_reduce_only_reservation(reduce_only_reservation)
+            if portfolio_state is not None:
+                self.set_portfolio_state(portfolio_state)
+            if halt_state is not None:
+                self.set_halt_state(halt_state)
+            if reconciliation_state is not None:
+                self.set_reconciliation_state(reconciliation_state)
+            if component_state is not None:
+                self._conn.execute("DELETE FROM component_state")
+                for component, payload in component_state.items():
+                    self.set_component_state(component, payload)
+
     # -- writes (all idempotent: same primary key overwrites, not duplicates) --
 
     def upsert_position(self, position: PositionRecord) -> None:
@@ -237,13 +327,13 @@ class SQLiteStore:
                 time_in_force, quantity, limit_price, reduce_only, created_at, status,
                 filled_quantity, avg_fill_price, role, parent_client_order_id,
                 oco_sibling_id, replaces_client_order_id, replaced_by_client_order_id,
-                trigger_price, take_profit_price, updated_at
+                trigger_price, take_profit_price, updated_at, metadata
             ) VALUES (
                 :client_order_id, :request_id, :decision_id, :instrument, :side, :order_type,
                 :time_in_force, :quantity, :limit_price, :reduce_only, :created_at, :status,
                 :filled_quantity, :avg_fill_price, :role, :parent_client_order_id,
                 :oco_sibling_id, :replaces_client_order_id, :replaced_by_client_order_id,
-                :trigger_price, :take_profit_price, :updated_at
+                :trigger_price, :take_profit_price, :updated_at, :metadata
             )
             ON CONFLICT (client_order_id) DO UPDATE SET
                 request_id = excluded.request_id,
@@ -266,7 +356,8 @@ class SQLiteStore:
                 replaced_by_client_order_id = excluded.replaced_by_client_order_id,
                 trigger_price = excluded.trigger_price,
                 take_profit_price = excluded.take_profit_price,
-                updated_at = excluded.updated_at
+                updated_at = excluded.updated_at,
+                metadata = excluded.metadata
             """,
             {
                 "client_order_id": order.client_order_id,
@@ -293,6 +384,7 @@ class SQLiteStore:
                     None if order.take_profit_price is None else str(order.take_profit_price)
                 ),
                 "updated_at": _utc(order.updated_at).isoformat(),
+                "metadata": json.dumps(order.metadata, sort_keys=True),
             },
         )
 
@@ -453,6 +545,25 @@ class SQLiteStore:
             },
         )
 
+    def set_component_state(self, component: str, payload: dict[str, Any]) -> None:
+        """Store an arbitrary deterministic JSON-serializable blob under
+        `component` (e.g. an execution/risk engine's internal dedup maps or
+        an exit-position ladder), replacing any prior value for that key."""
+        self._conn.execute(
+            """
+            INSERT INTO component_state (component, payload)
+            VALUES (:component, :payload)
+            ON CONFLICT (component) DO UPDATE SET payload = excluded.payload
+            """,
+            {"component": component, "payload": json.dumps(payload, sort_keys=True)},
+        )
+
+    def get_component_state(self, component: str) -> dict[str, Any] | None:
+        row = self._conn.execute(
+            "SELECT payload FROM component_state WHERE component = ?", (component,)
+        ).fetchone()
+        return None if row is None else json.loads(row["payload"])
+
     # -- point reads -------------------------------------------------------
 
     def get_position(self, instrument: str) -> PositionRecord | None:
@@ -476,7 +587,12 @@ class SQLiteStore:
         return [_row_to_order(row) for row in rows]
 
     def list_fills(self) -> list[FillRecord]:
-        rows = self._conn.execute("SELECT * FROM fills ORDER BY fill_id").fetchall()
+        # Ordered by `rowid` (SQLite's implicit, monotonically-increasing
+        # insertion-order column for an ordinary rowid table), NOT by the
+        # lexicographic `fill_id` sort a v1 reader used -- `fill_id` is not
+        # guaranteed to sort chronologically, and PnL/portfolio replay
+        # depends on true fill order.
+        rows = self._conn.execute("SELECT * FROM fills ORDER BY rowid").fetchall()
         return [_row_to_fill(row) for row in rows]
 
     def list_reservations(self) -> list[ReservationRecord]:
@@ -539,7 +655,11 @@ class SQLiteStore:
                 _row_to_position(r) for r in self._conn.execute("SELECT * FROM positions")
             )
             orders = tuple(_row_to_order(r) for r in self._conn.execute("SELECT * FROM orders"))
-            fills = tuple(_row_to_fill(r) for r in self._conn.execute("SELECT * FROM fills"))
+            # rowid (insertion) order, not lexicographic fill_id order -- see
+            # list_fills() above.
+            fills = tuple(
+                _row_to_fill(r) for r in self._conn.execute("SELECT * FROM fills ORDER BY rowid")
+            )
             reservations = tuple(
                 _row_to_reservation(r) for r in self._conn.execute("SELECT * FROM reservations")
             )
@@ -621,7 +741,20 @@ def _row_to_order(row: sqlite3.Row) -> OrderRecord:
         trigger_price=_dec_opt(row["trigger_price"], "trigger_price"),
         take_profit_price=_dec_opt(row["take_profit_price"], "take_profit_price"),
         updated_at=_ts(row["updated_at"], "updated_at"),
+        metadata=_json_obj(row["metadata"], "metadata"),
     )
+
+
+def _json_obj(value: str | None, field_name: str) -> dict[str, Any]:
+    if value is None:
+        return {}
+    try:
+        parsed = json.loads(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{field_name} is not valid JSON: {value!r}") from exc
+    if not isinstance(parsed, dict):
+        raise ValueError(f"{field_name} must decode to a JSON object: {value!r}")
+    return parsed
 
 
 def _row_to_fill(row: sqlite3.Row) -> FillRecord:
