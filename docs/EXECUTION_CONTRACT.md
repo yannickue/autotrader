@@ -46,6 +46,27 @@ instead of inferring them from the quote-side reference price the request was bu
 UTC daily-reset boundary yet (`docs/OPEN_QUESTIONS.md` #13, still open), so both terms remain
 all-time cumulative, consistent with each other.
 
+## Persistence and crash recovery
+
+`PaperTradingPipeline` persists to a `SQLiteStore` (`src/persistence`) at the end of every public
+mutating call, in one transaction covering positions, orders, risk reservations, portfolio state,
+risk's own halt state, execution's mode/halt_reason (a deliberately separate row from risk's halt
+-- either can fire independently of the other), component state (execution's internal dedup maps,
+pipeline counters, every open exit position), and that call's real fills together. This is the
+single commit point: for this single-process paper engine, an event's effects either fully commit
+or, if the process crashes first, did not happen at all from the system's own recorded point of
+view -- there is no partial state.
+
+`recover_pipeline()` reconstructs a pipeline from persisted state without trusting it blindly:
+every persisted fill is replayed (true chronological order, never lexicographic `fill_id` order)
+into a fresh portfolio and cross-checked against the persisted rows; any disagreement halts both
+engines. A reservation whose orders are all terminal is released as an audit-logged orphan; a
+non-terminal order with no matching reservation halts (possible unapproved exposure). Execution
+never resumes `READY` on restart regardless of what was persisted (`HALTED` stays `HALTED`,
+everything else forces `RECONCILING`) -- the only path back to `READY` is an explicit,
+documented-as-weak paper self-check `reconcile()` call, since paper has no independent venue to
+reconcile against for real.
+
 ## Idempotency and reconciliation
 
 - `request_id` and `client_order_id` are stable across retries.

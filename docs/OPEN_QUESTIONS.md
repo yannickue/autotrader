@@ -60,9 +60,22 @@ records and resolves them here.
 21. NautilusTrader `1.231.0` Sandbox does not expose a sufficient reconciliation source for this
     sprint. Sprint 1 therefore uses a deterministic local execution core and checkpoint interface;
     direct `SimulatedExchange` integration with recorded L2/trade data remains a later task.
-22. The durable checkpoint/event-journal storage backend is not selected. Sprint 1 can prove
-    deterministic export/import but must not claim crash durability or external exactly-once
-    guarantees.
+22. **RESOLVED 2026-09-28 (integration Slice 4a/4b).** The durable checkpoint/event-journal
+    storage backend is now SQLite (`src/persistence`), chosen as the smallest robust durable
+    solution that satisfies the crash-recovery contract, per the sprint brief's own guidance not
+    to reach for PostgreSQL/Redis without measurable justification. A single-commit-point design
+    (`SQLiteStore.write_snapshot()`, one transaction per pipeline call, covering positions,
+    orders, reservations, portfolio/halt/reconciliation state, component state, and that call's
+    fills together) makes torn state structurally impossible for this single-process paper
+    engine. `recover_pipeline()` never trusts persisted positions/portfolio_state blindly: every
+    fill is replayed from the append-only fills journal (true chronological order) into a fresh
+    portfolio and cross-checked against the persisted rows, halting on any disagreement rather
+    than guessing. This is real crash durability and exactly-once behavior FOR THIS SINGLE-PROCESS
+    PAPER ENGINE (verified with dedicated crash-boundary tests, see DEVELOPMENT_LEDGER.md). It
+    does not extend to a live venue: a future live crash after the venue acknowledges an order but
+    before the local commit would leave an unknown external order, which `reconcile()` correctly
+    turns into a HALT (fail-closed per EXECUTION_CONTRACT.md) rather than a silent guess -- this
+    remains a real, expected limitation for live trading, not a durability claim.
 23. **RESOLVED 2026-09-28.** Risk sizing (leverage cap, gross/net capacity, instrument notional,
     liquidity) was computed entirely from `request.entry_price`; only the spread check compared
     against market bid/ask. An entry price far from the market (found in independent review,
