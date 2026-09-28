@@ -30,11 +30,43 @@ visualization, and authenticated alert input; it is never the sole execution pat
 - `risk`: owns risk budgets, sizing, leverage, exposure, drawdown, correlation, daily loss controls,
   and the kill switch. No strategy can bypass it.
 - `execution`, `adapters`: own order construction, order type, maker/taker choice, reduce-only,
-  stops, profit-taking, trailing, partial fills, cancel/replace, duplicate protection, slippage and
-  spread guards, reconnects, and venue reconciliation.
+  cancel/replace, duplicate protection, slippage and spread guards, reconnects, venue
+  reconciliation, and fee/liquidity-role pricing (`src/costs`). Also mechanically places and
+  manages a protective STOP order at the position's original invalidation level as a hard
+  backstop, independent of the exit engine's own decisions.
+- `exits`: a decision layer, like `strategies` -- it evaluates break-even/trailing/partial- and
+  multi-stage-take-profit/momentum/liquidity/time/emergency exit rules from measurable
+  position/market state and emits reduce-only intent (`ExitDecision`) that goes through `risk`
+  exactly like any other exposure-reducing request, never calling `execution` directly. This
+  resolves the `execution`-vs-`exits` "stops, profit-taking, trailing" ownership question
+  (`docs/OPEN_QUESTIONS.md` #25 Q-X0): profit-taking/trailing/break-even DECISIONS belong to
+  `exits`; the mechanical protective-stop backstop stays in `execution`. Neither module's other
+  responsibilities were redesigned.
+- `margin`: a standalone, PAPER-ONLY liquidation-safety approximation (`src/margin`) consumed by
+  `risk` as one pre-approval check. It is explicitly not authoritative for any real venue -- a
+  future broker adapter (e.g. ActivTrades/MT5) MUST be able to replace this module's estimate
+  cleanly with real broker-reported margin/liquidation data without `risk`'s other invariants
+  changing. `MarginEngine`'s own module docstring documents its formula and known omissions in
+  full; every result it produces is labeled `is_estimate: True` and must never be treated as venue
+  truth.
+- `costs`: a standalone transaction cost model (`src/costs`) consumed by `execution` (real per-fill
+  fees) and `pipeline` (reporting-only round-trip cost attribution). `VenueCostSchedule` is
+  venue-specific configuration; a schedule built for one venue/asset class (e.g. the crypto-shaped
+  defaults used in Sprint 1 testing) must never be silently reused for a different one (e.g. a CFD
+  venue) -- see `docs/OPEN_QUESTIONS.md` #25 for the explicit-identifiability requirement carried
+  forward into the CFD/MT5 work.
+- `persistence`: a standalone SQLite-backed durable store (`src/persistence`) for positions,
+  orders, fills, reservations, portfolio, reconciliation, and halt state. Not yet wired into the
+  live pipeline/execution/risk state (tracked as the next integration slice).
 - `portfolio`: derives positions and PnL from idempotent execution events.
-- `monitoring`: records health, decisions, state transitions, metrics, and operator alerts.
+- `monitoring`, `health`: record health, decisions, state transitions, metrics, clock drift,
+  staleness, heartbeats, and operator alerts.
 - `research`: backtests and optimization only; it is not importable by production execution code.
+
+Hot path (updated for the exit engine): `market data → features → opportunity scanner (planned)
+→ regime/strategy router (planned) → strategies → risk → execution → fill → portfolio → exits
+→ risk (evaluate_reduce_only) → execution → fill → portfolio`. The exits loop repeats every tick
+for as long as a position stays open; it never bypasses risk.
 
 Boundary messages are immutable dataclasses using `Decimal` for price, quantity, notional, risk,
 and leverage. UTC timestamps and stable identifiers are mandatory at adapter boundaries.

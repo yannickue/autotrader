@@ -19,7 +19,7 @@ deterministic).
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from decimal import Decimal
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Protocol
@@ -36,8 +36,17 @@ from costs.models import (
 from data.models import MarketSnapshot
 from execution.events import TradeEvent
 from execution.models import ExecutionRequest, OrderSide, OrderType, TimeInForce
-from execution.orders import TERMINAL_STATUSES, OrderStatus, RejectCode, SubmitResult
-from execution.paper import FillEvent, PaperExecutionEngine
+from execution.orders import TERMINAL_STATUSES, HaltCode, OrderStatus, RejectCode, SubmitResult
+from execution.paper import EngineMode, FillEvent, PaperExecutionEngine
+from exits.engine import ExitEngine, apply_evaluation
+from exits.models import (
+    ExitDecision,
+    ExitMarketState,
+    ExitOutcome,
+    ExitPosition,
+    ExitReason,
+    PositionSide,
+)
 from monitoring.metrics import TradeOutcome, calculate_trade_metrics
 from portfolio.ledger import Portfolio
 from risk.engine import RiskEngine
@@ -81,6 +90,38 @@ class PipelineStage(StrEnum):
     # NO_SIGNAL, which both imply a signal was evaluated.
     EXECUTION_EVENT_FILLED = "execution_event_filled"
     EXECUTION_EVENT_NO_FILL = "execution_event_no_fill"
+    # Slice 3b (exit engine integration, docs/OPEN_QUESTIONS.md #25 Q-X0/X1):
+    # POSITION_ALREADY_OPEN is reached when a fresh signal would otherwise
+    # open a new entry on an instrument that already has one open position
+    # under exit management (Q-X1: one open position per instrument, no
+    # pyramiding). SIGNAL_REVERSAL_EXIT is reached when a fresh signal
+    # opposes the currently-open position's side: this tick closes the
+    # position via the exit engine instead of opening/flipping a new one:
+    # the earliest the same instrument may open a fresh position is the
+    # NEXT process() call, once flat.
+    POSITION_ALREADY_OPEN = "position_already_open"
+    SIGNAL_REVERSAL_EXIT = "signal_reversal_exit"
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ExitStepResult:
+    """Result of one `PaperTradingPipeline._evaluate_exit()`/`process_exits()` tick.
+
+    `decision` is `None` when the exit engine had nothing to do this tick
+    (e.g. no trigger condition was met). `risk_decision`/`execution_result`/
+    `outcome` are all `None` together with `decision` in that no-op case;
+    once a `decision` was emitted, `risk_decision` is always populated
+    (either approved or rejected), and `execution_result`/`outcome` are
+    populated once a reduce-only request was actually submitted to
+    execution (never submitted at all when risk rejected the request).
+    """
+
+    instrument: str
+    decision: ExitDecision | None
+    risk_decision: RiskDecision | None
+    execution_result: SubmitResult | None
+    outcome: ExitOutcome | None
+    position_closed: bool
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -142,6 +183,16 @@ class PaperTradingPipeline:
     instrument_limits: Mapping[str, InstrumentRiskLimits]
     leverage_cap: Decimal
     cost_schedule: VenueCostSchedule
+    exit_engine: ExitEngine
+
+    # instrument -> the ExitPosition currently under exit management. Only
+    # ever populated by this pipeline's own entry path (`_open_exit_position`,
+    # called from `_record_fill` when an entry fill opens a position from
+    # flat) -- see PART 2 docstring on `_evaluate_exit` for the full
+    # lifecycle. `ExitPosition.quantity` here is a snapshot only; the
+    # portfolio's own position quantity is always the source of truth and is
+    # re-derived every tick in `_evaluate_exit`.
+    _exit_positions: dict[str, ExitPosition] = field(init=False, default_factory=dict)
 
     _peak_equity: Decimal = field(init=False, default=ZERO)
     _initial_equity: Decimal = field(init=False, default=ZERO)
@@ -229,6 +280,44 @@ class PaperTradingPipeline:
         self._mark_positions_from_history(history)
         self._update_peak_equity()
 
+        # -- exit management (docs/OPEN_QUESTIONS.md #25 Q-X0/X1/X3) --------
+        # An instrument with an already-open position must have that
+        # position exit-managed (stop/trailing/break-even/time/momentum/
+        # liquidity/target) on EVERY process() call regardless of whether it
+        # is in the universe or has a fresh signal this tick -- this runs
+        # before the universe/signal-gated entry path below. The strategy
+        # signal is only evaluated early (here) when there IS an open
+        # position, so a reversal (Q-X1: opposite-direction signal closes
+        # rather than flips) can be detected; `signal_evaluated` prevents a
+        # redundant second `strategy.evaluate()` call further down.
+        existing_exit_position = self._exit_positions.get(instrument)
+        signal: Signal | None = None
+        signal_evaluated = False
+        if existing_exit_position is not None:
+            signal = strategy.evaluate(history)
+            signal_evaluated = True
+            reversal = self._signal_opposes_position(signal, existing_exit_position)
+            self._evaluate_exit(
+                instrument=instrument,
+                snapshot=latest,
+                runtime=runtime,
+                account_known=account_known,
+                now=now,
+                signal_reversal=reversal,
+            )
+            if reversal:
+                # Never also process a new entry in the same tick, even if
+                # the reversal fully closed the position -- the earliest a
+                # fresh entry may be considered is the NEXT process() call.
+                return self._finish(
+                    PipelineStage.SIGNAL_REVERSAL_EXIT,
+                    signal_id=signal.signal_id if signal is not None else None,
+                    risk_reason=None,
+                    execution_status=None,
+                    execution_reject_code=None,
+                    position_after=self._position_qty(instrument),
+                )
+
         if instrument not in universe:
             return self._finish(
                 PipelineStage.NOT_IN_UNIVERSE,
@@ -239,11 +328,27 @@ class PaperTradingPipeline:
                 position_after=self._position_qty(instrument),
             )
 
-        signal = strategy.evaluate(history)
+        if not signal_evaluated:
+            signal = strategy.evaluate(history)
         if signal is None:
             return self._finish(
                 PipelineStage.NO_SIGNAL,
                 signal_id=None,
+                risk_reason=None,
+                execution_status=None,
+                execution_reject_code=None,
+                position_after=self._position_qty(instrument),
+            )
+
+        if instrument in self._exit_positions:
+            # Q-X1: one open position per instrument, no pyramiding. The
+            # exit-management block above may have just closed it via a
+            # non-reversal trigger (stop/target/time/...) in this very
+            # call, in which case this instrument is no longer in
+            # `_exit_positions` and this branch is correctly skipped.
+            return self._finish(
+                PipelineStage.POSITION_ALREADY_OPEN,
+                signal_id=signal.signal_id,
                 risk_reason=None,
                 execution_status=None,
                 execution_reject_code=None,
@@ -372,6 +477,13 @@ class PaperTradingPipeline:
                 fees_after=fees_after,
                 order_side=order_side,
                 now=now,
+                # Only this, the pipeline's own signal-driven entry path, is
+                # allowed to open a NEW exit-managed position (Q-X1); the
+                # risk-approved stop threads through here so
+                # `_open_exit_position` can construct the initial
+                # `ExitPosition` with a real, risk-validated invalidation
+                # stop rather than an inferred one.
+                entry_stop_price=decision.stop_price,
             )
             self._update_peak_equity()
 
@@ -405,6 +517,36 @@ class PaperTradingPipeline:
         spread, reduce-only rules) -- it never writes to the portfolio directly.
         """
         return self.execution_engine.submit(request, decision, quote, now)
+
+    def process_exits(
+        self,
+        *,
+        snapshot: MarketSnapshot,
+        runtime: RuntimeRiskState,
+        account_known: bool,
+        now: datetime,
+    ) -> ExitStepResult | None:
+        """Tick exit management for `snapshot.instrument` outside `process()`.
+
+        `process()` already exit-manages the current instrument on every
+        call it makes for that instrument, but an instrument with no fresh
+        signal this cycle (or that a driver simply isn't calling
+        `process()` for this tick) still needs its stop/trailing/time exit
+        managed every tick, not only on ticks where `process()` happens to
+        run for it -- this is that passthrough. Returns `None` when the
+        instrument has no open exit-managed position (a safe no-op).
+        """
+        instrument = snapshot.instrument
+        self.portfolio.mark(instrument, snapshot.last)
+        self._update_peak_equity()
+        return self._evaluate_exit(
+            instrument=instrument,
+            snapshot=snapshot,
+            runtime=runtime,
+            account_known=account_known,
+            now=now,
+            signal_reversal=False,
+        )
 
     # -- background execution-engine event passthroughs ------------------
     #
@@ -543,7 +685,7 @@ class PaperTradingPipeline:
         return AccountRiskState(
             state_version="pipeline:v1",
             known=account_known,
-            reconciled=self.execution_engine.mode.value == "ready",
+            reconciled=self._account_reconciled(),
             equity=self.portfolio.equity,
             peak_equity=self._peak_equity,
             # G3 fix: `equity` above is already net of fees
@@ -676,6 +818,326 @@ class PaperTradingPipeline:
         if equity > self._peak_equity:
             self._peak_equity = equity
 
+    # -- exit engine integration (docs/OPEN_QUESTIONS.md #25 Q-X0/X1/X2/X3) --
+
+    @staticmethod
+    def _signal_opposes_position(signal: Signal | None, position: ExitPosition) -> bool:
+        """Q-X1: an opposite-direction signal is a reversal trigger for the
+        exit engine (closes the position), never a same-tick flip."""
+        if signal is None:
+            return False
+        signal_side = RiskSide.BUY if signal.direction is Direction.LONG else RiskSide.SELL
+        position_side = RiskSide.BUY if position.side is PositionSide.LONG else RiskSide.SELL
+        return signal_side != position_side
+
+    # HaltCode values under which `PaperExecutionEngine`'s own local state
+    # (orders/positions) may not reflect reality (docs/OPEN_QUESTIONS.md #25
+    # Q-X2: "a reconciliation mismatch or an unrecognized/unknown order").
+    # RECONCILIATION_MISMATCH and UNKNOWN_ORDER are the two Q-X2 names
+    # explicitly. INTERNAL_ERROR is added here (fail-closed on ambiguity):
+    # it is a generic caught-exception halt from `on_trade`/`report_fill`
+    # with no guarantee about which side of a mutation it fired on, so
+    # account state cannot be trusted as known. OVERFILL is deliberately
+    # NOT included: `PaperExecutionEngine._apply_fill` raises it BEFORE
+    # calling `Portfolio.apply_fill` (see the per-order/decision cap checks
+    # there), so the portfolio was never mutated inconsistently -- positions
+    # remain exactly as reliable as they were before the rejected fill, so
+    # reduce-only exits must stay allowed rather than being blocked by a
+    # halt that never touched account state.
+    _ACCOUNT_STATE_UNRELIABLE_HALT_CODES = frozenset(
+        {
+            HaltCode.RECONCILIATION_MISMATCH.value,
+            HaltCode.UNKNOWN_ORDER.value,
+            HaltCode.INTERNAL_ERROR.value,
+        }
+    )
+
+    def _account_reconciled(self) -> bool:
+        """Q-X2: reduce-only is allowed during a HALT except when the halt
+        itself means account state is unreliable. See
+        `_ACCOUNT_STATE_UNRELIABLE_HALT_CODES` above for exactly which halt
+        codes count as "unreliable" and why."""
+        mode = self.execution_engine.mode
+        if mode is EngineMode.READY:
+            return True
+        if mode is not EngineMode.HALTED:
+            return False  # STARTING/RECONCILING: account state not yet known either way
+        halt_reason = self.execution_engine.halt_reason or ""
+        # `PaperExecutionEngine._halt` formats halt_reason as f"{code}: {reason}".
+        halt_code = halt_reason.split(":", 1)[0]
+        return halt_code not in self._ACCOUNT_STATE_UNRELIABLE_HALT_CODES
+
+    @staticmethod
+    def _map_execution_status_to_exit_outcome(status: OrderStatus) -> ExitOutcome:
+        if status in (OrderStatus.FILLED, OrderStatus.PARTIALLY_FILLED):
+            return ExitOutcome.FILLED
+        if status is OrderStatus.CANCELED:
+            return ExitOutcome.CANCELED
+        return ExitOutcome.REJECTED  # REJECTED/EXPIRED: the reservation was never used
+
+    def _open_exit_position(
+        self,
+        *,
+        instrument: str,
+        order_side: OrderSide,
+        entry_price: Decimal,
+        quantity: Decimal,
+        stop_price: Decimal,
+        now: datetime,
+    ) -> None:
+        """Construct the initial `ExitPosition` for a fresh entry fill that
+        opened a position from flat, and start exit-managing it.
+
+        Only ever called from `_record_fill` for THIS pipeline's own
+        signal-driven entry path (`process()`), the only path allowed to
+        open a new position under Q-X1's one-open-position-per-instrument
+        rule.
+        """
+        side = PositionSide.LONG if order_side is OrderSide.BUY else PositionSide.SHORT
+        try:
+            position = ExitPosition(
+                position_id=f"exit-pos:{instrument}:{now.isoformat()}",
+                instrument=instrument,
+                side=side,
+                entry_price=entry_price,
+                quantity=quantity,
+                initial_stop_price=stop_price,
+                current_stop_price=stop_price,
+                opened_at=now,
+            )
+        except ValueError as exc:
+            # Fail closed rather than propagate or silently leave a real,
+            # unprotected position outside exit management. No real
+            # market/runtime context is available this deep inside fill
+            # accounting to safely fabricate a reduce-only
+            # ExecutionRequest, so the safe action taken here is a
+            # system-wide halt of all NEW exposure (every future
+            # RiskEngine.evaluate() call fails closed against it) --
+            # documented as a deviation from a literal "submit an
+            # emergency reduce-only close" in the slice report.
+            # `RiskEngine._stop_distance` already validates stop-price
+            # side before any decision reaches this point, so this is a
+            # should-never-happen defensive backstop.
+            self.risk_engine.halt(
+                f"exit position construction failed for {instrument} "
+                f"(qty={quantity}, entry={entry_price}, stop={stop_price}) at "
+                f"{now.isoformat()}: {exc}"
+            )
+            return
+        self._exit_positions[instrument] = position
+
+    def _evaluate_exit(
+        self,
+        *,
+        instrument: str,
+        snapshot: MarketSnapshot,
+        runtime: RuntimeRiskState,
+        account_known: bool,
+        now: datetime,
+        signal_reversal: bool = False,
+    ) -> ExitStepResult | None:
+        """One exit-management tick for `instrument`'s open position, if any.
+
+        No-op (returns `None`) when `instrument` has no open exit-managed
+        position. Otherwise: re-derives the position's quantity from the
+        portfolio (the source of truth, never a locally-tracked counter),
+        builds `ExitMarketState` from `snapshot`, calls
+        `self.exit_engine.evaluate()`, folds the ratcheted stop/high-water
+        mark via `apply_evaluation()`, and -- if a decision was emitted --
+        routes it through `risk_engine.evaluate_reduce_only()` and, if
+        approved, `execution_engine.submit()`, reconciling any resulting
+        fill through the same `_record_fill` accounting `process()` uses.
+        `exit_engine.notify_terminal()` is called on every terminal
+        execution outcome (approved-and-resolved, or risk-rejected), never
+        skipped, so a reduce-only reservation is never leaked.
+
+        `market.risk_halt` is always False here (deliberate: Q-X3 forbids
+        wiring an execution/runtime halt or kill switch into an automatic
+        flatten -- see docs/OPEN_QUESTIONS.md #25). This method itself
+        never checks `runtime.kill_switch`/`execution_engine.mode` before
+        evaluating a trigger, so a halt by itself never creates a decision;
+        it only affects whether risk APPROVES a decision the exit engine
+        independently decided to emit (via `_account_reconciled()`, Q-X2).
+        """
+        stored = self._exit_positions.get(instrument)
+        if stored is None:
+            return None
+
+        current_qty = abs(self._position_qty(instrument))
+        if current_qty <= ZERO:
+            # Portfolio is the source of truth for quantity: if some other
+            # path already flattened this instrument, drop the stale
+            # exit-management record rather than trust a local counter.
+            del self._exit_positions[instrument]
+            return None
+
+        materialized = replace(stored, quantity=current_qty)
+        market_state = ExitMarketState(
+            instrument=instrument,
+            timestamp=snapshot.timestamp,
+            price=snapshot.last,
+            bid=snapshot.bid,
+            ask=snapshot.ask,
+            volatility=snapshot.volatility,
+            momentum_score=None,
+            signal_reversal=signal_reversal,
+            risk_halt=False,
+            available_liquidity_notional=snapshot.liquidity,
+        )
+
+        evaluation = self.exit_engine.evaluate(position=materialized, market=market_state, now=now)
+        new_position = apply_evaluation(materialized, evaluation)
+
+        decision = evaluation.decision
+        if decision is None:
+            self._exit_positions[instrument] = new_position
+            return ExitStepResult(
+                instrument=instrument,
+                decision=None,
+                risk_decision=None,
+                execution_result=None,
+                outcome=None,
+                position_closed=False,
+            )
+
+        # Persist the pending-close guard BEFORE risk/execution are even
+        # consulted, mirroring `ExitPosition.pending_close_request_id`'s own
+        # purpose: a reentrant exit tick for this instrument (e.g. a driver
+        # calling `process_exits()` again before this call returns) must
+        # see it and no-op via `ExitEngine._no_op_if_already_closing`,
+        # never submit a second overlapping reduce-only request.
+        self._exit_positions[instrument] = replace(
+            new_position, pending_close_request_id=decision.request_id
+        )
+
+        account = self._build_account_state(instrument=instrument, account_known=account_known)
+        risk_decision = self.risk_engine.evaluate_reduce_only(
+            request_id=decision.request_id,
+            instrument=decision.instrument,
+            side=decision.close_side,
+            quantity=decision.quantity,
+            account=account,
+            runtime=runtime,
+            now=now,
+        )
+
+        if not risk_decision.approved:
+            # Nothing was submitted: release()'s underlying no-op is safe
+            # regardless (see `ExitEngine.notify_terminal` docstring), and
+            # clearing the pending guard lets the next tick retry once the
+            # blocking condition (e.g. Q-X2 unreconciled account) clears.
+            self.exit_engine.notify_terminal(risk_decision.decision_id, ExitOutcome.REJECTED)
+            self._exit_positions[instrument] = replace(new_position, pending_close_request_id=None)
+            return ExitStepResult(
+                instrument=instrument,
+                decision=decision,
+                risk_decision=risk_decision,
+                execution_result=None,
+                outcome=ExitOutcome.REJECTED,
+                position_closed=False,
+            )
+
+        order_side = OrderSide.BUY if decision.close_side is RiskSide.BUY else OrderSide.SELL
+        request = ExecutionRequest(
+            request_id=f"exec:{decision.request_id}",
+            risk_decision_id=risk_decision.decision_id,
+            instrument=instrument,
+            timestamp=now,
+            side=order_side,
+            quantity=risk_decision.quantity,
+            order_type=OrderType.MARKET,
+            limit_price=None,
+            reduce_only=True,
+            client_order_id=f"coid:{decision.request_id}",
+            time_in_force=TimeInForce.IOC,
+            metadata={"reference_price": str(snapshot.last)},
+        )
+
+        before_qty = self._position_qty(instrument)
+        realized_before = self.portfolio.realized_pnl
+        fees_before = self.portfolio.fees
+        self._pending_fills.clear()
+        self._fill_deltas.clear()
+
+        result = self.execution_engine.submit(request, risk_decision, snapshot, now)
+
+        if result.status in (OrderStatus.FILLED, OrderStatus.PARTIALLY_FILLED):
+            after_qty = self._position_qty(instrument)
+            realized_after = self.portfolio.realized_pnl
+            fees_after = self.portfolio.fees
+
+            own_fills = [
+                f for f in self._pending_fills if f.client_order_id == request.client_order_id
+            ]
+            if own_fills:
+                fill_notional = sum((f.price * f.quantity for f in own_fills), ZERO)
+                fill_quantity = sum((f.quantity for f in own_fills), ZERO)
+                actual_fill_price = fill_notional / fill_quantity
+            else:
+                actual_fill_price = snapshot.last
+
+            self._record_fill(
+                instrument=instrument,
+                fill_price=actual_fill_price,
+                expected_price=snapshot.last,
+                quote_bid=snapshot.bid,
+                quote_ask=snapshot.ask,
+                before_qty=before_qty,
+                after_qty=after_qty,
+                realized_before=realized_before,
+                realized_after=realized_after,
+                fees_before=fees_before,
+                fees_after=fees_after,
+                order_side=order_side,
+                now=now,
+            )
+            self._update_peak_equity()
+
+            remaining_qty = abs(after_qty)
+            pending = (
+                None if result.status in TERMINAL_STATUSES else decision.request_id
+            )
+            if remaining_qty <= ZERO:
+                self._exit_positions.pop(instrument, None)
+            else:
+                closed_quantity = abs(before_qty) - remaining_qty
+                stage_index = decision.metadata.get("stage_index")
+                self._exit_positions[instrument] = replace(
+                    new_position,
+                    quantity=remaining_qty,
+                    realized_partial_quantity=(
+                        new_position.realized_partial_quantity + closed_quantity
+                    ),
+                    stages_completed=(
+                        stage_index + 1
+                        if (
+                            decision.reason == ExitReason.TAKE_PROFIT
+                            and stage_index is not None
+                        )
+                        else new_position.stages_completed
+                    ),
+                    pending_close_request_id=pending,
+                )
+        else:
+            pending = None if result.status in TERMINAL_STATUSES else decision.request_id
+            self._exit_positions[instrument] = replace(
+                new_position, pending_close_request_id=pending
+            )
+
+        outcome: ExitOutcome | None = None
+        if result.status in TERMINAL_STATUSES:
+            outcome = self._map_execution_status_to_exit_outcome(result.status)
+            self.exit_engine.notify_terminal(risk_decision.decision_id, outcome)
+
+        return ExitStepResult(
+            instrument=instrument,
+            decision=decision,
+            risk_decision=risk_decision,
+            execution_result=result,
+            outcome=outcome,
+            position_closed=instrument not in self._exit_positions,
+        )
+
     def _record_fill(
         self,
         *,
@@ -692,10 +1154,21 @@ class PaperTradingPipeline:
         fees_after: Decimal,
         order_side: OrderSide,
         now: datetime,
+        entry_stop_price: Decimal | None = None,
     ) -> None:
         filled_quantity = abs(after_qty - before_qty)
         if filled_quantity == ZERO:
             return  # duplicate/no-op fill: nothing new to attribute
+
+        if before_qty == ZERO and after_qty != ZERO and entry_stop_price is not None:
+            self._open_exit_position(
+                instrument=instrument,
+                order_side=order_side,
+                entry_price=fill_price,
+                quantity=abs(after_qty),
+                stop_price=entry_stop_price,
+                now=now,
+            )
 
         accumulator = self._trade_accum.get(instrument)
         if accumulator is None:
@@ -736,6 +1209,15 @@ class PaperTradingPipeline:
             accumulator.exit_expected_notional += filled_quantity * expected_price
 
         if after_qty == ZERO:
+            # Portfolio is the source of truth for exit-management state
+            # too: drop it here regardless of which path drove the
+            # flattening fill (this pipeline's own `_evaluate_exit`, or a
+            # protective-child fill observed through
+            # `_reconcile_background_fills`) -- `_evaluate_exit` already
+            # does this for its own path, but a protective STOP/
+            # TAKE_PROFIT child filling via `on_trade()`/`on_time()`/
+            # `report_fill()` never goes through `_evaluate_exit` at all.
+            self._exit_positions.pop(instrument, None)
             gross_pnl = accumulator.realized_pnl_delta
             outcome = TradeOutcome(
                 gross_pnl=gross_pnl,

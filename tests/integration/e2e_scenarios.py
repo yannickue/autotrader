@@ -23,6 +23,8 @@ from execution.events import TradeEvent
 from execution.models import ExecutionRequest, OrderSide, OrderType, TimeInForce
 from execution.orders import OrderStatus, RejectCode
 from execution.paper import ExecutionConfig, PaperExecutionEngine
+from exits.engine import ExitEngine
+from exits.models import ExitPolicy
 from pipeline.paper import PaperTradingPipeline, PipelineOutcome, PipelineStage
 from portfolio.ledger import Portfolio
 from risk.engine import RiskEngine
@@ -175,6 +177,29 @@ def make_cost_schedule(**overrides: Any) -> VenueCostSchedule:
     return VenueCostSchedule(**values)
 
 
+def make_exit_policy(**overrides: Any) -> ExitPolicy:
+    """Conservative default exit policy for harnesses that don't care about
+    exit-engine specifics -- most existing e2e scenarios never trigger any
+    exit-engine rule within their own short synthetic price moves, so these
+    defaults are chosen to stay inert (wide trailing/target thresholds)
+    unless a test deliberately overrides them."""
+    values: dict[str, Any] = dict(
+        policy_id="exit-v1",
+        breakeven_trigger_r_multiple=Decimal("1"),
+        breakeven_buffer_bps=Decimal("5"),
+        trailing_activation_r_multiple=Decimal("1.5"),
+        trailing_distance_volatility_multiplier=Decimal("2"),
+        target_r_multiple=None,
+        partial_take_profit_fraction=Decimal("0.5"),
+        min_remaining_quantity=Decimal("0"),
+        quantity_step=Decimal("0.001"),
+        max_holding_duration=None,
+        max_market_data_age=timedelta(seconds=30),
+    )
+    values.update(overrides)
+    return ExitPolicy(**values)
+
+
 def make_runtime(**overrides: Any) -> RuntimeRiskState:
     values: dict[str, Any] = dict(
         state_version="runtime-1", mode=RuntimeMode.READY, risk_ready=True, kill_switch=False
@@ -193,6 +218,8 @@ class Harness:
     portfolio: Portfolio
     pipeline: PaperTradingPipeline
     cost_schedule: VenueCostSchedule
+    exit_policy: ExitPolicy
+    exit_engine: ExitEngine
 
 
 def build_harness(
@@ -203,6 +230,7 @@ def build_harness(
     leverage_cap: Decimal = Decimal("10"),
     exec_config: ExecutionConfig | None = None,
     cost_schedule: VenueCostSchedule | None = None,
+    exit_policy: ExitPolicy | None = None,
 ) -> Harness:
     policy = policy or make_policy()
     limits = limits or make_limits()
@@ -220,6 +248,11 @@ def build_harness(
     portfolio = Portfolio(starting_balance=starting_balance)
     execution_engine = PaperExecutionEngine(exec_config, portfolio, cost_schedule)
     execution_engine.reconcile({"orders": {}, "positions": {}}, NOW)
+    exit_policy = exit_policy or make_exit_policy()
+    # `risk_gate=risk_engine`: the exit engine releases reduce-only
+    # reservations directly against the SAME real RiskEngine instance this
+    # harness's pipeline uses (docs/OPEN_QUESTIONS.md #24/#25).
+    exit_engine = ExitEngine(policy=exit_policy, risk_gate=risk_engine)
     pipeline = PaperTradingPipeline(
         risk_engine=risk_engine,
         execution_engine=execution_engine,
@@ -227,6 +260,7 @@ def build_harness(
         instrument_limits={limits.instrument: limits},
         leverage_cap=leverage_cap,
         cost_schedule=cost_schedule,
+        exit_engine=exit_engine,
     )
     return Harness(
         policy=policy,
@@ -237,6 +271,8 @@ def build_harness(
         portfolio=portfolio,
         pipeline=pipeline,
         cost_schedule=cost_schedule,
+        exit_policy=exit_policy,
+        exit_engine=exit_engine,
     )
 
 
@@ -1383,8 +1419,13 @@ def scenario_metrics_json_serializable() -> dict[str, Any]:
         account_known=True,
         now=close_timestamp,
     )
-    assert close_outcome.stage is PipelineStage.EXECUTED
-    assert _qty(h) == 0  # SHORT of the same size flattens the LONG
+    # Slice 3b (exit engine integration, docs/OPEN_QUESTIONS.md #25 Q-X1): an
+    # opposite-direction signal on an instrument with an open position is now
+    # a REVERSAL trigger for the exit engine (a reduce-only close), never a
+    # same-tick flip through a brand-new opposite-side entry order -- see
+    # `PaperTradingPipeline.process()`'s exit-management block.
+    assert close_outcome.stage is PipelineStage.SIGNAL_REVERSAL_EXIT
+    assert _qty(h) == 0  # the exit engine's reduce-only close flattens the LONG
 
     metrics = h.pipeline.metrics()
     trade_metrics = metrics["trade_metrics"]

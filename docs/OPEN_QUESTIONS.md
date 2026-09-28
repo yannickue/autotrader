@@ -78,7 +78,7 @@ records and resolves them here.
     `src/risk/models.py` (`RiskPolicy.reference_price_*` fields); see `docs/RISK_CONTRACT.md`
     "Risk reference price" and regression tests in `tests/unit/risk/test_engine.py`
     (`test_entry_price_far_from_market_rejects_*`).
-24. `RiskEngine.evaluate_reduce_only()` (added to fix a reduce-only-can-flip-past-flat bug,
+24. **RESOLVED 2026-09-28 (integration Slice 3b).** `RiskEngine.evaluate_reduce_only()` (added to fix a reduce-only-can-flip-past-flat bug,
     2026-09-27) reserves quantity per decision_id the same way `evaluate()` already did, released
     via `RiskEngine.release(decision_id)`. For the main `evaluate()` path, `src/pipeline/paper.py`
     already calls `release()` on every terminal execution outcome (fill/cancel/reject). No
@@ -92,6 +92,11 @@ records and resolves them here.
     `risk_engine.release(decision.decision_id)` on every terminal outcome of a reduce-only order,
     mirroring exactly what `src/pipeline/paper.py`'s entry path already does. Not implemented now
     because there is no real caller to wire it into yet — do not invent one.
+
+    **Now implemented**: `src/exits/engine.py`'s `ExitEngine.notify_terminal()` calls
+    `release()` on every terminal outcome; `src/pipeline/paper.py`'s `_evaluate_exit()` calls
+    `notify_terminal()` on every `TERMINAL_STATUSES` result from a submitted reduce-only
+    `ExecutionRequest`. See `docs/RISK_CONTRACT.md` "Reduce-only reservations".
 25. **RESOLVED 2026-09-28 (Phase A integration policy decisions).** An AUDITOR (Opus) integration
     plan for wiring `src/costs`, `src/exits`, `src/persistence`, `src/margin` into
     `src/pipeline/paper.py` / `src/risk/engine.py` / `src/execution/paper.py` surfaced six genuine

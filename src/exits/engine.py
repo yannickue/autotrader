@@ -383,6 +383,18 @@ class ExitEngine:
     def _target_decision(
         self, *, position: ExitPosition, market: ExitMarketState, now: datetime
     ) -> ExitDecision | None:
+        # PRECEDENCE (see `ExitPolicy.take_profit_stages` docstring): a
+        # non-empty stage ladder is used EXCLUSIVELY; the single-stage
+        # target_r_multiple/fixed_target_price/partial_take_profit_fraction
+        # fields are only consulted when no ladder is configured, preserving
+        # the pre-multi-stage behavior exactly (existing tests/callers).
+        if self._policy.take_profit_stages:
+            return self._staged_target_decision(position=position, market=market, now=now)
+        return self._single_stage_target_decision(position=position, market=market, now=now)
+
+    def _single_stage_target_decision(
+        self, *, position: ExitPosition, market: ExitMarketState, now: datetime
+    ) -> ExitDecision | None:
         # A target is only taken once per position (realized_partial_quantity
         # tracks whether it already fired), so a strongly continuing move
         # after the partial is never cut short a second time.
@@ -399,9 +411,7 @@ class ExitEngine:
 
         policy = self._policy
         raw_partial = position.quantity * policy.partial_take_profit_fraction
-        partial_quantity = (raw_partial / policy.quantity_step).to_integral_value(
-            rounding=ROUND_DOWN
-        ) * policy.quantity_step
+        partial_quantity = self._round_down_to_step(raw_partial, policy.quantity_step)
         remaining_after_partial = position.quantity - partial_quantity
 
         if partial_quantity <= 0 or remaining_after_partial < policy.min_remaining_quantity:
@@ -420,6 +430,88 @@ class ExitEngine:
             now=now,
             metadata={"target_source": target_source, "target_price": str(target_price)},
         )
+
+    def _staged_target_decision(
+        self, *, position: ExitPosition, market: ExitMarketState, now: datetime
+    ) -> ExitDecision | None:
+        stages = self._policy.take_profit_stages
+        # Only the NEXT unfired stage is ever checked, and at most one stage
+        # decision is emitted per evaluate() call -- even if price has
+        # gapped past multiple stage triggers in a single tick, the
+        # remaining stage(s) are picked up on subsequent ticks once
+        # `stages_completed` has advanced from a real fill. This is a
+        # deliberate design choice (see PART 1 test coverage), not an
+        # oversight: it keeps exactly one reduce-only request in flight at a
+        # time, mirroring the engine's existing "one decision per tick"
+        # pattern used everywhere else in `_evaluate_inner`.
+        if position.stages_completed >= len(stages):
+            return None
+
+        stage = stages[position.stages_completed]
+        initial_risk = position.initial_risk
+        if initial_risk <= 0:
+            return None
+
+        is_long = position.side == PositionSide.LONG
+        offset = initial_risk * stage.r_multiple
+        target_price = position.entry_price + offset if is_long else position.entry_price - offset
+        target_hit = market.price >= target_price if is_long else market.price <= target_price
+        if not target_hit:
+            return None
+
+        policy = self._policy
+        # close_fraction is a fraction of the ORIGINAL position quantity
+        # (see `TakeProfitStage` docstring), not of whatever remains open
+        # now -- reconstruct it from the currently-open quantity plus
+        # whatever has already been realized via earlier partial closes.
+        original_quantity = position.quantity + position.realized_partial_quantity
+        raw_stage_quantity = original_quantity * stage.close_fraction
+        stage_quantity = self._round_down_to_step(raw_stage_quantity, policy.quantity_step)
+        # Defensive clamp: rounding/Decimal drift across stages must never
+        # let a stage try to close more than is actually still open.
+        stage_quantity = min(stage_quantity, position.quantity)
+        remaining_after_stage = position.quantity - stage_quantity
+
+        is_last_configured_stage = position.stages_completed == len(stages) - 1
+        # The dust-avoidance "just take everything" fallback the single-stage
+        # path uses only ever applies on this ladder's LAST stage -- an
+        # earlier stage rounding to (near) zero is a policy misconfiguration,
+        # not a reason to prematurely close the whole runner while later
+        # stages are still meant to fire.
+        dust_or_undersized = (
+            stage_quantity <= 0 or remaining_after_stage < policy.min_remaining_quantity
+        )
+        if dust_or_undersized and is_last_configured_stage:
+            quantity = position.quantity
+            is_partial = False
+        elif stage_quantity <= 0:
+            return None
+        else:
+            quantity = stage_quantity
+            is_partial = quantity < position.quantity
+
+        return self._build_decision(
+            position=position,
+            quantity=quantity,
+            is_partial=is_partial,
+            reason=ExitReason.TAKE_PROFIT,
+            reason_detail=(
+                f"price {market.price} reached stage {position.stages_completed} "
+                f"target {target_price} ({stage.r_multiple}R)"
+            ),
+            now=now,
+            metadata={
+                "target_source": "staged",
+                "target_price": str(target_price),
+                "stage_index": position.stages_completed,
+                "stage_r_multiple": str(stage.r_multiple),
+                "stage_close_fraction": str(stage.close_fraction),
+            },
+        )
+
+    @staticmethod
+    def _round_down_to_step(raw_quantity: Decimal, quantity_step: Decimal) -> Decimal:
+        return (raw_quantity / quantity_step).to_integral_value(rounding=ROUND_DOWN) * quantity_step
 
     def _build_decision(
         self,

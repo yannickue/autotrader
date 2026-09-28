@@ -9,12 +9,14 @@ second harness, so this exercises the real risk/execution/portfolio wiring.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import timedelta
 from decimal import Decimal
 
 from execution.events import TradeEvent
 from execution.models import ExecutionRequest, OrderSide, OrderType, TimeInForce
-from execution.orders import ChildRole, OrderStatus
+from execution.orders import ChildRole, HaltCode, OrderStatus
+from exits.models import ExitOutcome, ExitReason, StopStage, TakeProfitStage
 from pipeline.paper import PipelineStage
 from portfolio.models import Fill
 from risk.models import RiskDecision, RiskReason
@@ -375,6 +377,8 @@ def _build_two_instrument_harness(*, cost_schedule=None) -> scenarios.Harness:
     portfolio = scenarios.Portfolio(starting_balance=Decimal("100000"))
     execution_engine = scenarios.PaperExecutionEngine(exec_config, portfolio, cost_schedule)
     execution_engine.reconcile({"orders": {}, "positions": {}}, NOW)
+    exit_policy = scenarios.make_exit_policy()
+    exit_engine = scenarios.ExitEngine(policy=exit_policy, risk_gate=risk_engine)
     pipeline = scenarios.PaperTradingPipeline(
         risk_engine=risk_engine,
         execution_engine=execution_engine,
@@ -382,6 +386,7 @@ def _build_two_instrument_harness(*, cost_schedule=None) -> scenarios.Harness:
         instrument_limits={INSTRUMENT: limits1, INSTRUMENT2: limits2},
         leverage_cap=Decimal("10"),
         cost_schedule=cost_schedule,
+        exit_engine=exit_engine,
     )
     return scenarios.Harness(
         policy=policy,
@@ -392,6 +397,8 @@ def _build_two_instrument_harness(*, cost_schedule=None) -> scenarios.Harness:
         portfolio=portfolio,
         pipeline=pipeline,
         cost_schedule=cost_schedule,
+        exit_policy=exit_policy,
+        exit_engine=exit_engine,
     )
 
 
@@ -739,3 +746,527 @@ def test_reconcile_background_fills_buckets_multi_instrument_fills_independently
     # this same batch, regardless of how many other instruments' fills
     # interleave between this instrument's own open and close.
     assert outcome_second.gross_pnl == second_fill_delta
+
+
+# ===========================================================================
+# PART 2: exit engine <-> pipeline integration
+# (docs/OPEN_QUESTIONS.md #25 Q-X0/X1/X2/X3)
+# ===========================================================================
+
+
+def _harness_with_exit_policy(**overrides) -> scenarios.Harness:
+    return scenarios.build_harness(exit_policy=scenarios.make_exit_policy(**overrides))
+
+
+def _exit_snapshot(price: Decimal, ts, *, volatility: Decimal = Decimal("0.01")):
+    return scenarios.make_snapshot(
+        timestamp=ts,
+        bid=price - Decimal("0.1"),
+        ask=price + Decimal("0.1"),
+        last=price,
+        volatility=volatility,
+    )
+
+
+# -- 1. initial invalidation stop hit via the protective STOP child --------
+
+
+def test_exit_position_removed_when_protective_stop_closes_it() -> None:
+    """The protective STOP execution already manages mechanically (Q-X0
+    hard backstop) still closes the position exactly as before Part 2 --
+    but now `_exit_positions` bookkeeping must also be cleaned up, since it
+    never went through `_evaluate_exit` at all (see `_record_fill`'s
+    generic `after_qty == ZERO` cleanup)."""
+    h = scenarios.build_harness()
+    now1 = NOW
+    quantity = _open_long(h, now=now1)
+    assert INSTRUMENT in h.pipeline._exit_positions
+
+    entry_order = next(o for o in h.execution_engine._orders.values() if o.role == ChildRole.ENTRY)
+    stop_id = f"{entry_order.client_order_id}:{ChildRole.STOP}"
+    stop_order = h.execution_engine._orders[stop_id]
+
+    now2 = now1 + timedelta(minutes=5)
+    event = TradeEvent(
+        instrument=INSTRUMENT,
+        timestamp=now2,
+        trade_id="stop-trigger-exit-1",
+        price=stop_order.trigger_price - Decimal("1"),
+        quantity=quantity,
+    )
+    outcome = h.pipeline.process_trade_event(event=event, now=now2)
+
+    assert outcome.stage is PipelineStage.EXECUTION_EVENT_FILLED
+    assert h.portfolio.positions[INSTRUMENT].quantity == Decimal("0")
+    assert INSTRUMENT not in h.pipeline._exit_positions
+    assert len(h.pipeline._trade_outcomes) == 1
+
+
+# -- 2. full take-profit (single-stage config) closes the whole position ---
+
+
+def test_full_take_profit_single_stage_closes_whole_position() -> None:
+    h = _harness_with_exit_policy(
+        target_r_multiple=Decimal("1"),
+        partial_take_profit_fraction=Decimal("1"),
+        min_remaining_quantity=Decimal("0.001"),
+    )
+    now1 = NOW
+    _open_long(h, now=now1)
+    position = h.pipeline._exit_positions[INSTRUMENT]
+    target_price = position.entry_price + position.initial_risk * Decimal("1") + Decimal("0.2")
+
+    now2 = now1 + timedelta(minutes=1)
+    result = h.pipeline.process_exits(
+        snapshot=_exit_snapshot(target_price, now2),
+        runtime=scenarios.make_runtime(),
+        account_known=True,
+        now=now2,
+    )
+
+    assert result is not None
+    assert result.decision is not None
+    assert result.decision.reason == ExitReason.TAKE_PROFIT
+    assert result.decision.is_partial is False
+    assert result.outcome == ExitOutcome.FILLED
+    assert result.position_closed is True
+    assert h.portfolio.positions[INSTRUMENT].quantity == Decimal("0")
+    assert INSTRUMENT not in h.pipeline._exit_positions
+    assert len(h.pipeline._trade_outcomes) == 1
+
+
+# -- 3. partial take-profit (single TP1 stage) leaves a managed remainder --
+
+
+def test_partial_take_profit_single_stage_leaves_remainder_open_and_managed() -> None:
+    h = _harness_with_exit_policy(
+        target_r_multiple=Decimal("1"),
+        partial_take_profit_fraction=Decimal("0.5"),
+        min_remaining_quantity=Decimal("0.001"),
+    )
+    now1 = NOW
+    _open_long(h, now=now1)
+    position = h.pipeline._exit_positions[INSTRUMENT]
+    original_quantity = position.quantity
+    target_price = position.entry_price + position.initial_risk * Decimal("1") + Decimal("0.2")
+
+    now2 = now1 + timedelta(minutes=1)
+    result = h.pipeline.process_exits(
+        snapshot=_exit_snapshot(target_price, now2),
+        runtime=scenarios.make_runtime(),
+        account_known=True,
+        now=now2,
+    )
+
+    assert result is not None
+    assert result.decision is not None
+    assert result.decision.reason == ExitReason.TAKE_PROFIT
+    assert result.decision.is_partial is True
+    assert result.position_closed is False
+    remaining = h.portfolio.positions[INSTRUMENT].quantity
+    assert Decimal("0") < remaining < original_quantity
+    assert INSTRUMENT in h.pipeline._exit_positions
+    stored = h.pipeline._exit_positions[INSTRUMENT]
+    assert stored.quantity == remaining
+    assert stored.realized_partial_quantity == original_quantity - remaining
+
+    # The remainder keeps being exit-managed: a later stop hit still closes it.
+    now3 = now2 + timedelta(minutes=1)
+    pullback_price = stored.current_stop_price - Decimal("1")
+    result2 = h.pipeline.process_exits(
+        snapshot=_exit_snapshot(pullback_price, now3),
+        runtime=scenarios.make_runtime(),
+        account_known=True,
+        now=now3,
+    )
+
+    assert result2 is not None
+    assert result2.decision is not None
+    assert result2.position_closed is True
+    assert h.portfolio.positions[INSTRUMENT].quantity == Decimal("0")
+    assert INSTRUMENT not in h.pipeline._exit_positions
+
+
+# -- 4. multiple TP stages, then the runner exits via trailing stop --------
+
+
+def test_multi_stage_take_profit_ladder_then_trailing_stop_closes_runner() -> None:
+    stages = (
+        TakeProfitStage(r_multiple=Decimal("1"), close_fraction=Decimal("0.3")),
+        TakeProfitStage(r_multiple=Decimal("2"), close_fraction=Decimal("0.3")),
+    )
+    h = _harness_with_exit_policy(
+        take_profit_stages=stages,
+        min_remaining_quantity=Decimal("0.001"),
+        trailing_activation_r_multiple=Decimal("0.5"),
+        trailing_distance_volatility_multiplier=Decimal("2"),
+    )
+    now = NOW
+    _open_long(h, now=now)
+    position = h.pipeline._exit_positions[INSTRUMENT]
+    original_quantity = position.quantity
+    entry = position.entry_price
+    risk = position.initial_risk
+
+    now1 = now + timedelta(minutes=1)
+    tp1_price = entry + risk * Decimal("1") + Decimal("0.2")
+    result1 = h.pipeline.process_exits(
+        snapshot=_exit_snapshot(tp1_price, now1),
+        runtime=scenarios.make_runtime(),
+        account_known=True,
+        now=now1,
+    )
+    assert result1 is not None
+    assert result1.decision is not None
+    assert result1.decision.metadata["stage_index"] == 0
+    stored1 = h.pipeline._exit_positions[INSTRUMENT]
+    assert stored1.stages_completed == 1
+    assert Decimal("0") < stored1.quantity < original_quantity
+
+    now2 = now1 + timedelta(minutes=1)
+    tp2_price = entry + risk * Decimal("2") + Decimal("0.2")
+    result2 = h.pipeline.process_exits(
+        snapshot=_exit_snapshot(tp2_price, now2),
+        runtime=scenarios.make_runtime(),
+        account_known=True,
+        now=now2,
+    )
+    assert result2 is not None
+    assert result2.decision is not None
+    assert result2.decision.metadata["stage_index"] == 1
+    stored2 = h.pipeline._exit_positions[INSTRUMENT]
+    assert stored2.stages_completed == 2
+    assert Decimal("0") < stored2.quantity < stored1.quantity
+
+    # No third stage exists: further favorable movement must not fire another
+    # TAKE_PROFIT -- the remainder only runs protected by trailing/break-even.
+    now3 = now2 + timedelta(minutes=1)
+    high_price = entry + risk * Decimal("3")
+    result3 = h.pipeline.process_exits(
+        snapshot=_exit_snapshot(high_price, now3),
+        runtime=scenarios.make_runtime(),
+        account_known=True,
+        now=now3,
+    )
+    assert result3 is not None
+    assert result3.decision is None or result3.decision.reason != ExitReason.TAKE_PROFIT
+    stored3 = h.pipeline._exit_positions[INSTRUMENT]
+    assert stored3.stop_stage in (StopStage.TRAILING, StopStage.BREAK_EVEN)
+
+    now4 = now3 + timedelta(minutes=1)
+    pullback_price = stored3.current_stop_price - Decimal("1")
+    result4 = h.pipeline.process_exits(
+        snapshot=_exit_snapshot(pullback_price, now4),
+        runtime=scenarios.make_runtime(),
+        account_known=True,
+        now=now4,
+    )
+    assert result4 is not None
+    assert result4.decision is not None
+    assert result4.position_closed is True
+    assert h.portfolio.positions[INSTRUMENT].quantity == Decimal("0")
+    assert INSTRUMENT not in h.pipeline._exit_positions
+
+
+# -- 5. trailing stop / break-even transition observably move the stop -----
+
+
+def test_trailing_and_break_even_transition_move_stop_and_eventually_close() -> None:
+    h = _harness_with_exit_policy(
+        breakeven_trigger_r_multiple=Decimal("1"),
+        trailing_activation_r_multiple=Decimal("1.5"),
+        trailing_distance_volatility_multiplier=Decimal("2"),
+    )
+    now = NOW
+    _open_long(h, now=now)
+    position = h.pipeline._exit_positions[INSTRUMENT]
+    entry = position.entry_price
+    risk = position.initial_risk
+    initial_stop = position.current_stop_price
+
+    now1 = now + timedelta(minutes=1)
+    result1 = h.pipeline.process_exits(
+        snapshot=_exit_snapshot(entry + risk * Decimal("1.1"), now1),
+        runtime=scenarios.make_runtime(),
+        account_known=True,
+        now=now1,
+    )
+    assert result1 is not None
+    assert result1.decision is None
+    stored1 = h.pipeline._exit_positions[INSTRUMENT]
+    assert stored1.stop_stage == StopStage.BREAK_EVEN
+    assert stored1.current_stop_price > initial_stop
+
+    now2 = now1 + timedelta(minutes=1)
+    result2 = h.pipeline.process_exits(
+        snapshot=_exit_snapshot(entry + risk * Decimal("2"), now2),
+        runtime=scenarios.make_runtime(),
+        account_known=True,
+        now=now2,
+    )
+    assert result2 is not None
+    assert result2.decision is None
+    stored2 = h.pipeline._exit_positions[INSTRUMENT]
+    assert stored2.stop_stage == StopStage.TRAILING
+    assert stored2.current_stop_price > stored1.current_stop_price
+
+    now3 = now2 + timedelta(minutes=1)
+    result3 = h.pipeline.process_exits(
+        snapshot=_exit_snapshot(stored2.current_stop_price - Decimal("1"), now3),
+        runtime=scenarios.make_runtime(),
+        account_known=True,
+        now=now3,
+    )
+    assert result3 is not None
+    assert result3.decision is not None
+    assert result3.decision.reason == ExitReason.TRAILING_STOP
+    assert result3.position_closed is True
+    assert h.portfolio.positions[INSTRUMENT].quantity == Decimal("0")
+
+
+# -- 6. time exit closes a position past max_holding_duration --------------
+
+
+def test_time_exit_closes_position_past_max_holding_duration() -> None:
+    h = _harness_with_exit_policy(max_holding_duration=timedelta(hours=1))
+    now = NOW
+    _open_long(h, now=now)
+
+    later = now + timedelta(hours=1, seconds=1)
+    result = h.pipeline.process_exits(
+        snapshot=_exit_snapshot(Decimal("100"), later),
+        runtime=scenarios.make_runtime(),
+        account_known=True,
+        now=later,
+    )
+
+    assert result is not None
+    assert result.decision is not None
+    assert result.decision.reason == ExitReason.TIME_STOP
+    assert result.position_closed is True
+    assert h.portfolio.positions[INSTRUMENT].quantity == Decimal("0")
+    assert INSTRUMENT not in h.pipeline._exit_positions
+
+
+# -- 7. signal reversal closes (never flips); next tick can open fresh -----
+
+
+def test_signal_reversal_closes_position_and_next_tick_can_open_opposite() -> None:
+    h = scenarios.build_harness()
+    now1 = NOW
+    _open_long(h, now=now1)
+    assert INSTRUMENT in h.pipeline._exit_positions
+
+    now2 = now1 + timedelta(minutes=1)
+    short_signal = scenarios.make_signal(
+        direction=Direction.SHORT,
+        invalidation_level=Decimal("120"),
+        timestamp=now2,
+        signal_id="reversal-short",
+    )
+    history2 = scenarios.make_history(["100", "100", "100"], start=now2 - timedelta(minutes=2))
+    outcome2 = h.pipeline.process(
+        history=history2,
+        strategy=scenarios.FixedStrategy(short_signal),
+        universe=frozenset({INSTRUMENT}),
+        runtime=scenarios.make_runtime(),
+        account_known=True,
+        now=now2,
+    )
+
+    assert outcome2.stage is PipelineStage.SIGNAL_REVERSAL_EXIT
+    assert h.portfolio.positions[INSTRUMENT].quantity == Decimal("0")
+    assert INSTRUMENT not in h.pipeline._exit_positions
+
+    # The NEXT tick, once flat, is free to open a fresh (opposite) position.
+    now3 = now2 + timedelta(minutes=1)
+    fresh_short = scenarios.make_signal(
+        direction=Direction.SHORT,
+        invalidation_level=Decimal("120"),
+        timestamp=now3,
+        signal_id="fresh-short",
+    )
+    history3 = scenarios.make_history(["100", "100", "100"], start=now3 - timedelta(minutes=2))
+    outcome3 = h.pipeline.process(
+        history=history3,
+        strategy=scenarios.FixedStrategy(fresh_short),
+        universe=frozenset({INSTRUMENT}),
+        runtime=scenarios.make_runtime(),
+        account_known=True,
+        now=now3,
+    )
+
+    assert outcome3.stage is PipelineStage.EXECUTED
+    assert h.portfolio.positions[INSTRUMENT].quantity < Decimal("0")
+
+
+# -- 8. emergency exit path: stale/invalid market data during an exit tick -
+
+
+def test_emergency_exit_closes_position_on_stale_market_data() -> None:
+    h = _harness_with_exit_policy(max_market_data_age=timedelta(seconds=1))
+    now1 = NOW
+    _open_long(h, now=now1)
+
+    now2 = now1 + timedelta(minutes=1)
+    # Stale for the exit policy (>1s), but well within execution's own
+    # max_quote_age (30s in the harness default ExecutionConfig) -- isolates
+    # the exit engine's own staleness fail-closed path from execution's
+    # separate, unrelated quote-staleness guard.
+    slightly_stale = _exit_snapshot(Decimal("100"), now2 - timedelta(seconds=5))
+    result = h.pipeline.process_exits(
+        snapshot=slightly_stale,
+        runtime=scenarios.make_runtime(),
+        account_known=True,
+        now=now2,
+    )
+
+    assert result is not None
+    assert result.decision is not None
+    assert result.decision.reason == ExitReason.EMERGENCY_RISK_EXIT
+    assert result.outcome == ExitOutcome.FILLED
+    assert result.position_closed is True
+    assert h.portfolio.positions[INSTRUMENT].quantity == Decimal("0")
+
+
+# -- 9. exit idempotency: an already-pending close is never double-submitted
+
+
+def test_exit_tick_does_not_double_submit_when_close_already_pending() -> None:
+    h = scenarios.build_harness()
+    now1 = NOW
+    _open_long(h, now=now1)
+    stored = h.pipeline._exit_positions[INSTRUMENT]
+    # Seed the pending-close guard exactly like `_evaluate_exit` itself
+    # would, immediately before submitting a reduce-only request -- proving
+    # the pipeline actually threads `pending_close_request_id` through to
+    # `ExitEngine.evaluate()`/`_no_op_if_already_closing` on the real
+    # pipeline wiring, not just the isolated `ExitEngine` unit tests.
+    h.pipeline._exit_positions[INSTRUMENT] = replace(
+        stored, pending_close_request_id="exit:already-pending:invalidation_stop:t0"
+    )
+    requests_before = len(h.execution_engine._requests)
+
+    now2 = now1 + timedelta(minutes=1)
+    # A price that would otherwise trigger an ordinary stop-hit close.
+    result = h.pipeline.process_exits(
+        snapshot=_exit_snapshot(Decimal("1"), now2),
+        runtime=scenarios.make_runtime(),
+        account_known=True,
+        now=now2,
+    )
+
+    assert result is not None
+    assert result.decision is None  # ExitEngine's own no-op-when-pending guard fired
+    assert len(h.execution_engine._requests) == requests_before
+    assert h.portfolio.positions[INSTRUMENT].quantity != Decimal("0")
+
+
+# -- 10. reduce-only during HALT (Q-X2) -------------------------------------
+
+
+def test_reduce_only_exit_allowed_during_overfill_halt() -> None:
+    """OVERFILL never mutates the portfolio inconsistently (the halt fires
+    BEFORE `Portfolio.apply_fill` in `PaperExecutionEngine._apply_fill`), so
+    account state stays known/reliable and a reduce-only exit must still be
+    allowed through."""
+    h = _harness_with_exit_policy(max_holding_duration=timedelta(hours=1))
+    now1 = NOW
+    _open_long(h, now=now1)
+    h.execution_engine._halt(HaltCode.OVERFILL, "induced for test")
+    assert h.execution_engine.mode.value == "halted"
+
+    later = now1 + timedelta(hours=1, seconds=1)
+    result = h.pipeline.process_exits(
+        snapshot=_exit_snapshot(Decimal("100"), later),
+        runtime=scenarios.make_runtime(),
+        account_known=True,
+        now=later,
+    )
+
+    assert result is not None
+    assert result.decision is not None
+    assert result.risk_decision is not None
+    assert result.risk_decision.approved is True
+    assert result.outcome == ExitOutcome.FILLED
+    assert h.portfolio.positions[INSTRUMENT].quantity == Decimal("0")
+
+
+def test_reduce_only_exit_blocked_during_reconciliation_mismatch_halt() -> None:
+    """RECONCILIATION_MISMATCH means local state may not match the venue
+    (docs/OPEN_QUESTIONS.md #25 Q-X2's own example) -- reduce-only must be
+    blocked by risk's ACCOUNT_UNRECONCILED check, and no execution request
+    may even be submitted."""
+    h = _harness_with_exit_policy(max_holding_duration=timedelta(hours=1))
+    now1 = NOW
+    _open_long(h, now=now1)
+    h.execution_engine.reconcile({"orders": {}, "positions": {INSTRUMENT: "999"}}, now1)
+    assert h.execution_engine.mode.value == "halted"
+
+    later = now1 + timedelta(hours=1, seconds=1)
+    result = h.pipeline.process_exits(
+        snapshot=_exit_snapshot(Decimal("100"), later),
+        runtime=scenarios.make_runtime(),
+        account_known=True,
+        now=later,
+    )
+
+    assert result is not None
+    assert result.decision is not None
+    assert result.risk_decision is not None
+    assert result.risk_decision.approved is False
+    assert result.risk_decision.reason_code == RiskReason.ACCOUNT_UNRECONCILED
+    assert result.execution_result is None
+    assert h.portfolio.positions[INSTRUMENT].quantity != Decimal("0")
+
+
+# -- 11. no auto-flatten on halt/kill-switch (Q-X3) -------------------------
+
+
+def test_halt_and_kill_switch_do_not_by_themselves_trigger_any_exit_decision() -> None:
+    h = scenarios.build_harness()  # default exit policy has no independent trigger here
+    now1 = NOW
+    _open_long(h, now=now1)
+    h.execution_engine._halt(HaltCode.OVERFILL, "induced for test")
+
+    now2 = now1 + timedelta(minutes=1)
+    result = h.pipeline.process_exits(
+        snapshot=_exit_snapshot(Decimal("100"), now2),
+        runtime=scenarios.make_runtime(kill_switch=True),
+        account_known=True,
+        now=now2,
+    )
+
+    assert result is not None
+    assert result.decision is None
+    assert h.portfolio.positions[INSTRUMENT].quantity != Decimal("0")
+    assert INSTRUMENT in h.pipeline._exit_positions
+
+
+# -- 12. one open position per instrument (Q-X1): no pyramiding ------------
+
+
+def test_position_already_open_blocks_pyramiding_same_direction_signal() -> None:
+    h = scenarios.build_harness()
+    now1 = NOW
+    quantity = _open_long(h, now=now1)
+
+    now2 = now1 + timedelta(minutes=1)
+    second_signal = scenarios.make_signal(
+        direction=Direction.LONG,
+        invalidation_level=Decimal("95"),
+        timestamp=now2,
+        signal_id="pyramid-attempt",
+    )
+    history2 = scenarios.make_history(["100", "100", "100"], start=now2 - timedelta(minutes=2))
+    outcome2 = h.pipeline.process(
+        history=history2,
+        strategy=scenarios.FixedStrategy(second_signal),
+        universe=frozenset({INSTRUMENT}),
+        runtime=scenarios.make_runtime(),
+        account_known=True,
+        now=now2,
+    )
+
+    assert outcome2.stage is PipelineStage.POSITION_ALREADY_OPEN
+    assert h.portfolio.positions[INSTRUMENT].quantity == quantity

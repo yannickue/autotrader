@@ -90,6 +90,29 @@ def _require_utc_aware(name: str, value: datetime) -> None:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class TakeProfitStage:
+    """One ordered stage of a multi-stage take-profit ladder.
+
+    `r_multiple` is the trigger, using the exact same "offset from entry =
+    initial_risk * r_multiple" convention as `ExitPolicy.target_r_multiple`.
+    `close_fraction` is a fraction of the position's ORIGINAL quantity (the
+    quantity when the position first opened, i.e. `ExitPosition.quantity +
+    ExitPosition.realized_partial_quantity` at any later tick) to close when
+    this stage triggers -- not a fraction of whatever remains open at that
+    point. This keeps each stage's size independent of how earlier stages
+    happened to round, and lets `ExitPolicy.__post_init__` validate that a
+    ladder can never be configured to close more than the original position.
+    """
+
+    r_multiple: Decimal
+    close_fraction: Decimal
+
+    def __post_init__(self) -> None:
+        _require_finite_positive("r_multiple", self.r_multiple)
+        _require_fraction("close_fraction", self.close_fraction)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class ExitPolicy:
     """Immutable, configured thresholds for every exit rule.
 
@@ -117,10 +140,21 @@ class ExitPolicy:
     # takes a PARTIAL profit (`partial_take_profit_fraction` of the open
     # quantity) rather than closing the whole trade, so a strongly
     # continuing move is never cut short by a single fixed level.
+    #
+    # PRECEDENCE: when `take_profit_stages` is non-empty, it is used
+    # EXCLUSIVELY for target/partial-profit decisions and
+    # `target_r_multiple`/`fixed_target_price`/`partial_take_profit_fraction`
+    # below are ignored for that purpose (they remain valid, independently
+    # validated fields for backward compatibility with existing callers/
+    # tests). When `take_profit_stages` is empty, `target_r_multiple`/
+    # `fixed_target_price`/`partial_take_profit_fraction` are treated as an
+    # implicit single-stage configuration, exactly matching this engine's
+    # pre-multi-stage behavior.
     target_r_multiple: Decimal | None = None
     partial_take_profit_fraction: Decimal = Decimal("0.5")
     min_remaining_quantity: Decimal = ZERO
     quantity_step: Decimal = Decimal("0.00000001")
+    take_profit_stages: tuple[TakeProfitStage, ...] = ()
 
     # -- momentum / signal / liquidity ---------------------------------------
     momentum_deterioration_threshold: Decimal | None = None
@@ -166,6 +200,27 @@ class ExitPolicy:
         if self.max_market_data_age <= timedelta(0):
             raise ValueError("max_market_data_age must be positive")
 
+        if self.take_profit_stages:
+            previous_r_multiple = ZERO
+            cumulative_close_fraction = ZERO
+            for stage in self.take_profit_stages:
+                if not isinstance(stage, TakeProfitStage):
+                    raise ValueError(
+                        "take_profit_stages must contain only TakeProfitStage instances"
+                    )
+                if stage.r_multiple <= previous_r_multiple:
+                    raise ValueError(
+                        "take_profit_stages must be given in strictly increasing "
+                        "r_multiple order"
+                    )
+                previous_r_multiple = stage.r_multiple
+                cumulative_close_fraction += stage.close_fraction
+                if cumulative_close_fraction > Decimal("1"):
+                    raise ValueError(
+                        "take_profit_stages close_fraction values must not sum to more "
+                        "than 1 (fractions are of the ORIGINAL position quantity)"
+                    )
+
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class ExitPosition:
@@ -188,6 +243,15 @@ class ExitPosition:
     fixed_target_price: Decimal | None = None
     opened_at: datetime
     realized_partial_quantity: Decimal = ZERO
+    # How many entries of `ExitPolicy.take_profit_stages` have already fired
+    # (0 = none yet). Only advanced by the caller once a real fill for that
+    # stage's reduce-only close has landed -- mirroring how `quantity`/
+    # `realized_partial_quantity` are only ever updated from a real fill,
+    # never from `ExitEvaluation.updated_*` (see `apply_evaluation`'s
+    # docstring). Unused (stays 0) when `ExitPolicy.take_profit_stages` is
+    # empty and the single-stage `target_r_multiple`/`fixed_target_price`
+    # path is used instead.
+    stages_completed: int = 0
     # Set by the caller once a close request for this position has been
     # submitted to risk/execution and is awaiting a terminal outcome, so the
     # engine never emits a second, overlapping close for the same position
@@ -205,6 +269,8 @@ class ExitPosition:
         _require_finite_positive("initial_stop_price", self.initial_stop_price)
         _require_finite_positive("current_stop_price", self.current_stop_price)
         _require_finite_non_negative("realized_partial_quantity", self.realized_partial_quantity)
+        if self.stages_completed < 0:
+            raise ValueError("stages_completed must be non-negative")
         if self.fixed_target_price is not None:
             _require_finite_positive("fixed_target_price", self.fixed_target_price)
         if self.high_water_mark is not None:

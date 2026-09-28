@@ -64,6 +64,21 @@ immediately once sizing/margin math switches to the reference price.
 
 Resolves `docs/OPEN_QUESTIONS.md` #25 Q-M1 (2026-09-28).
 
+## Reduce-only reservations
+
+`RiskEngine.evaluate_reduce_only()` reserves quantity per decision id exactly like `evaluate()`
+does, released via `RiskEngine.release(decision_id)`. The exit engine (`src/exits`) is the primary
+caller: it emits `ExitDecision`s as reduce-only requests and calls `ExitEngine.notify_terminal()`
+on every terminal execution outcome (fill/cancel/reject) for that request, which forwards to
+`release()` (idempotent, safe to call more than once). This resolves `docs/OPEN_QUESTIONS.md` #24.
+
+Reduce-only is allowed during a HALT unless the halt itself means account state is unreliable
+(`RECONCILIATION_MISMATCH`, `UNKNOWN_ORDER`, or an `INTERNAL_ERROR` halt of ambiguous origin) --
+see `docs/OPEN_QUESTIONS.md` #25 Q-X2. A halt never itself triggers a flatten; existing positions
+stay open under normal exit management (Q-X3). One position per instrument is enforced at the
+pipeline level (Q-X1): no new entry while a position is open on that instrument, and an opposing
+signal is a reversal trigger for the exit engine, never a same-tick flip.
+
 ## Leverage
 
 The system ceiling is 20x; each environment, venue, instrument, strategy, and account may configure

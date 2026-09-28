@@ -10,6 +10,7 @@ from exits.models import (
     ExitReason,
     PositionSide,
     StopStage,
+    TakeProfitStage,
 )
 from risk.engine import RiskEngine
 from risk.models import (
@@ -369,6 +370,133 @@ def test_notify_terminal_release_is_idempotent():
     engine.notify_terminal("reduce-only:req-1", ExitOutcome.FILLED)
 
     assert gate.released == ["reduce-only:req-1", "reduce-only:req-1"]
+
+
+# -- multi-stage take-profit (PART 1) ---------------------------------------
+
+
+def _staged_policy(**changes: object) -> ExitPolicy:
+    values: dict[str, object] = {
+        "take_profit_stages": (
+            TakeProfitStage(r_multiple=Decimal("1"), close_fraction=Decimal("0.33")),
+            TakeProfitStage(r_multiple=Decimal("2"), close_fraction=Decimal("0.33")),
+        ),
+    }
+    values.update(changes)
+    return _policy(**values)
+
+
+def test_take_profit_stage_ladder_must_be_strictly_increasing_by_r_multiple():
+    raised = False
+    try:
+        _staged_policy(
+            take_profit_stages=(
+                TakeProfitStage(r_multiple=Decimal("2"), close_fraction=Decimal("0.3")),
+                TakeProfitStage(r_multiple=Decimal("1"), close_fraction=Decimal("0.3")),
+            )
+        )
+    except ValueError:
+        raised = True
+    assert raised
+
+
+def test_take_profit_stage_close_fractions_cannot_sum_beyond_one():
+    raised = False
+    try:
+        _staged_policy(
+            take_profit_stages=(
+                TakeProfitStage(r_multiple=Decimal("1"), close_fraction=Decimal("0.6")),
+                TakeProfitStage(r_multiple=Decimal("2"), close_fraction=Decimal("0.6")),
+            )
+        )
+    except ValueError:
+        raised = True
+    assert raised
+
+
+def test_tp1_stage_fires_and_leaves_remainder_open():
+    engine = _engine(policy=_staged_policy())
+    position = _position()  # entry=100, stop=95 -> initial_risk=5; TP1 target=105
+    market = _market(price=Decimal("105"))
+
+    result = engine.evaluate(position=position, market=market, now=NOW)
+
+    assert result.decision is not None
+    assert result.decision.reason == ExitReason.TAKE_PROFIT
+    assert result.decision.is_partial is True
+    assert result.decision.quantity == Decimal("0.33")
+    assert result.decision.metadata["stage_index"] == 0
+
+
+def test_tp2_stage_fires_only_after_tp1_already_completed():
+    engine = _engine(policy=_staged_policy())
+    # TP1 already fired and its fill landed: quantity reduced, realized
+    # tracked, stages_completed advanced -- exactly what a real caller does
+    # once execution reports the fill (Part 2 integration), mirrored here
+    # the same way the existing single-stage test simulates a fill.
+    after_tp1 = _position(
+        quantity=Decimal("0.67"),
+        realized_partial_quantity=Decimal("0.33"),
+        stages_completed=1,
+    )
+
+    # Below TP2's target (110): must not fire yet.
+    not_yet = engine.evaluate(position=after_tp1, market=_market(price=Decimal("109")), now=NOW)
+    assert not_yet.decision is None or not_yet.decision.reason != ExitReason.TAKE_PROFIT
+
+    # At/above TP2's target: fires stage index 1, closing its own fraction
+    # of the ORIGINAL quantity (0.33 of 1.0), not 0.33 of the 0.67 remaining.
+    result = engine.evaluate(position=after_tp1, market=_market(price=Decimal("110")), now=NOW)
+    assert result.decision is not None
+    assert result.decision.reason == ExitReason.TAKE_PROFIT
+    assert result.decision.is_partial is True
+    assert result.decision.quantity == Decimal("0.33")
+    assert result.decision.metadata["stage_index"] == 1
+
+
+def test_no_third_stage_fires_after_last_configured_stage_completes():
+    engine = _engine(policy=_staged_policy())
+    # Both TP1 and TP2 have already fired and filled: only a runner remains,
+    # protected by trailing/break-even, never by a further fixed target.
+    runner = _position(
+        quantity=Decimal("0.34"),
+        realized_partial_quantity=Decimal("0.66"),
+        stages_completed=2,
+    )
+    # Price continues far beyond both configured stage targets.
+    result = engine.evaluate(position=runner, market=_market(price=Decimal("200")), now=NOW)
+
+    assert result.decision is None or result.decision.reason != ExitReason.TAKE_PROFIT
+
+
+def test_only_one_stage_fires_per_evaluate_call_even_if_price_gaps_past_both():
+    engine = _engine(policy=_staged_policy())
+    position = _position()
+    # Price gaps straight past both TP1 (105) and TP2 (110) targets in one tick.
+    market = _market(price=Decimal("111"))
+
+    result = engine.evaluate(position=position, market=market, now=NOW)
+
+    assert result.decision is not None
+    assert result.decision.reason == ExitReason.TAKE_PROFIT
+    # Only stage 0 (TP1) fired -- not stage 1, and not a full/double close.
+    assert result.decision.metadata["stage_index"] == 0
+    assert result.decision.quantity == Decimal("0.33")
+
+
+def test_single_stage_backward_compatible_path_unaffected_by_empty_ladder():
+    # take_profit_stages defaults to () -- identical to the pre-multi-stage
+    # single-stage path exercised by test_take_profit_trigger_is_partial_by_default.
+    engine = _engine()
+    position = _position(fixed_target_price=Decimal("110"))
+    market = _market(price=Decimal("111"))
+
+    result = engine.evaluate(position=position, market=market, now=NOW)
+
+    assert result.decision is not None
+    assert result.decision.reason == ExitReason.TAKE_PROFIT
+    assert result.decision.is_partial is True
+    assert result.decision.metadata["target_source"] == "fixed"
 
 
 def test_notify_terminal_releases_real_risk_engine_reduce_only_reservation():
