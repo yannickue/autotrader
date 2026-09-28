@@ -329,3 +329,27 @@ TESTS: 341 passed, 1 skipped (was 279/1); ruff clean; compileall clean.
 
 Next: A2 (Exit Engine) -- retry. Then integration step: wire costs/persistence/margin into
 src/pipeline/src/execution/src/risk, per each module's documented integration point.
+
+## 2026-09-28 — Phase A2: exit engine (completes Phase A wave 1)
+
+TASK: Exit Engine (A2), retried after two worktree-seeding failures and one spend-limit
+termination (see prior entry).
+MODEL: Sonnet BUILDER (direct checkout, no isolation), Sonnet 5 (Lead) for review.
+RESULT: `src/exits/` added (models.py, engine.py) -- see commit `e091e24` for full detail.
+Relative-only thresholds (R-multiples/bps/fractions), partial-not-full close on target hit so
+runners keep running, `notify_terminal()` -> `RiskEngine.release()` wiring for #24 verified
+end-to-end against a real `RiskEngine` in tests. Fail-closed direction for an exit engine is
+"force a reduce", not "reject" (RiskEngine's direction) -- a deliberate, documented interpretive
+choice, flagged by the builder for lead sign-off; accepted as sound (a position exits toward flat
+under uncertainty rather than sitting unmanaged, which cannot increase exposure).
+Builder flagged two branches without dedicated unit coverage: `ExitPolicy.target_r_multiple`
+(volatility-derived target when no fixed target given) and `min_remaining_quantity` fallback-to
+-full-close. Filed as follow-up test-coverage gaps, not correctness concerns -- both paths are
+straightforward reuses of already-tested logic (target-hit / partial-sizing), but should get
+explicit tests before the integration step depends on them.
+TESTS: 357 passed, 1 skipped (was 341/1); ruff clean; compileall clean.
+
+Phase A wave 1 (A1 costs, A2 exits, A3 persistence, A4 margin) is now complete. None of the four
+modules are wired into `src/pipeline`/`src/execution`/`src/risk` yet. Next: integration step
+(Lead, not delegated -- touches the shared pipeline/risk/execution files) wiring all four in, plus
+Phase A5 (clock/latency/health) and the two exit-engine test-coverage gaps above.
