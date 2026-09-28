@@ -304,3 +304,28 @@ addressed directly when the Exit Engine (Phase A2) is built, per its own filed r
 
 Next: proceed to Phase A (cost model, exit engine, persistence/recovery, margin/liquidation,
 clock/latency) per the sprint brief, now unblocked.
+
+## 2026-09-28 — Phase A wave 1: cost model, persistence/recovery, margin safety
+
+TASK: Phase A (A1 cost model, A3 persistence/recovery, A4 margin/liquidation safety) from the
+sprint brief, built as three isolated, independently-testable modules.
+MODEL: 3x Sonnet BUILDER (parallel, one per module, `isolation: worktree`), Sonnet 5 (Lead) for
+review/lint-fixes/integration.
+WHY: Standalone modules matching this sprint's parallel-work-plan (disjoint files, no simultaneous
+edits) and the "cheapest capable model" routing policy -- each is a well-specified, self-contained
+implementation task, not an open architecture question.
+RESULT: `src/costs/`, `src/persistence/`, `src/margin/` added (see commit `546f545` for full
+detail). None wired into `src/pipeline`/`src/execution`/`src/risk` yet -- that integration is a
+separate follow-up step.
+
+Infra note: two of four Phase A worker worktrees (this wave's A1/A3/A4 launch also included A2
+exit engine) were seeded from a stale 2-commit bootstrap branch instead of `sprint1/integration`
+HEAD; those workers correctly stopped rather than guess at contracts from missing files. Then all
+four background workers hit the session's monthly spend limit mid-task and were terminated by the
+platform (not a repo issue) -- A1/A3/A4 had already written real code+tests to their worktrees
+before termination, verified independently (targeted tests + ruff) and integrated here; A2 (exit
+engine) never got far enough to leave usable output and needs a fresh attempt.
+TESTS: 341 passed, 1 skipped (was 279/1); ruff clean; compileall clean.
+
+Next: A2 (Exit Engine) -- retry. Then integration step: wire costs/persistence/margin into
+src/pipeline/src/execution/src/risk, per each module's documented integration point.
