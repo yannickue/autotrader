@@ -872,3 +872,9 @@ Codex review (1 pass): 2 High (cache fingerprint missing sizing/rules; OOS accep
 Findings: no variant passes the freeze rule whole; 5 REGIME_RESTRICTED survivors are validation-mined best-of-many (hypotheses, not evidence). Context question: of 199 qualifying slices only 16% positive in Train AND Validation (chance ~25%); mean slice expectancy -0.098R Train, +0.000R Validation. SESSION_TWAP_REFERENCE is untestable as defined (all candidates outside the entry window). Busiest variant 1.77 trades/day; 3-8/day is not supported. Trial accounting recorded in dev_run_record.json.
 Full pytest 1848 passed, 1 skipped; ruff clean. OOS never touched (no oos_access_log exists).
 DEFERRED: Optuna, DEAP, Qlib/RD-Agent spike, RL, NASDAQ100, exit research, light screening mode for 1000+ variants, Nautilus validation of survivors, walk-forward, Train/Validation embargo, new SESSION_TWAP version, push of the AR2 commits.
+
+## AD1 — Automated Alpha Discovery V1 start (2026-09-29)
+
+- Branch: `sprint1/integration`; starting HEAD: `8e9f97b87aecb0518153458099c22f83e1e15f86`; working tree clean at start.
+- AR2 state (22 commits, `fe1bbc2..8e9f97b`) pushed to `origin/sprint1/integration` as a pure fast-forward (0 behind / 22 ahead verified after fetch); nothing overwritten, no local commits lost.
+- Phase plan: AD1A embargo + light screen, AD1B 100/1000 benchmark, AD1C Optuna, AD1D DEAP/grammar, AD1E discovery run, AD1F Nautilus survivors, AD1G review fixes + report. OOS stays sealed. Claude = orchestrator/integrator; implementation via Codex, recon via scout/Haiku.
