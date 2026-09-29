@@ -1,13 +1,14 @@
 """Report MT5/ActivTrades terminal connection health.
 
-Once the MT5 adapter (owned by a parallel worker, not yet built) exists, this
-script will connect to the configured terminal/account and report: terminal
-path, account number, server, account currency, equity, margin, open-symbol
-count, and overall connection health -- without ever printing the account
-password. Today it only proves the config/CLI plumbing works: it loads and
-validates `MT5_LOGIN`/`MT5_PASSWORD`/`MT5_SERVER`/`MT5_TERMINAL_PATH` from the
-environment (see `.env.example`) and reports clearly that the actual MT5
-connection call is not yet implemented.
+Connects to the configured terminal/account and reports: terminal path,
+account number, server, account currency, equity, margin, open-symbol count,
+and overall connection health -- without ever printing the account password.
+
+SAFETY: the real MT5 call happens only inside a short-lived, hard-timeout-
+bounded child process (see `adapters.activtrades_mt5.bounded`) -- this
+script's own main process never blocks on a stuck MT5 IPC call. On timeout,
+only the disposable child is killed; the user's MT5 terminal GUI is never
+touched.
 
 Usage:
     <PY> scripts/mt5_connection_check.py
@@ -25,6 +26,10 @@ for path in (str(REPO_ROOT), str(SRC_ROOT)):
     if path not in sys.path:
         sys.path.insert(0, path)
 
+from adapters.activtrades_mt5.bounded import (  # noqa: E402
+    default_probe_timeout_seconds,
+    run_worker_bounded,
+)
 from adapters.activtrades_mt5.connection import ConnectionState, MT5Connection  # noqa: E402
 from adapters.activtrades_mt5.models import (  # noqa: E402
     account_info_to_account_state,
@@ -84,17 +89,37 @@ def _connect_and_report(config: MT5ConnectionConfig) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    argv = sys.argv[1:] if argv is None else argv
+
     try:
         config = load_mt5_connection_config()
     except MT5ConfigError as exc:
         print(f"Config error: {exc}", file=sys.stderr)
         return 2
 
-    print(
-        f"Config loaded: server={config.server!r}, login={config.login}, "
-        f"terminal_path={config.terminal_path or '<default>'!r}."
-    )
-    return _connect_and_report(config)
+    if "--worker" in argv:
+        print(
+            f"Config loaded: server={config.server!r}, login={config.login}, "
+            f"terminal_path={config.terminal_path or '<default>'!r}."
+        )
+        return _connect_and_report(config)
+
+    # The bounded child (below) prints its own "Config loaded" line as part
+    # of its relayed stdout -- no need to print it again here.
+    timeout = default_probe_timeout_seconds()
+    result = run_worker_bounded(Path(__file__), config, timeout=timeout)
+    if result.timed_out:
+        sys.stdout.write(result.stdout)
+        sys.stderr.write(result.stderr)
+        print(
+            f"MT5 CONNECTION FAILED: MT5_IPC_TIMEOUT (exceeded {timeout}s, child terminated; "
+            "the MT5 terminal itself was left untouched)",
+            file=sys.stderr,
+        )
+        return 1
+    sys.stdout.write(result.stdout)
+    sys.stderr.write(result.stderr)
+    return result.returncode if result.returncode is not None else 1
 
 
 if __name__ == "__main__":

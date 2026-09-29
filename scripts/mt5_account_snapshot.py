@@ -1,13 +1,12 @@
 """Report a point-in-time MT5/ActivTrades account snapshot.
 
-Once the MT5 adapter (owned by a parallel worker, not yet built) exists, this
-script will report: balance, equity, margin, free margin, margin level,
-account currency, open-position count, open-order count, and
-reconciliation status against locally persisted state -- without ever
-printing the account password. Today it only proves the config/CLI plumbing
-works: it loads and validates the MT5 connection env vars (see
-`.env.example`) and reports clearly that the actual account snapshot call is
-not yet implemented.
+Reports: balance, equity, margin, free margin, margin level, account
+currency, open-position count, open-order count -- without ever printing the
+account password.
+
+SAFETY: the real MT5 call happens only inside a short-lived, hard-timeout-
+bounded child process (see `adapters.activtrades_mt5.bounded`) -- this
+script's own main process never blocks on a stuck MT5 IPC call.
 
 Usage:
     <PY> scripts/mt5_account_snapshot.py
@@ -25,6 +24,10 @@ for path in (str(REPO_ROOT), str(SRC_ROOT)):
     if path not in sys.path:
         sys.path.insert(0, path)
 
+from adapters.activtrades_mt5.bounded import (  # noqa: E402
+    default_probe_timeout_seconds,
+    run_worker_bounded,
+)
 from adapters.activtrades_mt5.connection import MT5Connection  # noqa: E402
 from adapters.activtrades_mt5.models import account_info_to_account_state  # noqa: E402
 from adapters.activtrades_mt5.real_client import get_real_client  # noqa: E402
@@ -73,14 +76,32 @@ def _fetch_snapshot(config: MT5ConnectionConfig) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    argv = sys.argv[1:] if argv is None else argv
+
     try:
         config = load_mt5_connection_config()
     except MT5ConfigError as exc:
         print(f"Config error: {exc}", file=sys.stderr)
         return 2
 
-    print(f"Config loaded: server={config.server!r}, login={config.login}.")
-    return _fetch_snapshot(config)
+    if "--worker" in argv:
+        print(f"Config loaded: server={config.server!r}, login={config.login}.")
+        return _fetch_snapshot(config)
+
+    timeout = default_probe_timeout_seconds()
+    result = run_worker_bounded(Path(__file__), config, timeout=timeout)
+    if result.timed_out:
+        sys.stdout.write(result.stdout)
+        sys.stderr.write(result.stderr)
+        print(
+            f"MT5 CONNECTION FAILED: MT5_IPC_TIMEOUT (exceeded {timeout}s, child terminated; "
+            "the MT5 terminal itself was left untouched)",
+            file=sys.stderr,
+        )
+        return 1
+    sys.stdout.write(result.stdout)
+    sys.stderr.write(result.stderr)
+    return result.returncode if result.returncode is not None else 1
 
 
 if __name__ == "__main__":

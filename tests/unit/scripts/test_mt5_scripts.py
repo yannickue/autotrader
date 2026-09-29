@@ -47,9 +47,24 @@ def _load_script(name: str) -> types.ModuleType:
 
 
 @pytest.fixture(autouse=True)
-def _clear_mt5_env(monkeypatch: pytest.MonkeyPatch) -> None:
+def _clear_mt5_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     for var in _MT5_ENV_VARS:
         monkeypatch.delenv(var, raising=False)
+    # This checkout may have a real, git-ignored `.env` with real credentials
+    # (see PENDING_USER_INPUT.md) -- without this, these tests would silently
+    # pick it up via `load_mt5_connection_config()`'s real-repo-root
+    # auto-detection and attempt a real connection instead of exercising the
+    # "missing config" / "synthetic fake config" paths they're testing.
+    import adapters.config as config_module
+
+    monkeypatch.setattr(config_module, "_find_repo_root", lambda start: tmp_path)
+    # Every mt5_*.py script now runs its real MT5 work inside a bounded
+    # child process (adapters.activtrades_mt5.bounded) -- these tests
+    # genuinely exercise that subprocess + timeout path (there is no live
+    # MT5 terminal in this test environment), so keep the bound very short
+    # to keep the test suite fast without weakening the production default.
+    monkeypatch.setenv("MT5_PROBE_TIMEOUT_SECONDS", "3")
+    monkeypatch.setenv("MT5_STAGED_TIMEOUT_SECONDS", "3")
 
 
 @pytest.mark.parametrize("script_name", _SCRIPT_NAMES)
