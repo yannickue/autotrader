@@ -548,3 +548,31 @@ a stable contract to convert raw MT5 data into. Read-side first (typed wrappers 
 initialize/account_info/symbols_get/symbol_info/copy_rates/copy_ticks/order_calc_margin/
 order_calc_profit/order_check), connection/health state machine, mock MT5 client for testing
 (no real terminal in this environment). Write-side interface prepared but disabled by default.
+
+## 2026-09-29 — MT5 adapter + script wiring (credential-free foundation complete)
+
+TASK: ActivTrades MT5 adapter (read-side + guarded write-side), then wire the four mt5_*.py
+scripts to it, closing out the "prepare everything possible now" credential-free checklist.
+MODEL: Sonnet BUILDER (adapter, large single task), Sonnet 5 (Lead) for script wiring (direct,
+mechanical integration of already-built pieces) + verification + commits.
+RESULT: See commits `0b759e9` (adapter) and `a38d6e6` (script wiring). Real MT5 field
+names/signatures independently verified by the Lead (spot-checked constants via the installed
+package, spot-checked struct field name strings via direct binary inspection of the installed
+package's compiled extension -- both confirmed genuine, not guessed). Two items explicitly
+flagged unverified pending a real terminal: sl/tp field names, filling_mode bitmask beyond
+FOK/IOC (unrecognized bits recorded in quality_flags, never guessed).
+Scripts now make real connection attempts and fail cleanly without a live terminal (verified:
+correctly reports connection failure, never crashes, never leaks the password).
+TESTS: 623 passed, 1 skipped; ruff clean; compileall clean.
+
+**Credential-free CFD/MT5 foundation is now complete**: MetaTrader5 dependency, InstrumentSpec,
+symbol discovery, data provenance/Parquet/quality, cost-schedule cross-venue safety, MT5
+adapter (protocol-based, mock-testable), connection/health state machine, guarded write-side
+interface, and all four operational scripts (connection check, account snapshot, symbol
+discovery, preflight) wired to the real adapter. PENDING_USER_INPUT.md lists the exact,
+minimal remaining steps -- MT5 demo login, four env values, one preflight command.
+
+Remaining before Priority 3+ (FeatureRegistry/OpportunityScanner/Regime/strategy research):
+live data ingestion actually calling the adapter (Parquet layer exists, unpopulated), margin/
+profit comparison tests against real order_calc_margin/order_calc_profit (needs a live
+connection), and everything downstream of having real CFD market data.
