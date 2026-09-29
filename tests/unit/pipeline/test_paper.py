@@ -60,7 +60,9 @@ def test_build_account_state_realized_pnl_today_is_net_of_fees() -> None:
     assert h.portfolio.realized_pnl == Decimal("0")
     assert h.portfolio.fees == Decimal("6")
 
-    account = h.pipeline._build_account_state(instrument=INSTRUMENT, account_known=True)
+    account = h.pipeline._build_account_state(
+        instrument=INSTRUMENT, account_known=True, now=NOW
+    )
     assert account.realized_pnl_today == Decimal("-6")
 
 
@@ -95,7 +97,9 @@ def test_daily_loss_limit_trips_from_fees_alone_with_zero_price_pnl() -> None:
     )
     assert h.portfolio.realized_pnl == Decimal("0")  # no price PnL at all
 
-    account = h.pipeline._build_account_state(instrument=INSTRUMENT, account_known=True)
+    account = h.pipeline._build_account_state(
+        instrument=INSTRUMENT, account_known=True, now=NOW
+    )
     sizing_request = scenarios.PositionSizingRequest(
         signal_id="sig-1",
         instrument=INSTRUMENT,

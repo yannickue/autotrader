@@ -1,10 +1,17 @@
-"""Deterministic paper portfolio ledger: positions, realized/unrealized PnL, equity."""
+"""Deterministic paper portfolio ledger: positions, realized/unrealized PnL, equity.
 
+LEGACY_RUNTIME / SHADOW_ORACLE (Nautilus convergence, docs/ARCHITECTURE_AUDIT_2026-09-29.md):
+retained as a parity oracle; Nautilus Portfolio becomes authoritative. Do not add features
+except confirmed safety fixes.
+"""
+
+from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
 from execution.models import OrderSide
 from portfolio.models import Fill, PositionView
+from risk.trading_day import RealizedPnlEntry
 
 ZERO = Decimal("0")
 
@@ -35,6 +42,11 @@ class Portfolio:
         self._fees = ZERO
         self._positions: dict[str, _Position] = {}
         self._seen_fill_ids: set[str] = set()
+        # Append-only, derived per-fill (timestamp, realized PnL delta, fee)
+        # ledger -- NOT independent state: it is rebuilt by fill replay and
+        # only exists so "realized PnL today" can be windowed by trading day
+        # (risk.trading_day) instead of being all-time cumulative.
+        self._pnl_entries: list[RealizedPnlEntry] = []
 
     def has_fill(self, fill_id: str) -> bool:
         """True if `fill_id` has already been applied (or would be a no-op
@@ -53,11 +65,19 @@ class Portfolio:
         if not _is_finite_decimal(fill.fee):
             raise ValueError("fill fee must be finite")
 
+        if fill.timestamp is not None and (
+            fill.timestamp.tzinfo is None or fill.timestamp.utcoffset() != timedelta(0)
+        ):
+            # Checked BEFORE any state mutation so a bad timestamp cannot leave
+            # a half-applied fill behind.
+            raise ValueError("fill timestamp must be UTC-aware")
+
         if fill.fill_id in self._seen_fill_ids:
             return False
         self._seen_fill_ids.add(fill.fill_id)
 
         position = self._positions.setdefault(fill.instrument, _Position())
+        realized_delta = ZERO
         signed_delta = fill.quantity if fill.side is OrderSide.BUY else -fill.quantity
         current_qty = position.quantity
         new_qty = current_qty + signed_delta
@@ -76,6 +96,7 @@ class Portfolio:
             else:
                 realized = (position.avg_entry_price - fill.price) * closing_qty
             self._realized_pnl += realized
+            realized_delta = realized
 
             remaining_fill_qty = fill.quantity - closing_qty
             if new_qty == ZERO:
@@ -87,6 +108,9 @@ class Portfolio:
 
         position.quantity = new_qty
         self._fees += fill.fee
+        self._pnl_entries.append(
+            RealizedPnlEntry(timestamp=fill.timestamp, realized_pnl=realized_delta, fee=fill.fee)
+        )
         return True
 
     def mark(self, instrument: str, price: Decimal) -> None:
@@ -115,6 +139,11 @@ class Portfolio:
     @property
     def fees(self) -> Decimal:
         return self._fees
+
+    @property
+    def pnl_entries(self) -> tuple[RealizedPnlEntry, ...]:
+        """Per-fill realized-PnL/fee entries, for trading-day windowing only."""
+        return tuple(self._pnl_entries)
 
     def _unrealized_pnl(self, instrument: str, position: _Position) -> Decimal:
         if position.mark_price is None or position.quantity == ZERO:
@@ -178,6 +207,14 @@ class Portfolio:
             "realized_pnl": str(self._realized_pnl),
             "fees": str(self._fees),
             "seen_fill_ids": sorted(self._seen_fill_ids),
+            "pnl_entries": [
+                {
+                    "timestamp": None if e.timestamp is None else e.timestamp.isoformat(),
+                    "realized_pnl": str(e.realized_pnl),
+                    "fee": str(e.fee),
+                }
+                for e in self._pnl_entries
+            ],
             "positions": {
                 instrument: {
                     "quantity": str(position.quantity),
@@ -191,12 +228,45 @@ class Portfolio:
         }
 
     def import_state(self, state: dict[str, Any]) -> None:
-        """Replace this ledger's state with a previously exported checkpoint."""
-        self._starting_balance = Decimal(state["starting_balance"])
-        self._realized_pnl = Decimal(state["realized_pnl"])
-        self._fees = Decimal(state["fees"])
-        self._seen_fill_ids = set(state["seen_fill_ids"])
-        self._positions = {}
+        """Replace this ledger's state with a previously exported checkpoint.
+
+        Atomic: everything is parsed and validated into locals first; `self`
+        is only touched once the whole checkpoint is known to be well formed
+        (a malformed/corrupt checkpoint raises and leaves the ledger as it was).
+        """
+        starting_balance = Decimal(state["starting_balance"])
+        realized_pnl = Decimal(state["realized_pnl"])
+        fees = Decimal(state["fees"])
+        for value in (starting_balance, realized_pnl, fees):
+            if not value.is_finite():
+                raise ValueError("portfolio checkpoint amounts must be finite")
+        seen_fill_ids = set(state["seen_fill_ids"])
+        if "pnl_entries" in state:
+            entries = [
+                RealizedPnlEntry(  # validates UTC-aware timestamp and finite amounts
+                    timestamp=(
+                        None if p["timestamp"] is None else datetime.fromisoformat(p["timestamp"])
+                    ),
+                    realized_pnl=Decimal(p["realized_pnl"]),
+                    fee=Decimal(p["fee"]),
+                )
+                for p in state["pnl_entries"]
+            ]
+        else:
+            # Checkpoint predates the per-day ledger: the day of each past
+            # fill is unknowable, so carry the all-time totals as ONE entry
+            # with an unknown timestamp. `realized_pnl_today` counts an
+            # unknown-timestamp entry's LOSS only, never a profit (fail-closed:
+            # an all-time profit can never mask a real loss today).
+            entries = [RealizedPnlEntry(timestamp=None, realized_pnl=realized_pnl, fee=fees)]
+        if (
+            sum((e.realized_pnl for e in entries), ZERO) != realized_pnl
+            or sum((e.fee for e in entries), ZERO) != fees
+        ):
+            # The per-day ledger is derived from the same fills as the
+            # aggregate counters; a checkpoint where they disagree is corrupt.
+            raise ValueError("portfolio checkpoint pnl_entries do not sum to realized_pnl/fees")
+        positions: dict[str, _Position] = {}
         for instrument, payload in state["positions"].items():
             position = _Position(
                 quantity=Decimal(payload["quantity"]),
@@ -205,4 +275,11 @@ class Portfolio:
             position.mark_price = (
                 Decimal(payload["mark_price"]) if payload["mark_price"] is not None else None
             )
-            self._positions[instrument] = position
+            positions[instrument] = position
+
+        self._starting_balance = starting_balance
+        self._realized_pnl = realized_pnl
+        self._fees = fees
+        self._seen_fill_ids = seen_fill_ids
+        self._pnl_entries = entries
+        self._positions = positions

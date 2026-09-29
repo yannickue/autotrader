@@ -704,3 +704,22 @@ ledger) -- one attempt to verify live account identity before/after the gate tim
 (terminal left untouched, exactly as designed) rather than confirming a live before/after
 account match. The user should independently confirm on their own desktop, once, that running
 `uv run pytest` no longer logs their terminal out.
+
+## Architecture ownership audit (2026-09-29) — report only, no convergence implemented
+
+TASK: pre-alpha ownership audit (Nautilus vs custom stack). Report: `docs/ARCHITECTURE_AUDIT_2026-09-29.md`.
+MODELS: lead Sonnet (git/baseline/synthesis, direct); Haiku scout (module inventory; research/ claim wrong, discarded);
+Sonnet general-purpose (MT5 adapter + mt5-connector benchmark); Codex read-only adversarial review (task-mumgymub-ysr3nw). Opus not needed.
+RESULT: safety fix committed `ba93000`; baseline branch `architecture/nautilus-convergence-baseline` + tag `baseline-green-2026-09-29` pushed.
+FINDING: `src/` has zero nautilus_trader imports; custom stack duplicates orders/positions/PnL/reservations/halt/reconciliation state.
+NEXT DECISION: user review of the audit before any convergence step (C1 first).
+
+## Nautilus convergence C1 + C2 (2026-09-29) — uncommitted, awaiting review
+
+TASK: C1 engine-agnostic safety contracts, C2 pure RiskPolicy/PositionSizer split, plus two confirmed semantic bug fixes.
+MODELS: lead Sonnet (C2, both bug fixes, their tests, docs — direct); Sonnet builder (tests/contracts, 183 tests, tests-only);
+Codex read-only adversarial review (3 High + 1 Medium found, all fixed; re-verified by full suite).
+BUG 1: `realized_pnl_today` was all-time realized PnL minus all-time fees -> now trading-day windowed (`risk/trading_day.py`, default UTC midnight, PENDING broker calibration).
+BUG 2: READY was treated as reconciled, `last_reconciled_at=now` fabricated, recovery "reconciled" against itself -> `ReconciliationState` owned by the engine, set only by `reconcile()`.
+RESULT: 1299 passed, 1 skipped; ruff + compileall clean. Old engines kept, marked LEGACY_RUNTIME / SHADOW_ORACLE.
+NEXT DECISION: user review, then commit; C3 (GER40 data plane) only after.

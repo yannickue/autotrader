@@ -1,5 +1,9 @@
 """Deterministic Sprint 1 integration glue for the paper trading path.
 
+LEGACY_RUNTIME / SHADOW_ORACLE (Nautilus convergence, see
+docs/ARCHITECTURE_AUDIT_2026-09-29.md): retained as a parity oracle; do not add features
+except confirmed safety fixes.
+
 Wires together, without any LLM call, network access, or hidden global state:
 
     MarketSnapshot history -> universe membership check -> strategy.evaluate()
@@ -39,7 +43,6 @@ from execution.events import TradeEvent
 from execution.models import ExecutionRequest, OrderSide, OrderType, TimeInForce
 from execution.orders import (
     TERMINAL_STATUSES,
-    HaltCode,
     Order,
     OrderStatus,
     RejectCode,
@@ -76,11 +79,14 @@ from risk.models import (
     AccountRiskState,
     InstrumentRiskLimits,
     PositionSizingRequest,
+    ReconciliationSource,
+    ReconciliationState,
     RiskDecision,
     RiskReason,
     RiskSide,
     RuntimeRiskState,
 )
+from risk.trading_day import TradingDayPolicy, realized_pnl_today
 from signals.models import Direction, Signal
 
 ZERO = Decimal("0")
@@ -213,6 +219,11 @@ class PaperTradingPipeline:
     # (not only the "happy path"), since even an early return can have
     # mutated mark prices, exit-managed positions, or reservations.
     store: SQLiteStore | None = None
+
+    # Trading-day boundary used for `AccountRiskState.realized_pnl_today`.
+    # Default: UTC midnight, explicitly PENDING broker calibration
+    # (risk.trading_day) -- ActivTrades' real rollover is not yet known.
+    trading_day_policy: TradingDayPolicy = field(default_factory=TradingDayPolicy)
 
     # instrument -> the ExitPosition currently under exit management. Only
     # ever populated by this pipeline's own entry path (`_open_exit_position`,
@@ -434,7 +445,7 @@ class PaperTradingPipeline:
             )
 
         account = self._build_account_state(
-            instrument=instrument, account_known=account_known
+            instrument=instrument, account_known=account_known, now=now
         )
 
         decision = self.risk_engine.evaluate(
@@ -738,7 +749,9 @@ class PaperTradingPipeline:
 
     # -- internal helpers -----------------------------------------------
 
-    def _build_account_state(self, *, instrument: str, account_known: bool) -> AccountRiskState:
+    def _build_account_state(
+        self, *, instrument: str, account_known: bool, now: datetime
+    ) -> AccountRiskState:
         positions = self.portfolio.positions
         unrealized_total = sum(
             (view.unrealized_pnl for view in positions.values()), start=ZERO
@@ -746,23 +759,18 @@ class PaperTradingPipeline:
         return AccountRiskState(
             state_version="pipeline:v1",
             known=account_known,
-            reconciled=self._account_reconciled(),
+            reconciliation=self._reconciliation_state(),
             equity=self.portfolio.equity,
             peak_equity=self._peak_equity,
-            # G3 fix: `equity` above is already net of fees
-            # (`Portfolio.equity` = starting_balance + realized_pnl - fees +
-            # unrealized), but `realized_pnl_today` was gross of fees --
-            # once real per-fill fees exist (this slice), the daily-loss
-            # check in RiskEngine would under-count losses driven purely by
-            # fees. Sprint 1 has no authoritative UTC daily-reset boundary
-            # yet (docs/OPEN_QUESTIONS.md #13, unresolved): `realized_pnl`
-            # itself is already all-time cumulative, not reset daily, and
-            # "today" is a misnomer carried over from that open question.
-            # Consistent with that existing (lack of) windowing, this
-            # subtracts the same all-time cumulative `portfolio.fees`
-            # rather than inventing a new, separate daily-fee-reset
-            # mechanism that nothing else in the codebase has yet.
-            realized_pnl_today=self.portfolio.realized_pnl - self.portfolio.fees,
+            # `equity` above is net of fees, so this figure is net of fees too
+            # (G3). It is the realized PnL - fees of fills in the CURRENT
+            # trading day only (risk.trading_day.TradingDayPolicy); it used to
+            # be the all-time cumulative figure despite its name. The window
+            # start is passed along so the risk policy can verify that.
+            realized_pnl_today=realized_pnl_today(
+                self.portfolio.pnl_entries, now=now, policy=self.trading_day_policy
+            ),
+            pnl_window_start=self.trading_day_policy.trading_day_start(now),
             unrealized_pnl=unrealized_total,
             gross_notional=self.portfolio.gross_notional,
             net_notional=self.portfolio.net_notional,
@@ -891,42 +899,18 @@ class PaperTradingPipeline:
         position_side = RiskSide.BUY if position.side is PositionSide.LONG else RiskSide.SELL
         return signal_side != position_side
 
-    # HaltCode values under which `PaperExecutionEngine`'s own local state
-    # (orders/positions) may not reflect reality (docs/OPEN_QUESTIONS.md #25
-    # Q-X2: "a reconciliation mismatch or an unrecognized/unknown order").
-    # RECONCILIATION_MISMATCH and UNKNOWN_ORDER are the two Q-X2 names
-    # explicitly. INTERNAL_ERROR is added here (fail-closed on ambiguity):
-    # it is a generic caught-exception halt from `on_trade`/`report_fill`
-    # with no guarantee about which side of a mutation it fired on, so
-    # account state cannot be trusted as known. OVERFILL is deliberately
-    # NOT included: `PaperExecutionEngine._apply_fill` raises it BEFORE
-    # calling `Portfolio.apply_fill` (see the per-order/decision cap checks
-    # there), so the portfolio was never mutated inconsistently -- positions
-    # remain exactly as reliable as they were before the rejected fill, so
-    # reduce-only exits must stay allowed rather than being blocked by a
-    # halt that never touched account state.
-    _ACCOUNT_STATE_UNRELIABLE_HALT_CODES = frozenset(
-        {
-            HaltCode.RECONCILIATION_MISMATCH.value,
-            HaltCode.UNKNOWN_ORDER.value,
-            HaltCode.INTERNAL_ERROR.value,
-        }
-    )
+    def _reconciliation_state(self) -> ReconciliationState:
+        """Reconciliation state of the execution engine, read verbatim.
 
-    def _account_reconciled(self) -> bool:
-        """Q-X2: reduce-only is allowed during a HALT except when the halt
-        itself means account state is unreliable. See
-        `_ACCOUNT_STATE_UNRELIABLE_HALT_CODES` above for exactly which halt
-        codes count as "unreliable" and why."""
-        mode = self.execution_engine.mode
-        if mode is EngineMode.READY:
-            return True
-        if mode is not EngineMode.HALTED:
-            return False  # STARTING/RECONCILING: account state not yet known either way
-        halt_reason = self.execution_engine.halt_reason or ""
-        # `PaperExecutionEngine._halt` formats halt_reason as f"{code}: {reason}".
-        halt_code = halt_reason.split(":", 1)[0]
-        return halt_code not in self._ACCOUNT_STATE_UNRELIABLE_HALT_CODES
+        Deliberately NOT derived from `EngineMode`: READY is a permission
+        mode, and a HALTED engine whose halt did not invalidate local state
+        keeps its last (RECONCILED) outcome -- which is exactly what lets
+        reduce-only exits stay allowed during such a halt (docs/OPEN_QUESTIONS.md
+        #25 Q-X2) -- while UNKNOWN_ORDER / RECONCILIATION_MISMATCH /
+        INTERNAL_ERROR / failed recovery set MISMATCH inside the engine
+        itself. No halt-reason string is parsed here.
+        """
+        return self.execution_engine.reconciliation_state
 
     @staticmethod
     def _map_execution_status_to_exit_outcome(status: OrderStatus) -> ExitOutcome:
@@ -1018,7 +1002,7 @@ class PaperTradingPipeline:
         never checks `runtime.kill_switch`/`execution_engine.mode` before
         evaluating a trigger, so a halt by itself never creates a decision;
         it only affects whether risk APPROVES a decision the exit engine
-        independently decided to emit (via `_account_reconciled()`, Q-X2).
+        independently decided to emit (via `_reconciliation_state()`, Q-X2).
         """
         stored = self._exit_positions.get(instrument)
         if stored is None:
@@ -1071,7 +1055,9 @@ class PaperTradingPipeline:
             new_position, pending_close_request_id=decision.request_id
         )
 
-        account = self._build_account_state(instrument=instrument, account_known=account_known)
+        account = self._build_account_state(
+            instrument=instrument, account_known=account_known, now=now
+        )
         risk_decision = self.risk_engine.evaluate_reduce_only(
             request_id=decision.request_id,
             instrument=decision.instrument,
@@ -1427,15 +1413,14 @@ class PaperTradingPipeline:
         execution_mode = self.execution_engine.mode
         reconciliation_state = ReconciliationStateRecord(
             mode=str(execution_mode),
-            reconciled=execution_mode is EngineMode.READY,
+            reconciled=(
+                self.execution_engine.reconciliation_state is ReconciliationState.RECONCILED
+            ),
             mismatch_reason=self.execution_engine.halt_reason,
-            # Paper has no independently-timestamped "last reconciled with
-            # the venue" event; using `now` whenever the engine currently
-            # reports READY is a reasonable proxy (recover_pipeline's own
-            # weak self-check reconcile() call is what actually produces a
-            # READY mode after a restart) -- documented as an approximation,
-            # not a claim of a real venue reconciliation timestamp.
-            last_reconciled_at=now if execution_mode is EngineMode.READY else None,
+            # The engine's own timestamp of its last successful comparison
+            # (None if none happened since start/restart) -- never `now`
+            # merely because the engine is READY.
+            last_reconciled_at=self.execution_engine.last_reconciled_at,
             updated_at=now,
         )
 
@@ -1709,8 +1694,7 @@ def _halt_recovery(
     *, risk_engine: RiskEngine, execution_engine: PaperExecutionEngine, reason: str
 ) -> None:
     risk_engine.halt(reason)
-    execution_engine.mode = EngineMode.HALTED
-    execution_engine.halt_reason = reason
+    execution_engine.halt_state_unreliable(reason)
 
 
 def recover_pipeline(
@@ -1956,7 +1940,9 @@ def recover_pipeline(
                 instrument: str(view.quantity) for instrument, view in portfolio.positions.items()
             },
         }
-        execution_engine.reconcile(venue_state, now)
+        execution_engine.reconcile(
+            venue_state, now, source=ReconciliationSource.PAPER_SELF_CHECK
+        )
 
     return pipeline, PipelineRecoveryResult(
         ok=True, halted=False, orphan_reservations_released=tuple(orphans)

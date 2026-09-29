@@ -1,5 +1,9 @@
 """Standalone margin requirement and liquidation-safety estimation engine.
 
+LEGACY_RUNTIME / SHADOW_ORACLE (Nautilus convergence, see
+docs/ARCHITECTURE_AUDIT_2026-09-29.md): retained as the paper/backtest
+conservative gate and a parity oracle; do not add features except confirmed safety fixes.
+
 This module is intentionally decoupled from `risk.engine` business logic --
 it does not call into `RiskEngine` and `RiskEngine` does not yet call into
 it -- so it can be built and tested in isolation. A later integration step

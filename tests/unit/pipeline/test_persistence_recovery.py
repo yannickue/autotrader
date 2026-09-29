@@ -163,7 +163,9 @@ def test_recovery_restores_resting_unfilled_order_and_reservation(tmp_path) -> N
     decision = h.risk_engine.evaluate(
         request=sizing_request,
         snapshot=quote,
-        account=h.pipeline._build_account_state(instrument=INSTRUMENT, account_known=True),
+        account=h.pipeline._build_account_state(
+        instrument=INSTRUMENT, account_known=True, now=NOW
+    ),
         runtime=scenarios.make_runtime(),
         instrument=h.limits,
         now=NOW,

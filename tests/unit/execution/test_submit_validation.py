@@ -282,3 +282,53 @@ def test_slippage_guard_rejects_market_order(engine, now):
     result = engine.submit(request, decision, wide_quote, now)
     assert result.status == OrderStatus.REJECTED
     assert INSTRUMENT not in engine.portfolio.positions
+
+
+def test_ready_mode_without_reconciliation_does_not_admit_new_exposure(
+    config, portfolio, cost_schedule, now
+):
+    """READY is a permission mode, not proof of reconciliation: a READY engine
+    that never reconciled (or whose reconciliation state is not RECONCILED)
+    must not admit ordinary exposure, even with a valid decision."""
+    from execution.paper import EngineMode, PaperExecutionEngine
+    from risk.models import ReconciliationState
+
+    eng = PaperExecutionEngine(config, portfolio, cost_schedule)
+    eng.mode = EngineMode.READY  # forced without any comparison
+    assert eng.reconciliation_state is ReconciliationState.NOT_RECONCILED
+    result = eng.submit(make_request(), make_decision(), make_quote(), now)
+    assert result.reject_code == RejectCode.NOT_READY
+    assert eng.reconciliation_state is ReconciliationState.NOT_RECONCILED
+
+    eng.reconciliation_state = ReconciliationState.MISMATCH
+    result2 = eng.submit(
+        make_request(request_id="request-2"), make_decision(), make_quote(), now
+    )
+    assert result2.reject_code == RejectCode.NOT_READY
+
+
+def test_resting_order_fill_is_deferred_when_ready_but_not_reconciled(engine, now):
+    from execution.events import TradeEvent
+    from execution.models import TimeInForce
+    from risk.models import ReconciliationState
+
+    request = make_request(
+        order_type=OrderType.LIMIT, time_in_force=TimeInForce.GTC, limit_price="99", quantity="3"
+    )
+    result = engine.submit(request, make_decision(quantity="3"), make_quote(), now)
+    assert result.status == OrderStatus.ACCEPTED
+    engine.reconciliation_state = ReconciliationState.MISMATCH  # READY mode, unreliable state
+
+    engine.on_trade(
+        TradeEvent(
+            instrument=INSTRUMENT,
+            timestamp=now,
+            trade_id="t1",
+            price=Decimal("98"),
+            quantity=Decimal("5"),
+        ),
+        now,
+    )
+
+    assert engine._orders["client-1"].filled_quantity == Decimal("0")  # deferred, still resting
+    assert engine.mode.value == "ready"

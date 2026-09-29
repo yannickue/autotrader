@@ -1,5 +1,11 @@
 """SQLite-backed durable persistence/recovery layer.
 
+LEGACY_RUNTIME / SHADOW_ORACLE (Nautilus convergence, see
+docs/ARCHITECTURE_AUDIT_2026-09-29.md): retained as a parity oracle;
+operational state is later owned by
+Nautilus and only the append-only audit journal is kept. Do not add features except
+confirmed safety fixes.
+
 Resolves docs/OPEN_QUESTIONS.md item 22 (durable checkpoint/event-journal
 storage backend) with SQLite, per the sprint brief's default. Standalone and
 independently testable: no dependency on `execution.*` / `risk.*` -- a later

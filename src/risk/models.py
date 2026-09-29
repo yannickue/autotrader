@@ -15,6 +15,37 @@ class RiskSide(StrEnum):
     SELL = "sell"
 
 
+class ReconciliationState(StrEnum):
+    """Whether local account/order/position state has been compared with an
+    independent source of truth. This is deliberately NOT the same thing as
+    an engine being READY: a component is RECONCILED only after an explicit
+    comparison succeeded, and any restart/reconnect starts NOT_RECONCILED.
+
+    NOT_RECONCILED: no comparison has happened yet (initial state, restart).
+    RECONCILING:    a comparison is in progress.
+    RECONCILED:     the last comparison found no mismatch and nothing since
+                    has invalidated it.
+    MISMATCH:       the last comparison found a difference, or local state is
+                    known to be unreliable (unknown order, internal error).
+    """
+
+    NOT_RECONCILED = "not_reconciled"
+    RECONCILING = "reconciling"
+    RECONCILED = "reconciled"
+    MISMATCH = "mismatch"
+
+
+class ReconciliationSource(StrEnum):
+    """What a successful reconciliation actually compared against."""
+
+    VENUE_SNAPSHOT = "venue_snapshot"
+    # Paper trading has no independent venue: the caller compares the engine's
+    # state to a snapshot derived from its own persisted/replayed state. This
+    # is a consistency self-check, NOT a broker reconciliation, and is labelled
+    # so it can never be mistaken for one.
+    PAPER_SELF_CHECK = "paper_self_check"
+
+
 class RuntimeMode(StrEnum):
     STARTING = "starting"
     RECONCILING = "reconciling"
@@ -171,10 +202,16 @@ class InstrumentRiskLimits:
 class AccountRiskState:
     state_version: str
     known: bool
-    reconciled: bool
+    reconciliation: ReconciliationState
     equity: Decimal
     peak_equity: Decimal
+    # Net (after fees) realized PnL since `pnl_window_start` ONLY -- never an
+    # all-time figure. `pnl_window_start` is the UTC start of the current
+    # trading day as decided by a `TradingDayPolicy` (risk.trading_day); the
+    # risk policy rejects inputs whose window is not a plausible single
+    # trading day so an all-time value cannot be smuggled in under this name.
     realized_pnl_today: Decimal
+    pnl_window_start: datetime
     unrealized_pnl: Decimal
     gross_notional: Decimal
     net_notional: Decimal

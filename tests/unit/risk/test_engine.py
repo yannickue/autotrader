@@ -9,6 +9,7 @@ from risk.models import (
     AccountRiskState,
     InstrumentRiskLimits,
     PositionSizingRequest,
+    ReconciliationState,
     RiskDecision,
     RiskPolicy,
     RiskReason,
@@ -57,7 +58,8 @@ def _account(**changes: object) -> AccountRiskState:
     values: dict[str, object] = {
         "state_version": "account-1",
         "known": True,
-        "reconciled": True,
+        "reconciliation": ReconciliationState.RECONCILED,
+        "pnl_window_start": NOW.replace(hour=0, minute=0),
         "equity": Decimal("1000"),
         "peak_equity": Decimal("1000"),
         "realized_pnl_today": Decimal("0"),
@@ -256,7 +258,10 @@ def test_account_unknown_rejects() -> None:
 
 
 def test_account_unreconciled_rejects() -> None:
-    decision = _evaluate(RiskEngine(_policy()), account=_account(reconciled=False))
+    decision = _evaluate(
+        RiskEngine(_policy()),
+        account=_account(reconciliation=ReconciliationState.NOT_RECONCILED),
+    )
     assert decision.reason_code == RiskReason.ACCOUNT_UNRECONCILED
 
 
@@ -558,7 +563,7 @@ def test_margin_engine_value_error_halts_fail_closed() -> None:
         def evaluate_stop_safety(self, **kwargs: object) -> None:
             raise ValueError("boom: invalid margin inputs")
 
-    engine._margin = _BoomMargin()
+    engine._evaluator._margin = _BoomMargin()
 
     decision = _evaluate(engine)
 

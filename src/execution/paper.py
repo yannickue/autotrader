@@ -1,5 +1,9 @@
 """Deterministic paper execution engine.
 
+LEGACY_RUNTIME / SHADOW_ORACLE (Nautilus convergence, see
+docs/ARCHITECTURE_AUDIT_2026-09-29.md): retained as a parity oracle; do not add features
+except confirmed safety fixes.
+
 PAPER ONLY. No venue/network I/O occurs anywhere in this module; all state
 transitions are driven by explicitly supplied requests, quotes, and trade events
 with an injected clock (`now`), never by wall-clock reads.
@@ -30,7 +34,7 @@ from execution.orders import (
 )
 from portfolio.ledger import Portfolio
 from portfolio.models import Fill
-from risk.models import RiskDecision
+from risk.models import ReconciliationSource, ReconciliationState, RiskDecision
 
 ZERO = Decimal("0")
 BPS = Decimal("10000")
@@ -104,6 +108,13 @@ class PaperExecutionEngine:
         self.fill_listener = fill_listener
         self.mode: EngineMode = EngineMode.RECONCILING
         self.halt_reason: str | None = None
+        # READY is an execution-permission mode, NOT proof of reconciliation.
+        # `reconciliation_state` only becomes RECONCILED inside `reconcile()`
+        # after an explicit comparison succeeded; it starts (and, after a
+        # checkpoint import, restarts) NOT_RECONCILED.
+        self.reconciliation_state: ReconciliationState = ReconciliationState.NOT_RECONCILED
+        self.reconciliation_source: ReconciliationSource | None = None
+        self.last_reconciled_at: datetime | None = None
         self._orders: dict[str, Order] = {}
         self._requests: dict[str, SubmitResult] = {}
         self._client_id_owner: dict[str, str] = {}
@@ -126,27 +137,77 @@ class PaperExecutionEngine:
     def _log(self, event: str, **fields: Any) -> None:
         self.audit_log.append({"event": event, **fields})
 
+    # Halt codes meaning local order/position state can no longer be trusted
+    # against the venue. Every other halt (e.g. OVERFILL) leaves the last
+    # reconciliation outcome untouched: it stopped NEW exposure but did not
+    # invalidate what was compared.
+    _STATE_UNRELIABLE_HALT_CODES = frozenset(
+        {
+            HaltCode.RECONCILIATION_MISMATCH,
+            HaltCode.UNKNOWN_ORDER,
+            HaltCode.INTERNAL_ERROR,
+        }
+    )
+
     def _halt(self, code: HaltCode, reason: str) -> None:
         self.mode = EngineMode.HALTED
         self.halt_reason = f"{code}: {reason}"
+        if code in self._STATE_UNRELIABLE_HALT_CODES:
+            self.reconciliation_state = ReconciliationState.MISMATCH
         self._log("halt", code=str(code), reason=reason)
 
-    def reconcile(self, venue_state: Mapping[str, Any], now: datetime) -> bool:
-        """Compare local open orders/positions against a supplied venue snapshot."""
-        mismatch = self._find_reconciliation_mismatch(venue_state)
+    def halt_state_unreliable(self, reason: str) -> None:
+        """Externally-driven HALT (e.g. failed persistence recovery) after
+        which local state must not be trusted: HALTED + MISMATCH."""
+        self.mode = EngineMode.HALTED
+        self.halt_reason = reason
+        self.reconciliation_state = ReconciliationState.MISMATCH
+        self._log("halt", code="STATE_UNRELIABLE", reason=reason)
+
+    def reconcile(
+        self,
+        venue_state: Mapping[str, Any],
+        now: datetime,
+        *,
+        source: ReconciliationSource = ReconciliationSource.VENUE_SNAPSHOT,
+    ) -> bool:
+        """Compare local open orders/positions against a supplied snapshot.
+
+        The only place that can produce `ReconciliationState.RECONCILED`
+        (and, as a consequence, `EngineMode.READY`). `source` records what
+        the snapshot really was; a paper self-check is labelled as such.
+        """
+        self.reconciliation_state = ReconciliationState.RECONCILING
+        try:
+            mismatch = self._find_reconciliation_mismatch(venue_state)
+        except Exception as exc:  # malformed venue data etc.: fail closed, never stay READY
+            self._halt(HaltCode.INTERNAL_ERROR, f"reconciliation comparison failed: {exc}")
+            return False
         if mismatch is not None:
-            self._halt(HaltCode.RECONCILIATION_MISMATCH, mismatch)
+            self._halt(HaltCode.RECONCILIATION_MISMATCH, mismatch)  # -> MISMATCH
             return False
         self.mode = EngineMode.READY
         self.halt_reason = None
-        self._log("reconciled", at=now.isoformat())
+        self.reconciliation_state = ReconciliationState.RECONCILED
+        self.reconciliation_source = source
+        self.last_reconciled_at = now
+        self._log("reconciled", at=now.isoformat(), source=str(source))
         return True
 
-    def resume_after_reconcile(self, venue_state: Mapping[str, Any], now: datetime) -> bool:
+    def resume_after_reconcile(
+        self,
+        venue_state: Mapping[str, Any],
+        now: datetime,
+        *,
+        source: ReconciliationSource = ReconciliationSource.VENUE_SNAPSHOT,
+    ) -> bool:
         if self.mode is not EngineMode.HALTED:
-            return self.mode is EngineMode.READY
+            return (
+                self.mode is EngineMode.READY
+                and self.reconciliation_state is ReconciliationState.RECONCILED
+            )
         self.mode = EngineMode.RECONCILING
-        return self.reconcile(venue_state, now)
+        return self.reconcile(venue_state, now, source=source)
 
     def _find_reconciliation_mismatch(self, venue_state: Mapping[str, Any]) -> str | None:
         venue_orders: Mapping[str, Any] = venue_state.get("orders", {})
@@ -263,6 +324,21 @@ class PaperExecutionEngine:
             status=order.status,
         )
 
+    def _admission_blocked(self, *, reduce_only: bool) -> bool:
+        """True if an order of this kind must not be admitted right now.
+
+        READY alone is never enough: admission in READY also needs an explicit
+        RECONCILED outcome. New exposure is admitted only then. Reduce-only
+        keeps its pre-existing, explicitly documented exception: it may
+        proceed while HALTED (it can only shrink exposure and is checked
+        against the real portfolio, so emergency exits stay possible even
+        after a mismatch halt). The reconciliation requirement for reduce-only
+        is enforced one layer up, by the risk policy, on the account state.
+        """
+        if self.mode is EngineMode.READY:
+            return self.reconciliation_state is not ReconciliationState.RECONCILED
+        return not (self.mode is EngineMode.HALTED and reduce_only)
+
     def _validate_submit(
         self,
         request: ExecutionRequest,
@@ -270,11 +346,11 @@ class PaperExecutionEngine:
         quote: MarketSnapshot,
         now: datetime,
     ) -> tuple[RejectCode, str] | None:
-        if self.mode is not EngineMode.READY:
-            if self.mode is EngineMode.HALTED and request.reduce_only:
-                pass  # reduce-only may proceed while HALTED, subject to the check below
-            else:
-                return RejectCode.NOT_READY, f"engine mode is {self.mode}"
+        if self._admission_blocked(reduce_only=request.reduce_only):
+            return (
+                RejectCode.NOT_READY,
+                f"engine mode is {self.mode}, reconciliation is {self.reconciliation_state}",
+            )
 
         if (
             not _is_utc(request.timestamp)
@@ -604,7 +680,9 @@ class PaperExecutionEngine:
         # HALTED specifically, since they can only shrink exposure. The
         # fill is simply not applied yet (order stays resting) rather than
         # triggering another halt -- the engine is already not READY.
-        if not order.reduce_only and self.mode is not EngineMode.READY:
+        # Reduce-only fills are still applied when unreconciled: they mirror a
+        # real position reduction and deferring them would desynchronize state.
+        if not order.reduce_only and self._admission_blocked(reduce_only=False):
             self._log(
                 "fill_deferred_not_ready",
                 client_order_id=order.client_order_id,
@@ -933,9 +1011,7 @@ class PaperExecutionEngine:
         # opens new exposure -- bypassing the halt entirely. Apply the same
         # policy submit() uses: reduce-only replacements may still proceed
         # (they can only shrink exposure), anything else is rejected.
-        if self.mode is not EngineMode.READY and not (
-            self.mode is EngineMode.HALTED and original.reduce_only
-        ):
+        if self._admission_blocked(reduce_only=original.reduce_only):
             return CancelReplaceResult(
                 accepted=False,
                 original_client_order_id=client_order_id,
@@ -1140,6 +1216,11 @@ class PaperExecutionEngine:
             EngineMode.HALTED if persisted_mode is EngineMode.HALTED else EngineMode.RECONCILING
         )
         self.halt_reason = checkpoint["halt_reason"]
+        # A restart never inherits a reconciliation outcome: whatever the
+        # checkpoint's mode said, nothing has been compared since the restart.
+        self.reconciliation_state = ReconciliationState.NOT_RECONCILED
+        self.reconciliation_source = None
+        self.last_reconciled_at = None
         self._decision_usage = dict(checkpoint["decision_usage"])
         # .get(..., {}) rather than direct indexing: a checkpoint captured
         # before these two maps existed (any real historical checkpoint, or

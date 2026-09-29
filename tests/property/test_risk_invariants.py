@@ -13,6 +13,7 @@ from risk.models import (
     AccountRiskState,
     InstrumentRiskLimits,
     PositionSizingRequest,
+    ReconciliationState,
     RiskPolicy,
     RiskSide,
     RuntimeMode,
@@ -59,7 +60,8 @@ def _account(**changes: object) -> AccountRiskState:
     values: dict[str, object] = {
         "state_version": "account-1",
         "known": True,
-        "reconciled": True,
+        "reconciliation": ReconciliationState.RECONCILED,
+        "pnl_window_start": NOW.replace(hour=0, minute=0),
         "equity": Decimal("1000"),
         "peak_equity": Decimal("1000"),
         "realized_pnl_today": Decimal("0"),
