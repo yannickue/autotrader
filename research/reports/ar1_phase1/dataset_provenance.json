@@ -1,0 +1,338 @@
+{
+ "source": "ActivTrades MT5 DEMO, Ger40 (canonical GER40), M5 BID OHLC + spread points",
+ "broker_account_kind": "DEMO",
+ "n_bars": 96219,
+ "first_bar_utc": "2025-02-04T00:15:00+00:00",
+ "last_bar_utc": "2026-08-31T19:55:00+00:00",
+ "months": [
+  {
+   "month": "2025-02",
+   "path": "2025-02-04T001500__2025-02-28T205500.parquet",
+   "rows": 4731,
+   "validation_status": "PASSED",
+   "warning_summary": {},
+   "reviewed_gaps": [],
+   "content_sha256": "e481a3b0799a57c6e2cd0465d54b3b168a1dfd84bdbf8b997ea5dd3cc1b4f610",
+   "actual_start": "2025-02-04T00:15:00+00:00",
+   "actual_end": "2025-02-28T20:55:00+00:00",
+   "broker_account_kind": "DEMO"
+  },
+  {
+   "month": "2025-03",
+   "path": "2025-03-03T001500__2025-03-31T195500.parquet",
+   "rows": 5209,
+   "validation_status": "PASSED_WITH_WARNINGS",
+   "warning_summary": {
+    "SUSPICIOUS_GAP": 1
+   },
+   "reviewed_gaps": [
+    "2025-03-03T20:05:00+00:00..2025-03-03T20:50:00+00:00"
+   ],
+   "content_sha256": "54676f6eaec1697d2ab46014287373bd12ab9b3e7f15d386bd41a267fcb53849",
+   "actual_start": "2025-03-03T00:15:00+00:00",
+   "actual_end": "2025-03-31T19:55:00+00:00",
+   "broker_account_kind": "DEMO"
+  },
+  {
+   "month": "2025-04",
+   "path": "2025-04-01T001500__2025-04-30T195500.parquet",
+   "rows": 4739,
+   "validation_status": "PASSED_WITH_WARNINGS",
+   "warning_summary": {
+    "SPREAD_ANOMALY": 24,
+    "SUSPICIOUS_GAP": 1
+   },
+   "reviewed_gaps": [
+    "2025-04-17T19:55:00+00:00..2025-04-22T00:15:00+00:00"
+   ],
+   "content_sha256": "253cf0ec52ca99882ec584d423cf8ffa330b837216499fb5ffe350653b3b1ded",
+   "actual_start": "2025-04-01T00:15:00+00:00",
+   "actual_end": "2025-04-30T19:55:00+00:00",
+   "broker_account_kind": "DEMO"
+  },
+  {
+   "month": "2025-05",
+   "path": "2025-05-02T001500__2025-05-30T195500.parquet",
+   "rows": 4977,
+   "validation_status": "PASSED_WITH_WARNINGS",
+   "warning_summary": {
+    "SPREAD_ANOMALY": 3
+   },
+   "reviewed_gaps": [],
+   "content_sha256": "1d34463a761d427bd0090fd3dd82374a64d8a0a8938875ccadfc466d78a756e8",
+   "actual_start": "2025-05-02T00:15:00+00:00",
+   "actual_end": "2025-05-30T19:55:00+00:00",
+   "broker_account_kind": "DEMO"
+  },
+  {
+   "month": "2025-06",
+   "path": "2025-06-02T001500__2025-06-30T195500.parquet",
+   "rows": 4977,
+   "validation_status": "PASSED_WITH_WARNINGS",
+   "warning_summary": {
+    "SPREAD_ANOMALY": 37
+   },
+   "reviewed_gaps": [],
+   "content_sha256": "464991f08308a8ff361f709dce5da96c3e2d3d1f30c4d912b7c876f221ed6f40",
+   "actual_start": "2025-06-02T00:15:00+00:00",
+   "actual_end": "2025-06-30T19:55:00+00:00",
+   "broker_account_kind": "DEMO"
+  },
+  {
+   "month": "2025-07",
+   "path": "2025-07-01T001500__2025-07-31T195500.parquet",
+   "rows": 5451,
+   "validation_status": "PASSED_WITH_WARNINGS",
+   "warning_summary": {
+    "SPREAD_ANOMALY": 7
+   },
+   "reviewed_gaps": [],
+   "content_sha256": "6eb37ba8968a2a68f54992f71a09c8a306c7473881f88fc540506e4028ae5f17",
+   "actual_start": "2025-07-01T00:15:00+00:00",
+   "actual_end": "2025-07-31T19:55:00+00:00",
+   "broker_account_kind": "DEMO"
+  },
+  {
+   "month": "2025-08",
+   "path": "2025-08-01T001500__2025-08-29T195500.parquet",
+   "rows": 4977,
+   "validation_status": "PASSED_WITH_WARNINGS",
+   "warning_summary": {
+    "SPREAD_ANOMALY": 29
+   },
+   "reviewed_gaps": [],
+   "content_sha256": "51886e76485631363b5b13238e0fb16e9b1ba313fa4b7e302ce7e4ebc222c0a5",
+   "actual_start": "2025-08-01T00:15:00+00:00",
+   "actual_end": "2025-08-29T19:55:00+00:00",
+   "broker_account_kind": "DEMO"
+  },
+  {
+   "month": "2025-09",
+   "path": "2025-09-01T001500__2025-09-30T195500.parquet",
+   "rows": 5214,
+   "validation_status": "PASSED_WITH_WARNINGS",
+   "warning_summary": {
+    "SPREAD_ANOMALY": 42
+   },
+   "reviewed_gaps": [],
+   "content_sha256": "5e30e17d33664a5d478ec3fb8664e19312eb70bdc30c2d8471036a7cbbee94ad",
+   "actual_start": "2025-09-01T00:15:00+00:00",
+   "actual_end": "2025-09-30T19:55:00+00:00",
+   "broker_account_kind": "DEMO"
+  },
+  {
+   "month": "2025-10",
+   "path": "2025-10-01T001500__2025-10-31T205500.parquet",
+   "rows": 5511,
+   "validation_status": "PASSED_WITH_WARNINGS",
+   "warning_summary": {
+    "SPREAD_ANOMALY": 3
+   },
+   "reviewed_gaps": [],
+   "content_sha256": "d1ff7b09deb96da8d44a5259c473fb33d618f5e14e04e450723a2dde04c98d5b",
+   "actual_start": "2025-10-01T00:15:00+00:00",
+   "actual_end": "2025-10-31T20:55:00+00:00",
+   "broker_account_kind": "DEMO"
+  },
+  {
+   "month": "2025-11",
+   "path": "2025-11-03T011500__2025-11-28T205500.parquet",
+   "rows": 4919,
+   "validation_status": "PASSED_WITH_WARNINGS",
+   "warning_summary": {
+    "SPREAD_ANOMALY": 1
+   },
+   "reviewed_gaps": [],
+   "content_sha256": "3c8bebcce59035139a8dcb130fbad3f6b61a6bc7951e01b939954315752e3f4e",
+   "actual_start": "2025-11-03T01:15:00+00:00",
+   "actual_end": "2025-11-28T20:55:00+00:00",
+   "broker_account_kind": "DEMO"
+  },
+  {
+   "month": "2025-12",
+   "path": "2025-12-01T001500__2025-12-30T205500.parquet",
+   "rows": 4731,
+   "validation_status": "PASSED_WITH_WARNINGS",
+   "warning_summary": {
+    "SUSPICIOUS_GAP": 1
+   },
+   "reviewed_gaps": [
+    "2025-12-23T20:55:00+00:00..2025-12-29T00:15:00+00:00"
+   ],
+   "content_sha256": "d2b2ea1caacdc7a2e61734f886d7a042a8265f7e1176a846ca209205fbd39a84",
+   "actual_start": "2025-12-01T00:15:00+00:00",
+   "actual_end": "2025-12-30T20:55:00+00:00",
+   "broker_account_kind": "DEMO"
+  },
+  {
+   "month": "2026-01",
+   "path": "2026-01-02T001500__2026-01-30T205500.parquet",
+   "rows": 5229,
+   "validation_status": "PASSED",
+   "warning_summary": {},
+   "reviewed_gaps": [],
+   "content_sha256": "ec21e32c7c70dd81362a0cc0c6e1126e57606d82f7830b2fef157d8572fd24b8",
+   "actual_start": "2026-01-02T00:15:00+00:00",
+   "actual_end": "2026-01-30T20:55:00+00:00",
+   "broker_account_kind": "DEMO"
+  },
+  {
+   "month": "2026-02",
+   "path": "2026-02-02T001500__2026-02-27T205500.parquet",
+   "rows": 4979,
+   "validation_status": "PASSED_WITH_WARNINGS",
+   "warning_summary": {
+    "SPREAD_ANOMALY": 6
+   },
+   "reviewed_gaps": [],
+   "content_sha256": "90dd409fa5a985dc308252e56ca9958e639ac7b1e8727ca9988fdb7eea7e8d7f",
+   "actual_start": "2026-02-02T00:15:00+00:00",
+   "actual_end": "2026-02-27T20:55:00+00:00",
+   "broker_account_kind": "DEMO"
+  },
+  {
+   "month": "2026-03",
+   "path": "2026-03-02T001500__2026-03-31T195500.parquet",
+   "rows": 5453,
+   "validation_status": "PASSED_WITH_WARNINGS",
+   "warning_summary": {
+    "SPREAD_ANOMALY": 8
+   },
+   "reviewed_gaps": [],
+   "content_sha256": "b8a4d8c3108c7ed1afdf2f00570228fcf8094365963883a06750dbef92f5e134",
+   "actual_start": "2026-03-02T00:15:00+00:00",
+   "actual_end": "2026-03-31T19:55:00+00:00",
+   "broker_account_kind": "DEMO"
+  },
+  {
+   "month": "2026-04",
+   "path": "2026-04-01T001500__2026-04-30T195500.parquet",
+   "rows": 4740,
+   "validation_status": "PASSED_WITH_WARNINGS",
+   "warning_summary": {
+    "SUSPICIOUS_GAP": 1
+   },
+   "reviewed_gaps": [
+    "2026-04-02T19:55:00+00:00..2026-04-07T00:15:00+00:00"
+   ],
+   "content_sha256": "d937f8e398141bb97a9309c3ad45e86ebedc2b6fc39755304dd8b8d7683f5670",
+   "actual_start": "2026-04-01T00:15:00+00:00",
+   "actual_end": "2026-04-30T19:55:00+00:00",
+   "broker_account_kind": "DEMO"
+  },
+  {
+   "month": "2026-05",
+   "path": "2026-05-04T001500__2026-05-29T195500.parquet",
+   "rows": 4740,
+   "validation_status": "PASSED",
+   "warning_summary": {},
+   "reviewed_gaps": [],
+   "content_sha256": "1c0d686170101aa57ac65dd4949a4f565268e7304843a5dfeeaf91370064422e",
+   "actual_start": "2026-05-04T00:15:00+00:00",
+   "actual_end": "2026-05-29T19:55:00+00:00",
+   "broker_account_kind": "DEMO"
+  },
+  {
+   "month": "2026-06",
+   "path": "2026-06-01T001500__2026-06-30T195500.parquet",
+   "rows": 5214,
+   "validation_status": "PASSED_WITH_WARNINGS",
+   "warning_summary": {
+    "SPREAD_ANOMALY": 2
+   },
+   "reviewed_gaps": [],
+   "content_sha256": "968f0bcfb1dc9ddcfa4a5533858f1bb77457182b410f889992305a7c0c658608",
+   "actual_start": "2026-06-01T00:15:00+00:00",
+   "actual_end": "2026-06-30T19:55:00+00:00",
+   "broker_account_kind": "DEMO"
+  },
+  {
+   "month": "2026-07",
+   "path": "2026-07-01T001500__2026-07-31T195500.parquet",
+   "rows": 5451,
+   "validation_status": "PASSED_WITH_WARNINGS",
+   "warning_summary": {
+    "SPREAD_ANOMALY": 1
+   },
+   "reviewed_gaps": [],
+   "content_sha256": "20afdfdcb8bf051f2c9fae10cb6f7d0ffe9d6449223d6c5ea2612fb971ef1148",
+   "actual_start": "2026-07-01T00:15:00+00:00",
+   "actual_end": "2026-07-31T19:55:00+00:00",
+   "broker_account_kind": "DEMO"
+  },
+  {
+   "month": "2026-08",
+   "path": "2026-08-03T001500__2026-08-31T195500.parquet",
+   "rows": 4977,
+   "validation_status": "PASSED_WITH_WARNINGS",
+   "warning_summary": {
+    "SPREAD_ANOMALY": 3
+   },
+   "reviewed_gaps": [],
+   "content_sha256": "15fd1bae910585fe5c08cdd668f41e3c780f74b23b835709f824de33b6100009",
+   "actual_start": "2026-08-03T00:15:00+00:00",
+   "actual_end": "2026-08-31T19:55:00+00:00",
+   "broker_account_kind": "DEMO"
+  }
+ ],
+ "excluded_months": [
+  {
+   "month": "2024-01",
+   "reason": "status=REJECTED"
+  },
+  {
+   "month": "2024-02",
+   "reason": "status=REJECTED"
+  },
+  {
+   "month": "2024-03",
+   "reason": "status=REJECTED"
+  },
+  {
+   "month": "2024-04",
+   "reason": "status=REJECTED"
+  },
+  {
+   "month": "2024-05",
+   "reason": "status=REJECTED"
+  },
+  {
+   "month": "2024-06",
+   "reason": "status=REJECTED"
+  },
+  {
+   "month": "2024-07",
+   "reason": "status=REJECTED"
+  },
+  {
+   "month": "2024-08",
+   "reason": "status=REJECTED"
+  },
+  {
+   "month": "2024-09",
+   "reason": "status=REJECTED"
+  },
+  {
+   "month": "2024-10",
+   "reason": "status=REJECTED"
+  },
+  {
+   "month": "2024-11",
+   "reason": "status=REJECTED"
+  },
+  {
+   "month": "2024-12",
+   "reason": "status=REJECTED"
+  },
+  {
+   "month": "2025-01",
+   "reason": "status=REJECTED"
+  }
+ ],
+ "reviewed_gaps": {
+  "2025-04-17T19:55:00+00:00..2025-04-22T00:15:00+00:00": "Easter closure",
+  "2025-12-23T20:55:00+00:00..2025-12-29T00:15:00+00:00": "Christmas closure",
+  "2026-04-02T19:55:00+00:00..2026-04-07T00:15:00+00:00": "Easter closure",
+  "2025-03-03T20:05:00+00:00..2025-03-03T20:50:00+00:00": "45-minute hole at 21:05-21:50 Berlin: after the last entry (20:00) and the forced flat"
+ }
+}

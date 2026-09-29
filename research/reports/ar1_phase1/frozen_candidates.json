@@ -1,0 +1,59 @@
+{
+ "hash": "717e22513c6fc8d78799a9b45facbc1bd1be70476e2341e441fec87aff5f9722",
+ "set": [
+  {
+   "role": "CANONICAL",
+   "family": "MOMENTUM",
+   "params": {
+    "lookback": 24,
+    "thr": 1.5,
+    "stop_mult": 2.5
+   },
+   "exit": {
+    "kind": "fixed_r",
+    "r": 1.5
+   }
+  },
+  {
+   "role": "CANONICAL",
+   "family": "BREAKOUT",
+   "params": {
+    "kind": "orb",
+    "or_bars": 6,
+    "buffer_atr": 0.25,
+    "stop_mode": "or_mid"
+   },
+   "exit": {
+    "kind": "fixed_r",
+    "r": 1.5
+   }
+  },
+  {
+   "role": "SELECTED",
+   "family": "BREAKOUT",
+   "params": {
+    "kind": "orb",
+    "or_bars": 6,
+    "buffer_atr": 0.25,
+    "stop_mode": "or_mid"
+   },
+   "exit": {
+    "kind": "fixed_r",
+    "r": 2.5
+   }
+  },
+  {
+   "role": "CANONICAL",
+   "family": "PULLBACK",
+   "params": {
+    "ema_fast": 21,
+    "depth": 1.0,
+    "stop_mode": "swing"
+   },
+   "exit": {
+    "kind": "fixed_r",
+    "r": 1.5
+   }
+  }
+ ]
+}

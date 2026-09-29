@@ -1,0 +1,115 @@
+[
+ {
+  "kind": "evaluation",
+  "frozen_hash": "717e22513c6fc8d78799a9b45facbc1bd1be70476e2341e441fec87aff5f9722",
+  "note": "AR1 frozen set 4 candidates"
+ },
+ {
+  "kind": "reset",
+  "reason": "Framework defects found by Codex review (entry-bar gap fill price, silently skipped adverse entry gaps, MFE stop-first, holding time, gate fingerprint). No strategy, grid, split or candidate changes; re-run only to measure the corrected simulator."
+ },
+ {
+  "kind": "reset",
+  "reason": "Framework defects found by Codex review (entry-bar gap fill price, silently skipped adverse entry gaps, MFE stop-first, holding time, gate fingerprint). No strategy, grid, split or candidate changes; re-run only to measure the corrected simulator."
+ },
+ {
+  "kind": "evaluation",
+  "experiment_fingerprint": "d8fc01646afdddce8c149277057126f8f03e35422e0946cbd5bde82e4bcecdfc",
+  "note": "AR1 frozen set 4 candidates",
+  "components": {
+   "frozen_hash": "717e22513c6fc8d78799a9b45facbc1bd1be70476e2341e441fec87aff5f9722",
+   "config_hash": "4eaeb13875bfc287c3319360a735cbfd401ac8c7c1634747c38cb65b0570dd77",
+   "dataset_hashes": {
+    "2025-02": "e481a3b0799a57c6e2cd0465d54b3b168a1dfd84bdbf8b997ea5dd3cc1b4f610",
+    "2025-03": "54676f6eaec1697d2ab46014287373bd12ab9b3e7f15d386bd41a267fcb53849",
+    "2025-04": "253cf0ec52ca99882ec584d423cf8ffa330b837216499fb5ffe350653b3b1ded",
+    "2025-05": "1d34463a761d427bd0090fd3dd82374a64d8a0a8938875ccadfc466d78a756e8",
+    "2025-06": "464991f08308a8ff361f709dce5da96c3e2d3d1f30c4d912b7c876f221ed6f40",
+    "2025-07": "6eb37ba8968a2a68f54992f71a09c8a306c7473881f88fc540506e4028ae5f17",
+    "2025-08": "51886e76485631363b5b13238e0fb16e9b1ba313fa4b7e302ce7e4ebc222c0a5",
+    "2025-09": "5e30e17d33664a5d478ec3fb8664e19312eb70bdc30c2d8471036a7cbbee94ad",
+    "2025-10": "d1ff7b09deb96da8d44a5259c473fb33d618f5e14e04e450723a2dde04c98d5b",
+    "2025-11": "3c8bebcce59035139a8dcb130fbad3f6b61a6bc7951e01b939954315752e3f4e",
+    "2025-12": "d2b2ea1caacdc7a2e61734f886d7a042a8265f7e1176a846ca209205fbd39a84",
+    "2026-01": "ec21e32c7c70dd81362a0cc0c6e1126e57606d82f7830b2fef157d8572fd24b8",
+    "2026-02": "90dd409fa5a985dc308252e56ca9958e639ac7b1e8727ca9988fdb7eea7e8d7f",
+    "2026-03": "b8a4d8c3108c7ed1afdf2f00570228fcf8094365963883a06750dbef92f5e134",
+    "2026-04": "d937f8e398141bb97a9309c3ad45e86ebedc2b6fc39755304dd8b8d7683f5670",
+    "2026-05": "1c0d686170101aa57ac65dd4949a4f565268e7304843a5dfeeaf91370064422e",
+    "2026-06": "968f0bcfb1dc9ddcfa4a5533858f1bb77457182b410f889992305a7c0c658608",
+    "2026-07": "20afdfdcb8bf051f2c9fae10cb6f7d0ffe9d6449223d6c5ea2612fb971ef1148",
+    "2026-08": "15fd1bae910585fe5c08cdd668f41e3c780f74b23b835709f824de33b6100009"
+   },
+   "source_hashes": {
+    "src/alpha/__init__.py": "79223a2a671e1eb0ee24ef67a8299369ba61efca1b7431a5ee4872f6def3fc93",
+    "src/alpha/breakout/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "src/alpha/breakout/strategy.py": "480c73eb156c319f33826c2321ed98ba72dce86efd29e52e766f285cef62082f",
+    "src/alpha/common/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "src/alpha/common/dataset.py": "65cae5208e7f3f75807dc01d7411eb2f8dca942501fa372434bc86b99e9175d7",
+    "src/alpha/common/frame.py": "b03978bb63b905533b10b83f1f373b5c71bb2d071502c2da5b089c37915ca5f6",
+    "src/alpha/common/metrics.py": "e6a2861c99ede7727dfbb808790f05265c65430521d0f20ab6deb4cc11fc7b2d",
+    "src/alpha/common/protocol.py": "54b68e8adb09f032ef7860763b70e259bca221f9c10b1f98a506f6b1edf42086",
+    "src/alpha/common/regime.py": "f655f8efd3731378631e734291a29a96ab25bc7687258033574c498d46c7277e",
+    "src/alpha/common/sim.py": "b38975558101bf06fa8f4c3a0f9266fbb6c9dbfc1f6ce52380fdaca806f49437",
+    "src/alpha/momentum/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "src/alpha/momentum/strategy.py": "7f4da5bd6a26a70051cacb387c4bd51ab3bcd6a52c117eb2fb014f469c9eeeda",
+    "src/alpha/pullback/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "src/alpha/pullback/strategy.py": "d201280120c2bb3b8a13d40b769c1306c71591f8dc688c4429f994d6c0c78350",
+    "src/alpha/registry.py": "26c659001e3387603dd7d0da2f039bd565b410e428cfc0d1bf09e6d68e15b5cd",
+    "research/runners/ar1_compare.py": "9efe0decd3b4dadf911774d10c0a8eac8dca4aeb435db043dc7d4a7e358982a4"
+   }
+  }
+ },
+ {
+  "kind": "reset",
+  "reason": "Lint-only edit (noqa comments) to runner scripts after the corrected-simulator run; no logic, strategy, grid, split or candidate change; re-run only so the recorded fingerprint matches the committed sources."
+ },
+ {
+  "kind": "evaluation",
+  "experiment_fingerprint": "dc0a10c05297f88e894c7543112f533b7e4fe639d25d118a1ce531ebeca156c6",
+  "note": "AR1 frozen set 4 candidates",
+  "components": {
+   "frozen_hash": "717e22513c6fc8d78799a9b45facbc1bd1be70476e2341e441fec87aff5f9722",
+   "config_hash": "4eaeb13875bfc287c3319360a735cbfd401ac8c7c1634747c38cb65b0570dd77",
+   "dataset_hashes": {
+    "2025-02": "e481a3b0799a57c6e2cd0465d54b3b168a1dfd84bdbf8b997ea5dd3cc1b4f610",
+    "2025-03": "54676f6eaec1697d2ab46014287373bd12ab9b3e7f15d386bd41a267fcb53849",
+    "2025-04": "253cf0ec52ca99882ec584d423cf8ffa330b837216499fb5ffe350653b3b1ded",
+    "2025-05": "1d34463a761d427bd0090fd3dd82374a64d8a0a8938875ccadfc466d78a756e8",
+    "2025-06": "464991f08308a8ff361f709dce5da96c3e2d3d1f30c4d912b7c876f221ed6f40",
+    "2025-07": "6eb37ba8968a2a68f54992f71a09c8a306c7473881f88fc540506e4028ae5f17",
+    "2025-08": "51886e76485631363b5b13238e0fb16e9b1ba313fa4b7e302ce7e4ebc222c0a5",
+    "2025-09": "5e30e17d33664a5d478ec3fb8664e19312eb70bdc30c2d8471036a7cbbee94ad",
+    "2025-10": "d1ff7b09deb96da8d44a5259c473fb33d618f5e14e04e450723a2dde04c98d5b",
+    "2025-11": "3c8bebcce59035139a8dcb130fbad3f6b61a6bc7951e01b939954315752e3f4e",
+    "2025-12": "d2b2ea1caacdc7a2e61734f886d7a042a8265f7e1176a846ca209205fbd39a84",
+    "2026-01": "ec21e32c7c70dd81362a0cc0c6e1126e57606d82f7830b2fef157d8572fd24b8",
+    "2026-02": "90dd409fa5a985dc308252e56ca9958e639ac7b1e8727ca9988fdb7eea7e8d7f",
+    "2026-03": "b8a4d8c3108c7ed1afdf2f00570228fcf8094365963883a06750dbef92f5e134",
+    "2026-04": "d937f8e398141bb97a9309c3ad45e86ebedc2b6fc39755304dd8b8d7683f5670",
+    "2026-05": "1c0d686170101aa57ac65dd4949a4f565268e7304843a5dfeeaf91370064422e",
+    "2026-06": "968f0bcfb1dc9ddcfa4a5533858f1bb77457182b410f889992305a7c0c658608",
+    "2026-07": "20afdfdcb8bf051f2c9fae10cb6f7d0ffe9d6449223d6c5ea2612fb971ef1148",
+    "2026-08": "15fd1bae910585fe5c08cdd668f41e3c780f74b23b835709f824de33b6100009"
+   },
+   "source_hashes": {
+    "src/alpha/__init__.py": "79223a2a671e1eb0ee24ef67a8299369ba61efca1b7431a5ee4872f6def3fc93",
+    "src/alpha/breakout/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "src/alpha/breakout/strategy.py": "480c73eb156c319f33826c2321ed98ba72dce86efd29e52e766f285cef62082f",
+    "src/alpha/common/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "src/alpha/common/dataset.py": "65cae5208e7f3f75807dc01d7411eb2f8dca942501fa372434bc86b99e9175d7",
+    "src/alpha/common/frame.py": "b03978bb63b905533b10b83f1f373b5c71bb2d071502c2da5b089c37915ca5f6",
+    "src/alpha/common/metrics.py": "e6a2861c99ede7727dfbb808790f05265c65430521d0f20ab6deb4cc11fc7b2d",
+    "src/alpha/common/protocol.py": "54b68e8adb09f032ef7860763b70e259bca221f9c10b1f98a506f6b1edf42086",
+    "src/alpha/common/regime.py": "f655f8efd3731378631e734291a29a96ab25bc7687258033574c498d46c7277e",
+    "src/alpha/common/sim.py": "b38975558101bf06fa8f4c3a0f9266fbb6c9dbfc1f6ce52380fdaca806f49437",
+    "src/alpha/momentum/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "src/alpha/momentum/strategy.py": "7f4da5bd6a26a70051cacb387c4bd51ab3bcd6a52c117eb2fb014f469c9eeeda",
+    "src/alpha/pullback/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "src/alpha/pullback/strategy.py": "d201280120c2bb3b8a13d40b769c1306c71591f8dc688c4429f994d6c0c78350",
+    "src/alpha/registry.py": "26c659001e3387603dd7d0da2f039bd565b410e428cfc0d1bf09e6d68e15b5cd",
+    "research/runners/ar1_compare.py": "fe63b4f0af7836198fc3632d6dc1e12069a99e250bd8ad191850e9e0ee713454"
+   }
+  }
+ }
+]

@@ -318,7 +318,7 @@ def main() -> int:
     # ---- FINAL: OOS evaluated once for the frozen set --------------------------------------
     import hashlib
 
-    src_files = sorted((REPO_ROOT / "src" / "alpha").rglob("*.py")) + [Path(__file__).resolve()]
+    src_files = sorted((REPO_ROOT / "src" / "alpha").rglob("*.py")) + [Path(__file__).resolve()]  # noqa: RUF005
     source_hashes = {
         str(f.relative_to(REPO_ROOT)).replace("\\", "/"): hashlib.sha256(
             f.read_bytes().replace(b"\r\n", b"\n")
