@@ -67,7 +67,11 @@ class PipelineConfig:
     c_min_profit_factor: float = 1.0  # strictly greater, BASE
     # Stage D (pooled Train+Validation, COMBINED_ADVERSE)
     d_lb_se_mult: float = 1.0  # lower bound = mean - mult * SE (day-clustered, CR1)
-    d_lb_min: float = -0.02  # R
+    # Stage D is PARTITION-WISE: Train and post-embargo Validation must each have expectancy > 0
+    # under SPREAD_STRESS, SLIPPAGE_STRESS and COMBINED_ADVERSE separately; pooled numbers are
+    # reported only.  Validation COMBINED_ADVERSE lower bound (mean - d_lb_se_mult * SE) > this:
+    d_val_lb_min: float = -0.05  # R
+    d_cost_scenarios: tuple[str, ...] = ("SPREAD_STRESS", "SLIPPAGE_STRESS", "COMBINED_ADVERSE")
     # Stage E (i) parameter neighbourhood
     e_joint_perturbations: int = 30
     e_neighbor_min_positive_frac: float = 0.60
@@ -277,6 +281,9 @@ class StageDResult:
     lower_bound_adverse: float | None
     cost_burden_adverse_r: float | None
     r_lost_base_to_adverse: float | None
+    # cost -> {"train": PooledStats, "validation": PooledStats} (the decision statistics)
+    by_partition: dict[str, dict[str, PooledStats]] = field(default_factory=dict)
+    validation_lower_bound_adverse: float | None = None
 
 
 @dataclass
@@ -382,25 +389,49 @@ def stage_c_validation(candidate: Genome | GenomeEval, ev: GenomeEvaluator,
 
 
 # --------------------------------------------------------------------------- Stage D
-def judge_stage_d(by_cost: dict[str, PooledStats], cfg: PipelineConfig) -> StageDResult:
+def judge_stage_d(by_cost: dict[str, PooledStats], cfg: PipelineConfig,
+                  by_partition: dict[str, dict[str, PooledStats]] | None = None) -> StageDResult:
+    """Partition-wise cost stress (see PipelineConfig); pooled stats are informational."""
     adv, base = by_cost[ADVERSE_COST], by_cost[BASE_COST]
     reasons: list[str] = []
-    if adv.expectancy_r is None or adv.expectancy_r <= 0:
-        reasons.append(f"pooled expectancy COMBINED_ADVERSE {adv.expectancy_r} <= 0")
-    lb = adv.lower_bound_r
-    if lb is None or lb <= cfg.d_lb_min:
-        reasons.append(f"pooled lower bound COMBINED_ADVERSE {lb} <= {cfg.d_lb_min}")
+    val_lb: float | None = None
+    if by_partition is None:
+        reasons.append("partition-wise statistics unavailable")
+    else:
+        for cost in cfg.d_cost_scenarios:
+            for part in ("train", "validation"):
+                s = by_partition.get(cost, {}).get(part)
+                e = None if s is None else s.expectancy_r
+                if e is None or e <= 0:
+                    reasons.append(f"{part} expectancy {cost} {e} <= 0")
+        vs = by_partition.get(ADVERSE_COST, {}).get("validation")
+        val_lb = None if vs is None else vs.lower_bound_r
+        if val_lb is None or val_lb <= cfg.d_val_lb_min:
+            reasons.append(f"validation lower bound COMBINED_ADVERSE {val_lb} <= "
+                           f"{cfg.d_val_lb_min}")
     lost = (None if base.expectancy_r is None or adv.expectancy_r is None
             else base.expectancy_r - adv.expectancy_r)
-    return StageDResult(not reasons, reasons, by_cost, adv.expectancy_r, lb, adv.cost_burden_r,
-                        lost)
+    return StageDResult(not reasons, reasons, by_cost, adv.expectancy_r, adv.lower_bound_r,
+                        adv.cost_burden_r, lost, by_partition or {}, val_lb)
+
+
+def _partition_stats(pt: PooledTrades, cfg: PipelineConfig) -> dict[str, PooledStats]:
+    if pt.trades is None or not len(pt.trades):
+        empty = stats_from_r(np.zeros(0), np.zeros(0, int))
+        return {"train": empty, "validation": empty}
+    out = {}
+    for name, m in (("train", ~pt.is_validation), ("validation", pt.is_validation)):
+        out[name] = stats_from_r(pt.r[m], pt.days[m], lb_mult=cfg.d_lb_se_mult)
+    return out
 
 
 def stage_d_cost_stress(candidate: Genome, ev: GenomeEvaluator, cfg: PipelineConfig | None = None,
                         sim: PooledSim | None = None) -> StageDResult:
     cfg = cfg or PipelineConfig()
     sim = sim or PooledSim(ev, cfg)
-    return judge_stage_d({c: sim.pooled(candidate, c).stats for c in STRESS_COSTS}, cfg)
+    pooled = {c: sim.pooled(candidate, c) for c in STRESS_COSTS}
+    return judge_stage_d({c: p.stats for c, p in pooled.items()}, cfg,
+                         {c: _partition_stats(p, cfg) for c, p in pooled.items()})
 
 
 # --------------------------------------------------------------------------- Stage E (i)
@@ -644,6 +675,7 @@ class CandidateResult:
     stage_d: StageDResult | None = None
     stage_e: StageEResult | None = None
     selection: Any = None  # selection.SelectionStats, filled by run_pipeline
+    drift_excess_ok: bool | None = None  # from a drift-baseline result; None = none supplied
 
     @property
     def furthest_stage(self) -> str:
@@ -682,15 +714,21 @@ def ledger_snapshot(ev: GenomeEvaluator) -> dict[str, int]:
 
 
 def run_pipeline(pool: dict[str, Any], ev: GenomeEvaluator, cfg: PipelineConfig | None = None,
-                 prior_trials: int | None = None, prior_unique_specs: int | None = None
-                 ) -> PipelineResult:
+                 prior_trials: int | None = None, prior_unique_specs: int | None = None,
+                 prior_validation_looks: int = 0) -> PipelineResult:
     """Stage A (done in search) -> C -> D -> E over the candidate pool; only survivors advance.
 
     Selection statistics use N = this campaign's total trials + ``prior_trials`` (and unique
     specs + ``prior_unique_specs`` for Bonferroni); the priors default to
-    ``meta.prior_trials`` / ``meta.prior_unique_specs`` of the pool, else 0.
+    ``meta.prior_trials`` / ``meta.prior_unique_specs`` of the pool, else 0.  The Validation-only
+    null bound uses N_val_looks = candidates that reached Stage C in this pool (Stage-A
+    survivors) + ``prior_validation_looks`` (Stage-C looks of earlier campaigns, default 0).
     """
-    from alpha.discovery.selection import ledger_unique, selection_stats  # selection imports stages
+    from alpha.discovery.selection import (  # selection imports stages
+        expected_max_null_t,
+        ledger_unique,
+        selection_stats,
+    )
 
     cfg = cfg or PipelineConfig()
     meta = pool.get("meta", {})
@@ -749,7 +787,19 @@ def run_pipeline(pool: dict[str, Any], ev: GenomeEvaluator, cfg: PipelineConfig 
         cand.stage_e = stage_e_stability(canon, ev, cfg, sim)
         if cand.stage_e.passed:
             counts["E"] += 1
-    return PipelineResult(out, counts, ledger_before, ledger_snapshot(ev), sim, accounting)
+    after = ledger_snapshot(ev)
+    n_looks = counts["stage_a"] + int(prior_validation_looks)
+    accounting.update({
+        "prior_validation_looks": int(prior_validation_looks),
+        "n_validation_looks": n_looks,
+        "neighbour_param_trials": after["param_trials"] - ledger_before["param_trials"],
+    })
+    accounting["n_total_incl_neighbours"] = n_total + accounting["neighbour_param_trials"]
+    for cand in out:  # N_val_looks is only known once every Stage-C look has happened
+        if cand.selection is not None:
+            cand.selection.n_validation_looks = n_looks
+            cand.selection.validation_t_null_bound = expected_max_null_t(n_looks)
+    return PipelineResult(out, counts, ledger_before, after, sim, accounting)
 
 
 def _num(x: Any) -> Any:

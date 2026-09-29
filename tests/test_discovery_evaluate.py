@@ -158,7 +158,7 @@ def test_param_kind_evaluation(env, tmp_path):
 def test_stage_a_min_train_trades_is_60_and_version_bumped(env, tmp_path):
     from alpha.discovery.evaluate import EVALUATOR_VERSION, MIN_TRAIN_TRADES
 
-    assert MIN_TRAIN_TRADES == 60 and EVALUATOR_VERSION == "ad1-genome-eval-v2"
+    assert MIN_TRAIN_TRADES == 60 and EVALUATOR_VERSION == "ad1-genome-eval-v3"
     ev = _evaluator(env, tmp_path)
     assert ev.min_trades == 60  # research/configs/ad1_discovery.json sample_rules
 

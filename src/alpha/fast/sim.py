@@ -249,6 +249,9 @@ def _simulate_kernel(
     contract_size: float,
     max_trades_per_day: int,
     max_entry_spread: float,
+    entry_start_min: int,
+    entry_end_min: int,
+    flat_min: int,
 ) -> tuple:
     cap = len(decision_idx)
     out_i = np.empty((5, cap), dtype=np.int64)
@@ -273,7 +276,7 @@ def _simulate_kernel(
         if not contig_next[i] or day[j] != day[i]:
             skips[1] += 1
             continue
-        if not (ENTRY_START_MIN <= minute[j] < ENTRY_END_MIN):
+        if not (entry_start_min <= minute[j] < entry_end_min):
             skips[2] += 1
             continue
         if day[j] == last_trade_day and trades_on_day >= max_trades_per_day:
@@ -338,7 +341,7 @@ def _simulate_kernel(
                 exit_idx = k
                 reason = REASON_DATA_GAP
                 break
-            if minute[k] >= FLAT_MIN:
+            if minute[k] >= flat_min:
                 exit_px = o[k] - slip if side > 0 else o[k] + raw_spread[k] * spread_mult + slip
                 exit_idx = k
                 reason = REASON_SESSION_END
@@ -501,6 +504,9 @@ def simulate_fast(
         sizing.contract_size,
         rules.max_trades_per_day,
         rules.max_entry_spread_pts,
+        ENTRY_START_MIN,  # explicit args: numba's on-disk cache cannot keep stale frozen globals
+        ENTRY_END_MIN,
+        FLAT_MIN,
     )
     return TradeArrays(
         ints[0], ints[1], ints[2], ints[3].astype(np.int8), ints[4],

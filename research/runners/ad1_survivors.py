@@ -28,6 +28,7 @@ for _path in (str(REPO_ROOT), str(REPO_ROOT / "src")):
         sys.path.insert(0, _path)
 
 from alpha.common.dataset import POINT, load_research_dataset  # noqa: E402
+from alpha.discovery import provenance as prov  # noqa: E402
 from alpha.discovery import selection as sel  # noqa: E402
 from alpha.discovery import stages as st  # noqa: E402
 from alpha.discovery.compile import TrialLedger  # noqa: E402
@@ -97,6 +98,7 @@ def _finalist_record(c: st.CandidateResult, ev: GenomeEvaluator, cluster_size: i
                   "chunk_expectancy_adverse": list(train.adverse.chunk_expectancy)},
         "stage_c": st.to_plain(c.stage_c), "stage_d": st.to_plain(c.stage_d),
         "stage_e": st.to_plain(c.stage_e), "selection": st.to_plain(c.selection),
+        "drift_excess_ok": c.drift_excess_ok,
         "weaknesses": derive_weaknesses(c, train_adv),
     }
 
@@ -131,8 +133,9 @@ def _glance_table(finalists: list[dict[str, Any]]) -> list[str]:
 
     out = ["## Finalists at a glance", "",
            "| # | hash | origin | lineage family | Train n | Train E[R] | Val n | Val E[R] | "
-           "Val t | Val Bonf. p | pooled t | null bound | trades/day | timing ok |",
-           "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
+           "Val t | Val null bound | Val Bonf. p | pooled t (in-sample-contaminated) | "
+           "null bound | trades/day | timing ok | drift ok |",
+           "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for i, f in enumerate(finalists, 1):
         tr, sc, s = f["train"]["adverse"], f["stage_c"] or {}, f["selection"] or {}
         sd = f["stage_d"]
@@ -144,8 +147,10 @@ def _glance_table(finalists: list[dict[str, Any]]) -> list[str]:
             f"{lineage_family(f['lineage'] or 'HYBRID')} | {_fmt(tr.get('n_trades'))} | "
             f"{_fmt(tr.get('expectancy_r'))} | {_fmt(sc.get('n_trades'))} | "
             f"{_fmt(sc.get('expectancy_adverse'))} | {_fmt(sc.get('t_adverse'), 2)} | "
+            f"{_fmt(s.get('validation_t_null_bound'), 2)} | "
             f"{_fmt(s.get('validation_bonferroni_p'))} | {_fmt(s.get('pooled_t'), 2)} | "
-            f"{_fmt(s.get('null_bound_t'), 2)} | {_fmt(tpd, 2)} | {timing_ok} |")
+            f"{_fmt(s.get('null_bound_t'), 2)} | {_fmt(tpd, 2)} | {timing_ok} | "
+            f"{'-' if f.get('drift_excess_ok') is None else f['drift_excess_ok']} |")
     return [*out, ""]
 
 
@@ -153,7 +158,7 @@ def render_report(summary: dict[str, Any], finalists: list[dict[str, Any]]) -> s
     m, counts = summary["meta_ledger"], summary["counts"]
     acc = summary["accounting"]
     out = ["# AD1 survivors report (Train + Validation only)", "",
-           "OOS TOUCHED: NO", "",
+           "OOS TOUCHED: NO", "", f"**OOS status:** {summary['oos_status']}", "",
            f"**{VERDICT_PREFIX}: {summary['verdict']}**", "",
            *(_glance_table(finalists) if finalists else []),
            f"Verdict rule: {sel.VERDICT_RULE}", "",
@@ -167,13 +172,24 @@ def render_report(summary: dict[str, Any], finalists: list[dict[str, Any]]) -> s
            f"Selection null bound: E[max t] ~ sqrt(2 ln N) = {summary['null_bound_t']:.2f} for "
            f"N={acc['n_total_trials']} (rough extreme-value bound, NOT a proof); "
            f"Bonferroni N_eff = {acc['n_unique_specs']} unique canonical specs.", "",
+           f"Validation-only looks: N_val_looks = {acc['n_validation_looks']} (Stage-C-evaluated "
+           f"candidates in this pool + {acc['prior_validation_looks']} prior; "
+           f"`--prior-validation-looks`); Validation-only null bound sqrt(2 ln N_val_looks) = "
+           f"{_fmt(summary['validation_null_bound_t'], 2)} (reported, not gated). Pooled t is "
+           "in-sample-contaminated (Train is the selection sample); the verdict uses the "
+           f"Validation-only t >= {sel.YES_MIN_VALIDATION_T}.", "",
+           f"Drift baseline: {summary['drift_baseline'] or 'ABSENT -> YES impossible'}.", "",
+           *([f"**Provenance warnings (pool searched with a different toolchain):** "
+              f"{'; '.join(summary['provenance_warnings'])}", ""]
+             if summary["provenance_warnings"] else []),
            f"Cumulative N: this campaign {acc['campaign_total_trials']} trials / "
            f"{acc['campaign_unique_specs']} unique specs + prior campaigns "
            f"{acc['prior_trials']} trials / {acc['prior_unique_specs']} unique specs "
            f"(`--prior-trials`, `--prior-unique-specs`) = {acc['n_total_trials']} / "
            f"{acc['n_unique_specs']}.", "",
            f"Stage-E neighbour evaluations added {summary['neighbor_param_trials']} param trials "
-           "(pipeline ledger delta, not part of the search N).", "",
+           "(pipeline ledger delta, not part of the search N); incl. neighbour trials the total "
+           f"is {acc['n_total_incl_neighbours']}.", "",
            "## Survivors per stage", "",
            "| stage | count |", "|---|---|",
            f"| pool (distinct) | {counts['pool']} |",
@@ -262,7 +278,8 @@ def render_report(summary: dict[str, Any], finalists: list[dict[str, Any]]) -> s
                     f"{_fmt(s['deflated_sharpe_prob'])}"]
         out += ["", "Weaknesses:"] + ([f"- {x}" for x in f["weaknesses"]] or ["- none derived"])
         out.append("")
-    out += ["---", "OOS TOUCHED: NO", f"**{VERDICT_PREFIX}: {summary['verdict']}**", ""]
+    out += ["---", "OOS TOUCHED: NO", f"OOS status: {summary['oos_status']}",
+            f"**{VERDICT_PREFIX}: {summary['verdict']}**", ""]
     return "\n".join(out)
 
 
@@ -270,7 +287,9 @@ def render_report(summary: dict[str, Any], finalists: list[dict[str, Any]]) -> s
 def run(pool_path: Path, config: Path, out_dir: Path, cache_dir: Path,
         overlap: float = OVERLAP_THRESHOLD, prior_trials: int | None = None,
         prior_unique_specs: int | None = None, min_train_trades: int | None = None,
-        c_min_trades: int | None = None, dev_override=None) -> dict[str, Any]:
+        c_min_trades: int | None = None, dev_override=None,
+        allow_evaluator_mismatch: bool = False, prior_validation_looks: int = 0,
+        drift_baseline: Path | None = None, oos_log: Path | None = None) -> dict[str, Any]:
     cfg = json.loads(config.read_text(encoding="utf-8"))
     pool = json.loads(pool_path.read_text(encoding="utf-8"))
     if pool.get("meta", {}).get("oos_touched") is not False:
@@ -283,17 +302,28 @@ def run(pool_path: Path, config: Path, out_dir: Path, cache_dir: Path,
         dev = ar2_fast.dev_frame(ds.frame, plan)  # OOS bars physically removed
     features = FeatureStore.load_or_build(dev, {"point_size": POINT}, cache_dir)
     market, dates = ar2_fast._market(features), ar2_fast._dates(features)
-    # Train minimum: CLI override, else the value the pool was searched with (its cache
-    # fingerprint must match), else the config default
-    if min_train_trades is None:
-        min_train_trades = pool["meta"].get("min_train_trades")
+    prov.assert_oos_untouched(plan, dates)  # also for an injected dev_override frame
+    # Train minimum: CLI value, else the config default.  It is CHECKED against the pool meta
+    # below (a high-frequency pool therefore needs its --min-train-trades passed explicitly).
     ev = GenomeEvaluator(features, market, dates, plan, cfg, cache_dir, TrialLedger(),
                          min_train_trades=min_train_trades)
+    errors, warnings = prov.check_pool_provenance(
+        pool["meta"], prov.expected_provenance(features, ev, cfg, plan), cfg,
+        allow_evaluator_mismatch)
+    if errors:
+        raise SystemExit("refusing: pool provenance mismatch: " + "; ".join(errors))
     overrides = {} if c_min_trades is None else {"c_min_trades": int(c_min_trades)}
     pcfg = st.PipelineConfig.from_dict({"seed": cfg.get("seed", 20260930),
                                         **cfg.get("pipeline", {}), **overrides})
 
-    res = st.run_pipeline(pool, ev, pcfg, prior_trials, prior_unique_specs)
+    res = st.run_pipeline(pool, ev, pcfg, prior_trials, prior_unique_specs,
+                          prior_validation_looks)
+    drift = None
+    if drift_baseline is not None:  # {hash: {excess_expectancy, p}} or {"candidates": {...}}
+        drift = json.loads(Path(drift_baseline).read_text(encoding="utf-8"))
+        drift = drift.get("candidates", drift)
+        for cand in res.candidates:
+            cand.drift_excess_ok = sel.drift_excess_ok(drift.get(cand.canonical_hash))
     e_surv = res.survivors("E")
     clusters = sel.overlap_clusters(e_surv, ev, overlap, sim=res.sim)
     reps = [c.representative for c in clusters]
@@ -308,6 +338,12 @@ def run(pool_path: Path, config: Path, out_dir: Path, cache_dir: Path,
     n_total = res.accounting["n_total_trials"]
     summary = {
         "verdict": verdict, "verdict_rule": sel.VERDICT_RULE, "oos_touched": False,
+        "oos_status": prov.oos_status(oos_log),
+        "provenance_warnings": warnings,
+        "drift_baseline": None if drift_baseline is None else str(drift_baseline),
+        "validation_null_bound_t": sel.expected_max_null_t(res.accounting["n_validation_looks"]),
+        "verdict_thresholds": {"yes_min_validation_t": sel.YES_MIN_VALIDATION_T,
+                               "drift_excess_p_max": sel.DRIFT_EXCESS_P_MAX},
         "counts": res.counts, "meta_ledger": meta_ledger, "accounting": res.accounting,
         "null_bound_t": sel.expected_max_null_t(n_total),
         "overlap_threshold": overlap,
@@ -338,13 +374,26 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--prior-unique-specs", type=int, default=None,
                         help="unique specs of earlier campaigns (default: pool meta, else 0)")
     parser.add_argument("--min-train-trades", type=int, default=None,
-                        help="Train minimum (default: value recorded in pool meta, else config)")
+                        help="Train minimum (default: config; must equal the pool meta value)")
     parser.add_argument("--c-min-trades", "--c-min-val-trades", dest="c_min_trades", type=int,
                         default=None, help="Stage C minimum Validation trades (default 25)")
+    parser.add_argument("--prior-validation-looks", type=int, default=0,
+                        help="Stage-C looks of EARLIER campaigns (added to this pool's "
+                             "Stage-C-evaluated candidate count for the Validation null bound)")
+    parser.add_argument("--drift-baseline-json", default=None,
+                        help="per-hash {excess_expectancy, p}; without it YES is impossible")
+    parser.add_argument("--allow-evaluator-mismatch", action="store_true",
+                        help="downgrade evaluator version/fingerprint mismatches to warnings "
+                             "(evaluator + feature toolchain; the pool is then only a candidate "
+                             "list, all stages re-run on the CURRENT evaluator)")
+    parser.add_argument("--oos-access-log", default=None)
     args = parser.parse_args(argv)
     summary = run(Path(args.pool), Path(args.config), Path(args.out_dir), Path(args.cache_dir),
                   args.overlap, args.prior_trials, args.prior_unique_specs,
-                  args.min_train_trades, args.c_min_trades)
+                  args.min_train_trades, args.c_min_trades, None, args.allow_evaluator_mismatch,
+                  args.prior_validation_looks,
+                  Path(args.drift_baseline_json) if args.drift_baseline_json else None,
+                  Path(args.oos_access_log) if args.oos_access_log else None)
     print(f"counts: {summary['counts']}")
     print(f"accounting: {summary['accounting']}")
     print(f"clusters: {len(summary['clusters'])}  neighbour param trials: "

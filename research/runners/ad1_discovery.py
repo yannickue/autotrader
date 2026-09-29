@@ -40,6 +40,7 @@ from alpha.discovery.evaluate import (  # noqa: E402
 )
 from alpha.discovery.fitness import train_fitness  # noqa: E402
 from alpha.discovery.optuna_driver import Candidate, optimize_structure  # noqa: E402
+from alpha.discovery.provenance import assert_oos_untouched  # noqa: E402
 from alpha.fast.store import FeatureStore  # noqa: E402
 from research.runners import ar2_fast  # noqa: E402
 
@@ -95,12 +96,6 @@ def merge_pool(entries: list[tuple[Candidate, str]], keep: int, cap_fraction: fl
             rest.append(item)
     chosen += rest[: max(0, keep - len(chosen))]
     return sorted(chosen, key=lambda t: (-t[0].fitness, t[0].genome_hash))
-
-
-def assert_oos_untouched(plan, dates: np.ndarray) -> None:
-    n_oos = int(plan.mask(dates, plan.oos).sum())
-    assert n_oos == 0, f"{n_oos} OOS bars present in the evaluator frame"
-    assert dates.max() <= np.datetime64(plan.validation.end), "bars beyond validation end"
 
 
 def run(args: argparse.Namespace, dev_override=None) -> dict:
@@ -211,6 +206,7 @@ def run(args: argparse.Namespace, dev_override=None) -> dict:
     merged = merge_pool(cands.ranked(), args.pool_size, POOL_LINEAGE_CAP)
     ledger_json = json.loads(ledger.to_json())
     ledger_json.pop("seen")
+    ledger_json.pop("behaviors", None)
     total_s = time.perf_counter() - t_start
     meta = {
         "campaign_version": "ad1-campaign-v1",

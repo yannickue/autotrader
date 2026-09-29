@@ -89,7 +89,9 @@ def deflated_sharpe_probability(r: np.ndarray, n_trials: int) -> dict[str, float
 @dataclass
 class SelectionStats:
     n_trades: int
-    pooled_t: float | None  # day-clustered t of pooled Train+Validation (COMBINED_ADVERSE)
+    # IN-SAMPLE-CONTAMINATED: pooled Train+Validation day-clustered t (COMBINED_ADVERSE); Train is
+    # the selection sample, so this is NOT an out-of-sample statistic (validation_t is)
+    pooled_t: float | None
     null_bound_t: float  # expected_max_null_t(N_total)
     exceeds_null: bool
     validation_t: float | None
@@ -101,10 +103,15 @@ class SelectionStats:
     deflated_sharpe_prob: float | None
     n_total_trials: int
     n_unique_specs: int
+    # Validation-only null bound sqrt(2 ln N_val_looks); N_val_looks = candidates that reached
+    # Stage C (their Validation numbers were looked at), this pool + prior campaigns.
+    n_validation_looks: int = 0
+    validation_t_null_bound: float | None = None
 
 
 def selection_stats(pooled_r: np.ndarray, pooled_days: np.ndarray, validation_t: float | None,
-                    n_total_trials: int, n_unique_specs: int) -> SelectionStats:
+                    n_total_trials: int, n_unique_specs: int, n_validation_looks: int = 0
+                    ) -> SelectionStats:
     r = np.asarray(pooled_r, dtype=float)
     se = cluster_se(r, pooled_days) if len(r) else None
     t = None if not se else float(r.mean() / se)
@@ -113,7 +120,8 @@ def selection_stats(pooled_r: np.ndarray, pooled_days: np.ndarray, validation_t:
     return SelectionStats(
         len(r), t, bound, bool(t is not None and t > bound), validation_t,
         bonferroni_p(validation_t, n_unique_specs), d["sharpe"], d["skew"], d["kurtosis"],
-        d["sr0"], d["dsr"], int(n_total_trials), int(n_unique_specs))
+        d["sr0"], d["dsr"], int(n_total_trials), int(n_unique_specs), int(n_validation_looks),
+        expected_max_null_t(n_validation_looks) if n_validation_looks else None)
 
 
 # --------------------------------------------------------------------------- overlap clusters
@@ -173,35 +181,63 @@ def overlap_clusters(survivors: list[Any], ev: Any, threshold: float = 0.6, sim:
 
 
 # --------------------------------------------------------------------------- verdict
+# Verdict thresholds (documented constants, not tuned to any result)
+YES_MIN_VALIDATION_T = 2.5  # single-look "honest" minimum for the Validation-only t (review)
+DRIFT_EXCESS_P_MAX = 0.05  # drift-baseline excess-expectancy p-value
+
 VERDICT_RULE = (
     "YES only if at least one overlap-cluster representative passes ALL stages (C, D, E) AND its "
-    "pooled day-clustered t exceeds the selection null bound sqrt(2 ln N_total_trials); "
-    "INCONCLUSIVE if some representative passes all stages but none exceeds the null bound; "
-    "otherwise NO."
+    f"Validation-only day-clustered t >= {YES_MIN_VALIDATION_T} AND its pooled t (in-sample-"
+    "contaminated: Train is the selection sample) exceeds the selection null bound "
+    "sqrt(2 ln N_total_trials) AND a drift-baseline result is supplied with excess-over-drift "
+    f"p < {DRIFT_EXCESS_P_MAX} (without a drift baseline YES is impossible); INCONCLUSIVE if some "
+    "representative passes all stages but any additional condition fails; otherwise NO. The "
+    "Validation-only null bound sqrt(2 ln N_val_looks) is reported alongside, not gated."
 )
 
 
+def drift_excess_ok(entry: dict[str, Any] | None) -> bool | None:
+    """From one drift-baseline record ({excess_expectancy, p}); None = no baseline supplied."""
+    if not entry:
+        return None
+    p = entry.get("drift_excess_p", entry.get("p"))
+    excess = entry.get("excess_expectancy", entry.get("excess"))
+    return bool(p is not None and p < DRIFT_EXCESS_P_MAX and (excess is None or excess > 0))
+
+
+def passes_yes_conditions(c: Any) -> bool:
+    s = c.selection
+    return bool(
+        c.passed_all and s is not None and s.exceeds_null
+        and s.validation_t is not None and s.validation_t >= YES_MIN_VALIDATION_T
+        and getattr(c, "drift_excess_ok", None) is True)
+
+
 def robust_verdict(representatives: list[Any]) -> str:
-    """``representatives``: CandidateResult-like objects with ``passed_all`` and
-    ``selection.exceeds_null``."""
+    """``representatives``: CandidateResult-like objects with ``passed_all``, ``selection`` and
+    ``drift_excess_ok`` (None/missing = no drift baseline = condition NOT satisfied)."""
     passing = [c for c in representatives if c.passed_all]
-    if any(c.selection is not None and c.selection.exceeds_null for c in passing):
+    if any(passes_yes_conditions(c) for c in passing):
         return VERDICT_YES
     return VERDICT_INCONCLUSIVE if passing else VERDICT_NO
 
 
 __all__ = (
+    "DRIFT_EXCESS_P_MAX",
     "VERDICT_RULE",
+    "YES_MIN_VALIDATION_T",
     "OverlapCluster",
     "SelectionStats",
     "bonferroni_p",
     "cluster_entry_sets",
     "deflated_sharpe_probability",
+    "drift_excess_ok",
     "entry_set",
     "expected_max_null_t",
     "jaccard",
     "ledger_unique",
     "overlap_clusters",
+    "passes_yes_conditions",
     "robust_verdict",
     "selection_stats",
 )

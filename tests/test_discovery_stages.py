@@ -85,17 +85,33 @@ def _ps(e, se, **kw):
     return st.PooledStats(**base)
 
 
-def test_stage_d_thresholds():
+def _parts(tr=0.1, va=0.1, va_se=0.05):
+    return {c: {"train": _ps(tr, 0.05), "validation": _ps(va, va_se)}
+            for c in ("SPREAD_STRESS", "SLIPPAGE_STRESS", "COMBINED_ADVERSE")}
+
+
+def test_stage_d_is_partition_wise():
     by = {"BASE": _ps(0.20, 0.05), "SPREAD_STRESS": _ps(0.1, 0.05),
           "SLIPPAGE_STRESS": _ps(0.1, 0.05), "COMBINED_ADVERSE": _ps(0.05, 0.05)}
-    d = st.judge_stage_d(by, CFG)
+    d = st.judge_stage_d(by, CFG, _parts())
     assert d.passed and d.r_lost_base_to_adverse == pytest.approx(0.15)
-    by["COMBINED_ADVERSE"] = _ps(0.05, 0.08)  # lower bound -0.03 <= -0.02
-    assert not st.judge_stage_d(by, CFG).passed
-    by["COMBINED_ADVERSE"] = _ps(0.05, 0.06)  # lower bound -0.01 > -0.02
-    assert st.judge_stage_d(by, CFG).passed
+    assert not st.judge_stage_d(by, CFG).passed  # no partition data -> cannot pass
+    # a pooled-positive candidate whose Validation is negative under ONE stress must fail
+    p = _parts()
+    p["SLIPPAGE_STRESS"]["validation"] = _ps(-0.01, 0.05)
+    bad = st.judge_stage_d(by, CFG, p)
+    assert not bad.passed and any("validation expectancy SLIPPAGE_STRESS" in r
+                                  for r in bad.reasons)
+    p = _parts()
+    p["SPREAD_STRESS"]["train"] = _ps(0.0, 0.05)  # Train must be > 0 as well
+    assert not st.judge_stage_d(by, CFG, p).passed
+    # Validation lower bound: mean 0.01, SE 0.07 -> -0.06 <= -0.05 fails; SE 0.05 -> -0.04 ok
+    p = _parts(va=0.01, va_se=0.07)
+    assert not st.judge_stage_d(by, CFG, p).passed
+    assert st.judge_stage_d(by, CFG, _parts(va=0.01, va_se=0.05)).passed
+    # pooled numbers are informational only: a negative pooled adverse does not fail by itself
     by["COMBINED_ADVERSE"] = _ps(-0.01, 0.001)
-    assert not st.judge_stage_d(by, CFG).passed
+    assert st.judge_stage_d(by, CFG, _parts()).passed
 
 
 def test_neighborhood_thresholds():
@@ -178,17 +194,32 @@ class _Fake:
     passed_all: bool
     selection: object | None
     train_fitness: float = 0.0
+    drift_excess_ok: bool | None = None
 
 
 def test_verdict_rule_yes_no_inconclusive():
-    hit = sel.SelectionStats(100, 5.0, 4.0, True, 3.0, 0.1, .1, 0, 3, 0, 0.99, 1000, 500)
+    hit = sel.SelectionStats(100, 5.0, 4.0, True, 3.0, 0.1, .1, 0, 3, 0, 0.99, 1000, 500, 800, 3.6)
     miss = replace(hit, pooled_t=2.0, exceeds_null=False)
-    assert sel.robust_verdict([_Fake(True, hit)]) == "YES"
-    assert sel.robust_verdict([_Fake(False, hit), _Fake(True, miss)]) == "INCONCLUSIVE"
-    assert sel.robust_verdict([_Fake(True, miss)]) == "INCONCLUSIVE"
-    assert sel.robust_verdict([_Fake(False, hit)]) == "NO"  # exceeding null without stages: NO
+    weak_val = replace(hit, validation_t=2.4)
+    assert sel.YES_MIN_VALIDATION_T == 2.5 and sel.DRIFT_EXCESS_P_MAX == 0.05
+    ok = _Fake(True, hit, drift_excess_ok=True)
+    assert sel.robust_verdict([ok]) == "YES"
+    # YES is impossible without a drift baseline (None) or with a failed one (False)
+    assert sel.robust_verdict([_Fake(True, hit)]) == "INCONCLUSIVE"
+    assert sel.robust_verdict([_Fake(True, hit, drift_excess_ok=False)]) == "INCONCLUSIVE"
+    assert sel.robust_verdict([_Fake(True, weak_val, drift_excess_ok=True)]) == "INCONCLUSIVE"
+    assert sel.robust_verdict([_Fake(True, replace(hit, validation_t=2.5),
+                                     drift_excess_ok=True)]) == "YES"  # boundary is inclusive
+    assert sel.robust_verdict([_Fake(False, hit, drift_excess_ok=True),
+                               _Fake(True, miss, drift_excess_ok=True)]) == "INCONCLUSIVE"
+    assert sel.robust_verdict([_Fake(True, miss, drift_excess_ok=True)]) == "INCONCLUSIVE"
+    assert sel.robust_verdict([_Fake(False, hit, drift_excess_ok=True)]) == "NO"
     assert sel.robust_verdict([]) == "NO"
-    assert sel.robust_verdict([_Fake(True, None)]) == "INCONCLUSIVE"
+    assert sel.robust_verdict([_Fake(True, None, drift_excess_ok=True)]) == "INCONCLUSIVE"
+    assert sel.drift_excess_ok(None) is None and sel.drift_excess_ok({}) is None
+    assert sel.drift_excess_ok({"excess_expectancy": 0.05, "p": 0.04}) is True
+    assert sel.drift_excess_ok({"excess_expectancy": 0.05, "p": 0.05}) is False
+    assert sel.drift_excess_ok({"excess_expectancy": -0.05, "p": 0.01}) is False
 
 
 def test_cluster_entry_sets_greedy_and_dedupe():
@@ -240,6 +271,9 @@ def _build_pool(env, ev, n, seed=11):
                        "duplicate_rejects": led["duplicate_rejects"],
                        "invalid_rejects": led["invalid_rejects"], "cache_hits": led["cache_hits"]},
             "oos_touched": False}
+    from alpha.discovery import provenance as prov
+
+    meta.update(prov.expected_provenance(env["features"], ev, env["cfg"], env["plan"]))
     return {"meta": meta, "candidates": cands}
 
 
@@ -319,6 +353,7 @@ def test_stage_c_and_d_on_real_candidate_consistent_with_eval(env, tmp_path):
         assert e["BASE"] >= e["SPREAD_STRESS"] - 1e-9 and e["BASE"] >= e["SLIPPAGE_STRESS"] - 1e-9
         assert e["SPREAD_STRESS"] >= e["COMBINED_ADVERSE"] - 1e-9
         assert d.r_lost_base_to_adverse == pytest.approx(e["BASE"] - e["COMBINED_ADVERSE"])
+    assert {"train", "validation"} <= set(d.by_partition["COMBINED_ADVERSE"])
     pooled_n = d.by_cost["BASE"].n_trades
     ev_view = ev.evaluate(g)
     # embargo respected: pooled trades == Train + post-embargo Validation
@@ -376,6 +411,39 @@ def test_runner_cli_writes_survivors_and_report(env, tmp_path):
     assert f"{runner.VERDICT_PREFIX}: {data['summary']['verdict']}" in report
     assert data["summary"]["verdict"] in ("YES", "NO", "INCONCLUSIVE")
     assert data["summary"]["counts"]["pool"] <= 30
+    assert "OOS status:" in report and "NOT a clean holdout" in report
+    assert "evaluations" in data["summary"]["oos_status"]
+    assert data["summary"]["verdict"] != "YES"  # no drift baseline supplied
+    assert "Validation-only null bound" in report and "in-sample-contaminated" in report
+    acc = data["summary"]["accounting"]
+    assert acc["n_validation_looks"] == data["summary"]["counts"]["stage_a"]
+    assert acc["n_total_incl_neighbours"] >= acc["n_total_trials"]
+    # provenance mismatches are refused (config, splits/embargo, dataset, min_train_trades)
+    args = ["--config", str(CONFIG), "--out-dir", str(tmp_path / "o3"), "--cache-dir", str(CACHE)]
+    base = json.loads(pool_path.read_text(encoding="utf-8"))
+    for key, val in (("config_hash", "0" * 64), ("dataset_hash", "1" * 64),
+                     ("embargo_days", 99), ("min_train_trades", 999), ("feature_key", "x"),
+                     ("splits", {})):
+        bad = json.loads(json.dumps(base))
+        bad["meta"][key] = val
+        p = tmp_path / f"bad_{key}.json"
+        p.write_text(json.dumps(bad), encoding="utf-8")
+        with pytest.raises(SystemExit, match=key):
+            runner.main(["--pool", str(p), *args])
+    lacking = json.loads(json.dumps(base))
+    del lacking["meta"]["dataset_hash"]
+    (tmp_path / "lack.json").write_text(json.dumps(lacking), encoding="utf-8")
+    with pytest.raises(SystemExit, match="lacks dataset_hash"):
+        runner.main(["--pool", str(tmp_path / "lack.json"), *args])
+    old = json.loads(json.dumps(base))
+    old["meta"]["evaluator_version"] = "ad1-genome-eval-v2"
+    (tmp_path / "old.json").write_text(json.dumps(old), encoding="utf-8")
+    with pytest.raises(SystemExit, match="evaluator_version"):
+        runner.main(["--pool", str(tmp_path / "old.json"), *args])
+    assert runner.main(["--pool", str(tmp_path / "old.json"), *args,
+                        "--allow-evaluator-mismatch"]) == 0
+    warned = json.loads((tmp_path / "o3" / "survivors.json").read_text(encoding="utf-8"))
+    assert warned["summary"]["provenance_warnings"]
     # an OOS-touched pool is refused
     bad = json.loads(pool_path.read_text(encoding="utf-8"))
     bad["meta"]["oos_touched"] = True
