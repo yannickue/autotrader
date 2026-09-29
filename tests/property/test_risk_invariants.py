@@ -126,7 +126,7 @@ def test_sizing_never_breaches_leverage_or_exposure_limits() -> None:
     stop_fracs = [Decimal("0.01"), Decimal("0.05"), Decimal("0.2")]
     equities = [Decimal("100"), Decimal("1000"), Decimal("50000")]
     sides = [RiskSide.BUY, RiskSide.SELL]
-    leverage_caps = [Decimal("1"), Decimal("5"), Decimal("20")]
+    leverage_caps = [Decimal("1"), Decimal("5"), Decimal("20"), Decimal("30")]
     gross_used_fracs = [Decimal("0"), Decimal("0.3"), Decimal("0.8")]
 
     signal_counter = 0
@@ -177,13 +177,13 @@ def test_sizing_never_breaches_leverage_or_exposure_limits() -> None:
                             )
 
                             max_leverage = min(
-                                Decimal("20"),
+                                Decimal("30"),  # absolute ceiling, not a target
                                 policy.max_leverage,
                                 instrument.max_leverage,
                                 leverage_cap,
                             )
                             assert decision.leverage <= max_leverage
-                            assert decision.max_leverage <= Decimal("20")
+                            assert decision.max_leverage <= Decimal("30")
 
                             if decision.approved:
                                 gross_after = (

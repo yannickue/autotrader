@@ -12,7 +12,7 @@
 ## Mandatory invariants
 
 1. Exposure never exceeds the configured maximum.
-2. Selected leverage never exceeds any applicable maximum or the 20x system ceiling.
+2. Selected leverage never exceeds any applicable maximum or the 30x system ceiling.
 3. Reduce-only never increases exposure.
 4. A fill id is counted at most once.
 5. Duplicate order events cannot create duplicate positions.

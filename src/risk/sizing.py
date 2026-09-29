@@ -94,7 +94,7 @@ class PositionSizer:
     def max_leverage(
         self, *, instrument: InstrumentRiskLimits, account: AccountRiskState
     ) -> Decimal:
-        """Hard system ceiling (20x) is always the outermost cap."""
+        """Hard system ceiling (30x) is always the outermost cap."""
         return min(
             MAX_SYSTEM_LEVERAGE,
             self._policy.max_leverage,

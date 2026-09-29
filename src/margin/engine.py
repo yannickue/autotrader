@@ -14,7 +14,7 @@ as an additional pre-approval check, using the same `risk_reference_price`
 margin/liquidation math stays consistent with how risk sizing already prices
 a position. The only dependency this module takes on `risk` is the shared,
 read-only `risk.models.MAX_SYSTEM_LEVERAGE` constant, so the two modules can
-never silently diverge on what "the hard 20x ceiling" means.
+never silently diverge on what "the hard 30x ceiling" means.
 
 PRECISION HONESTY (explicit repo policy -- do not violate it): every
 liquidation price this module produces is an ESTIMATE derived from a
@@ -246,7 +246,7 @@ class MarginEngine:
     ) -> Decimal:
         """Suggested max leverage that shrinks as `volatility` rises.
 
-        Layered on top of -- never replacing -- `MAX_SYSTEM_LEVERAGE` (20x)
+        Layered on top of -- never replacing -- `MAX_SYSTEM_LEVERAGE` (30x)
         and any stricter `configured_cap` supplied by the caller (e.g. an
         instrument/account/policy leverage limit already enforced by
         `risk.engine`). The result is always

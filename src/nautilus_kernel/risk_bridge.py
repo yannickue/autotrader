@@ -31,6 +31,7 @@ from nautilus_trader.model.identifiers import InstrumentId
 from data.models import DataQuality, MarketSnapshot
 from nautilus_kernel.queries import closed_position_lifecycles
 from risk.models import (
+    MAX_SYSTEM_LEVERAGE,
     AccountRiskState,
     InstrumentRiskLimits,
     PositionSizingRequest,
@@ -110,12 +111,14 @@ class NautilusRiskBridge:
         limits: InstrumentRiskLimits | None = None,
         trading_day: TradingDayPolicy | None = None,
         evaluator: RiskPolicyEvaluator | None = None,
+        account_leverage_cap: Decimal = MAX_SYSTEM_LEVERAGE,
     ) -> None:
         self._instrument_id = instrument_id
         self._policy = policy or technical_risk_policy()
         self._limits = limits or technical_instrument_limits()
         self._trading_day = trading_day or TradingDayPolicy()
         self._evaluator = evaluator or RiskPolicyEvaluator(self._policy)
+        self._account_leverage_cap = account_leverage_cap  # from broker account info when known
         self._peak_equity: Decimal | None = None
         self.decisions = 0
 
@@ -183,7 +186,7 @@ class NautilusRiskBridge:
             net_notional=net,
             instrument_notionals=notionals,
             positions=positions,
-            leverage_cap=Decimal("20"),
+            leverage_cap=self._account_leverage_cap,
             consecutive_losses=losses,
         )
 

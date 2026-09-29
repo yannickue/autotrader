@@ -63,7 +63,7 @@ def test_risk_decision_rejects_leverage_above_configured_limit() -> None:
         )
 
 
-def test_risk_decision_rejects_configured_limit_above_twenty() -> None:
+def test_risk_decision_rejects_configured_limit_above_thirty() -> None:
     with pytest.raises(ValueError, match="max_leverage cannot exceed system maximum"):
         RiskDecision(
             decision_id="risk-1",
@@ -75,7 +75,7 @@ def test_risk_decision_rejects_configured_limit_above_twenty() -> None:
             quantity=Decimal("0.02"),
             notional=Decimal("2000"),
             leverage=Decimal("20"),
-            max_leverage=Decimal("21"),
+            max_leverage=Decimal("31"),
             risk_budget=Decimal("10"),
             stop_price=Decimal("98000"),
             metadata={},

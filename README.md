@@ -10,7 +10,7 @@ does **not** contain a trading strategy or a live venue integration.
 - Every exposure-increasing request must pass the risk engine.
 - The execution path is deterministic and never waits for an LLM.
 - Stale data, unknown account state, unavailable risk, or failed reconciliation fail closed.
-- Leverage is bounded by both a configured limit and the 20x system ceiling.
+- Leverage is bounded by both a configured limit and the 30x system ceiling.
 - Paper trading is the first executable milestone. Live mode remains disabled until its gates pass.
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the component model and the other files in

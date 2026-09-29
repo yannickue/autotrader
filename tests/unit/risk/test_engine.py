@@ -834,7 +834,7 @@ def test_cached_approval_not_honored_when_runtime_degrades_without_halting() -> 
 
 def test_risk_policy_rejects_leverage_above_system_ceiling() -> None:
     with pytest.raises(ValueError):
-        _policy(max_leverage=Decimal("21"))
+        _policy(max_leverage=Decimal("31"))
 
 
 def test_risk_policy_rejects_non_positive_leverage() -> None:
@@ -844,7 +844,7 @@ def test_risk_policy_rejects_non_positive_leverage() -> None:
 
 def test_instrument_limits_reject_leverage_above_system_ceiling() -> None:
     with pytest.raises(ValueError):
-        _limits(max_leverage=Decimal("25"))
+        _limits(max_leverage=Decimal("31"))
 
 
 def test_decision_post_init_rejects_leverage_above_max() -> None:

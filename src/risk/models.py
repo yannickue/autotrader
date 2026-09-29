@@ -7,7 +7,9 @@ from decimal import Decimal
 from enum import StrEnum
 from typing import Any
 
-MAX_SYSTEM_LEVERAGE = Decimal("20")
+# Absolute ceiling, NOT a target: ActivTrades permits 1:30. Actual leverage stays bound by risk
+# budget, stop distance, exposure, drawdown, spread, account and instrument caps.
+MAX_SYSTEM_LEVERAGE = Decimal("30")
 
 
 class RiskSide(StrEnum):
@@ -263,7 +265,7 @@ class RiskDecision:
 
     def __post_init__(self) -> None:
         if self.max_leverage > MAX_SYSTEM_LEVERAGE:
-            raise ValueError("max_leverage cannot exceed system maximum of 20")
+            raise ValueError("max_leverage cannot exceed system maximum of 30")
         if self.leverage > self.max_leverage:
             raise ValueError("leverage cannot exceed max_leverage")
         if self.leverage < 0:

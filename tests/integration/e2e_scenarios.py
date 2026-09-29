@@ -898,7 +898,7 @@ def scenario_leverage_cap() -> dict[str, Any]:
         RiskPolicy(
             policy_id="over-cap",
             risk_fraction=Decimal("0.01"),
-            max_leverage=Decimal("25"),
+            max_leverage=Decimal("31"),
             max_gross_notional=Decimal("1000"),
             max_net_notional=Decimal("1000"),
             max_daily_loss=Decimal("100"),

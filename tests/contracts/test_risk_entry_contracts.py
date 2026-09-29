@@ -42,42 +42,45 @@ def _rejects(outcome, reason: RiskReason) -> None:
 # -- 1. hard system leverage ceiling ------------------------------------------------
 
 
-def test_c01_policy_and_instrument_construction_reject_leverage_above_20x() -> None:
-    assert D("20") == MAX_SYSTEM_LEVERAGE
+def test_c01_policy_and_instrument_construction_reject_leverage_above_30x() -> None:
+    # 30x is an absolute CEILING (ActivTrades allows 1:30), never a default or a target.
+    assert D("30") == MAX_SYSTEM_LEVERAGE
+    make_policy(max_leverage=D("30"))
     with pytest.raises(ValueError):
-        make_policy(max_leverage=D("21"))
+        make_policy(max_leverage=D("31"))
     with pytest.raises(ValueError):
-        make_limits(max_leverage=D("21"))
+        make_limits(max_leverage=D("31"))
     with pytest.raises(ValueError):
         make_policy(max_leverage=D("0"))
 
 
-def test_c01_leverage_20x_is_never_exceeded_even_if_account_cap_allows_more(
-    admission: EntryAdmission,
+@pytest.mark.parametrize("ceiling", [D("20"), D("30")])
+def test_c01_leverage_ceiling_is_never_exceeded_even_if_account_cap_allows_more(
+    admission: EntryAdmission, ceiling: Decimal
 ) -> None:
     # Policy and instrument are at the ceiling; the account cap (which has no
     # construction-time check) claims 50x. Sizing is driven to the leverage cap.
     scenario = Scenario(
         policy=make_policy(
             risk_fraction=D("1"),
-            max_leverage=D("20"),
-            max_gross_notional=D("50000"),
-            max_net_notional=D("50000"),
+            max_leverage=ceiling,
+            max_gross_notional=D("50000") * ceiling,
+            max_net_notional=D("50000") * ceiling,
         ),
-        limits=make_limits(max_leverage=D("20"), max_notional=D("50000")),
+        limits=make_limits(max_leverage=ceiling, max_notional=D("50000") * ceiling),
         account=make_account(leverage_cap=D("50")),
         request=make_request(
-            stop_price=D("99"), available_liquidity_notional=D("1000000")
+            stop_price=D("99.8"), available_liquidity_notional=D("1000000")
         ),
     )
     outcome = admission.admit(scenario)
 
     assert outcome.approved is True, outcome.reason_code
-    assert outcome.max_leverage == D("20")
-    assert outcome.leverage <= D("20")
+    assert outcome.max_leverage == ceiling
+    assert outcome.leverage <= ceiling
     assert outcome.binding_constraint == "leverage_cap"
     # ...and the account-level leverage is bounded by the same ceiling.
-    assert outcome.notional / scenario.account.equity <= D("20")
+    assert outcome.notional / scenario.account.equity <= ceiling
 
 
 def test_c01_effective_cap_is_the_minimum_of_policy_instrument_and_account(

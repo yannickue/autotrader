@@ -81,7 +81,7 @@ signal is a reversal trigger for the exit engine, never a same-tick flip.
 
 ## Leverage
 
-The system ceiling is 20x; each environment, venue, instrument, strategy, and account may configure
+The system ceiling is 30x (a ceiling, not a target; was 20x until 2026-09-29); each environment, venue, instrument, strategy, and account may configure
 a lower limit. Selected leverage must not exceed the strictest applicable limit. It is the result of
 risk budget, stop distance, quantity/notional, liquidation buffer, volatility, liquidity, open
 exposure, correlation, fees/funding, and portfolio constraints. Confidence alone cannot choose it.

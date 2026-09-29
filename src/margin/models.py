@@ -184,7 +184,7 @@ class VolatilityLeverageCapPolicy:
     """Suggested dynamic leverage cap that shrinks as volatility rises.
 
     This is layered ON TOP OF -- and can only be more restrictive than -- the
-    hard `risk.models.MAX_SYSTEM_LEVERAGE` ceiling (20x) and any stricter cap
+    hard `risk.models.MAX_SYSTEM_LEVERAGE` ceiling (30x) and any stricter cap
     a caller configures elsewhere (e.g. an instrument/account/policy leverage
     limit already enforced by `risk.engine`). It never raises the effective
     cap above either; see `MarginEngine.volatility_adjusted_leverage_cap`.

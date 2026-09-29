@@ -112,7 +112,7 @@ Not in V1: dashboards, deep learning, reinforcement learning, options, or multip
 - Simulated account: 500 USDT starting equity.
 - Instrument identity and precision remain Binance-compatible.
 - Live execution, exchange API keys, and real orders remain disabled.
-- The 20x ceiling is a hard maximum, never a default or confidence-derived target.
+- The 30x ceiling (ActivTrades permits 1:30; raised from the obsolete 20x, 2026-09-29) is a hard maximum, never a default or confidence-derived target. Actual leverage stays determined by risk budget, stop distance, volatility, spread, liquidity, exposure, drawdown, loss streak, account and instrument constraints.
 
 ## Open decisions
 
