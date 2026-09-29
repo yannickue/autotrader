@@ -730,3 +730,19 @@ TASK: persist reconciliation source; reduce-only defense in depth at execution a
 MODELS: lead Sonnet (direct); Codex read-only review x2 (1 Critical + 3 High, then 1 High; all fixed or decided, see below).
 DECISION: simulated fills of RESTING reduce-only/protective orders stay ungated (paper stand-in for broker-side stops); documented in docs/EXECUTION_CONTRACT.md.
 RESULT: 1344 passed, 1 skipped; ruff + compileall clean. DST/rollover still PENDING_BROKER_CALIBRATION. C3 not started.
+
+## C3 GER40 historical data plane (2026-09-29)
+
+TASK: MT5 historical read path -> normalization -> validation -> provenance -> deterministic Parquet, against REAL ActivTrades (DEMO) schema.
+MODELS: lead Sonnet, direct (small, sequential; delegation overhead not worthwhile). Codex review deferred to the single post-C4 review.
+BROKER FACTS (observed live, attach-only, read-only, demo account trade_mode=0, terminal build 6231):
+- Broker symbol for canonical GER40 = `Ger40` (path `Cash Indices\Ger40`, "DAX Cash Index"). Also present: `Ger40Dec26` (dated), `GerMid50`, `GerTec`. `Ger40Dec26` deliberately NOT mapped.
+- copy_rates_* dtype: time <i8 (epoch s, bar OPEN), open/high/low/close <f8, tick_volume <u8, spread <i4 (POINTS), real_volume <u8 (always 0).
+- copy_ticks_* dtype: time <i8, bid/ask/last <f8, volume <u8, time_msc <i8, flags <u4, volume_real <f8. last=0.0, volume=0 always (CFD index) -> last stored as null.
+- symbol_info: digits 2, point 0.01, trade_tick_size 0.01, tick_value 0.01, contract_size 1.0, volume_min 0.25 / step 0.25 / max 250, currency EUR (base/profit/margin), trade_calc_mode 4, trade_mode 4, exemode 2 (MARKET), filling_mode 3, stops_level 100, margin_initial/maintenance 0.0 (not provided), swap_long -5.445 / short -0.555, margin_hedged 0.2. Snapshot: tests/fixtures/ger40/symbol_info.json.
+- TIME: MT5 `time` is SERVER wall clock encoded as epoch, NOT UTC. Measured tick time vs system UTC = +7199 s (2026-09-29, CEST). Policy: Europe/Berlin (`ServerTimePolicy`), basis INFERRED, not broker-confirmed. Ambiguous/non-existent DST-hour values fail closed. Range requests must be passed in server epoch (`utc_to_request_datetime`); a true-UTC end silently clipped 2h of data.
+- Session structure (server clock): daily last M5 bar 21:55; first bar 02:15 (summer) / 01:15 (winter) in most sampled weeks = 00:15 UTC. ANOMALY (unresolved): week of 2025-11-03 started 02:15 (=01:15 UTC) while other winter weeks start 01:15. User note: may be a DEMO-account limitation, not a rule of the live account -> do not generalize; re-check on live/other data before relying on the session calendar. 2026-10-12 week returned no data (future/unavailable).
+- Sample week 2026-09-21..25: M1 5925 bars, M5 1185 bars (= 5 x 237, 00:15-19:55 UTC), zero missing intraday bars, 4 expected session gaps, 0 suspicious; 3441 ticks (2026-09-25 08:00-08:10 UTC) clean. Typical bar spread 155-570 points (1.55-5.7 index points).
+DECISIONS: parquet is single-file-per-range with provenance in Parquet metadata + content_sha256 (verified on read); FAILED validation is never persisted; Decimal columns stored as exact strings (existing convention); `BarRecord.spread_points` added (optional). Old day-partition `ParquetStore` untouched.
+ASSUMPTIONS / DEFERRED: DST offset rule (Europe/Berlin) needs broker confirmation; holidays surface as SUSPICIOUS gaps (reviewed, not hidden); trading-day rollover still PENDING_BROKER_CALIBRATION; no M1 fixture committed (M5 week only); real data lives in git-ignored data/c3_sample, offline tests use tests/fixtures/ger40.
+FAILED/REJECTED: an earlier session's history.py docstring claimed live verification but had no tests or time handling (treated server epoch as UTC) -> rewritten and re-verified this session.

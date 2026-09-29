@@ -91,6 +91,9 @@ class BarRecord:
     source: Source
     quality_flags: tuple[str, ...] = ()
     ingested_at: datetime = None  # type: ignore[assignment]
+    # Broker-reported spread in POINTS (MT5 bar `spread`); None if unknown.
+    # Not persisted by ParquetStore day partitions; persisted by data.historical.
+    spread_points: int | None = None
 
     def __post_init__(self) -> None:
         if not self.canonical_symbol.strip():
