@@ -576,3 +576,32 @@ Remaining before Priority 3+ (FeatureRegistry/OpportunityScanner/Regime/strategy
 live data ingestion actually calling the adapter (Parquet layer exists, unpopulated), margin/
 profit comparison tests against real order_calc_margin/order_calc_profit (needs a live
 connection), and everything downstream of having real CFD market data.
+
+## 2026-09-29 — Python 3.12 restore + MT5 hang-safety + central .env config loader
+
+TASK: Fix four reported local-environment problems: uv silently drifted to Python 3.13 (broken
+3.12 managed install), MT5 connection attempts could hang, .env wasn't loaded, and (separately)
+verify the real ActivTrades DEMO connection with user-provided credentials.
+MODEL: Sonnet 5 (Lead), direct implementation (mechanical environment/safety fixes with a clear,
+fully-specified brief -- no delegation needed).
+RESULT: See commits `86bdbe5` (Python 3.12 pin + pytest pythonpath fix) and `04fb966` (config
+loader + bounded MT5 IPC safety). Python reinstalled/pinned via `uv python install 3.12` + `uv
+python pin 3.12`; requires-python narrowed to `<3.13`. New central `load_mt5_connection_config()`
+.env support (process env still wins), redacting `__repr__`. New
+`src/adapters/activtrades_mt5/bounded.py` (subprocess+timeout, kills a hung child, never the
+terminal), `diagnostics.py` (12 precise categories from real MT5 `RES_E_*` codes), `probe.py`
+(testable isolated probe). All four scripts + new `mt5_ipc_probe.py` now self-reinvoke via the
+bounded pattern. `mt5_preflight.py` restructured to print each stage incrementally so a later
+hang doesn't lose earlier results. New `run_mt5_preflight.ps1`/`.cmd` double-click launchers.
+Real bug found+fixed along the way: a killed child's stdout was lost without `-u` (unbuffered).
+TESTS: 651 passed, 1 skipped (was 623/1); ruff clean; compileall clean (all via `uv run`).
+
+Real-world finding: with real ActivTrades DEMO credentials configured locally (`.env`, never
+committed/printed -- verified absent from every tracked file), the bounded preflight correctly
+loads config and cleanly reports MT5_IPC_TIMEOUT after the configured bound rather than hanging
+(confirmed zero orphaned processes afterward). The underlying connection still fails from this
+automation session specifically; consistent with this session's own earlier diagnosis (shell
+processes here likely lack interactive-desktop access to the MT5 terminal GUI -- a Windows
+session/window-station limitation, not a code or config bug). The user needs to run
+`run_mt5_preflight.ps1` (or `uv run python scripts/mt5_preflight.py`) directly on their own
+desktop to get a real result.
