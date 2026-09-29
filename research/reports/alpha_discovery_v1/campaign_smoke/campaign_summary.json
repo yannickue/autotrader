@@ -1,0 +1,264 @@
+{
+ "deap": {
+  "budget_exhausted": false,
+  "generations_run": 8,
+  "per_generation": [
+   {
+    "best": -0.011048870236844675,
+    "cache_hit_rate": 0.21666666666666667,
+    "cap_relaxed": false,
+    "evaluations_used": 60,
+    "generation": 0,
+    "lineage_histogram": {
+     "BREAKOUT": 4,
+     "BREAKOUT_RETEST": 4,
+     "COMPRESSION_EXPANSION": 4,
+     "FAILED_BREAKOUT": 4,
+     "HYBRID": 3,
+     "MEAN_REVERSION": 4,
+     "MOMENTUM_CONTINUATION": 4,
+     "OPENING_DRIVE": 4,
+     "PA_CONTINUATION": 4,
+     "PA_REVERSAL": 4,
+     "PREV_DAY_LEVEL": 4,
+     "RANGE_REJECTION": 4,
+     "SESSION_SWEEP": 4,
+     "TREND_CONTINUATION": 3,
+     "TREND_PULLBACK": 3,
+     "VOL_TRANSITION": 3
+    },
+    "median": -0.4082015642641862,
+    "unique_hashes": 60
+   },
+   {
+    "best": -0.011048870236844675,
+    "cache_hit_rate": 0.10833333333333334,
+    "cap_relaxed": false,
+    "evaluations_used": 120,
+    "generation": 1,
+    "lineage_histogram": {
+     "BREAKOUT": 8,
+     "BREAKOUT_RETEST": 1,
+     "COMPRESSION_EXPANSION": 3,
+     "FAILED_BREAKOUT": 3,
+     "HYBRID": 1,
+     "MEAN_REVERSION": 3,
+     "MOMENTUM_CONTINUATION": 2,
+     "OPENING_DRIVE": 6,
+     "PA_CONTINUATION": 13,
+     "PA_REVERSAL": 7,
+     "PREV_DAY_LEVEL": 2,
+     "SESSION_SWEEP": 2,
+     "TREND_CONTINUATION": 3,
+     "VOL_TRANSITION": 6
+    },
+    "median": -0.20850866890677427,
+    "unique_hashes": 60
+   },
+   {
+    "best": 0.14953822711444567,
+    "cache_hit_rate": 0.07222222222222222,
+    "cap_relaxed": false,
+    "evaluations_used": 180,
+    "generation": 2,
+    "lineage_histogram": {
+     "BREAKOUT": 9,
+     "COMPRESSION_EXPANSION": 2,
+     "HYBRID": 1,
+     "MEAN_REVERSION": 1,
+     "MOMENTUM_CONTINUATION": 1,
+     "OPENING_DRIVE": 11,
+     "PA_CONTINUATION": 15,
+     "PA_REVERSAL": 10,
+     "PREV_DAY_LEVEL": 1,
+     "SESSION_SWEEP": 2,
+     "TREND_CONTINUATION": 4,
+     "VOL_TRANSITION": 3
+    },
+    "median": -0.1391522934932038,
+    "unique_hashes": 60
+   },
+   {
+    "best": 0.14953822711444567,
+    "cache_hit_rate": 0.05439330543933055,
+    "cap_relaxed": false,
+    "evaluations_used": 239,
+    "generation": 3,
+    "lineage_histogram": {
+     "BREAKOUT": 8,
+     "COMPRESSION_EXPANSION": 1,
+     "OPENING_DRIVE": 12,
+     "PA_CONTINUATION": 15,
+     "PA_REVERSAL": 9,
+     "SESSION_SWEEP": 3,
+     "TREND_CONTINUATION": 4,
+     "VOL_TRANSITION": 8
+    },
+    "median": -0.0896962619131377,
+    "unique_hashes": 60
+   },
+   {
+    "best": 0.22212169532427442,
+    "cache_hit_rate": 0.043478260869565216,
+    "cap_relaxed": false,
+    "evaluations_used": 299,
+    "generation": 4,
+    "lineage_histogram": {
+     "BREAKOUT": 7,
+     "OPENING_DRIVE": 11,
+     "PA_CONTINUATION": 15,
+     "PA_REVERSAL": 2,
+     "SESSION_SWEEP": 9,
+     "TREND_CONTINUATION": 3,
+     "VOL_TRANSITION": 13
+    },
+    "median": -0.043252313507827544,
+    "unique_hashes": 60
+   },
+   {
+    "best": 0.22212169532427442,
+    "cache_hit_rate": 0.036312849162011177,
+    "cap_relaxed": false,
+    "evaluations_used": 358,
+    "generation": 5,
+    "lineage_histogram": {
+     "BREAKOUT": 9,
+     "OPENING_DRIVE": 10,
+     "PA_CONTINUATION": 15,
+     "PA_REVERSAL": 1,
+     "SESSION_SWEEP": 8,
+     "TREND_CONTINUATION": 2,
+     "VOL_TRANSITION": 15
+    },
+    "median": 0.0007880136670489245,
+    "unique_hashes": 60
+   },
+   {
+    "best": 0.24274775966566742,
+    "cache_hit_rate": 0.03117505995203837,
+    "cap_relaxed": false,
+    "evaluations_used": 417,
+    "generation": 6,
+    "lineage_histogram": {
+     "BREAKOUT": 12,
+     "OPENING_DRIVE": 8,
+     "PA_CONTINUATION": 15,
+     "SESSION_SWEEP": 9,
+     "TREND_CONTINUATION": 1,
+     "VOL_TRANSITION": 15
+    },
+    "median": 0.0342201240589043,
+    "unique_hashes": 60
+   },
+   {
+    "best": 0.38648447725963175,
+    "cache_hit_rate": 0.02736842105263158,
+    "cap_relaxed": false,
+    "evaluations_used": 475,
+    "generation": 7,
+    "lineage_histogram": {
+     "BREAKOUT": 11,
+     "OPENING_DRIVE": 4,
+     "PA_CONTINUATION": 15,
+     "SESSION_SWEEP": 12,
+     "TREND_CONTINUATION": 3,
+     "VOL_TRANSITION": 15
+    },
+    "median": 0.06460928516685202,
+    "unique_hashes": 60
+   },
+   {
+    "best": 0.38648447725963175,
+    "cache_hit_rate": 0.024390243902439025,
+    "cap_relaxed": false,
+    "evaluations_used": 533,
+    "generation": 8,
+    "lineage_histogram": {
+     "BREAKOUT": 11,
+     "OPENING_DRIVE": 3,
+     "PA_CONTINUATION": 15,
+     "SESSION_SWEEP": 12,
+     "TREND_CONTINUATION": 4,
+     "VOL_TRANSITION": 15
+    },
+    "median": 0.12634321516814953,
+    "unique_hashes": 60
+   }
+  ],
+  "unique_evaluations": 533
+ },
+ "ledger": {
+  "cache_hits": 34,
+  "duplicate_rejects": 34,
+  "invalid_rejects": 0,
+  "param_trials": 400,
+  "structural_trials": 733,
+  "total_trials": 1133,
+  "unique": 1099
+ },
+ "oos_touched": false,
+ "overall_cache_hit_rate": 0.03,
+ "overall_evals_per_s": 73.56,
+ "phases": {
+  "deap": {
+   "best_train_fitness": 0.386484,
+   "cache_hit_rate": 0.0244,
+   "evals_per_s": 122.43,
+   "evaluations": 533,
+   "unique_specs_added": 520,
+   "valid_candidates_added": 461,
+   "wall_s": 4.35
+  },
+  "optuna": {
+   "best_train_fitness": 0.225401,
+   "cache_hit_rate": 0.0525,
+   "evals_per_s": 95.2,
+   "evaluations": 400,
+   "unique_specs_added": 379,
+   "valid_candidates_added": 100,
+   "wall_s": 4.2
+  },
+  "random": {
+   "best_train_fitness": -0.026679,
+   "cache_hit_rate": 0.0,
+   "evals_per_s": 44.91,
+   "evaluations": 200,
+   "unique_specs_added": 200,
+   "valid_candidates_added": 164,
+   "wall_s": 4.45
+  }
+ },
+ "pool": {
+  "lineage_family_histogram": {
+   "BREAKOUT": 64,
+   "BREAKOUT_RETEST": 10,
+   "COMPRESSION_EXPANSION": 30,
+   "FAILED_BREAKOUT": 13,
+   "HYBRID": 31,
+   "MEAN_REVERSION": 12,
+   "MOMENTUM_CONTINUATION": 12,
+   "OPENING_DRIVE": 71,
+   "PA_CONTINUATION": 90,
+   "PA_REVERSAL": 40,
+   "PREV_DAY_LEVEL": 16,
+   "RANGE_REJECTION": 5,
+   "SESSION_SWEEP": 61,
+   "TREND_CONTINUATION": 45,
+   "TREND_PULLBACK": 10,
+   "VOL_TRANSITION": 90
+  },
+  "origin_histogram": {
+   "deap": 373,
+   "optuna": 90,
+   "random": 137
+  },
+  "size": 600,
+  "train_fitness": {
+   "max": 0.3865,
+   "median": -0.1208,
+   "min": -0.6389
+  }
+ },
+ "total_wall_s": 15.4,
+ "unique_specs_total": 1099
+}
