@@ -16,6 +16,7 @@ cache fingerprint contains the TRAIN-mask hash as the resolver identity.
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import hashlib
 import importlib
@@ -33,16 +34,17 @@ from alpha.discovery.compile import (
     SPEC_VERSION,
     ThresholdResolver,
     TrialLedger,
+    behavior_key,
     canonical_hash,
     canonicalize,
     compile_genome,
 )
-from alpha.discovery.genome import Genome, complexity
+from alpha.discovery.genome import Genome, GenomeError, complexity
 from alpha.fast.screen import PartitionScreen, RejectReason, reject_reason, screen_trades
-from alpha.fast.sim import TradeArrays, simulate_fast
+from alpha.fast.sim import CandidateArrays, TradeArrays, simulate_fast
 from alpha.fast.spec import evaluate_spec
 
-EVALUATOR_VERSION = "ad1-genome-eval-v2"  # v2: MIN_TRAIN_TRADES 60, floored brk_* thresholds
+EVALUATOR_VERSION = "ad1-genome-eval-v3"  # v3: wider source/library fingerprint; v2: MIN 60
 # Stage A / fitness minimum of Train trades (COMBINED_ADVERSE).  Principled from the standard
 # error: at n = 60 with sd(R) ~ 1..1.5 the mean is resolved to ~0.13-0.19 R (1 SE).
 MIN_TRAIN_TRADES = 60
@@ -52,8 +54,20 @@ BASE_COST = "BASE"
 ADVERSE_COST = "COMBINED_ADVERSE"
 _SOURCE_MODULES = (
     "alpha.fast.sim", "alpha.fast.spec", "alpha.fast.screen", "alpha.discovery.compile",
-    "alpha.discovery.catalog", "alpha.discovery.evaluate",
+    "alpha.discovery.catalog", "alpha.discovery.evaluate", "alpha.discovery.genome",
+    "alpha.common.frame", "alpha.common.sim", "alpha.common.protocol",
 )
+_LIBRARIES = ("numba", "numpy", "pandas", "talib")
+
+
+def _library_versions() -> dict[str, str]:
+    out = {}
+    for name in _LIBRARIES:
+        try:
+            out[name] = str(getattr(importlib.import_module(name), "__version__", "unknown"))
+        except ImportError:
+            out[name] = "absent"
+    return out
 
 
 # --------------------------------------------------------------------------- result types
@@ -128,7 +142,12 @@ class ValidationView:
 
 @dataclass(frozen=True)
 class GenomeEval:
-    """JSON-serialisable evaluation record (no per-trade arrays)."""
+    """JSON-serialisable evaluation record (no per-trade arrays).
+
+    The Validation seal (``_validation`` / ``validation_gate_view``) is a CONVENTION that keeps
+    search code from reading Validation numbers by accident; it is NOT a security boundary (the
+    data is in the same process and can be reached deliberately).
+    """
 
     genome_hash: str
     lineage: str
@@ -273,6 +292,7 @@ class GenomeEvaluator:
             "sizing": cfg["sizing"], "rules": cfg["rules"], "min_trades": self.min_trades,
             "n_chunks": N_CHUNKS,
             "sources": _source_hashes(),
+            "libraries": _library_versions(),
         })
 
     # ------------------------------------------------------------------ cache
@@ -309,6 +329,10 @@ class GenomeEvaluator:
                               TrainView(digest, 0, empty, empty), ValidationView(empty, empty))
         canon = canonicalize(genome)
         ghash = canonical_hash(canon)
+        # behaviour-level uniqueness (identical resolved spec), reported by the ledger
+        with contextlib.suppress(GenomeError, ValueError):
+            self.ledger.behaviors.add(
+                behavior_key(compile_genome(canon, self.resolver, snap=False)))
         key = self.fingerprint(ghash)
         raw = self._cache_get(key)
         if raw is not None:
@@ -332,7 +356,16 @@ class GenomeEvaluator:
             return GenomeEval(ghash, canon.lineage, cx, n_cand, reason,
                               TrainView(ghash, cx, side, side), ValidationView(empty, empty))
 
-        reason = reject_reason(spec, cands, min_trades=self.min_trades, market=self.market,
+        # Stage A judges TRAIN candidates only (Validation decisions must not count towards
+        # the Train sample or the impossible-spec check)
+        if n_cand:
+            tm = self.split.mask(train_dates, self.split.train)
+            train_cands = CandidateArrays(
+                cands.decision_idx[tm], cands.direction[tm], cands.stop[tm], cands.target[tm],
+                cands.target_r[tm], cands.exit_kind[tm])
+        else:
+            train_cands = cands
+        reason = reject_reason(spec, train_cands, min_trades=self.min_trades, market=self.market,
                                sizing=self.sizing, cost=self._costs[ADVERSE_COST])
         if reason is not None:
             n = n_train_cand if reason is RejectReason.TOO_FEW_TRADES else 0

@@ -164,14 +164,29 @@ def _canon_window(window: tuple[int, int] | None) -> tuple[int, int] | None:
 
 
 def canonicalize(genome: Genome) -> Genome:
-    """Return the canonical form: logically identical genomes map to identical values."""
+    """Return the canonical form: logically identical genomes map to identical values.
+
+    Iterated to a FIXED POINT (``canonicalize(canonicalize(g)) == canonicalize(g)``): merging a
+    single-alternative OR group into the trigger can create a same-feature pair that the next
+    pass must dedupe (e.g. trigger rsi>q0.6 + OR [rsi>q0.7, rsi>q0.7]).
+    """
+    cur = _canonicalize_once(genome)
+    for _ in range(8):
+        nxt = _canonicalize_once(cur)
+        if nxt == cur:
+            return cur
+        cur = nxt
+    raise RuntimeError("canonicalize did not reach a fixed point")
+
+
+def _canonicalize_once(genome: Genome) -> Genome:
     regime = _canon_group(genome.regime)
     context = _canon_group(genome.context)
     trigger = _canon_group(genome.trigger)
     or_group = tuple(sorted({_snap_clause(c) for c in genome.or_group}, key=_clause_key))
     if len(or_group) == 1:  # both alternatives identical -> a plain conjunct
         if len(trigger) < MAX_TRIGGER and or_group[0] not in trigger:
-            trigger = tuple(sorted(trigger + or_group, key=_clause_key))
+            trigger = _canon_group(trigger + or_group)  # re-dedupe after the merge
         or_group = ()
     return Genome(
         direction=genome.direction,
@@ -313,6 +328,9 @@ class TrialLedger:
     duplicate_rejects: int = 0
     invalid_rejects: int = 0
     cache_hits: int = 0  # evaluations served from the result cache (still counted as trials)
+    # behaviour keys (compiled spec identity after threshold resolution) of valid genomes: two
+    # canonical genomes whose q values resolve to identical thresholds are ONE behaviour
+    behaviors: set[str] = field(default_factory=set)
 
     def record(self, genome: Genome, kind: str = "structural") -> str:
         """Count one trial; returns 'new', 'duplicate' or 'invalid'."""
@@ -339,6 +357,10 @@ class TrialLedger:
     def unique(self) -> int:
         return len(self.seen)
 
+    @property
+    def unique_behaviors(self) -> int:
+        return len(self.behaviors)
+
     def to_json(self) -> str:
         return json.dumps(
             {
@@ -346,7 +368,9 @@ class TrialLedger:
                 "param_trials": self.param_trials, "structural_trials": self.structural_trials,
                 "duplicate_rejects": self.duplicate_rejects,
                 "invalid_rejects": self.invalid_rejects, "unique": self.unique,
-                "unique_specs": self.unique,  # alias: pool meta / stages / report read this key
+                # unique_specs: alias read by pool meta / stages / report
+                "unique_specs": self.unique, "unique_behaviors": self.unique_behaviors,
+                "behaviors": sorted(self.behaviors),
                 "cache_hits": self.cache_hits,
             },
             sort_keys=True,
@@ -358,6 +382,7 @@ class TrialLedger:
         return cls(
             set(raw["seen"]), raw["total_trials"], raw["param_trials"], raw["structural_trials"],
             raw["duplicate_rejects"], raw["invalid_rejects"], raw.get("cache_hits", 0),
+            set(raw.get("behaviors", ())),
         )
 
 
