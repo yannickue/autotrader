@@ -51,6 +51,39 @@ from alpha.regime import REGIME_DIMENSIONS, RegimeConfig, classify_regime
 from alpha.timeframe import MtfView
 
 FEATURE_SCHEMA_VERSION = 2
+# Bump whenever the set/definition of price-action feature arrays changes (cache invalidation).
+FEATURE_SET_VERSION = 2
+NEW_FEATURE_NAMES: tuple[str, ...] = (
+    "dist_pdh_atr",
+    "dist_pdl_atr",
+    "dist_pdc_atr",
+    "dist_sess_open_atr",
+    "dist_sess_high_atr",
+    "dist_sess_low_atr",
+    "dist_swing_high_atr",
+    "dist_swing_low_atr",
+    "brk_up_20",
+    "brk_dn_20",
+    "brk_up_48",
+    "brk_dn_48",
+    "from_high_24_atr",
+    "from_low_24_atr",
+    "range_ratio_12_48",
+    "bar_range_atr",
+    "bar_body_ratio",
+    "bar_close_loc",
+    "upper_wick_ratio",
+    "lower_wick_ratio",
+    "bar_dir",
+    "mom_3_atr",
+    "mom_6_atr",
+    "mom_12_atr",
+    "sweep_hi_20",
+    "sweep_lo_20",
+    "sweep_pdh",
+    "sweep_pdl",
+    "gap_atr",
+)
 _PHASES = ("EUROPEAN_OPEN", "MORNING", "MIDDAY", "US_CASH_OPEN_OVERLAP", "LATE")
 _TA_NAMES = (
     "atr14",
@@ -163,6 +196,8 @@ def _key_components(frame: pd.DataFrame, config: FeatureConfig) -> dict[str, Any
     return {
         "dataset_hash": _hash_frame(frame),
         "schema_version": FEATURE_SCHEMA_VERSION,
+        "feature_set_version": FEATURE_SET_VERSION,
+        "new_feature_names": list(NEW_FEATURE_NAMES),
         "timeframes": list(config.timeframes),
         "parameters": _plain(config),
         "code_fingerprint": _code_fingerprint(),
@@ -366,6 +401,94 @@ def _swings(high: np.ndarray, low: np.ndarray, order: int) -> dict[str, np.ndarr
     }
 
 
+def _run_start(day_id: np.ndarray, contig: np.ndarray) -> np.ndarray:
+    """Index of the first bar of the day-contiguous run containing each bar."""
+    n = len(day_id)
+    idx = np.arange(n)
+    broken = ~contig
+    if n:
+        broken = broken.copy()
+        broken[0] = True
+        broken[1:] |= day_id[1:] != day_id[:-1]
+    return np.maximum.accumulate(np.where(broken, idx, 0))
+
+
+def _roll(values: np.ndarray, window: int, fn: str) -> np.ndarray:
+    roller = pd.Series(values).rolling(window, min_periods=window)
+    return (roller.max() if fn == "max" else roller.min()).to_numpy()
+
+
+def _price_action_arrays(a: Mapping[str, np.ndarray]) -> dict[str, np.ndarray]:
+    """Normalized price-action features; bar i uses only bars <= i (NaN when window leaves the
+    day-contiguous run, so nothing crosses the overnight gap, a DST change or a data hole)."""
+    o, h, low, c = a["o"], a["h"], a["l"], a["c"]
+    n = len(c)
+    idx = np.arange(n)
+    start = _run_start(a["berlin_day_id"], a["contig"])
+    atr = a["m5_atr14"]
+    scale = np.where(atr > 0, atr, np.nan)
+    out: dict[str, np.ndarray] = {}
+    for name, level in (
+        ("dist_pdh_atr", "previous_day_high"),
+        ("dist_pdl_atr", "previous_day_low"),
+        ("dist_pdc_atr", "previous_day_close"),
+        ("dist_sess_open_atr", "session_open"),
+        ("dist_sess_high_atr", "session_high"),
+        ("dist_sess_low_atr", "session_low"),
+        ("dist_swing_high_atr", "last_swing_high"),
+        ("dist_swing_low_atr", "last_swing_low"),
+    ):
+        out[name] = (c - a[level]) / scale
+
+    def valid(back: int) -> np.ndarray:
+        return idx - back >= start
+
+    def prior(window: int, fn: str) -> np.ndarray:
+        src = h if fn == "max" else low
+        shifted = np.r_[np.nan, _roll(src, window, fn)[:-1]] if n else src.copy()
+        return np.where(valid(window), shifted, np.nan)
+
+    for window in (20, 48):
+        out[f"brk_up_{window}"] = (c - prior(window, "max")) / scale
+        out[f"brk_dn_{window}"] = (prior(window, "min") - c) / scale
+    hi24 = np.where(valid(23), _roll(h, 24, "max"), np.nan)
+    lo24 = np.where(valid(23), _roll(low, 24, "min"), np.nan)
+    out["from_high_24_atr"] = (hi24 - c) / scale
+    out["from_low_24_atr"] = (c - lo24) / scale
+    span12 = _roll(h, 12, "max") - _roll(low, 12, "min")
+    span48 = _roll(h, 48, "max") - _roll(low, 48, "min")
+    with np.errstate(invalid="ignore", divide="ignore"):
+        ratio = span12 / np.where(span48 > 0, span48, np.nan)
+    out["range_ratio_12_48"] = np.where(valid(47), ratio, np.nan)
+
+    rng = h - low
+    flat = rng <= 0
+    safe = np.where(flat, np.nan, rng)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        out["bar_range_atr"] = rng / scale
+        out["bar_body_ratio"] = np.where(flat, 0.0, np.abs(c - o) / safe)
+        out["bar_close_loc"] = np.where(flat, 0.5, (c - low) / safe)
+        out["upper_wick_ratio"] = np.where(flat, 0.0, (h - np.maximum(o, c)) / safe)
+        out["lower_wick_ratio"] = np.where(flat, 0.0, (np.minimum(o, c) - low) / safe)
+    out["bar_dir"] = np.sign(c - o).astype(float)
+    for k in (3, 6, 12):
+        lagged = np.full(n, np.nan)
+        if n > k:
+            lagged[k:] = c[:-k]
+        out[f"mom_{k}_atr"] = np.where(valid(k), (c - lagged) / scale, np.nan)
+
+    pmax = prior(20, "max")
+    pmin = prior(20, "min")
+    ok20 = np.isfinite(pmax) & np.isfinite(pmin)
+    out["sweep_hi_20"] = np.where(ok20, ((h > pmax) & (c < pmax)).astype(float), np.nan)
+    out["sweep_lo_20"] = np.where(ok20, ((low < pmin) & (c > pmin)).astype(float), np.nan)
+    pdh, pdl = a["previous_day_high"], a["previous_day_low"]
+    out["sweep_pdh"] = np.where(np.isfinite(pdh), ((h > pdh) & (c < pdh)).astype(float), np.nan)
+    out["sweep_pdl"] = np.where(np.isfinite(pdl), ((low < pdl) & (c > pdl)).astype(float), np.nan)
+    out["gap_atr"] = (a["session_open"] - a["previous_day_close"]) / scale
+    return {name: out[name].astype(np.float64) for name in NEW_FEATURE_NAMES}
+
+
 class FeatureStore:
     """Build and persist an immutable set of causal research features."""
 
@@ -435,6 +558,7 @@ class FeatureStore:
         arrays["compression_expansion_ratio"] = np.divide(
             short, long, out=np.full(n, np.nan), where=long > 0
         )
+        arrays.update(_price_action_arrays(arrays))
         for name, value in arrays.items():
             if value.ndim != 1 or len(value) != n:
                 raise AssertionError(f"unaligned feature {name}: {value.shape}")
@@ -444,6 +568,7 @@ class FeatureStore:
             arrays,
             {
                 "schema_version": FEATURE_SCHEMA_VERSION,
+                "feature_set_version": FEATURE_SET_VERSION,
                 "timing_s": elapsed,
                 "cache_hit": False,
                 "maps": maps,
@@ -490,4 +615,11 @@ class FeatureStore:
         return built
 
 
-__all__ = ("FEATURE_SCHEMA_VERSION", "FeatureConfig", "FeatureSet", "FeatureStore")
+__all__ = (
+    "FEATURE_SCHEMA_VERSION",
+    "FEATURE_SET_VERSION",
+    "NEW_FEATURE_NAMES",
+    "FeatureConfig",
+    "FeatureSet",
+    "FeatureStore",
+)
