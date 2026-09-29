@@ -73,6 +73,14 @@ def _child_env(config: MT5ConnectionConfig) -> dict[str, str]:
         env["MT5_TERMINAL_PATH"] = config.terminal_path
     else:
         env.pop("MT5_TERMINAL_PATH", None)
+    # Forward the explicit real-authentication gate unchanged -- the child
+    # re-loads config from its own environment, so without this the parent's
+    # `config.allow_account_login` would silently NOT reach the worker that
+    # actually calls `initialize()`.
+    if config.allow_account_login:
+        env["MT5_ALLOW_ACCOUNT_LOGIN"] = "1"
+    else:
+        env.pop("MT5_ALLOW_ACCOUNT_LOGIN", None)
     return env
 
 

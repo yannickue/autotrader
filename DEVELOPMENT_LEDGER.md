@@ -648,3 +648,59 @@ to a real demo account**, not just a tested-in-isolation module. DAX and NASDAQ1
 confirmed tradeable (order_check PASS on DAX). Next: live/historical data ingestion actually
 calling the adapter (per PENDING_USER_INPUT.md), then FeatureRegistry/OpportunityScanner/Regime
 Engine and the DAX/NASDAQ research vertical slice, per the master directive's priority order.
+
+## Critical fix: account-protection invariant (2026-09-29)
+
+TASK: the user reported their manually logged-in ActivTrades demo account was repeatedly being
+logged out while this repo's own development activity (running the test suite) ran, and had to
+be re-authenticated by hand every time. This is unacceptable for a safety-critical repo and was
+treated as a stop-everything fix.
+
+ROOT CAUSE (confirmed): `MT5Connection.connect()` and `probe.run_isolated_probe()`
+unconditionally called `MetaTrader5.initialize(path, login=, password=, server=)` -- real
+authentication -- for every real MT5 access, including read-only diagnostics. Worse,
+`tests/unit/scripts/test_mt5_scripts.py` had a test
+(`test_script_attempts_real_connection_without_crashing_or_leaking_password`) that ran four
+scripts' real subprocess workers with synthetic fake credentials as part of ordinary `pytest`.
+MT5 has exactly one current account per terminal instance, so this real, credentialed
+`initialize()` call against the SAME real, already-authenticated terminal -- happening every
+time `pytest` ran -- is what was switching/disconnecting the user's manually logged-in session.
+
+FIX:
+- `MT5Connection.connect()`/`probe.run_isolated_probe()` now default to a credential-free
+  `initialize(terminal_path)` (attach-only, exactly like a second manual terminal instance would
+  do), verify the already-attached account's `login` against the configured one, and fail closed
+  (`ACCOUNT_MISMATCH`) on any mismatch -- never logging in or switching the account automatically.
+- Real authentication only happens when `config.allow_account_login` is explicitly `True`, set
+  via `MT5_ALLOW_ACCOUNT_LOGIN=1` read ONLY from the process environment (never `.env`, so it can
+  never become "sticky"). No test/preflight/discovery/downloader/ruff/compileall enables it.
+- A single-owner file lock (`adapters/activtrades_mt5/lock.py`) now gates every real
+  `initialize()`/`login()` call site in the repo (including the two temporary diagnostic scripts
+  that still perform real IPC) -- a second concurrent real-MT5 access gets `CONNECTION_BUSY`
+  immediately instead of racing. Lock staleness window tuned to 90s (was tried at 300s first,
+  then tightened after discovering a killed/timed-out worker leaks the lock past its own
+  `finally` block -- 90s clears a leaked lock well before it would block a legitimate retry).
+  `MT5Connection`/`run_isolated_probe` take an injectable `lock_path` so tests never share the
+  real, process-wide lock file.
+- The dangerous pytest test above was replaced: `run_worker_bounded` is now faked in every
+  script test, so ordinary `pytest` can no longer reach real MT5 in any way, not just "not with
+  real credentials" -- a strictly stronger guarantee, and structurally impossible to regress
+  silently (any future script that bypasses the fake would raise, not silently connect for real).
+- Codex adversarial review (`codex-companion.mjs adversarial-review`) caught two real MT5 call
+  sites this pass initially missed: `mt5_diag_attach_then_login.py`'s Test 1 attach and
+  `mt5_diag_portable_instance.py`'s attach, both real `initialize()` calls outside the lock. Both
+  fixed to acquire the lock before their first real call.
+
+TESTS: 677 passed, 1 skipped; ruff clean; compileall clean. New coverage:
+`tests/unit/adapters/activtrades_mt5/test_account_protection.py` (8 tests: no-credentials
+default, account-mismatch fail-closed, unreadable-account fail-closed, explicit-auth path,
+lock busy/release semantics), `tests/unit/adapters/activtrades_mt5/test_lock.py` (6 tests: the
+lock primitive itself), plus updated `test_config.py`/`test_probe.py`/`test_connection.py`/
+`test_mt5_scripts.py`.
+
+VERIFICATION LIMIT: this session's own automation-shell processes still cannot reliably reach
+the real MT5 terminal's IPC (the same pre-existing, accepted limitation noted elsewhere in this
+ledger) -- one attempt to verify live account identity before/after the gate timed out cleanly
+(terminal left untouched, exactly as designed) rather than confirming a live before/after
+account match. The user should independently confirm on their own desktop, once, that running
+`uv run pytest` no longer logs their terminal out.

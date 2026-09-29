@@ -31,6 +31,7 @@ _LOGIN_VAR = "MT5_LOGIN"
 _PASSWORD_VAR = "MT5_PASSWORD"
 _SERVER_VAR = "MT5_SERVER"
 _TERMINAL_PATH_VAR = "MT5_TERMINAL_PATH"
+_ALLOW_ACCOUNT_LOGIN_VAR = "MT5_ALLOW_ACCOUNT_LOGIN"
 _ALL_VARS = (*_REQUIRED_VARS, _TERMINAL_PATH_VAR)
 
 _REDACTED = "<redacted>"
@@ -60,11 +61,23 @@ class MT5ConnectionConfig:
     password: str
     server: str
     terminal_path: str | None = None
+    allow_account_login: bool = False
+    """Gate for real `initialize(..., login=, password=, server=)`/`login()`
+    authentication (see `MT5Connection.connect` in
+    `adapters/activtrades_mt5/connection.py`). Default OFF: by default,
+    `connect()` only ATTACHES to whatever account is already logged into the
+    terminal (no credentials sent) and verifies its identity matches
+    `login`, failing closed on any mismatch -- it never logs in or switches
+    the terminal's account. Only set to `True` via the explicit
+    `MT5_ALLOW_ACCOUNT_LOGIN=1` environment variable for a single invocation
+    that genuinely needs to authenticate; no normal test, preflight,
+    discovery, or downloader run enables this on its own."""
 
     def __repr__(self) -> str:
         return (
             f"MT5ConnectionConfig(login={self.login!r}, password={_REDACTED}, "
-            f"server={self.server!r}, terminal_path={self.terminal_path!r})"
+            f"server={self.server!r}, terminal_path={self.terminal_path!r}, "
+            f"allow_account_login={self.allow_account_login!r})"
         )
 
     __str__ = __repr__
@@ -159,9 +172,18 @@ def load_mt5_connection_config(
             f"{_LOGIN_VAR} must be an integer MT5 account number, got {raw_login!r}."
         ) from exc
 
+    # Deliberately read ONLY from the process environment, never from
+    # `.env` -- this must stay a one-off, explicit flag for a single
+    # invocation, never something that becomes "sticky" by sitting in a
+    # local config file and silently enabling real authentication on every
+    # future run. Only the exact string "1" enables it; anything else
+    # (unset, "0", "false", ...) keeps the safe attach-only default.
+    allow_account_login = process_env.get(_ALLOW_ACCOUNT_LOGIN_VAR) == "1"
+
     return MT5ConnectionConfig(
         login=login,
         password=merged[_PASSWORD_VAR],
         server=merged[_SERVER_VAR],
         terminal_path=merged.get(_TERMINAL_PATH_VAR) or None,
+        allow_account_login=allow_account_login,
     )

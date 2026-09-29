@@ -1,14 +1,18 @@
 """Tests that each MT5 script can be invoked and reports a clear message
 instead of crashing, whether real MT5 env vars are absent (config missing)
-or present but no real MT5 terminal/account exists in this environment (a
-real connection attempt that fails cleanly).
+or present.
 
-No real MT5 credentials are used anywhere here -- `monkeypatch` clears any
-real env vars for the "missing config" case and sets synthetic, obviously
-fake test values for the "connection fails" case (there is no live terminal
-in this test environment, so `initialize()` genuinely fails against them;
-these scripts now wire into the real `src/adapters/activtrades_mt5` adapter
-rather than a stub).
+ACCOUNT PROTECTION INVARIANT (see `adapters/activtrades_mt5/connection.py`,
+`lock.py`, `docs/ARCHITECTURE.md`): ordinary `pytest` must NEVER perform any
+real MT5 IPC call -- not a login, not even a read-only attach -- because a
+manually logged-in ActivTrades terminal must never be touched just by
+running the test suite. Every test below that exercises the "config
+present" path therefore replaces `adapters.activtrades_mt5.bounded.
+run_worker_bounded` (the ONE function that ever spawns a real-MT5-capable
+child process) with a fake before calling `module.main()`, so real MT5 is
+categorically unreachable here regardless of what `main()` does internally
+-- this is a stronger guarantee than "uses fake credentials", which
+previously still let a real subprocess attempt a real IPC call.
 """
 
 from __future__ import annotations
@@ -19,6 +23,8 @@ import types
 from pathlib import Path
 
 import pytest
+
+from adapters.activtrades_mt5.bounded import BoundedRunResult
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SCRIPTS_DIR = REPO_ROOT / "scripts"
@@ -81,35 +87,85 @@ def test_script_reports_missing_config_without_crashing(
 
 
 @pytest.mark.parametrize("script_name", _SCRIPT_NAMES)
-def test_script_attempts_real_connection_without_crashing_or_leaking_password(
+def test_script_never_touches_real_mt5_during_normal_pytest(
     script_name: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """With config present, every script must attempt a real connection
-    (proving the wiring is real, not a stub) and terminate cleanly --
-    never crash with an unhandled exception, and never leak the password.
+    """With config present, every script must reach exactly one call to
+    `run_worker_bounded` (the sole function that can spawn a real-MT5-
+    capable child) with the genuinely-loaded config, and terminate cleanly
+    on the canned result -- never crash, never leak the password, and (the
+    account protection invariant) never call real MT5 in any way, since
+    `run_worker_bounded` itself is replaced with a fake below.
 
-    This deliberately does NOT assert a specific PASS/FAIL outcome: whether
-    the real MT5 terminal accepts these obviously-fake credentials is
-    environment-dependent (e.g. if a terminal happens to already be running
-    and authenticated when this test runs, `initialize()` may attach to
-    that existing session and succeed regardless of the login/password/
-    server given here -- this is a real MT5 behavior this codebase does not
-    control, not a bug in the script). What IS guaranteed and asserted: a
-    clean, valid exit code, config was genuinely loaded (proving this
-    wasn't short-circuited), and the password never appears in output.
+    Also asserts `config.allow_account_login is False`: with
+    `MT5_ALLOW_ACCOUNT_LOGIN` unset (the normal case), the config this
+    script would hand to a real connection attempt must carry the safe,
+    attach-only default -- proving the explicit-auth gate defaults OFF.
     """
     monkeypatch.setenv("MT5_LOGIN", "12345")
     monkeypatch.setenv("MT5_PASSWORD", "test-password-not-real")
     monkeypatch.setenv("MT5_SERVER", "ActivTrades-Demo")
+    monkeypatch.delenv("MT5_ALLOW_ACCOUNT_LOGIN", raising=False)
 
     module = _load_script(script_name)
 
+    calls: list[dict[str, object]] = []
+
+    def _fake_run_worker_bounded(script_path, config, *, timeout, extra_args=()):
+        del script_path, timeout, extra_args
+        calls.append({"login": config.login, "allow_account_login": config.allow_account_login})
+        return BoundedRunResult(
+            timed_out=False,
+            returncode=0,
+            stdout="Config loaded: server='ActivTrades-Demo', login=12345.\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr(module, "run_worker_bounded", _fake_run_worker_bounded)
+
     exit_code = module.main()
 
+    assert len(calls) == 1, (
+        "main() must reach exactly one run_worker_bounded call and never call real MT5 directly"
+    )
+    assert calls[0]["login"] == 12345
+    assert calls[0]["allow_account_login"] is False
+    assert exit_code == 0
+
     captured = capsys.readouterr()
-    assert exit_code in (0, 1, 2)
     combined = (captured.out + captured.err).lower()
-    assert "config loaded" in combined or "[pass] config" in combined
+    assert "config loaded" in combined
     # The password must never be printed anywhere in the script's output.
     assert "test-password-not-real" not in captured.out
     assert "test-password-not-real" not in captured.err
+
+
+@pytest.mark.parametrize("script_name", _SCRIPT_NAMES)
+def test_script_allow_account_login_env_var_reaches_config(
+    script_name: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`MT5_ALLOW_ACCOUNT_LOGIN=1` must be an explicit, visible opt-in that
+    reaches the config handed to `run_worker_bounded` -- proving the gate is
+    wired, without ever actually calling real MT5 (still faked)."""
+    monkeypatch.setenv("MT5_LOGIN", "12345")
+    monkeypatch.setenv("MT5_PASSWORD", "test-password-not-real")
+    monkeypatch.setenv("MT5_SERVER", "ActivTrades-Demo")
+    monkeypatch.setenv("MT5_ALLOW_ACCOUNT_LOGIN", "1")
+
+    module = _load_script(script_name)
+
+    calls: list[dict[str, object]] = []
+
+    def _fake_run_worker_bounded(script_path, config, *, timeout, extra_args=()):
+        del script_path, timeout, extra_args
+        calls.append({"allow_account_login": config.allow_account_login})
+        return BoundedRunResult(
+            timed_out=False, returncode=0, stdout="Config loaded: ok\n", stderr=""
+        )
+
+    monkeypatch.setattr(module, "run_worker_bounded", _fake_run_worker_bounded)
+
+    module.main()
+
+    assert len(calls) == 1
+    assert calls[0]["allow_account_login"] is True

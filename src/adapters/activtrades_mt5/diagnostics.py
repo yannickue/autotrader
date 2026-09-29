@@ -47,6 +47,8 @@ class ConnectionDiagnosticCategory(StrEnum):
     ACCOUNT_INFO_FAILED = "ACCOUNT_INFO_FAILED"
     WRONG_TERMINAL_SESSION = "WRONG_TERMINAL_SESSION"
     UNKNOWN_MT5_ERROR = "UNKNOWN_MT5_ERROR"
+    ACCOUNT_MISMATCH = "ACCOUNT_MISMATCH"
+    CONNECTION_BUSY = "CONNECTION_BUSY"
 
 
 # Real RES_E_* integer values, duplicated here (not imported from

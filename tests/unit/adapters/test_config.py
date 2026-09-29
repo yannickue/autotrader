@@ -173,3 +173,48 @@ def test_password_never_appears_in_error_message(tmp_path: Path) -> None:
         load_mt5_connection_config(env=env, env_file=_no_env_file(tmp_path))
 
     assert "super-secret-value" not in str(exc_info.value)
+
+
+# -- allow_account_login: explicit, off-by-default real-auth gate -----------
+
+
+def test_allow_account_login_defaults_false_when_unset(tmp_path: Path) -> None:
+    env = {"MT5_LOGIN": "1", "MT5_PASSWORD": "p", "MT5_SERVER": "s"}
+
+    config = load_mt5_connection_config(env=env, env_file=_no_env_file(tmp_path))
+
+    assert config.allow_account_login is False
+
+
+def test_allow_account_login_true_only_for_exact_string_one(tmp_path: Path) -> None:
+    for value, expected in (
+        ("1", True),
+        ("0", False),
+        ("true", False),
+        ("True", False),
+        ("yes", False),
+        ("", False),
+    ):
+        env = {
+            "MT5_LOGIN": "1",
+            "MT5_PASSWORD": "p",
+            "MT5_SERVER": "s",
+            "MT5_ALLOW_ACCOUNT_LOGIN": value,
+        }
+        config = load_mt5_connection_config(env=env, env_file=_no_env_file(tmp_path))
+        assert config.allow_account_login is expected, f"value {value!r} -> {expected}"
+
+
+def test_allow_account_login_is_never_read_from_env_file(tmp_path: Path) -> None:
+    """Must stay a one-off, explicit-invocation flag -- never something a
+    checked-in or locally-saved `.env` can silently turn on for every
+    future run."""
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "MT5_LOGIN=1\nMT5_PASSWORD=p\nMT5_SERVER=s\nMT5_ALLOW_ACCOUNT_LOGIN=1\n",
+        encoding="utf-8",
+    )
+
+    config = load_mt5_connection_config(env={}, env_file=env_file)
+
+    assert config.allow_account_login is False

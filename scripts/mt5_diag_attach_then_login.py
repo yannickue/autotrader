@@ -47,6 +47,7 @@ from adapters.activtrades_mt5.bounded import (  # noqa: E402
     run_worker_bounded,
 )
 from adapters.activtrades_mt5.diagnostics import classify_initialize_failure  # noqa: E402
+from adapters.activtrades_mt5.lock import acquire_mt5_lock  # noqa: E402
 from adapters.activtrades_mt5.models import account_info_to_account_state  # noqa: E402
 from adapters.activtrades_mt5.real_client import get_real_client  # noqa: E402
 from adapters.config import (  # noqa: E402
@@ -76,6 +77,17 @@ def _run_worker() -> int:
     except MT5ConfigError as exc:
         print(f"TERMINAL_ATTACH: FAIL\nreason: CONFIG_MISSING: {exc}")
         return 2
+
+    # ACCOUNT PROTECTION INVARIANT: every real initialize()/login() call in
+    # this codebase is single-owner-locked (see `adapters/activtrades_mt5/
+    # lock.py`), including this diagnostic's own attach-only Test 1 -- a
+    # second real MT5-touching process must never overlap this one.
+    lock = acquire_mt5_lock()
+    if lock is None:
+        print("TERMINAL_ATTACH: FAIL")
+        print("reason: MT5_CONNECTION_BUSY: another process already holds the real MT5 lock")
+        print("ACCOUNT_LOGIN: SKIPPED")
+        return 1
 
     client = get_real_client()
     attached = False
@@ -155,6 +167,16 @@ def _run_worker() -> int:
                 )
 
         # -- TEST 2: explicit account login, only because Test 1 passed ----
+        # ACCOUNT PROTECTION INVARIANT: real authentication (a call capable
+        # of switching/logging in the terminal's account) never runs unless
+        # explicitly requested via MT5_ALLOW_ACCOUNT_LOGIN=1 -- this
+        # diagnostic's own MT5_LOGIN/PASSWORD/SERVER config being present is
+        # NOT sufficient on its own, matching every other real call site in
+        # this adapter (see `adapters/activtrades_mt5/connection.py`).
+        if not config.allow_account_login:
+            print("ACCOUNT_LOGIN: SKIPPED (set MT5_ALLOW_ACCOUNT_LOGIN=1 to run this test)")
+            return 0
+
         try:
             login_ok = bool(
                 client.login(
@@ -185,6 +207,7 @@ def _run_worker() -> int:
         if attached:
             with contextlib.suppress(Exception):
                 client.shutdown()
+        lock.release()
 
 
 def main(argv: list[str] | None = None) -> int:

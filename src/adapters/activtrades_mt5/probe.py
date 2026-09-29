@@ -27,6 +27,7 @@ from adapters.activtrades_mt5.diagnostics import (
     classify_account_info_failure,
     classify_initialize_failure,
 )
+from adapters.activtrades_mt5.lock import DEFAULT_LOCK_PATH, acquire_mt5_lock
 from adapters.config import MT5ConnectionConfig
 
 
@@ -56,7 +57,24 @@ def check_terminal_path(terminal_path: str | None) -> ConnectionDiagnosticCatego
     return None
 
 
-def run_isolated_probe(config: MT5ConnectionConfig, client: MT5ClientProtocol) -> ProbeReport:
+def run_isolated_probe(
+    config: MT5ConnectionConfig,
+    client: MT5ClientProtocol,
+    *,
+    lock_path: Path | None = None,
+) -> ProbeReport:
+    """ACCOUNT PROTECTION INVARIANT (mirrors `MT5Connection.connect`, do not
+    weaken without an explicit, separate directive): by default
+    (`config.allow_account_login is False`), this only ATTACHES to whatever
+    account is already logged into the terminal (`initialize(terminal_path)`,
+    no credentials) and verifies its identity against `config.login`, failing
+    closed on any mismatch -- it never authenticates and never can switch or
+    log out the terminal's current account. Real authentication only happens
+    when `config.allow_account_login` is explicitly `True` (`MT5_ALLOW_
+    ACCOUNT_LOGIN=1`). Also acquires the single-owner MT5 lock
+    (`lock.py`) before any real call -- a second concurrent caller gets
+    `CONNECTION_BUSY` immediately rather than racing this one.
+    """
     path_problem = check_terminal_path(config.terminal_path)
     if path_problem is not None:
         return ProbeReport(
@@ -65,84 +83,121 @@ def run_isolated_probe(config: MT5ConnectionConfig, client: MT5ClientProtocol) -
             message=f"configured MT5_TERMINAL_PATH does not exist: {config.terminal_path!r}",
         )
 
-    package_version: str | None = None
+    lock = acquire_mt5_lock(lock_path if lock_path is not None else DEFAULT_LOCK_PATH)
+    if lock is None:
+        return ProbeReport(
+            success=False,
+            category=ConnectionDiagnosticCategory.CONNECTION_BUSY,
+            message=(
+                "MT5_CONNECTION_BUSY: another process already holds the real MT5 "
+                "connection lock"
+            ),
+        )
+
     try:
-        version_info = client.version()
-        if version_info is not None:
-            package_version = str(version_info)
-    except Exception:
-        package_version = None
-
-    initialized = False
-    try:
+        package_version: str | None = None
         try:
-            initialized = bool(
-                client.initialize(
-                    config.terminal_path,
-                    login=config.login,
-                    password=config.password,
-                    server=config.server,
-                )
-            )
-        except Exception as exc:
-            return ProbeReport(
-                success=False,
-                category=ConnectionDiagnosticCategory.MT5_INITIALIZE_FAILED,
-                message=f"initialize() raised: {exc}",
-                package_version=package_version,
-            )
-
-        if not initialized:
-            error_code, error_description = _safe_last_error(client)
-            return ProbeReport(
-                success=False,
-                category=classify_initialize_failure(error_code),
-                message="initialize() returned False",
-                mt5_error_code=error_code,
-                mt5_error_description=error_description,
-                package_version=package_version,
-            )
-
-        terminal_info_ok = False
-        try:
-            terminal_info_ok = client.terminal_info() is not None
+            version_info = client.version()
+            if version_info is not None:
+                package_version = str(version_info)
         except Exception:
-            terminal_info_ok = False
+            package_version = None
 
-        account_info_ok = False
-        account_error_code: int | None = None
-        account_error_description: str | None = None
+        initialized = False
         try:
-            account_info_ok = client.account_info() is not None
-        except Exception as exc:
-            account_info_ok = False
-            account_error_description = str(exc)
-        if not account_info_ok and account_error_description is None:
-            account_error_code, account_error_description = _safe_last_error(client)
+            try:
+                if config.allow_account_login:
+                    initialized = bool(
+                        client.initialize(
+                            config.terminal_path,
+                            login=config.login,
+                            password=config.password,
+                            server=config.server,
+                        )
+                    )
+                else:
+                    initialized = bool(client.initialize(config.terminal_path))
+            except Exception as exc:
+                return ProbeReport(
+                    success=False,
+                    category=ConnectionDiagnosticCategory.MT5_INITIALIZE_FAILED,
+                    message=f"initialize() raised: {exc}",
+                    package_version=package_version,
+                )
 
-        if not account_info_ok:
+            if not initialized:
+                error_code, error_description = _safe_last_error(client)
+                return ProbeReport(
+                    success=False,
+                    category=classify_initialize_failure(error_code),
+                    message="initialize() returned False",
+                    mt5_error_code=error_code,
+                    mt5_error_description=error_description,
+                    package_version=package_version,
+                )
+
+            terminal_info_ok = False
+            try:
+                terminal_info_ok = client.terminal_info() is not None
+            except Exception:
+                terminal_info_ok = False
+
+            account_info_ok = False
+            account_error_code: int | None = None
+            account_error_description: str | None = None
+            account_raw = None
+            try:
+                account_raw = client.account_info()
+                account_info_ok = account_raw is not None
+            except Exception as exc:
+                account_info_ok = False
+                account_error_description = str(exc)
+            if not account_info_ok and account_error_description is None:
+                account_error_code, account_error_description = _safe_last_error(client)
+
+            if not account_info_ok:
+                return ProbeReport(
+                    success=False,
+                    category=classify_account_info_failure(account_error_code),
+                    message=(
+                        "account_info() returned None or raised after a successful initialize()"
+                    ),
+                    mt5_error_code=account_error_code,
+                    mt5_error_description=account_error_description,
+                    package_version=package_version,
+                    terminal_info_ok=terminal_info_ok,
+                )
+
+            if not config.allow_account_login:
+                observed_login = getattr(account_raw, "login", None)
+                if observed_login != config.login:
+                    return ProbeReport(
+                        success=False,
+                        category=ConnectionDiagnosticCategory.ACCOUNT_MISMATCH,
+                        message=(
+                            f"MT5_ACCOUNT_MISMATCH: expected login {config.login}, the "
+                            f"terminal is currently attached to login {observed_login!r} "
+                            "instead -- never logging in automatically to correct this"
+                        ),
+                        package_version=package_version,
+                        terminal_info_ok=terminal_info_ok,
+                        account_info_ok=True,
+                    )
+
             return ProbeReport(
-                success=False,
-                category=classify_account_info_failure(account_error_code),
-                message="account_info() returned None or raised after a successful initialize()",
-                mt5_error_code=account_error_code,
-                mt5_error_description=account_error_description,
+                success=True,
+                category=None,
+                message="initialize/terminal_info/account_info all succeeded",
                 package_version=package_version,
                 terminal_info_ok=terminal_info_ok,
+                account_info_ok=True,
             )
-
-        return ProbeReport(
-            success=True,
-            category=None,
-            message="initialize/terminal_info/account_info all succeeded",
-            package_version=package_version,
-            terminal_info_ok=terminal_info_ok,
-            account_info_ok=True,
-        )
+        finally:
+            if initialized:
+                with contextlib.suppress(Exception):
+                    client.shutdown()
     finally:
-        if initialized:
-            with contextlib.suppress(Exception):
-                client.shutdown()
+        lock.release()
 
 
 def _safe_last_error(client: MT5ClientProtocol) -> tuple[int | None, str | None]:

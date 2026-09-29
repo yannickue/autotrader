@@ -40,6 +40,7 @@ from adapters.activtrades_mt5.bounded import (  # noqa: E402
     run_worker_bounded,
 )
 from adapters.activtrades_mt5.diagnostics import classify_initialize_failure  # noqa: E402
+from adapters.activtrades_mt5.lock import acquire_mt5_lock  # noqa: E402
 from adapters.activtrades_mt5.real_client import get_real_client  # noqa: E402
 from adapters.config import MT5ConfigError, load_mt5_connection_config  # noqa: E402
 
@@ -59,6 +60,17 @@ def _run_worker() -> int:
     if not Path(PORTABLE_TERMINAL_PATH).is_file():
         print("PORTABLE_ATTACH: FAIL")
         print(f"reason: TERMINAL_NOT_FOUND: {PORTABLE_TERMINAL_PATH!r} does not exist")
+        return 1
+
+    # ACCOUNT PROTECTION INVARIANT: every real initialize() call in this
+    # codebase is single-owner-locked (see `adapters/activtrades_mt5/
+    # lock.py`), including this diagnostic's attach-only call against a
+    # separate portable instance -- a second real MT5-touching process must
+    # never overlap this one.
+    lock = acquire_mt5_lock()
+    if lock is None:
+        print("PORTABLE_ATTACH: FAIL")
+        print("reason: MT5_CONNECTION_BUSY: another process already holds the real MT5 lock")
         return 1
 
     client = get_real_client()
@@ -100,6 +112,7 @@ def _run_worker() -> int:
         if attached:
             with contextlib.suppress(Exception):
                 client.shutdown()
+        lock.release()
 
 
 def main(argv: list[str] | None = None) -> int:
