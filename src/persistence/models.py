@@ -197,21 +197,53 @@ class PortfolioStateRecord:
         _require_utc(self.updated_at, "updated_at")
 
 
+# Mirrors risk.models.ReconciliationState / ReconciliationSource values (plain strings
+# here by design; tests/unit/persistence/test_store.py pins them against the enums).
+RECONCILIATION_STATES = frozenset({"not_reconciled", "reconciling", "reconciled", "mismatch"})
+RECONCILIATION_SOURCES = frozenset({"venue_snapshot", "paper_self_check"})
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class ReconciliationStateRecord:
-    """Last-known venue reconciliation outcome."""
+    """Last-known reconciliation outcome, INCLUDING what it was compared against.
+
+    `state` + `source` + `last_reconciled_at` (the time of the last successful
+    comparison, None if none) are persisted explicitly. This record is an audit
+    trail, never an authority: after a restart the engine starts NOT_RECONCILED
+    regardless of what is stored here, and a `paper_self_check` record can never
+    be read back as a venue reconciliation (`grants_venue_authority`).
+    """
 
     mode: str
     reconciled: bool
     mismatch_reason: str | None
     last_reconciled_at: datetime | None
     updated_at: datetime
+    state: str = "not_reconciled"
+    source: str | None = None
 
     def __post_init__(self) -> None:
         _require_nonempty(self.mode, "mode")
+        if self.state not in RECONCILIATION_STATES:
+            raise ValueError(f"unknown reconciliation state: {self.state!r}")
+        if self.source is not None and self.source not in RECONCILIATION_SOURCES:
+            raise ValueError(f"unknown reconciliation source: {self.source!r}")
         if self.last_reconciled_at is not None:
             _require_utc(self.last_reconciled_at, "last_reconciled_at")
         _require_utc(self.updated_at, "updated_at")
+        if self.reconciled != (self.state == "reconciled"):
+            raise ValueError("reconciled flag must equal (state == 'reconciled')")
+        if self.state != "reconciled" and self.source is not None:
+            raise ValueError("only a reconciled record may carry a source")
+        if self.state == "reconciled" and (
+            self.source is None or self.last_reconciled_at is None
+        ):
+            raise ValueError("a reconciled record requires a source and last_reconciled_at")
+
+    @property
+    def grants_venue_authority(self) -> bool:
+        """True only for a RECONCILED record compared against a real venue snapshot."""
+        return self.state == "reconciled" and self.source == "venue_snapshot"
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

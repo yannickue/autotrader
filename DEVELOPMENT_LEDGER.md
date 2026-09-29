@@ -723,3 +723,10 @@ BUG 1: `realized_pnl_today` was all-time realized PnL minus all-time fees -> now
 BUG 2: READY was treated as reconciled, `last_reconciled_at=now` fabricated, recovery "reconciled" against itself -> `ReconciliationState` owned by the engine, set only by `reconcile()`.
 RESULT: 1299 passed, 1 skipped; ruff + compileall clean. Old engines kept, marked LEGACY_RUNTIME / SHADOW_ORACLE.
 NEXT DECISION: user review, then commit; C3 (GER40 data plane) only after.
+
+## C2.1 final reconciliation hardening (2026-09-29)
+
+TASK: persist reconciliation source; reduce-only defense in depth at execution admission; outbound-vs-inbound invariant.
+MODELS: lead Sonnet (direct); Codex read-only review x2 (1 Critical + 3 High, then 1 High; all fixed or decided, see below).
+DECISION: simulated fills of RESTING reduce-only/protective orders stay ungated (paper stand-in for broker-side stops); documented in docs/EXECUTION_CONTRACT.md.
+RESULT: 1344 passed, 1 skipped; ruff + compileall clean. DST/rollover still PENDING_BROKER_CALIBRATION. C3 not started.

@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 
 from risk.engine import RiskEngine
-from risk.models import ReconciliationState, RiskReason, RiskSide
+from risk.models import ReconciliationState, RiskReason, RiskSide, RuntimeMode
 from risk.policy import (
     PendingExposure,
     PolicyRejection,
@@ -253,3 +253,22 @@ def test_reduce_only_never_adds_exposure_and_ignores_halt_but_not_reconciliation
         args.update(kwargs)
         result = pure.evaluate_reduce_only(**args)
         assert isinstance(result, PolicyRejection) and result.reason_code is reason
+
+
+@pytest.mark.parametrize(
+    "runtime_mode",
+    [RuntimeMode.READY, RuntimeMode.DEGRADED, RuntimeMode.HALTED, RuntimeMode.RECONCILING],
+)
+def test_reduce_only_is_allowed_in_any_runtime_mode_when_reconciled(runtime_mode) -> None:
+    """HALTED/DEGRADED do not by themselves prohibit an exit; RECONCILED is what counts."""
+    account = _account(positions={"BTCUSDT-PERP": Decimal("2")})
+    legacy = RiskEngine(_policy()).evaluate_reduce_only(
+        request_id="r-mode",
+        instrument="BTCUSDT-PERP",
+        side=RiskSide.SELL,
+        quantity=Decimal("1"),
+        account=account,
+        runtime=_runtime(mode=runtime_mode, kill_switch=True),
+        now=NOW,
+    )
+    assert legacy.approved is True

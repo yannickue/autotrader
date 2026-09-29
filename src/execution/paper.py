@@ -115,6 +115,17 @@ class PaperExecutionEngine:
         self.reconciliation_state: ReconciliationState = ReconciliationState.NOT_RECONCILED
         self.reconciliation_source: ReconciliationSource | None = None
         self.last_reconciled_at: datetime | None = None
+        # Entry orders whose protective-order (stop/take-profit) sync had to be
+        # deferred because the engine was not RECONCILED when their fill was
+        # ingested; flushed on the next successful reconcile().
+        self._protective_sync_pending: set[str] = set()
+        # Latched by any INTERNAL_ERROR halt: an exception may have interrupted a
+        # multi-step mutation (e.g. portfolio booked, order accounting not), and
+        # `reconcile()` only compares open-order ids and position quantities, so it
+        # cannot prove internal consistency. While latched, reconcile() refuses to
+        # return to RECONCILED; only a fresh engine restored via import_checkpoint()
+        # (i.e. recovery from durable state) clears it.
+        self._internal_inconsistency: str | None = None
         self._orders: dict[str, Order] = {}
         self._requests: dict[str, SubmitResult] = {}
         self._client_id_owner: dict[str, str] = {}
@@ -154,6 +165,9 @@ class PaperExecutionEngine:
         self.halt_reason = f"{code}: {reason}"
         if code in self._STATE_UNRELIABLE_HALT_CODES:
             self.reconciliation_state = ReconciliationState.MISMATCH
+            self.reconciliation_source = None
+        if code is HaltCode.INTERNAL_ERROR:
+            self._internal_inconsistency = reason
         self._log("halt", code=str(code), reason=reason)
 
     def halt_state_unreliable(self, reason: str) -> None:
@@ -162,6 +176,7 @@ class PaperExecutionEngine:
         self.mode = EngineMode.HALTED
         self.halt_reason = reason
         self.reconciliation_state = ReconciliationState.MISMATCH
+        self.reconciliation_source = None
         self._log("halt", code="STATE_UNRELIABLE", reason=reason)
 
     def reconcile(
@@ -177,7 +192,15 @@ class PaperExecutionEngine:
         (and, as a consequence, `EngineMode.READY`). `source` records what
         the snapshot really was; a paper self-check is labelled as such.
         """
+        if self._internal_inconsistency is not None:
+            self._halt(
+                HaltCode.RECONCILIATION_MISMATCH,
+                "internal inconsistency latched by an earlier INTERNAL_ERROR "
+                f"({self._internal_inconsistency}); restore from durable state instead",
+            )
+            return False
         self.reconciliation_state = ReconciliationState.RECONCILING
+        self.reconciliation_source = None
         try:
             mismatch = self._find_reconciliation_mismatch(venue_state)
         except Exception as exc:  # malformed venue data etc.: fail closed, never stay READY
@@ -192,7 +215,20 @@ class PaperExecutionEngine:
         self.reconciliation_source = source
         self.last_reconciled_at = now
         self._log("reconciled", at=now.isoformat(), source=str(source))
+        self._flush_pending_protective_sync(now)
         return True
+
+    def _flush_pending_protective_sync(self, now: datetime) -> None:
+        pending = sorted(self._protective_sync_pending)
+        self._protective_sync_pending.clear()
+        for entry_id in pending:
+            entry = self._orders.get(entry_id)
+            position = self.portfolio.positions.get(entry.instrument) if entry else None
+            if entry is None or position is None or position.quantity == ZERO:
+                continue  # position no longer open: nothing left to protect
+            if (position.quantity > ZERO) != (entry.side is OrderSide.BUY):
+                continue  # position is on the other side now
+            self._sync_protective_orders(entry, now)
 
     def resume_after_reconcile(
         self,
@@ -327,17 +363,35 @@ class PaperExecutionEngine:
     def _admission_blocked(self, *, reduce_only: bool) -> bool:
         """True if an order of this kind must not be admitted right now.
 
-        READY alone is never enough: admission in READY also needs an explicit
-        RECONCILED outcome. New exposure is admitted only then. Reduce-only
-        keeps its pre-existing, explicitly documented exception: it may
-        proceed while HALTED (it can only shrink exposure and is checked
-        against the real portfolio, so emergency exits stay possible even
-        after a mismatch halt). The reconciliation requirement for reduce-only
-        is enforced one layer up, by the risk policy, on the account state.
+        This gates OUTBOUND actions only (orders/replacements that could change
+        exposure). It never gates INBOUND venue truth (`report_fill`, see
+        docs/EXECUTION_CONTRACT.md "Outbound vs inbound").
+
+        READY alone is never enough: every admission needs an explicit
+        RECONCILED outcome (defense in depth -- the risk policy checks the same
+        state on the account). New exposure additionally needs mode READY.
+        Reduce-only is admissible in READY or HALTED (HALTED does not by itself
+        prohibit an exit) but only while RECONCILED: never in NOT_RECONCILED /
+        RECONCILING / MISMATCH, i.e. never after UNKNOWN_ORDER, INTERNAL_ERROR,
+        a reconciliation mismatch or a failed recovery. (`EngineMode` has no
+        DEGRADED; the risk layer's DEGRADED runtime mode does not block
+        reduce-only either.)
         """
+        if self.reconciliation_state is not ReconciliationState.RECONCILED:
+            return True
         if self.mode is EngineMode.READY:
-            return self.reconciliation_state is not ReconciliationState.RECONCILED
+            return False
         return not (self.mode is EngineMode.HALTED and reduce_only)
+
+    @property
+    def venue_reconciled(self) -> bool:
+        """True only for a RECONCILED outcome whose source was a real venue
+        snapshot. A PAPER_SELF_CHECK never satisfies this; any live/broker
+        gate must use this property, not `reconciliation_state` alone."""
+        return (
+            self.reconciliation_state is ReconciliationState.RECONCILED
+            and self.reconciliation_source is ReconciliationSource.VENUE_SNAPSHOT
+        )
 
     def _validate_submit(
         self,
@@ -657,7 +711,55 @@ class PaperExecutionEngine:
         quantity: Decimal,
         now: datetime,
         liquidity_role: LiquidityRole,
-    ) -> None:
+        inbound: bool = False,
+    ) -> bool:
+        """Returns True iff the fill is booked (now, or already booked earlier).
+
+        For INBOUND (venue truth) fills the venue-like clamps are replaced by
+        book-as-reported plus an explicit flag: a reduce-only fill larger than
+        the locally reducible position is booked in full and then halts as
+        RECONCILIATION_MISMATCH; a fill that could NOT be booked (order or
+        decision cap) leaves the engine MISMATCH, never silently RECONCILED.
+        """
+        notes: list[tuple[str, str]] = []
+        booked = self._apply_fill_inner(
+            order,
+            fill_id=fill_id,
+            price=price,
+            quantity=quantity,
+            now=now,
+            liquidity_role=liquidity_role,
+            inbound=inbound,
+            notes=notes,
+        )
+        if inbound:
+            for kind, text in notes:
+                if kind == "excess" and booked:
+                    self._halt(HaltCode.RECONCILIATION_MISMATCH, text)
+                elif kind == "unbooked" and not booked:
+                    self.reconciliation_state = ReconciliationState.MISMATCH
+                    self.reconciliation_source = None
+                    self._log("inbound_fill_not_booked", fill_id=fill_id, reason=text)
+        return booked
+
+    def _apply_fill_inner(
+        self,
+        order: Order,
+        *,
+        fill_id: str,
+        price: Decimal,
+        quantity: Decimal,
+        now: datetime,
+        liquidity_role: LiquidityRole,
+        inbound: bool,
+        notes: list[tuple[str, str]],
+    ) -> bool:
+        # `inbound=True`: the fill is venue/broker TRUTH (report_fill) and is
+        # ALWAYS ingested, whatever the mode or reconciliation state -- ignoring
+        # broker events never makes the system safer. `inbound=False` fills are
+        # this paper venue's own simulated matching of a resting order (an
+        # engine decision, the analogue of an outbound action), which may be
+        # deferred while unreconciled/halted.
         # Regression: a duplicate fill_id (e.g. the same underlying trade
         # reported once via on_trade()'s crossing path and again via
         # report_fill(), which use different outer dedup key shapes) used to
@@ -667,7 +769,7 @@ class PaperExecutionEngine:
         # false OVERFILL halt -- even though the portfolio itself would
         # have correctly treated it as a no-op. Check first.
         if self.portfolio.has_fill(fill_id):
-            return
+            return True
 
         # Regression: submit() and cancel_replace() both check self.mode
         # before letting a NEW order/replacement through, but nothing
@@ -682,14 +784,14 @@ class PaperExecutionEngine:
         # triggering another halt -- the engine is already not READY.
         # Reduce-only fills are still applied when unreconciled: they mirror a
         # real position reduction and deferring them would desynchronize state.
-        if not order.reduce_only and self._admission_blocked(reduce_only=False):
+        if not inbound and not order.reduce_only and self._admission_blocked(reduce_only=False):
             self._log(
                 "fill_deferred_not_ready",
                 client_order_id=order.client_order_id,
                 fill_id=fill_id,
                 mode=str(self.mode),
             )
-            return
+            return False
 
         if order.reduce_only:
             # Fail-closed, venue-like cap: a reduce-only order (manual or a
@@ -697,21 +799,34 @@ class PaperExecutionEngine:
             # the position it is reducing actually has open *at fill time* --
             # not merely at submit time, since other reduce-only orders may
             # have already reduced or flattened the position since then.
+            # Simulated (non-inbound) fills only: an INBOUND broker fill is
+            # truth and is booked as reported (see `_apply_fill`).
             allowed = self._reduce_only_allowed_quantity(order.instrument, order.side)
-            if allowed <= ZERO:
-                if not order.is_terminal():
-                    self._transition(order, OrderStatus.CANCELED, now)
-                    self._log(
-                        "reduce_only_canceled_no_position",
-                        client_order_id=order.client_order_id,
+            if inbound:
+                if allowed <= ZERO or quantity > allowed:
+                    notes.append(
+                        (
+                            "excess",
+                            f"inbound reduce-only fill {fill_id} ({quantity}) exceeds the locally "
+                            f"reducible quantity ({allowed}); booked as reported",
+                        )
                     )
-                return
-            if quantity > allowed:
-                quantity = allowed
+            else:
+                if allowed <= ZERO:
+                    if not order.is_terminal():
+                        self._transition(order, OrderStatus.CANCELED, now)
+                        self._log(
+                            "reduce_only_canceled_no_position",
+                            client_order_id=order.client_order_id,
+                        )
+                    return False
+                if quantity > allowed:
+                    quantity = allowed
 
         if order.filled_quantity + quantity > order.quantity:
             self._halt(HaltCode.OVERFILL, f"order {order.client_order_id} would overfill")
-            return
+            notes.append(("unbooked", f"inbound fill {fill_id} exceeds order quantity"))
+            return False
 
         # Decision-level cumulative cap, in addition to the per-order cap
         # above. cancel_replace() gives a replacement the same decision_id
@@ -733,7 +848,8 @@ class PaperExecutionEngine:
                     f"decision {order.decision_id} would overfill across replacement chain "
                     f"(order {order.client_order_id})",
                 )
-                return
+                notes.append(("unbooked", f"inbound fill {fill_id} exceeds decision quantity"))
+                return False
 
         fee = calculate_fill_fee(
             notional=price * quantity,
@@ -752,7 +868,7 @@ class PaperExecutionEngine:
             )
         )
         if not applied:
-            return  # duplicate fill id: no-op, never double count
+            return True  # duplicate fill id: already booked, never double count
 
         if self.fill_listener is not None:
             self.fill_listener(
@@ -795,7 +911,7 @@ class PaperExecutionEngine:
             self._log("late_fill_booked", client_order_id=order.client_order_id, fill_id=fill_id)
             if order.role is ChildRole.ENTRY:
                 self._sync_protective_orders(order, now)
-            return
+            return True
 
         target = (
             OrderStatus.FILLED if order.remaining_quantity == ZERO else OrderStatus.PARTIALLY_FILLED
@@ -835,6 +951,7 @@ class PaperExecutionEngine:
                 self._cancel_other_reduce_only_orders(
                     order.instrument, now, keep=order.client_order_id
                 )
+        return True
 
     def report_fill(
         self, client_order_id: str, trade_id: str, price: Decimal, quantity: Decimal, now: datetime
@@ -850,8 +967,7 @@ class PaperExecutionEngine:
             key = (client_order_id, trade_id)
             if key in self._seen_fill_keys:
                 return
-            self._seen_fill_keys.add(key)
-            self._apply_fill(
+            booked = self._apply_fill(
                 order,
                 fill_id=f"{client_order_id}:{trade_id}",
                 price=price,
@@ -861,13 +977,30 @@ class PaperExecutionEngine:
                 # hook): the conservative, higher-fee choice since we cannot
                 # tell whether this order added or removed liquidity.
                 liquidity_role=LiquidityRole.TAKER,
+                inbound=True,
             )
+            if booked:
+                # Marked seen only once actually booked: a fill that was not
+                # applied (cap halt, exception) must not be silently discarded
+                # as a "duplicate" if the venue re-delivers it.
+                self._seen_fill_keys.add(key)
         except Exception as exc:
             self._halt(HaltCode.INTERNAL_ERROR, f"exception applying reported fill: {exc}")
 
     # -- protective orders -------------------------------------------------
 
     def _sync_protective_orders(self, entry: Order, now: datetime) -> None:
+        if self._admission_blocked(reduce_only=True):
+            # Creating/resizing protective (reduce-only) orders is an outbound
+            # action: not while NOT_RECONCILED / RECONCILING / MISMATCH. The
+            # sync is remembered and flushed after the next successful
+            # reconcile(); the (inbound) fill itself is still booked.
+            self._protective_sync_pending.add(entry.client_order_id)
+            self._log(
+                "protective_sync_deferred_unreconciled",
+                client_order_id=entry.client_order_id,
+            )
+            return
         protective_qty = entry.filled_quantity
         protective_side = OrderSide.SELL if entry.side is OrderSide.BUY else OrderSide.BUY
 
@@ -1145,6 +1278,7 @@ class PaperExecutionEngine:
         return {
             "mode": str(self.mode),
             "halt_reason": self.halt_reason,
+            "protective_sync_pending": sorted(self._protective_sync_pending),
             "requests": {
                 request_id: {
                     "accepted": result.accepted,
@@ -1216,6 +1350,8 @@ class PaperExecutionEngine:
             EngineMode.HALTED if persisted_mode is EngineMode.HALTED else EngineMode.RECONCILING
         )
         self.halt_reason = checkpoint["halt_reason"]
+        self._protective_sync_pending = set(checkpoint.get("protective_sync_pending", []))
+        self._internal_inconsistency = None  # state is being replaced from durable state
         # A restart never inherits a reconciliation outcome: whatever the
         # checkpoint's mode said, nothing has been compared since the restart.
         self.reconciliation_state = ReconciliationState.NOT_RECONCILED

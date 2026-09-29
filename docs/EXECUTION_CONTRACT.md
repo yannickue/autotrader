@@ -82,3 +82,37 @@ Market orders still require price-band and maximum-slippage policies. Stops must
 an equivalent deterministic contingency must be active; otherwise the system reduces or halts
 exposure according to the approved recovery policy.
 
+
+## Outbound actions vs inbound venue events (C2.1 -- binding for the Nautilus adapter)
+
+- **OUTBOUND** actions that can change broker exposure (submit, modify/replace, cancel-and-replace,
+  any order-creating request) require runtime/reconciliation admission: RECONCILED for everything;
+  additionally mode READY for new exposure; reduce-only is admissible in READY or HALTED but never
+  while NOT_RECONCILED / RECONCILING / MISMATCH. Enforced at the final execution admission layer
+  (`PaperExecutionEngine._admission_blocked`) and, independently, by the risk policy.
+- **INBOUND** broker truth -- fills, cancellations, rejects, position reports, order reports -- is
+  ALWAYS ingested, in RECONCILING, DEGRADED, HALTED and MISMATCH alike. Ignoring or deferring a
+  broker event never makes the system safer; it desynchronizes local state from reality. Ingestion may
+  itself raise a flag (unknown order -> HALT + MISMATCH; overfill -> HALT) but never drops the event.
+- Terminology in `PaperExecutionEngine`: `report_fill()` is INBOUND truth and bypasses the admission
+  deferral (`_apply_fill(inbound=True)`). `on_trade()`/`on_time()` matching of a resting order is the
+  paper venue's OWN simulated decision, the analogue of an outbound action, and may be deferred while
+  the engine is unreconciled/halted. There is no such thing in a real venue: with Nautilus the venue
+  decides fills, and every fill it reports is inbound.
+- Inbound fills are booked AS REPORTED (no venue-like clamp). If a reported reduce-only fill exceeds the
+  locally reducible position it is booked in full and then the engine HALTs as RECONCILIATION_MISMATCH.
+  If an inbound fill cannot be booked (order/decision cap, exception) the engine becomes MISMATCH and the
+  fill is NOT marked seen, so a re-delivery is never silently discarded as a duplicate.
+- Creating or resizing protective (reduce-only) child orders is an OUTBOUND action: while the engine is
+  not RECONCILED it is deferred (remembered in the checkpoint) and flushed by the next successful
+  `reconcile()`, if the position is still open on the same side. The inbound fill itself is booked at once.
+- Simulated fills of RESTING reduce-only/protective orders are the paper stand-in for broker-side stops:
+  they only shrink exposure and mirror what a real venue does regardless of our state, so they are
+  deliberately not deferred (`test_resting_protective_stop_still_fills_when_state_is_unreconciled`).
+  Simulated fills of non-reduce-only resting orders remain deferrable.
+- Not yet modeled in the paper engine (adapter work, C5): inbound cancel/reject/order/position
+  reports. The invariant above applies to them when added.
+- An INTERNAL_ERROR halt latches an internal-inconsistency flag: `reconcile()` compares only open-order
+  ids and position quantities and cannot prove that order/decision accounting is intact after an exception
+  interrupted a multi-step mutation, so while latched it refuses to return to RECONCILED (MISMATCH). Only
+  restoring from durable state (`import_checkpoint`, i.e. `recover_pipeline`) clears it.

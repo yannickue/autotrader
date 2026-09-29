@@ -1416,6 +1416,12 @@ class PaperTradingPipeline:
             reconciled=(
                 self.execution_engine.reconciliation_state is ReconciliationState.RECONCILED
             ),
+            state=self.execution_engine.reconciliation_state.value,
+            source=(
+                None
+                if self.execution_engine.reconciliation_source is None
+                else self.execution_engine.reconciliation_source.value
+            ),
             mismatch_reason=self.execution_engine.halt_reason,
             # The engine's own timestamp of its last successful comparison
             # (None if none happened since start/restart) -- never `now`

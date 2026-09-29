@@ -142,16 +142,19 @@ def test_resume_after_reconcile_returns_to_ready(engine, now):
     assert engine.mode == EngineMode.READY
 
 
-def test_reduce_only_submit_allowed_while_halted_if_it_truly_reduces(engine, now):
+def test_reduce_only_submit_allowed_while_halted_and_reconciled_if_it_truly_reduces(engine, now):
     open_decision = make_decision(decision_id="d-open", quantity="2")
     open_request = make_request(
         request_id="r-open", risk_decision_id="d-open", client_order_id="c-open", quantity="2"
     )
     engine.submit(open_request, open_decision, make_quote(), now)
 
-    # force a halt
-    engine.reconcile({"orders": {"ghost": {}}, "positions": {}}, now)
+    # force a halt that does NOT invalidate reconciled state (HALTED + RECONCILED
+    # may still exit; a mismatch/unknown-order halt may not -- see
+    # test_reduce_only_reconciliation_admission.py)
+    engine._halt(HaltCode.OVERFILL, "test halt keeping state reconciled")
     assert engine.mode == EngineMode.HALTED
+    assert engine.reconciliation_state.value == "reconciled"
 
     close_decision = make_decision(
         decision_id="d-close", quantity="1", side="sell", reduce_only=True
@@ -195,7 +198,7 @@ def test_non_reduce_only_cancel_replace_rejected_while_halted(engine, now):
     assert "client-1-r1" not in engine._orders
 
 
-def test_reduce_only_cancel_replace_still_allowed_while_halted(engine, now):
+def test_reduce_only_cancel_replace_still_allowed_while_halted_and_reconciled(engine, now):
     """A reduce-only order's cancel/replace can only shrink exposure, so it
     stays allowed while HALTED -- mirrors submit()'s existing policy."""
     open_decision = make_decision(decision_id="d-open", quantity="2")
@@ -220,8 +223,9 @@ def test_reduce_only_cancel_replace_still_allowed_while_halted(engine, now):
     )
     engine.submit(close_request, close_decision, make_quote(), now)
 
-    engine.reconcile({"orders": {"ghost": {}}, "positions": {}}, now)
+    engine._halt(HaltCode.OVERFILL, "test halt keeping state reconciled")
     assert engine.mode == EngineMode.HALTED
+    assert engine.reconciliation_state.value == "reconciled"
 
     result = engine.cancel_replace("c-close", "c-close-r1", now, new_price=Decimal("98"))
     assert result.accepted is True

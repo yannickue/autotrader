@@ -129,6 +129,8 @@ def _reconciliation_state(**changes: object) -> ReconciliationStateRecord:
     values: dict[str, object] = {
         "mode": "ready",
         "reconciled": True,
+        "state": "reconciled",
+        "source": "venue_snapshot",
         "mismatch_reason": None,
         "last_reconciled_at": NOW,
         "updated_at": NOW,
@@ -249,7 +251,11 @@ def test_portfolio_state_round_trip_upsert_replaces(store: SQLiteStore) -> None:
 
 def test_reconciliation_state_round_trip(store: SQLiteStore) -> None:
     state = _reconciliation_state(
-        mode="reconciling", reconciled=False, mismatch_reason="unknown order"
+        mode="reconciling",
+        reconciled=False,
+        state="mismatch",
+        source=None,
+        mismatch_reason="unknown order",
     )
     store.set_reconciliation_state(state)
     fetched = store.get_reconciliation_state()
@@ -460,7 +466,7 @@ def test_recover_rejects_a_v1_stamped_database(db_path: Path) -> None:
     assert result.ok is False
     assert result.snapshot is None
     assert result.details["found_version"] == "1"
-    assert result.details["expected_version"] == STATE_FORMAT_VERSION == "2"
+    assert result.details["expected_version"] == STATE_FORMAT_VERSION == "3"
 
 
 # -- transaction() ------------------------------------------------------------
@@ -525,7 +531,9 @@ def test_write_snapshot_atomically_replaces_all_mutable_tables_in_one_commit(
         reduce_only_reservations=[_reduce_only_reservation(decision_id="new-ro-dec")],
         portfolio_state=_portfolio_state(realized_pnl=Decimal("2")),
         halt_state=_halt_state(halted=True, reason="halted for test"),
-        reconciliation_state=_reconciliation_state(mode="reconciling", reconciled=False),
+        reconciliation_state=_reconciliation_state(
+            mode="reconciling", reconciled=False, state="reconciling", source=None
+        ),
         component_state={"execution": {"seen": ["b"]}},
     )
 

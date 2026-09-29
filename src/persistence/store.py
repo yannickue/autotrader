@@ -58,7 +58,7 @@ from persistence.models import (
 # table, and fills are now ordered by insertion (`rowid`) rather than the
 # lexicographic `fill_id` sort a v1 reader would use -- a v1-stamped database
 # is rejected by `recover()` below rather than silently reinterpreted.
-STATE_FORMAT_VERSION = "2"
+STATE_FORMAT_VERSION = "3"
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -147,7 +147,9 @@ CREATE TABLE IF NOT EXISTS reconciliation_state (
     reconciled INTEGER NOT NULL,
     mismatch_reason TEXT,
     last_reconciled_at TEXT,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    reconciliation_state TEXT NOT NULL DEFAULT 'not_reconciled',
+    reconciliation_source TEXT
 );
 
 CREATE TABLE IF NOT EXISTS halt_state (
@@ -210,6 +212,7 @@ class SQLiteStore:
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA foreign_keys = ON")
         self._conn.executescript(_SCHEMA)
+        self._add_missing_reconciliation_columns()
         row = self._conn.execute(
             "SELECT value FROM meta WHERE key = 'state_format_version'"
         ).fetchone()
@@ -217,6 +220,24 @@ class SQLiteStore:
             self._conn.execute(
                 "INSERT INTO meta (key, value) VALUES ('state_format_version', ?)",
                 (STATE_FORMAT_VERSION,),
+            )
+
+    def _add_missing_reconciliation_columns(self) -> None:
+        """A DB written by format version 2 lacks the reconciliation state/source
+        columns. Add them (defaults: not_reconciled / NULL) so writes do not
+        crash; `recover()` still refuses such a DB (state_format_version 2 !=
+        3), so nothing is ever interpreted from a pre-source row."""
+        existing = {
+            r["name"] for r in self._conn.execute("PRAGMA table_info(reconciliation_state)")
+        }
+        if "reconciliation_state" not in existing:
+            self._conn.execute(
+                "ALTER TABLE reconciliation_state ADD COLUMN "
+                "reconciliation_state TEXT NOT NULL DEFAULT 'not_reconciled'"
+            )
+        if "reconciliation_source" not in existing:
+            self._conn.execute(
+                "ALTER TABLE reconciliation_state ADD COLUMN reconciliation_source TEXT"
             )
 
     def close(self) -> None:
@@ -524,16 +545,22 @@ class SQLiteStore:
         self._conn.execute(
             """
             INSERT INTO reconciliation_state
-                (id, mode, reconciled, mismatch_reason, last_reconciled_at, updated_at)
-            VALUES (1, :mode, :reconciled, :mismatch_reason, :last_reconciled_at, :updated_at)
+                (id, mode, reconciled, mismatch_reason, last_reconciled_at, updated_at,
+                 reconciliation_state, reconciliation_source)
+            VALUES (1, :mode, :reconciled, :mismatch_reason, :last_reconciled_at, :updated_at,
+                    :reconciliation_state, :reconciliation_source)
             ON CONFLICT (id) DO UPDATE SET
                 mode = excluded.mode,
                 reconciled = excluded.reconciled,
                 mismatch_reason = excluded.mismatch_reason,
                 last_reconciled_at = excluded.last_reconciled_at,
-                updated_at = excluded.updated_at
+                updated_at = excluded.updated_at,
+                reconciliation_state = excluded.reconciliation_state,
+                reconciliation_source = excluded.reconciliation_source
             """,
             {
+                "reconciliation_state": state.state,
+                "reconciliation_source": state.source,
                 "mode": state.mode,
                 "reconciled": int(state.reconciled),
                 "mismatch_reason": state.mismatch_reason,
@@ -823,6 +850,8 @@ def _row_to_reconciliation_state(row: sqlite3.Row) -> ReconciliationStateRecord:
         mismatch_reason=row["mismatch_reason"],
         last_reconciled_at=_ts_opt(row["last_reconciled_at"], "last_reconciled_at"),
         updated_at=_ts(row["updated_at"], "updated_at"),
+        state=row["reconciliation_state"],
+        source=row["reconciliation_source"],
     )
 
 

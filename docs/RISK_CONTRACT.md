@@ -145,17 +145,21 @@ arithmetic are unchanged (`tests/unit/risk/test_policy_purity_parity.py`).
 
 ### Post-fix review notes (2026-09-29)
 
-- Execution admission: `PaperExecutionEngine` admits new exposure (submit, cancel/replace, fills of
-  resting orders) only in mode READY **and** `RECONCILED`. Reduce-only keeps its pre-existing rule of
-  being admissible while HALTED (it can only shrink exposure and is checked against the real
-  portfolio, so emergency exits survive a mismatch halt); the reconciliation requirement for
-  reduce-only is enforced one layer up, by the risk policy, on `AccountRiskState.reconciliation`.
-  Reduce-only fills are still applied when unreconciled (they mirror a real reduction).
+- Execution admission (C2.1, supersedes the earlier note): `PaperExecutionEngine` admits OUTBOUND
+  orders only when `RECONCILED`. New exposure additionally needs mode READY. Reduce-only is admissible
+  in READY or HALTED -- HALTED does not by itself prohibit an exit -- but never in NOT_RECONCILED,
+  RECONCILING or MISMATCH (so never after UNKNOWN_ORDER, INTERNAL_ERROR, a mismatch halt or a failed
+  recovery). The same state is also checked by the risk policy: defense in depth. `EngineMode` has no
+  DEGRADED; the risk layer's DEGRADED runtime mode does not block reduce-only.
+  The table: READY+RECONCILED exit allowed; HALTED+RECONCILED exit allowed; NOT_RECONCILED /
+  RECONCILING / MISMATCH exit blocked.
 - `RealizedPnlEntry` validates at construction (UTC-aware timestamp, finite amounts); a naive fill
   timestamp is rejected before any portfolio mutation; `Portfolio.import_state` is atomic.
-- Known, deferred (Medium): (a) `ReconciliationStateRecord`/SQLite do not persist
-  `reconciliation_source`, so a persisted `PAPER_SELF_CHECK` is indistinguishable from a venue
-  reconciliation to a later reader -- add the column before any consumer relies on it (C5/C6);
-  (b) a rollover time that falls in a DST gap/overlap of the configured zone is resolved by
+- Persistence (C2.1): the reconciliation record now stores `state`, `source` and the time of the last
+  successful comparison (`last_reconciled_at`); state format version 3. A `paper_self_check` record
+  never grants venue authority (`ReconciliationStateRecord.grants_venue_authority`,
+  `PaperExecutionEngine.venue_reconciled`); a restart always begins NOT_RECONCILED and a stored record
+  is an audit trail, never an authority. A format-2 database is refused by `recover()`.
+- Known, deferred (Medium): a rollover time that falls in a DST gap/overlap of the configured zone is resolved by
   `zoneinfo` defaults (fold=0) -- pick a rollover time outside DST transitions until the broker's
   real rollover is calibrated.
