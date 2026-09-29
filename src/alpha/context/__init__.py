@@ -182,6 +182,7 @@ def classify_context(frame: pd.DataFrame, config: ContextConfig | None = None) -
         position: view.m15.index[position] for position in np.flatnonzero(view.m15["complete"])
     }
     records: list[dict[str, object]] = []
+    rows: dict[pd.Timestamp, dict[str, object]] = {}
     for position in view.m15_alignment:
         if position < 0:
             record = {column: np.nan for column in context.columns if column not in CONTEXT_LABELS}
@@ -189,7 +190,9 @@ def classify_context(frame: pd.DataFrame, config: ContextConfig | None = None) -
             record.update({"defined": False, "labels": (UNDEFINED,), "higher_bar_ts": None})
         else:
             stamp = position_to_stamp[int(position)]
-            record = context.loc[stamp].to_dict()
+            if stamp not in rows:  # one lookup per higher bar, reused by its M5 bars
+                rows[stamp] = context.loc[stamp].to_dict()
+            record = dict(rows[stamp])
             record["higher_bar_ts"] = stamp
         records.append(record)
     return pd.DataFrame(records, index=view.m5.index)

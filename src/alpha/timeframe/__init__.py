@@ -78,33 +78,59 @@ def _bucket_opens(index: pd.DatetimeIndex, minutes: int) -> pd.DatetimeIndex:
 
 
 def _aggregate(m5: pd.DataFrame, minutes: int) -> pd.DataFrame:
+    # Vectorised over buckets. M5 timestamps are strictly increasing and bucket opens are a
+    # non-decreasing function of them, so every bucket is one contiguous run of positions.
     expected_count = minutes // 5
     buckets = _bucket_opens(m5.index, minutes)
-    records: list[dict[str, object]] = []
-    starts: list[pd.Timestamp] = []
-    for bucket_open, positions in pd.Series(
-        np.arange(len(m5)), index=buckets
-    ).groupby(level=0, sort=False):
-        source_positions = positions.to_numpy(dtype=np.int64)
-        source = m5.iloc[source_positions]
-        expected = pd.date_range(bucket_open, periods=expected_count, freq="5min")
-        complete = len(source) == expected_count and source.index.equals(expected)
-        starts.append(bucket_open)
-        records.append(
+    if not len(m5):
+        return pd.DataFrame(
             {
-                "open": float(source["open"].iloc[0]) if complete else np.nan,
-                "high": float(source["high"].max()) if complete else np.nan,
-                "low": float(source["low"].min()) if complete else np.nan,
-                "close": float(source["close"].iloc[-1]) if complete else np.nan,
-                "spread_pts": float(source["spread_pts"].iloc[-1]) if complete else np.nan,
-                "complete": bool(complete),
-                "source_count": len(source),
-                "source_start": int(source_positions[0]),
-                "source_end": int(source_positions[-1]),
-                "available_at": bucket_open + pd.Timedelta(minutes=minutes),
-            }
-        )
-    result = pd.DataFrame(records, index=pd.DatetimeIndex(starts, name="ts"))
+                "open": [], "high": [], "low": [], "close": [], "spread_pts": [],
+                "complete": [], "source_count": [], "source_start": [], "source_end": [],
+                "available_at": [],
+            },
+            index=pd.DatetimeIndex([], name="ts"),
+        )  # fmt: skip
+    bucket_ns = buckets.as_unit("ns").asi8
+    starts = np.flatnonzero(np.r_[True, bucket_ns[1:] != bucket_ns[:-1]])
+    ends = np.r_[starts[1:], len(m5)] - 1
+    counts = ends - starts + 1
+    step = pd.Timedelta(minutes=5).value
+    stamps = m5.index.as_unit("ns").asi8
+    bucket_open_ns = bucket_ns[starts]
+    # Strictly increasing timestamps on the 5-minute grid: exactly ``expected_count`` bars that
+    # start at the bucket open and end (count - 1) steps later are the complete expected run.
+    complete = (
+        (counts == expected_count)
+        & (stamps[starts] == bucket_open_ns)
+        & (stamps[ends] == bucket_open_ns + (expected_count - 1) * step)
+    )
+
+    def column(name: str) -> np.ndarray:
+        return m5[name].to_numpy(dtype=float)
+
+    high = np.fmax.reduceat(column("high"), starts)  # NaN-skipping, like Series.max
+    low = np.fmin.reduceat(column("low"), starts)  # NaN-skipping, like Series.min
+    open_index = buckets[starts]
+
+    def masked(values: np.ndarray) -> np.ndarray:
+        return np.where(complete, values, np.nan)
+
+    result = pd.DataFrame(
+        {
+            "open": masked(column("open")[starts]),
+            "high": masked(high),
+            "low": masked(low),
+            "close": masked(column("close")[ends]),
+            "spread_pts": masked(column("spread_pts")[ends]),
+            "complete": complete.astype(bool),
+            "source_count": counts.astype(np.int64),
+            "source_start": starts.astype(np.int64),
+            "source_end": ends.astype(np.int64),
+            "available_at": open_index + pd.Timedelta(minutes=minutes),
+        },
+        index=pd.DatetimeIndex(open_index, name="ts"),
+    )
     return result
 
 
@@ -188,6 +214,15 @@ class MtfView:
         self.m15_alignment = _alignment(self.m5.index, self.m15)
         self.h1_alignment = _alignment(self.m5.index, self.h1)
         self._levels = _session_levels(self.m5)
+        # Runtime-only acceleration of ``at``. Row access through ``iloc`` on these frames costs
+        # far more than the strategy logic that consumes it, and every state is requested once
+        # per strategy variant. M5 rows are rebuilt from one homogeneous numpy block (same dtype
+        # and values ``iloc`` produces); M15/H1 rows (mixed dtypes) are materialised through
+        # ``iloc`` once per higher bar and handed out as copies, exactly as before.
+        self._m5_values = self.m5.to_numpy()
+        self._m5_columns = self.m5.columns
+        self._m5_dtype = self._m5_values.dtype
+        self._row_cache: dict[tuple[str, int], pd.Series] = {}
 
     def _position(self, index_or_ts: int | pd.Timestamp) -> int:
         if isinstance(index_or_ts, (int, np.integer)):
@@ -203,18 +238,30 @@ class MtfView:
             raise KeyError(stamp)
         return int(location)
 
-    @staticmethod
-    def _known(table: pd.DataFrame, position: int) -> pd.Series | None:
-        return None if position < 0 else table.iloc[position].copy()
+    def _known(self, name: str, position: int) -> pd.Series | None:
+        if position < 0:
+            return None
+        key = (name, position)
+        row = self._row_cache.get(key)
+        if row is None:
+            row = getattr(self, name).iloc[position].copy()
+            self._row_cache[key] = row
+        return row.copy()
 
     def at(self, index_or_ts: int | pd.Timestamp) -> MtfState:
         """Return state known at the close of the selected M5 bar-open timestamp."""
 
         position = self._position(index_or_ts)
+        m5 = pd.Series(
+            self._m5_values[position].copy(),
+            index=self._m5_columns,
+            name=self.m5.index[position],
+            dtype=self._m5_dtype,
+        )
         return MtfState(
-            m5=self.m5.iloc[position].copy(),
-            m15=self._known(self.m15, int(self.m15_alignment[position])),
-            h1=self._known(self.h1, int(self.h1_alignment[position])),
+            m5=m5,
+            m15=self._known("m15", int(self.m15_alignment[position])),
+            h1=self._known("h1", int(self.h1_alignment[position])),
             levels=self._levels[position],
         )
 

@@ -128,15 +128,31 @@ def generate_candidates(
     """Run REGIME -> SETUP -> TRIGGER in order over causal MTF states."""
 
     view = view_or_frame if isinstance(view_or_frame, MtfView) else MtfView(view_or_frame)
+    # Optional runtime-only hooks: a strategy may snapshot read-only lookups for exactly one
+    # causal run (e.g. positional label arrays) and must drop them afterwards. They carry no
+    # decision logic; strategies without them behave exactly as before.
+    begin_run = getattr(strategy, "begin_run", None)
+    end_run = getattr(strategy, "end_run", None)
     strategy.reset()
+    if begin_run is not None:
+        begin_run()
+    try:
+        return _run(strategy, view)
+    finally:
+        if end_run is not None:
+            end_run()
+
+
+def _run(strategy: CandidateStrategy, view: MtfView) -> list[SignalCandidate]:
     candidates: list[SignalCandidate] = []
+    step = pd.Timedelta(minutes=5)
     for position, bar_open in enumerate(view.m5.index):
         state = view.at(position)
         if not strategy.regime_eligible(state):
             continue
         if not strategy.setup_condition(state):
             continue
-        signal_ts = bar_open + pd.Timedelta(minutes=5)
+        signal_ts = bar_open + step
         item = strategy.trigger(state, signal_ts)
         if item is None:
             continue

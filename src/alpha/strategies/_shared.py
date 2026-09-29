@@ -8,9 +8,10 @@ from typing import Any
 import pandas as pd
 
 from alpha.common.sim import ExitSpec
-from alpha.context import CONTEXT_LABELS, classify_context
-from alpha.regime import REGIME_DIMENSIONS, classify_regime
+from alpha.context import CONTEXT_LABELS
+from alpha.regime import REGIME_DIMENSIONS
 from alpha.signals.candidate import ENTRY_INTENT, CandidateStrategyBase, SignalCandidate
+from alpha.strategies._labels import LabelLookup, frame_labels
 
 
 class GroupCStrategyBase(CandidateStrategyBase):
@@ -18,19 +19,30 @@ class GroupCStrategyBase(CandidateStrategyBase):
 
     def __init__(self, frame: pd.DataFrame, params: Any) -> None:
         super().__init__(asdict(params))
-        self._regime = classify_regime(frame)
-        self._context = classify_context(frame)
+        _, self._regime, self._context = frame_labels(frame)
+        self._lookup: LabelLookup | None = None
         self.reset()
+
+    def begin_run(self) -> None:
+        """Snapshot the (possibly test-mutated) labels positionally for one causal run."""
+        self._lookup = LabelLookup(self._regime, self._context)
+
+    def end_run(self) -> None:
+        self._lookup = None
 
     @staticmethod
     def _stamp(state: Any) -> pd.Timestamp:
         return pd.Timestamp(state.m5.name)
 
     def _regime_at(self, state: Any) -> dict[str, str]:
+        if self._lookup is not None:
+            return self._lookup.regime(self._stamp(state))
         row = self._regime.loc[self._stamp(state)]
         return {dimension: str(row[dimension]) for dimension in REGIME_DIMENSIONS}
 
     def _context_at(self, state: Any) -> dict[str, bool]:
+        if self._lookup is not None:
+            return self._lookup.context(self._stamp(state))
         row = self._context.loc[self._stamp(state)]
         return {label: bool(row[label]) for label in CONTEXT_LABELS}
 

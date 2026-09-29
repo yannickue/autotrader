@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 
+import numpy as np
 import pandas as pd
 
 from alpha.common.dataset import BERLIN
@@ -41,15 +42,21 @@ class OpeningDriveStrategy(FrameCandidateStrategy):
     def __init__(self, frame: pd.DataFrame, params: OpeningDriveParams = VARIANTS[0]) -> None:
         self.config = params
         super().__init__(frame, params)
+        local = self._view.m5.index.tz_convert(BERLIN)
+        self._local_minutes = np.asarray(local.hour * 60 + local.minute, dtype=np.int64)
+        day = np.asarray(local.year * 10_000 + local.month * 100 + local.day, dtype=np.int64)
+        # timestamps are strictly increasing, so each Berlin day is one contiguous block
+        self._day_start = np.searchsorted(day, day, side="left")
 
     def _opening_range(self, state: MtfState) -> pd.DataFrame:
+        # Bars of the current Berlin day known at this close (positions <= current) inside the
+        # 09:00-10:00 window. Berlin-local day/minute are elementwise functions of each timestamp,
+        # so they are precomputed once; the day's first position bounds the (causal) scan.
         position = self._position(state)
-        known = self._view.m5.iloc[: position + 1]
-        local = known.index.tz_convert(BERLIN)
-        current = local[-1]
-        minutes = local.hour * 60 + local.minute
-        same_day = local.date == current.date()
-        return known[same_day & (minutes >= 9 * 60) & (minutes < 10 * 60)]
+        start = int(self._day_start[position])
+        minutes = self._local_minutes[start : position + 1]
+        keep = np.flatnonzero((minutes >= 9 * 60) & (minutes < 10 * 60)) + start
+        return self._view.m5.iloc[keep]
 
     def regime_eligible(self, state: MtfState) -> bool:
         if state.levels.phase not in {"EUROPEAN_OPEN", "MORNING"}:

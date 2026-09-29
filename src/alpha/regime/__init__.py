@@ -139,6 +139,7 @@ def classify_regime(frame: pd.DataFrame, config: RegimeConfig | None = None) -> 
         position: view.h1.index[position] for position in np.flatnonzero(view.h1["complete"])
     }
     records: list[dict[str, object]] = []
+    rows: dict[pd.Timestamp, dict[str, object]] = {}
     for position in view.h1_alignment:
         if position < 0:
             record = {column: np.nan for column in features.columns}
@@ -146,7 +147,9 @@ def classify_regime(frame: pd.DataFrame, config: RegimeConfig | None = None) -> 
             record.update({"defined": False, "higher_bar_ts": None})
         else:
             stamp = position_to_stamp[int(position)]
-            record = labels.loc[stamp].to_dict()
+            if stamp not in rows:  # one lookup per higher bar, reused by its M5 bars
+                rows[stamp] = labels.loc[stamp].to_dict()
+            record = dict(rows[stamp])
             record["higher_bar_ts"] = stamp
         records.append(record)
     return pd.DataFrame(records, index=view.m5.index)
