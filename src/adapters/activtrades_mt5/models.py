@@ -762,11 +762,21 @@ def make_profit_estimate(
 class OrderCheckResult:
     """Typed conversion of raw `OrderCheckResult` (from `order_check`).
 
-    `success` is `True` only when the real `retcode` is
-    `TRADE_RETCODE_DONE` (10009) or `TRADE_RETCODE_PLACED` (10008) -- the
-    two codes that mean "this would actually succeed" (verified against the
-    literal `TRADE_RETCODE_*` integer constants in the installed package's
-    `__init__.py`, not guessed).
+    `success` is `True` when the real `retcode` is `0` -- the actual,
+    verified-against-a-live-account convention `order_check()` uses for "no
+    errors, this request is valid" (confirmed empirically against a real
+    ActivTrades demo account, 2026-09-29: a genuinely valid, fundable
+    request -- correct margin/margin_free numbers, well within account
+    equity -- returned `retcode=0, comment='Done'`). This is NOT the same
+    convention `order_send()`/a real fill uses (`TRADE_RETCODE_DONE` =
+    10009, `TRADE_RETCODE_PLACED` = 10008): `order_check()`'s `retcode`
+    field is a distinct namespace, not a `TRADE_RETCODE_*` value, even
+    though MT5 happens to reuse the human-readable string "Done" for both.
+    An earlier version of this dataclass incorrectly treated 10008/10009 as
+    the success codes for `order_check()` specifically, which produced a
+    false FAIL for every genuinely valid check -- kept here (alongside 0)
+    only as defensive extras in case a different MT5 build/venue ever uses
+    them for order_check instead, never as the primary signal.
     """
 
     success: bool
@@ -780,7 +790,7 @@ class OrderCheckResult:
     margin_level: Decimal
 
 
-_ORDER_CHECK_SUCCESS_RETCODES = frozenset({10008, 10009})
+_ORDER_CHECK_SUCCESS_RETCODES = frozenset({0, 10008, 10009})
 
 
 def order_check_result_from_mt5(raw: Any) -> OrderCheckResult:

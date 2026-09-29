@@ -266,7 +266,24 @@ def test_profit_estimate_available() -> None:
     assert est.profit == Decimal("10.0")
 
 
+def test_order_check_result_success_on_zero_retcode() -> None:
+    """The REAL, primary success convention order_check() actually uses --
+    verified against a live ActivTrades demo account, 2026-09-29 (a
+    genuinely valid, fundable 0.25-lot Ger40 request returned exactly
+    retcode=0, comment='Done'). A prior version of this codebase incorrectly
+    treated only 10008/10009 as success, which misclassified every real
+    valid check as a failure -- this is the regression test for that bug.
+    """
+    result = order_check_result_from_mt5(make_order_check_result(retcode=0))
+    assert result.success is True
+    assert result.comment == "Done"
+
+
 def test_order_check_result_success_on_done_retcode() -> None:
+    """order_send()'s TRADE_RETCODE_DONE (10009) is also accepted as a
+    defensive extra, in case a different MT5 build/venue ever returns it
+    for order_check() too -- but 0 (tested above) is the primary, verified
+    convention, not this one."""
     result = order_check_result_from_mt5(make_order_check_result(retcode=10009))
     assert result.success is True
 

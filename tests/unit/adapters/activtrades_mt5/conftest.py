@@ -155,7 +155,10 @@ def make_deal(**overrides: object) -> SimpleNamespace:
 
 def make_order_check_result(**overrides: object) -> SimpleNamespace:
     defaults: dict[str, object] = {
-        "retcode": 10009,  # TRADE_RETCODE_DONE
+        # order_check()'s own success convention (retcode=0, not
+        # TRADE_RETCODE_DONE=10009) -- verified against a real ActivTrades
+        # demo account, 2026-09-29. See OrderCheckResult's docstring.
+        "retcode": 0,
         "comment": "Done",
         "balance": 10000.0,
         "equity": 10050.0,
