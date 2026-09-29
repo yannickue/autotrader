@@ -605,3 +605,46 @@ processes here likely lack interactive-desktop access to the MT5 terminal GUI --
 session/window-station limitation, not a code or config bug). The user needs to run
 `run_mt5_preflight.ps1` (or `uv run python scripts/mt5_preflight.py`) directly on their own
 desktop to get a real result.
+
+## 2026-09-29 — MT5 connection troubleshooting resolved: live and verified
+
+TASK: Diagnose and resolve the persistent MT5_IPC_TIMEOUT that blocked all real-connection
+verification. Extensive read-only environment diagnostics (process/user/integrity/bitness/
+version/multi-instance checks, isolated portable-instance A/B test, attach-vs-login separation)
+all ruled out code/config causes; a build-regression hypothesis could not be tested responsibly
+(no trusted archive of old MT5 builds exists) and was explicitly not assumed.
+RESULT: Root cause was environmental/terminal-settings-related (most likely the "Allow
+algorithmic trading" toggle in the terminal's own Expert Advisors options, per public MQL5
+forum evidence gathered during research) -- resolved on the user's own desktop, not via a code
+change. Confirmed end-to-end, user-run: config/terminal_connection/account_state/order_check
+all PASS against the real ActivTrades demo account (EUR 500 equity). This session's own
+automation-shell processes still cannot reliably reach the MT5 terminal's IPC (a separate,
+accepted limitation -- see `run_mt5_preflight.ps1`/`.cmd`), but the adapter and real broker
+connection are now confirmed genuinely working.
+
+Real bug found and fixed along the way, from live evidence (`scripts/mt5_diag_order_check_raw.py`,
+never sends a real order): `order_check()` uses `retcode=0` for success, NOT `order_send()`'s
+`TRADE_RETCODE_DONE=10009` convention -- a genuinely valid, fundable request was being
+misclassified as FAIL. `_ORDER_CHECK_SUCCESS_RETCODES` now includes 0 as the primary, verified
+value; regression test added; test fixture default corrected.
+
+Also fixed a real test-design flaw the now-working environment exposed:
+`tests/unit/scripts/test_mt5_scripts.py`'s "fake credentials always fail cleanly" test assumed
+a real connection attempt against wrong credentials could never succeed -- but MT5's
+`initialize()` can attach to an already-running, already-authenticated terminal session
+regardless of mismatched login/password/server, which is real MT5 behavior outside this
+codebase's control. Test now asserts what actually matters (clean exit, config genuinely
+loaded, password never leaked) instead of assuming a specific outcome; verified stable across
+multiple real runs against the live terminal.
+
+WTI confirmed by the user as genuinely unavailable on this demo account (not a matching bug) --
+kept in the target instrument set for later real-account trading per explicit instruction; the
+symbol-matching code is fully generic and needs no change for that.
+
+TESTS: 652 passed, 1 skipped; ruff clean; compileall clean.
+
+**Milestone: the ActivTrades MT5 adapter is now a confirmed-working, live-verified connection
+to a real demo account**, not just a tested-in-isolation module. DAX and NASDAQ100 are
+confirmed tradeable (order_check PASS on DAX). Next: live/historical data ingestion actually
+calling the adapter (per PENDING_USER_INPUT.md), then FeatureRegistry/OpportunityScanner/Regime
+Engine and the DAX/NASDAQ research vertical slice, per the master directive's priority order.
