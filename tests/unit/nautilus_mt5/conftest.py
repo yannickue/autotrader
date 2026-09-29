@@ -26,3 +26,14 @@ def broker() -> FakeMT5Broker:
 @pytest.fixture
 def assumptions() -> InstrumentAssumptions:
     return InstrumentAssumptions(margin_init=Decimal("0.05"), margin_maint=Decimal("0.05"))
+
+
+@pytest.fixture(autouse=True)
+def _real_mt5_is_unreachable(monkeypatch):
+    """C5 safety: any path that tries to obtain the REAL MetaTrader5 client fails the test."""
+    import adapters.activtrades_mt5.real_client as real_client
+
+    def boom():
+        raise AssertionError("real MT5 client requested from a unit test")
+
+    monkeypatch.setattr(real_client, "get_real_client", boom)

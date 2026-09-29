@@ -46,11 +46,12 @@ class OrderRow:
     position_ticket: int | None
     venue_order_id: str | None
     created_ns: int
+    parent_client_order_id: str | None = None
 
 
 _COLUMNS = (
     "client_order_id, token, strategy_id, instrument_id, kind, side, quantity, status, "
-    "order_ticket, position_ticket, venue_order_id, created_ns"
+    "order_ticket, position_ticket, venue_order_id, created_ns, parent_client_order_id"
 )
 
 
@@ -86,7 +87,8 @@ class Mt5StateStore:
                     order_ticket INTEGER,
                     position_ticket INTEGER,
                     venue_order_id TEXT,
-                    created_ns INTEGER NOT NULL)"""
+                    created_ns INTEGER NOT NULL,
+                    parent_client_order_id TEXT)"""
             )
             cur.execute("CREATE INDEX IF NOT EXISTS ix_order_ticket ON order_map(order_ticket)")
             cur.execute(
@@ -128,6 +130,7 @@ class Mt5StateStore:
         quantity: str,
         position_ticket: int | None = None,
         created_ns: int | None = None,
+        parent_client_order_id: str | None = None,
     ) -> str:
         """Write-ahead record; returns the MT5 `comment` token. Idempotent per ClientOrderId."""
         existing = self.by_client_order_id(client_order_id)
@@ -136,8 +139,8 @@ class Mt5StateStore:
         with self._tx() as cur:
             cur.execute(
                 "INSERT INTO order_map (client_order_id, token, strategy_id, instrument_id, kind, "
-                "side, quantity, status, position_ticket, created_ns) "
-                "VALUES (?, 'PENDING', ?, ?, ?, ?, ?, 'INTENT', ?, ?)",
+                "side, quantity, status, position_ticket, created_ns, parent_client_order_id) "
+                "VALUES (?, 'PENDING', ?, ?, ?, ?, ?, 'INTENT', ?, ?, ?)",
                 (
                     client_order_id,
                     strategy_id,
@@ -147,6 +150,7 @@ class Mt5StateStore:
                     quantity,
                     position_ticket,
                     created_ns or time.time_ns(),
+                    parent_client_order_id,
                 ),
             )
             token = f"{TOKEN_PREFIX}{cur.lastrowid}"
@@ -200,6 +204,13 @@ class Mt5StateStore:
     def by_token(self, token: str) -> OrderRow | None:
         cur = self._conn.execute(f"SELECT {_COLUMNS} FROM order_map WHERE token=?", (token,))
         return self._row(cur.fetchone())
+
+    def children_of(self, parent_client_order_id: str) -> list[OrderRow]:
+        cur = self._conn.execute(
+            f"SELECT {_COLUMNS} FROM order_map WHERE parent_client_order_id=? ORDER BY seq",
+            (parent_client_order_id,),
+        )
+        return [OrderRow(*r) for r in cur.fetchall()]
 
     def unresolved(self) -> list[OrderRow]:
         """Orders whose broker outcome we have not confirmed (need reconciliation)."""
