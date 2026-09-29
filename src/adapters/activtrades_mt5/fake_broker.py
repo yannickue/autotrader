@@ -13,6 +13,8 @@ Times are SERVER-clock epochs (as the real terminal reports them); tests set
 
 from __future__ import annotations
 
+import threading
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from types import SimpleNamespace
@@ -84,8 +86,65 @@ class FakeMT5Broker:
         self.initialize_calls: list[dict[str, Any]] = []
         self.order_send_calls = 0
         self.rates: dict[int, Any] = {}  # mt5 timeframe -> structured numpy array
+        # -- concurrency instrumentation (the real MT5 API must never see overlapping calls)
+        self.call_latency_s = 0.0  # widen race windows in concurrency tests
+        self.send_delay_s = 0.0  # order_send blocks this long BEFORE executing
+        self.max_concurrency = 0
+        self.call_threads: dict[str, set[int]] = {}
+        self._active_by_thread: dict[int, int] = {}
+        self._track_lock = threading.Lock()
+        for name in (
+            "initialize",
+            "shutdown",
+            "terminal_info",
+            "version",
+            "account_info",
+            "symbols_get",
+            "symbol_select",
+            "symbol_info",
+            "symbol_info_tick",
+            "positions_get",
+            "orders_get",
+            "history_orders_get",
+            "history_deals_get",
+            "copy_rates_from",
+            "copy_rates_from_pos",
+            "copy_rates_range",
+            "copy_ticks_from",
+            "copy_ticks_range",
+            "order_calc_margin",
+            "order_calc_profit",
+            "order_check",
+            "order_send",
+            "last_error",
+        ):
+            setattr(self, name, self._tracked(name, getattr(self, name)))
 
     # -- helpers -------------------------------------------------------------
+
+    def _tracked(self, name: str, fn: Any) -> Any:
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            tid = threading.get_ident()
+            with self._track_lock:
+                # Nested calls on the SAME thread (order_check -> account_info) are not overlap;
+                # concurrency = number of distinct threads inside the API at once.
+                self._active_by_thread[tid] = self._active_by_thread.get(tid, 0) + 1
+                self.max_concurrency = max(self.max_concurrency, len(self._active_by_thread))
+                self.call_threads.setdefault(name, set()).add(tid)
+            try:
+                if self.call_latency_s:
+                    time.sleep(self.call_latency_s)
+                return fn(*args, **kwargs)
+            finally:
+                with self._track_lock:
+                    self._active_by_thread[tid] -= 1
+                    if self._active_by_thread[tid] == 0:
+                        del self._active_by_thread[tid]
+
+        return wrapper
+
+    def all_call_threads(self) -> set[int]:
+        return set().union(*self.call_threads.values()) if self.call_threads else set()
 
     def _ticket(self) -> int:
         self._next_ticket += 1
@@ -391,6 +450,8 @@ class FakeMT5Broker:
 
     def order_send(self, request: dict[str, Any]) -> Any:
         self.order_send_calls += 1
+        if self.send_delay_s:
+            time.sleep(self.send_delay_s)
         if not self._guard("order_send"):
             return None
         self.request_log.append(dict(request))

@@ -18,11 +18,13 @@ deal un-marked, so the next pass ingests it again (never lost).
 from __future__ import annotations
 
 import sqlite3
+import threading
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 SCHEMA_VERSION = 1
 TOKEN_PREFIX = "NT"
@@ -55,18 +57,51 @@ _COLUMNS = (
 )
 
 
+class _Rows:
+    """Fully-fetched result: safe to use after the connection lock is released."""
+
+    def __init__(self, rows: list[tuple], lastrowid: int | None, rowcount: int) -> None:
+        self._rows = rows
+        self.lastrowid = lastrowid
+        self.rowcount = rowcount
+
+    def fetchone(self) -> tuple | None:
+        return self._rows[0] if self._rows else None
+
+    def fetchall(self) -> list[tuple]:
+        return list(self._rows)
+
+
+class _LockedConnection:
+    """The store is used from the MT5 lane thread AND the event-loop thread: one connection
+    (check_same_thread=False) guarded by one re-entrant lock."""
+
+    def __init__(self, raw: sqlite3.Connection, lock: threading.RLock) -> None:
+        self._raw = raw
+        self._lock = lock
+
+    def execute(self, sql: str, args: Any = ()) -> _Rows:
+        with self._lock:
+            cur = self._raw.execute(sql, args)
+            rows = cur.fetchall() if cur.description else []
+            return _Rows(rows, cur.lastrowid, cur.rowcount)
+
+
 class Mt5StateStore:
     def __init__(self, path: Path | str) -> None:
         self._path = str(path)
         if self._path != ":memory:":
             Path(self._path).parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(self._path, isolation_level=None)
+        self._lock = threading.RLock()
+        self._raw = sqlite3.connect(self._path, isolation_level=None, check_same_thread=False)
+        self._conn = _LockedConnection(self._raw, self._lock)
         if self._path != ":memory:":
             self._conn.execute("PRAGMA journal_mode=WAL")
         self._init_schema()
 
     def close(self) -> None:
-        self._conn.close()
+        with self._lock:
+            self._raw.close()
 
     # -- schema ------------------------------------------------------------
 
@@ -107,15 +142,16 @@ class Mt5StateStore:
 
     @contextmanager
     def _tx(self) -> Iterator[sqlite3.Cursor]:
-        cur = self._conn.cursor()
-        cur.execute("BEGIN IMMEDIATE")
-        try:
-            yield cur
-        except BaseException:
-            self._conn.execute("ROLLBACK")
-            raise
-        else:
-            self._conn.execute("COMMIT")
+        with self._lock:
+            cur = self._raw.cursor()
+            cur.execute("BEGIN IMMEDIATE")
+            try:
+                yield cur
+            except BaseException:
+                self._raw.execute("ROLLBACK")
+                raise
+            else:
+                self._raw.execute("COMMIT")
 
     # -- order map ---------------------------------------------------------
 

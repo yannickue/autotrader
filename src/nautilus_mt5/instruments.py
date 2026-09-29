@@ -150,15 +150,22 @@ class Mt5InstrumentProvider(InstrumentProvider):
         self.specs[instrument.id] = spec
         self.add(instrument)
 
-    async def load_all_async(self, filters: dict | None = None) -> None:
+    def load_all_sync(self) -> None:
+        """Blocking MT5 IPC: call from the MT5 lane (see `nautilus_mt5.executor`)."""
         for mapping in self._registry.all():
             self._load_mapping(mapping)
+
+    def load_ids_sync(self, instrument_ids: list[InstrumentId]) -> None:
+        for instrument_id in instrument_ids:
+            self._load_mapping(self._registry.by_instrument_id(instrument_id))
+
+    async def load_all_async(self, filters: dict | None = None) -> None:
+        self.load_all_sync()
 
     async def load_ids_async(
         self, instrument_ids: list[InstrumentId], filters: dict | None = None
     ) -> None:
-        for instrument_id in instrument_ids:
-            self._load_mapping(self._registry.by_instrument_id(instrument_id))
+        self.load_ids_sync(instrument_ids)
 
     async def load_async(self, instrument_id: InstrumentId, filters: dict | None = None) -> None:
         await self.load_ids_async([instrument_id], filters)

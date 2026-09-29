@@ -39,6 +39,7 @@ from adapters.activtrades_mt5.history import (
     TIMEFRAME_SECONDS,
     AmbiguousServerTime,
 )
+from nautilus_mt5.executor import LoopBridge
 from nautilus_mt5.instruments import Mt5InstrumentProvider
 from nautilus_mt5.session import Mt5CallError, Mt5Session
 from nautilus_mt5.symbols import VENUE
@@ -94,21 +95,36 @@ class Mt5LiveMarketDataClient(LiveMarketDataClient):
             "stale_quotes": 0,
         }
         self._backoff_index = 0
+        self._bridge = LoopBridge(loop)  # Nautilus objects are touched on the loop thread only
+        self._bridge.bind_current_thread()
+
+    async def _lane_run(self, fn: Any, *args: Any, **kwargs: Any) -> Any:
+        """All MT5 IPC runs on the dedicated lane; without a lane (unit tests) it runs inline."""
+        lane = self._session.lane
+        if lane is None:
+            return fn(*args, **kwargs)
+        return await lane.run(fn, *args, **kwargs)
+
+    def _emit(self, data: Any) -> None:
+        self._bridge.call(self._handle_data, data)
 
     # -- connection ---------------------------------------------------------------
 
-    async def _connect(self) -> None:
+    def _connect_core(self) -> None:
         result = self._session.acquire()
         if result is not None and not result.success:
             raise ConnectionError(f"MT5 connect failed: {result.reason}")
-        await self._provider.load_all_async()
+        self._provider.load_all_sync()
         for instrument in self._provider.list_all():
-            self._cache.add_instrument(instrument)
-            self._handle_data(instrument)
+            self._bridge.call(self._cache.add_instrument, instrument)
+            self._emit(instrument)
+
+    async def _connect(self) -> None:
+        await self._lane_run(self._connect_core)
 
     async def _disconnect(self) -> None:
         await self._stop_poller()
-        self._session.release()
+        await self._lane_run(self._session.release)
 
     # -- subscriptions ----------------------------------------------------------------
 
@@ -146,14 +162,16 @@ class Mt5LiveMarketDataClient(LiveMarketDataClient):
     # -- requests ---------------------------------------------------------------------------
 
     async def _request_instrument(self, request: Any) -> None:
-        await self._provider.load_async(request.instrument_id)
+        await self._lane_run(self._provider.load_ids_sync, [request.instrument_id])
         instrument = self._provider.find(request.instrument_id)
         self._handle_instrument(instrument, request.id, request.start, request.end, request.params)
 
     async def _request_bars(self, request: Any) -> None:
         bar_type: BarType = request.bar_type
         self._validate_bar_type(bar_type)
-        bars = self._fetch_bars(bar_type, count=request.limit or 100, completed_only=True)
+        bars = await self._lane_run(
+            self._fetch_bars, bar_type, count=request.limit or 100, completed_only=True
+        )
         self._handle_bars(bar_type, bars, request.id, request.start, request.end, request.params)
 
     # -- controlled poller ----------------------------------------------------------------------
@@ -178,13 +196,13 @@ class Mt5LiveMarketDataClient(LiveMarketDataClient):
     async def _poll_loop(self) -> None:
         while True:
             try:
-                self.poll_once()
+                await self._lane_run(self.poll_once)
                 self._backoff_index = 0
                 await asyncio.sleep(self._cfg.poll_interval_secs)
             except Mt5CallError:
                 self.stats["poll_failures"] += 1
                 await asyncio.sleep(self._next_backoff())
-                self.try_reconnect()
+                await self._lane_run(self.try_reconnect)
 
     def _next_backoff(self) -> float:
         table = self._cfg.reconnect_backoff_secs
@@ -241,7 +259,7 @@ class Mt5LiveMarketDataClient(LiveMarketDataClient):
             ts_init=self._clock.timestamp_ns(),
         )
         self._last_quote_key[instrument_id] = key
-        self._handle_data(quote)
+        self._emit(quote)
         self.stats["quotes"] += 1
         return 1
 
@@ -306,7 +324,7 @@ class Mt5LiveMarketDataClient(LiveMarketDataClient):
             if bar.ts_event <= last:
                 continue
             last = self._last_bar_open[bar_type] = bar.ts_event
-            self._handle_data(bar)
+            self._emit(bar)
             self.stats["bars"] += 1
             published += 1
         return published

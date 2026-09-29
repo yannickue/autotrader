@@ -75,6 +75,7 @@ from nautilus_mt5.constants import (
     SendOutcome,
     classify_send_retcode,
 )
+from nautilus_mt5.executor import LaneTimeout, LoopBridge
 from nautilus_mt5.gates import AdapterStatus, OutboundKind, admit
 from nautilus_mt5.instruments import Mt5InstrumentProvider
 from nautilus_mt5.reconciliation import (
@@ -104,6 +105,107 @@ ZERO = Decimal(0)
 KIND_MARKET, KIND_EXIT, KIND_SL, KIND_TP = "MARKET", "EXIT", "PROTECT_SL", "PROTECT_TP"
 
 
+NT_EMITTERS = (
+    "generate_order_submitted",
+    "generate_order_accepted",
+    "generate_order_rejected",
+    "generate_order_denied",
+    "generate_order_filled",
+    "generate_order_canceled",
+    "generate_order_updated",
+    "generate_order_triggered",
+    "generate_order_modify_rejected",
+    "generate_order_cancel_rejected",
+    "generate_order_expired",
+    "generate_account_state",
+    "_send_order_status_report",
+    "_send_fill_report",
+    "_send_position_status_report",
+    "_send_mass_status_report",
+    "_set_account_id",
+)
+
+
+class _MarshalledCache:
+    """Cache facade for code running in the MT5 lane: every call executes on the loop thread."""
+
+    def __init__(self, cache: Any, bridge: LoopBridge) -> None:
+        self._cache = cache
+        self._bridge = bridge
+
+    def __getattr__(self, name: str) -> Any:
+        attr = getattr(self._cache, name)
+        if not callable(attr):
+            return attr
+        return lambda *args, **kwargs: self._bridge.call(attr, *args, **kwargs)
+
+
+def _run_coroutine_inline(coroutine: Any) -> Any:
+    """Drive a coroutine that has no real suspension points to completion (inside the lane)."""
+    try:
+        coroutine.send(None)
+    except StopIteration as stop:
+        return stop.value
+    coroutine.close()
+    raise RuntimeError("coroutine suspended inside the MT5 lane")
+
+
+def _command_instrument(command: Any) -> Any:
+    iid = getattr(command, "instrument_id", None)
+    if iid is None and getattr(command, "order", None) is not None:
+        iid = command.order.instrument_id
+    if iid is None and getattr(command, "order_list", None) is not None:
+        iid = command.order_list.orders[0].instrument_id
+    return iid
+
+
+def _in_section(client: Any, command: Any, coroutine: Any) -> Any:
+    """Run the coroutine inside the per-symbol critical section of the command's instrument."""
+    iid = _command_instrument(command)
+    if iid is None:
+        return _run_coroutine_inline(coroutine)
+    with client._section(iid):
+        return _run_coroutine_inline(coroutine)
+
+
+def lane_op(method: Any) -> Any:
+    """Run an async handler's (synchronous) body on the MT5 lane; inline when no lane exists."""
+
+    async def wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
+        lane = self._session.lane
+        if lane is None or lane.in_lane:
+            return await method(self, *args, **kwargs)
+        command = args[0] if args else None
+        return await lane.run(_in_section, self, command, method(self, *args, **kwargs))
+
+    wrapper.__name__ = method.__name__
+    return wrapper
+
+
+def exposure_op(method: Any) -> Any:
+    """Like `lane_op`, plus: a lane TIMEOUT means OUTCOME UNKNOWN -- never 'rejected', never
+    resent. The involved orders become IN_DOUBT and reconciliation authority is dropped."""
+
+    async def wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
+        lane = self._session.lane
+        if lane is None or lane.in_lane:
+            return await method(self, *args, **kwargs)
+        try:
+            return await lane.run(
+                _in_section,
+                self,
+                args[0] if args else None,
+                method(self, *args, **kwargs),
+                timeout=self._cfg.exposure_timeout_secs,
+            )
+        except LaneTimeout:
+            self._on_exposure_timeout(method.__name__, args[0] if args else None)
+            return None
+
+    wrapper.__name__ = method.__name__
+    return wrapper
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Mt5ExecClientConfig:
     magic: int = 730001
@@ -115,6 +217,9 @@ class Mt5ExecClientConfig:
     reconnect_backoff_secs: tuple[float, ...] = (1.0, 2.0, 5.0, 10.0)
     autostart_sync: bool = True
     auto_reconcile_on_connect: bool = True
+    # Caller-side wait for an exposure-changing operation on the MT5 lane. Expiry is NOT a
+    # rejection: the operation may still complete at the broker (outcome unknown -> reconcile).
+    exposure_timeout_secs: float = 30.0
 
 
 @dataclass(slots=True)
@@ -158,6 +263,11 @@ class Mt5LiveExecutionClient(LiveExecutionClient):
         self._store = store
         self._cfg = config or Mt5ExecClientConfig()
         self._ccy = base_currency
+        self._bridge = LoopBridge(loop)  # Nautilus objects are touched on the loop thread only
+        self._bridge.bind_current_thread()
+        self._nt_cache = _MarshalledCache(self._cache, self._bridge)
+        for name in NT_EMITTERS:
+            setattr(self, name, self._marshalled(getattr(self, name)))
         self._now_fn = now  # injectable time source (deterministic tests); default: clock
         self.recon = ReconciliationTracker()
         self.ingest_stats = IngestStats()
@@ -169,6 +279,48 @@ class Mt5LiveExecutionClient(LiveExecutionClient):
         self.audit: list[str] = []  # small append-only trail for tests/operators (no decisions)
 
     # ------------------------------------------------------------------ status --
+
+    @contextlib.contextmanager
+    def _section(self, instrument_id: InstrumentId) -> Any:
+        """Per-symbol critical section for execution-changing work (no-op without a lane)."""
+        lane = self._session.lane
+        if lane is None:
+            yield
+            return
+        symbol = self._provider.registry.by_instrument_id(instrument_id).broker_symbol
+        with lane.symbol_section(symbol):
+            yield
+
+    def _marshalled(self, fn: Any) -> Any:
+        return lambda *args, **kwargs: self._bridge.call(fn, *args, **kwargs)
+
+    async def _lane_run(self, fn: Any, *args: Any, **kwargs: Any) -> Any:
+        lane = self._session.lane
+        if lane is None:
+            return fn(*args, **kwargs)
+        return await lane.run(fn, *args, **kwargs)
+
+    def _on_exposure_timeout(self, operation: str, command: Any) -> None:
+        """The caller stopped waiting: the outcome is UNKNOWN. Mark, invalidate, do NOT resend."""
+        ids: list[str] = []
+        if command is not None:
+            if hasattr(command, "order"):
+                ids.append(str(command.order.client_order_id))
+            elif hasattr(command, "order_list"):
+                ids.extend(str(o.client_order_id) for o in command.order_list.orders)
+            elif hasattr(command, "client_order_id"):
+                ids.append(str(command.client_order_id))
+        for cid in ids:
+            row = self._store.by_client_order_id(cid)
+            if (
+                row is not None
+                and row.parent_client_order_id is None  # children follow their parent
+                and row.status in ("INTENT", "SENT")
+            ):
+                self._store.update_order(cid, status="IN_DOUBT")
+        self.audit.append(f"LANE_TIMEOUT {operation}: outcome unknown for {ids}")
+        self.recon.invalidate(f"LANE_TIMEOUT {operation}")
+        self._session.mark_degraded(f"lane timeout during {operation}")
 
     @property
     def status(self) -> AdapterStatus:
@@ -223,14 +375,14 @@ class Mt5LiveExecutionClient(LiveExecutionClient):
 
     # ---------------------------------------------------------------- connection --
 
-    async def _connect(self) -> None:
+    def _connect_core(self) -> None:
         result = self._session.acquire()
         if result is not None and not result.success:
             raise ConnectionError(f"MT5 connect failed: {result.reason}")
         self._session.account_mode()  # fail closed unless RETAIL_NETTING
-        await self._provider.load_all_async()
+        self._provider.load_all_sync()
         for instrument in self._provider.list_all():
-            self._cache.add_instrument(instrument)
+            self._nt_cache.add_instrument(instrument)
         account = self._call("account_info", self._session.client.account_info)
         self._set_account_id(AccountId(f"ACTIVTRADES-{int(account.login)}"))
         self._push_account_state()
@@ -238,12 +390,18 @@ class Mt5LiveExecutionClient(LiveExecutionClient):
         self._last_generation = self._session.generation
         if self._cfg.auto_reconcile_on_connect:
             self.reconcile()
+
+    async def _connect(self) -> None:
+        await self._lane_run(self._connect_core)
         self._ensure_sync_task()
+
+    def _disconnect_core(self) -> None:
+        self.recon.invalidate("disconnect")
+        self._session.release()
 
     async def _disconnect(self) -> None:
         await self._stop_sync_task()
-        self.recon.invalidate("disconnect")
-        self._session.release()
+        await self._lane_run(self._disconnect_core)
 
     def _check_generation(self) -> None:
         """A changed session generation means a reconnect happened: authority is gone."""
@@ -379,7 +537,7 @@ class Mt5LiveExecutionClient(LiveExecutionClient):
     ) -> None:
         common = self._deal_common(deal, instrument_id)
         client_order_id = ClientOrderId(row.client_order_id)
-        order = self._cache.order(client_order_id)
+        order = self._nt_cache.order(client_order_id)
         if order is None:
             # Cold cache (restart): hand Nautilus the fill as reports; its own reconciliation
             # de-duplicates by trade id. Not an external trade -> no mismatch flag.
@@ -511,7 +669,7 @@ class Mt5LiveExecutionClient(LiveExecutionClient):
                 and row.position_ticket == deal.position_id
                 and row.status == "ACCEPTED"
             ):
-                order = self._cache.order(ClientOrderId(row.client_order_id))
+                order = self._nt_cache.order(ClientOrderId(row.client_order_id))
                 if order is not None and order.is_open:
                     self.generate_order_canceled(
                         order.strategy_id,
@@ -524,11 +682,14 @@ class Mt5LiveExecutionClient(LiveExecutionClient):
 
     # ------------------------------------------------------------- reconciliation --
 
+    async def reconcile_async(self) -> ReconciliationTracker:
+        return await self._lane_run(self.reconcile)
+
     def local_view(self) -> LocalView:
         positions: dict[str, Decimal] = {}
         for mapping in self._provider.registry.all():
             signed = ZERO
-            for position in self._cache.positions_open(instrument_id=mapping.instrument_id):
+            for position in self._nt_cache.positions_open(instrument_id=mapping.instrument_id):
                 signed += Decimal(str(position.signed_qty))
             if signed != ZERO:
                 positions[mapping.broker_symbol] = signed
@@ -547,6 +708,12 @@ class Mt5LiveExecutionClient(LiveExecutionClient):
     def reconcile(self) -> ReconciliationTracker:
         """Compare REAL broker state with Nautilus' cache. Only a clean VENUE_SNAPSHOT
         comparison grants RECONCILED; anything else leaves the adapter halted/unreconciled."""
+        with contextlib.ExitStack() as stack:
+            for mapping in self._provider.registry.all():
+                stack.enter_context(self._section(mapping.instrument_id))
+            return self._reconcile_locked()
+
+    def _reconcile_locked(self) -> ReconciliationTracker:
         self._check_generation()
         self.recon.begin()
         try:
@@ -595,7 +762,7 @@ class Mt5LiveExecutionClient(LiveExecutionClient):
             if row.parent_client_order_id:
                 continue  # children are resolved together with their parent
             found = by_token.get(row.token)
-            order = self._cache.order(ClientOrderId(row.client_order_id))
+            order = self._nt_cache.order(ClientOrderId(row.client_order_id))
             if found is not None:
                 self._store.update_order(
                     row.client_order_id,
@@ -636,6 +803,10 @@ class Mt5LiveExecutionClient(LiveExecutionClient):
         if self._sync_task is None or self._sync_task.done():
             self._sync_task = self._loop.create_task(self._sync_loop(), name="mt5-exec-sync")
 
+    def _reconnect_core(self) -> None:
+        if self._session.reconnect().success:  # attach-only; NOT reconciled afterwards
+            self._check_generation()
+
     async def _stop_sync_task(self) -> None:
         task, self._sync_task = self._sync_task, None
         if task is not None and not task.done():
@@ -646,7 +817,7 @@ class Mt5LiveExecutionClient(LiveExecutionClient):
     async def _sync_loop(self) -> None:
         while True:
             try:
-                self.sync_once()
+                await self._lane_run(self.sync_once)
                 self._backoff_index = 0
                 await asyncio.sleep(self._cfg.sync_interval_secs)
             except Mt5CallError as exc:
@@ -656,14 +827,15 @@ class Mt5LiveExecutionClient(LiveExecutionClient):
                 delay = table[min(self._backoff_index, len(table) - 1)]
                 self._backoff_index += 1
                 await asyncio.sleep(delay)
-                if self._session.reconnect().success:  # attach-only; NOT reconciled afterwards
-                    self._check_generation()
+                await self._lane_run(self._reconnect_core)
 
     # ---------------------------------------------------------------- outbound: submit --
 
+    @exposure_op
     async def _submit_order(self, command: Any) -> None:
         self.submit_sync(command.order)
 
+    @exposure_op
     async def _submit_order_list(self, command: Any) -> None:
         orders = list(command.order_list.orders)
         parent = next((o for o in orders if not o.is_reduce_only), None)
@@ -678,7 +850,7 @@ class Mt5LiveExecutionClient(LiveExecutionClient):
         for order in stray:
             self._deny(order, "UNSUPPORTED_CHILD_ORDER_TYPE")
         self.submit_sync(parent, stop_loss=sl_order, take_profit=tp_order)
-        parent_now = self._cache.order(parent.client_order_id)
+        parent_now = self._nt_cache.order(parent.client_order_id)
         if parent_now is not None and parent_now.status in (
             OrderStatus.DENIED,
             OrderStatus.REJECTED,
@@ -693,6 +865,10 @@ class Mt5LiveExecutionClient(LiveExecutionClient):
 
     def submit_sync(self, order: Any, *, stop_loss: Any = None, take_profit: Any = None) -> None:
         """Deterministic core of submit (also driven directly by tests)."""
+        with self._section(order.instrument_id):
+            self._submit_locked(order, stop_loss, take_profit)
+
+    def _submit_locked(self, order: Any, stop_loss: Any, take_profit: Any) -> None:
         if order.order_type == OrderType.MARKET:
             if order.is_reduce_only:
                 self._submit_reduce_only(order)
@@ -724,7 +900,7 @@ class Mt5LiveExecutionClient(LiveExecutionClient):
         return sum(
             (
                 Decimal(str(p.signed_qty))
-                for p in self._cache.positions_open(instrument_id=instrument_id)
+                for p in self._nt_cache.positions_open(instrument_id=instrument_id)
             ),
             ZERO,
         )
@@ -938,7 +1114,7 @@ class Mt5LiveExecutionClient(LiveExecutionClient):
         (IOC remainder), Nautilus' still-open order must be closed too. Derived from broker
         history (not from the send retcode) so a delayed deal cannot leave it PARTIALLY_FILLED."""
         row = self._store.by_client_order_id(client_order_id)
-        order = self._cache.order(ClientOrderId(client_order_id))
+        order = self._nt_cache.order(ClientOrderId(client_order_id))
         if (
             row is None
             or order is None
@@ -973,7 +1149,9 @@ class Mt5LiveExecutionClient(LiveExecutionClient):
         if parent_row is None:
             return
         pending = [
-            c for c in self._store.children_of(parent_client_order_id) if c.status == "INTENT"
+            c
+            for c in self._store.children_of(parent_client_order_id)
+            if c.status in ("INTENT", "IN_DOUBT")
         ]
         if not pending:
             return
@@ -987,7 +1165,7 @@ class Mt5LiveExecutionClient(LiveExecutionClient):
         if position_ticket is None:
             return
         for child in pending:
-            order = self._cache.order(ClientOrderId(child.client_order_id))
+            order = self._nt_cache.order(ClientOrderId(child.client_order_id))
             venue_id = VenueOrderId(f"{'SL' if child.kind == KIND_SL else 'TP'}:{position_ticket}")
             self._store.update_order(
                 child.client_order_id,
@@ -1011,7 +1189,7 @@ class Mt5LiveExecutionClient(LiveExecutionClient):
         for child in self._store.children_of(str(parent.client_order_id)):
             if child.status in ("INTENT", "ACCEPTED"):
                 self._store.update_order(child.client_order_id, status="REJECTED")
-            order = self._cache.order(ClientOrderId(child.client_order_id))
+            order = self._nt_cache.order(ClientOrderId(child.client_order_id))
             if order is not None and order.status == OrderStatus.INITIALIZED:
                 self._deny(order, reason)
 
@@ -1191,6 +1369,9 @@ class Mt5LiveExecutionClient(LiveExecutionClient):
         """Protect a broker position that Nautilus does not know about (entry filled remotely,
         local reconciliation lost). Tighten-only, requires fresh broker evidence of the ticket,
         allowed in ANY reconciliation state. Returns a denial reason or None."""
+        return self._emergency_protect_locked(position_ticket, stop_loss)
+
+    def _emergency_protect_locked(self, position_ticket: int, stop_loss: Decimal) -> str | None:
         if not self._session.is_connected:
             return f"SESSION_{self._session.state.value}"
         try:
@@ -1203,9 +1384,10 @@ class Mt5LiveExecutionClient(LiveExecutionClient):
 
     # ------------------------------------------------------------ modify / cancel --
 
+    @exposure_op
     async def _modify_order(self, command: Any) -> None:
         row = self._store.by_client_order_id(str(command.client_order_id))
-        order = self._cache.order(command.client_order_id)
+        order = self._nt_cache.order(command.client_order_id)
         if (
             row is None
             or order is None
@@ -1276,6 +1458,7 @@ class Mt5LiveExecutionClient(LiveExecutionClient):
             self._now_ns(),
         )
 
+    @exposure_op
     async def _cancel_order(self, command: Any) -> None:
         row = self._store.by_client_order_id(str(command.client_order_id))
         if row is None or row.kind not in (KIND_SL, KIND_TP) or row.status != "ACCEPTED":
@@ -1359,10 +1542,11 @@ class Mt5LiveExecutionClient(LiveExecutionClient):
             self._now_ns(),
         )
 
+    @lane_op
     async def _cancel_all_orders(self, command: Any) -> None:
         for row in self._store.all_orders():
             if row.status == "ACCEPTED" and row.kind in (KIND_SL, KIND_TP):
-                order = self._cache.order(ClientOrderId(row.client_order_id))
+                order = self._nt_cache.order(ClientOrderId(row.client_order_id))
                 if order is not None and order.instrument_id == command.instrument_id:
                     from types import SimpleNamespace
 
@@ -1375,6 +1559,7 @@ class Mt5LiveExecutionClient(LiveExecutionClient):
                         )
                     )
 
+    @lane_op
     async def _batch_cancel_orders(self, command: Any) -> None:
         for cancel in command.cancels:
             await self._cancel_order(cancel)
@@ -1382,7 +1567,7 @@ class Mt5LiveExecutionClient(LiveExecutionClient):
     # ------------------------------------------------------------------- reports --
 
     def _order_report_from_row(self, row: OrderRow) -> OrderStatusReport | None:
-        order = self._cache.order(ClientOrderId(row.client_order_id))
+        order = self._nt_cache.order(ClientOrderId(row.client_order_id))
         if order is None:
             return None
         return OrderStatusReport(
@@ -1405,6 +1590,7 @@ class Mt5LiveExecutionClient(LiveExecutionClient):
             reduce_only=order.is_reduce_only,
         )
 
+    @lane_op
     async def generate_order_status_report(self, command: Any) -> OrderStatusReport | None:
         for row in self._store.all_orders():
             if (
@@ -1417,6 +1603,7 @@ class Mt5LiveExecutionClient(LiveExecutionClient):
                 return self._order_report_from_row(row)
         return None
 
+    @lane_op
     async def generate_order_status_reports(self, command: Any) -> list[OrderStatusReport]:
         reports = []
         for row in self._store.all_orders():
@@ -1431,6 +1618,7 @@ class Mt5LiveExecutionClient(LiveExecutionClient):
                 reports.append(report)
         return reports
 
+    @lane_op
     async def generate_fill_reports(self, command: Any) -> list[FillReport]:
         reports = []
         for deal in self._broker_deals(self._now() - self._cfg.deal_lookback):
@@ -1463,6 +1651,7 @@ class Mt5LiveExecutionClient(LiveExecutionClient):
             )
         return reports
 
+    @lane_op
     async def generate_position_status_reports(self, command: Any) -> list[PositionStatusReport]:
         reports = []
         broker = {p.symbol: p for p in self._broker_positions()}
@@ -1490,6 +1679,7 @@ class Mt5LiveExecutionClient(LiveExecutionClient):
             )
         return reports
 
+    @lane_op
     async def generate_mass_status(
         self, lookback_mins: int | None = None
     ) -> ExecutionMassStatus | None:

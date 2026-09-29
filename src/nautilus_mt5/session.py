@@ -33,6 +33,25 @@ class AttachOnlyViolation(RuntimeError):
     """The adapter was configured to authenticate; C5 forbids that."""
 
 
+class _LaneGuardedClient:
+    """Attribute-access proxy: every MT5 client method asserts it runs on the MT5 lane."""
+
+    def __init__(self, client: Any, lane: Any) -> None:
+        self._client = client
+        self._lane = lane
+
+    def __getattr__(self, name: str) -> Any:
+        attr = getattr(self._client, name)
+        if not callable(attr):
+            return attr
+
+        def guarded(*args: Any, **kwargs: Any) -> Any:
+            self._lane.assert_in_lane(f"MT5 client.{name}")
+            return attr(*args, **kwargs)
+
+        return guarded
+
+
 class Mt5CallError(RuntimeError):
     """An MT5 call failed (exception or None result). `last_error` is preserved."""
 
@@ -61,6 +80,7 @@ class Mt5Session:
         *,
         lock_path: Path | None = None,
         time_policy: ServerTimePolicy | None = None,
+        lane: Any = None,
     ) -> None:
         if config.allow_account_login:
             raise AttachOnlyViolation(
@@ -69,6 +89,9 @@ class Mt5Session:
             )
         self._client = client
         self._config = config
+        # Optional MT5 execution lane (nautilus_mt5.executor.Mt5Executor). When set, EVERY MT5
+        # call must run on its thread; anything else raises LaneViolation.
+        self.lane = lane
         self._connection = MT5Connection(client, lock_path=lock_path)
         self.time_policy = time_policy or ServerTimePolicy()
         self.state = SessionState.DISCONNECTED
@@ -82,7 +105,11 @@ class Mt5Session:
 
     @property
     def client(self) -> Any:
-        return self._client
+        """The MT5 client. With a lane configured this is a guard proxy that refuses calls made
+        from any thread but the lane's (raw access would bypass the serialization)."""
+        if self.lane is None:
+            return self._client
+        return _LaneGuardedClient(self._client, self.lane)
 
     @property
     def is_connected(self) -> bool:
@@ -114,7 +141,12 @@ class Mt5Session:
         if self._users == 0:
             self.disconnect()
 
+    def _guard_lane(self, what: str) -> None:
+        if self.lane is not None:
+            self.lane.assert_in_lane(what)
+
     def connect(self) -> ConnectionResult:
+        self._guard_lane("MT5 connect")
         self.connect_attempts += 1
         result = self._connection.connect(self._config)
         if result.success:
@@ -128,11 +160,13 @@ class Mt5Session:
         return result
 
     def disconnect(self) -> None:
+        self._guard_lane("MT5 disconnect")
         self._connection.disconnect()
         self._set(SessionState.DISCONNECTED)
 
     def reconnect(self) -> ConnectionResult:
         """Drop and re-attach. Attach-only: never logs in, never switches account."""
+        self._guard_lane("MT5 reconnect")
         self._connection.disconnect()
         return self.connect()
 
@@ -166,6 +200,7 @@ class Mt5Session:
     ) -> Any:
         """Run one MT5 call. Exceptions and None results become `Mt5CallError`; a lost
         terminal additionally degrades the session (=> reconciliation required)."""
+        self._guard_lane(f"MT5 call {what}")
         if self.state not in (SessionState.CONNECTED,):
             raise Mt5CallError(what, (0, f"session {self.state}"))
         try:

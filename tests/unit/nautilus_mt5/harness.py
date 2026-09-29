@@ -99,6 +99,7 @@ from nautilus_mt5.execution_client import (  # noqa: E402
     Mt5ExecClientConfig,
     Mt5LiveExecutionClient,
 )
+from nautilus_mt5.executor import Mt5Executor  # noqa: E402
 from nautilus_mt5.instruments import InstrumentAssumptions, Mt5InstrumentProvider  # noqa: E402
 from nautilus_mt5.session import Mt5Session  # noqa: E402
 from nautilus_mt5.state import Mt5StateStore  # noqa: E402
@@ -119,6 +120,7 @@ class ExecHarness(Harness):
         state_name: str = "state.db",
         connect: bool = True,
         live_engine: bool = False,
+        lane: bool = False,
     ) -> None:
         super().__init__()
         self.broker = broker
@@ -138,12 +140,14 @@ class ExecHarness(Harness):
         else:
             self.engine = ExecutionEngine(self.msgbus, self.cache, self.clock)
             self.engine.start()
+        self.lane = Mt5Executor() if lane else None
         self.session = Mt5Session(
             broker,
             MT5ConnectionConfig(
                 login=broker.cfg.login, password="x", server="s", terminal_path="t"
             ),
             lock_path=tmp_path / "mt5.lock",
+            lane=self.lane,
         )
         self.provider = Mt5InstrumentProvider(
             broker,
@@ -244,7 +248,11 @@ class ExecHarness(Harness):
         return None
 
     def shutdown(self) -> None:
-        self.session.disconnect()  # releases the single-owner lock; idempotent
+        if self.lane is not None:
+            self.run(self.lane.run(self.session.disconnect))  # loop must keep running
+            self.lane.shutdown()
+        else:
+            self.session.disconnect()  # releases the single-owner lock; idempotent
         self.store.close()
         self.close()
 

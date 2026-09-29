@@ -95,6 +95,7 @@ def test_build_adapter_is_io_free_and_shares_one_attach_only_session(broker, tmp
         assert adapter.data_client._session is adapter.exec_client._session
         assert adapter.session.state is SessionState.DISCONNECTED
         adapter.store.close()
+        adapter.lane.shutdown()
     finally:
         harness.close()
 
@@ -147,6 +148,7 @@ def test_both_clients_share_the_session_refcount_and_disconnect_cleanly(broker, 
         harness.run(adapter.exec_client._disconnect())
         assert adapter.session.state is SessionState.DISCONNECTED
         adapter.store.close()
+        adapter.lane.shutdown()
     finally:
         harness.close()
 

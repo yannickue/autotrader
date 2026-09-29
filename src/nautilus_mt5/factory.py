@@ -19,6 +19,7 @@ from nautilus_trader.common.component import LiveClock, MessageBus
 from adapters.config import MT5ConnectionConfig
 from nautilus_mt5.data_client import Mt5DataClientConfig, Mt5LiveMarketDataClient
 from nautilus_mt5.execution_client import Mt5ExecClientConfig, Mt5LiveExecutionClient
+from nautilus_mt5.executor import Mt5Executor
 from nautilus_mt5.instruments import InstrumentAssumptions, Mt5InstrumentProvider
 from nautilus_mt5.session import Mt5Session
 from nautilus_mt5.state import Mt5StateStore
@@ -32,6 +33,7 @@ class Mt5Adapter:
     data_client: Mt5LiveMarketDataClient
     exec_client: Mt5LiveExecutionClient
     store: Mt5StateStore
+    lane: Mt5Executor | None = None
 
 
 def build_mt5_adapter(
@@ -48,8 +50,16 @@ def build_mt5_adapter(
     registry: SymbolRegistry | None = None,
     data_config: Mt5DataClientConfig | None = None,
     exec_config: Mt5ExecClientConfig | None = None,
+    use_lane: bool = True,
 ) -> Mt5Adapter:
-    session = Mt5Session(client, connection, lock_path=lock_path)  # refuses login opt-in
+    # ONE dedicated thread carries all MT5 IPC; the session refuses calls from anywhere else.
+    lane = Mt5Executor() if use_lane else None
+    try:
+        session = Mt5Session(client, connection, lock_path=lock_path, lane=lane)  # no login opt-in
+    except BaseException:
+        if lane is not None:
+            lane.shutdown()
+        raise
     provider = Mt5InstrumentProvider(client, assumptions=assumptions, registry=registry)
     store = Mt5StateStore(state_path)
     data_client = Mt5LiveMarketDataClient(
@@ -64,4 +74,5 @@ def build_mt5_adapter(
         data_client=data_client,
         exec_client=exec_client,
         store=store,
+        lane=lane,
     )
