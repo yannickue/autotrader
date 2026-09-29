@@ -662,6 +662,9 @@ class DealRecord:
     comment: str
     external_id: str
     quality_flags: tuple[str, ...] = field(default_factory=tuple)
+    # MT5 DEAL_REASON_* (SL=4, TP=5, ...); 0 when the field is absent on a fixture.
+    reason: int = 0
+    time_msc: int = 0
 
 
 def deal_to_deal_record(raw: Any) -> DealRecord:
@@ -699,6 +702,8 @@ def deal_to_deal_record(raw: Any) -> DealRecord:
         comment=str(raw.comment),
         external_id=str(raw.external_id),
         quality_flags=quality_flags,
+        reason=int(getattr(raw, "reason", 0)),
+        time_msc=int(getattr(raw, "time_msc", 0)),
     )
 
 

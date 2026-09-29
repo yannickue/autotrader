@@ -105,6 +105,10 @@ class MT5ClientProtocol(Protocol):
         self, symbol: str, timeframe: int, date_from: datetime, count: int
     ) -> Any | None: ...
 
+    def copy_rates_from_pos(
+        self, symbol: str, timeframe: int, start_pos: int, count: int
+    ) -> Any | None: ...
+
     def copy_rates_range(
         self, symbol: str, timeframe: int, date_from: datetime, date_to: datetime
     ) -> Any | None: ...

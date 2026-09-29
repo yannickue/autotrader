@@ -216,6 +216,12 @@ class FakeMT5Client:
         del symbol, timeframe, date_from, count
         return self._rates
 
+    def copy_rates_from_pos(
+        self, symbol: str, timeframe: int, start_pos: int, count: int
+    ) -> Any | None:
+        del symbol, timeframe, start_pos, count
+        return self._rates
+
     def copy_rates_range(
         self, symbol: str, timeframe: int, date_from: datetime, date_to: datetime
     ) -> Any | None:

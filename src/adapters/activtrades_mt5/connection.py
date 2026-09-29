@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
+from typing import Any
 
 from adapters.activtrades_mt5.client import MT5ClientProtocol
 from adapters.activtrades_mt5.diagnostics import ConnectionDiagnosticCategory
@@ -257,6 +258,7 @@ class MT5Connection:
         required_symbols: Sequence[str],
         max_quote_age: timedelta,
         now: datetime,
+        server_time_policy: Any | None = None,
     ) -> ReadinessResult:
         """Caller-driven readiness check -- never runs on a hidden schedule
         (mirrors `RiskEngine`/`PaperExecutionEngine`, which only ever react
@@ -304,7 +306,17 @@ class MT5Connection:
                 missing.append(symbol)
                 continue
 
-            tick_time = datetime.fromtimestamp(int(tick.time), tz=now.tzinfo)
+            if server_time_policy is not None:
+                # MT5 tick.time is SERVER-clock epoch, not UTC (observed +7199 s). Without the
+                # policy the age is understated by the server offset (default kept for
+                # backwards compatibility; the Nautilus adapter always passes the policy).
+                try:
+                    tick_time = server_time_policy.server_epoch_to_utc(tick.time)
+                except Exception:
+                    stale.append(symbol)
+                    continue
+            else:
+                tick_time = datetime.fromtimestamp(int(tick.time), tz=now.tzinfo)
             if now - tick_time > max_quote_age:
                 stale.append(symbol)
 
