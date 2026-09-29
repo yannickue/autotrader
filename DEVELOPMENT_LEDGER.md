@@ -847,3 +847,9 @@ RESULTS (see research/reports/ar1_phase1/report.md): Pre-registered canonical MO
 CODEX FINDINGS FIXED: H1 OOS gate now binds full experiment fingerprint (candidates+config+dataset hashes+source hashes) with logged reset; H2 entry-bar gap fills at the open; H3 adverse entry gaps kept as ENTRY_GAP_STOP trades (no survivorship skip); M4 MFE stop-first; M5 holding time; M6 OOS PF check + selection note; L8 day-clustered CI. Results unchanged in verdict after the fixes.
 TESTS: alpha 52; full suite 1693 passed 1 skipped; ruff clean; compileall OK; 0 real MT5 calls in tests.
 DEFERRED: Monte Carlo sequence stress, walk-forward (needs longer history), Partial TP/exit research, dynamic sizing, NASDAQ100 (symbol not yet observed), M1 intrabar order resolution, Gemini adversarial pass (not needed: Codex found no Critical), rename of C7 `positions` report label.
+
+## AR2A — Alpha Research Phase 2 start (2026-09-29)
+
+- Branch: `sprint1/integration`; starting HEAD: `fe1bbc2da09dcaa6cb187c5f821183fa7d5435b3`; working tree clean.
+- AR1 state pushed to `origin/sprint1/integration` as a fast-forward (`068c3c8..fe1bbc2`, 65 commits); no remote divergence (fetch showed 0 behind), nothing overwritten.
+- Orchestration: Claude/Sonnet = orchestrator/integrator; implementation delegated to Codex, cheap recon to scout/Haiku.
