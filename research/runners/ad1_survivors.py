@@ -131,17 +131,21 @@ def _glance_table(finalists: list[dict[str, Any]]) -> list[str]:
 
     out = ["## Finalists at a glance", "",
            "| # | hash | origin | lineage family | Train n | Train E[R] | Val n | Val E[R] | "
-           "Val t | Val Bonf. p | pooled t | null bound |",
-           "|---|---|---|---|---|---|---|---|---|---|---|---|"]
+           "Val t | Val Bonf. p | pooled t | null bound | trades/day | timing ok |",
+           "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for i, f in enumerate(finalists, 1):
         tr, sc, s = f["train"]["adverse"], f["stage_c"] or {}, f["selection"] or {}
+        sd = f["stage_d"]
+        tpd = sd["by_cost"][st.ADVERSE_COST]["trades_per_day"] if sd else None
+        se_ = f["stage_e"]
+        timing_ok = "-" if not se_ else ("yes" if se_.get("timing_ok") else "NO")
         out.append(
             f"| {i} | `{f['canonical_hash'][:12]}` | {f['origin']} | "
             f"{lineage_family(f['lineage'] or 'HYBRID')} | {_fmt(tr.get('n_trades'))} | "
             f"{_fmt(tr.get('expectancy_r'))} | {_fmt(sc.get('n_trades'))} | "
             f"{_fmt(sc.get('expectancy_adverse'))} | {_fmt(sc.get('t_adverse'), 2)} | "
             f"{_fmt(s.get('validation_bonferroni_p'))} | {_fmt(s.get('pooled_t'), 2)} | "
-            f"{_fmt(s.get('null_bound_t'), 2)} |")
+            f"{_fmt(s.get('null_bound_t'), 2)} | {_fmt(tpd, 2)} | {timing_ok} |")
     return [*out, ""]
 
 
@@ -228,6 +232,20 @@ def render_report(summary: dict[str, Any], finalists: list[dict[str, Any]]) -> s
                 for bucket, v in table.items():
                     out.append(f"| {dim} | {bucket} | {v['n']} | {_fmt(v['sum_r'], 2)} | "
                                f"{_fmt(v['mean_r'])} |")
+            tm = se.get("timing")
+            if tm:
+                thr = summary["thresholds"]
+                req = ", ".join(f"k={k}" for k in thr["e_timing_required"])
+                out += ["", "Timing robustness (pooled COMBINED_ADVERSE, decisions delayed by k M5 "
+                        f"bars; required > 0: {req} and jitter):", "",
+                        "| variant | trades | E[R] | t |", "|---|---|---|---|",
+                        f"| undelayed | - | {_fmt(tm['undelayed_expectancy'])} | - |"]
+                variants = {**tm["by_delay"],
+                            f"jitter U{{0..{thr['e_timing_jitter_max']}}}": tm["jitter"]}
+                for name, row in variants.items():
+                    out.append(f"| {name} | {row['n_trades']} | {_fmt(row['expectancy_r'])} | "
+                               f"{_fmt(row['t_stat'], 2)} |")
+                out.append(f"timing_ok = {tm['passed']}")
             cc = se["concentration"]
             out += ["", f"Concentration: top-3 share {_fmt(cc['top3_share'])}, maxDD "
                     f"{_fmt(cc['max_dd_r'], 1)} R, loss streak {cc['max_loss_streak']}, "
@@ -251,7 +269,8 @@ def render_report(summary: dict[str, Any], finalists: list[dict[str, Any]]) -> s
 # --------------------------------------------------------------------------- driver
 def run(pool_path: Path, config: Path, out_dir: Path, cache_dir: Path,
         overlap: float = OVERLAP_THRESHOLD, prior_trials: int | None = None,
-        prior_unique_specs: int | None = None) -> dict[str, Any]:
+        prior_unique_specs: int | None = None, min_train_trades: int | None = None,
+        c_min_trades: int | None = None) -> dict[str, Any]:
     cfg = json.loads(config.read_text(encoding="utf-8"))
     pool = json.loads(pool_path.read_text(encoding="utf-8"))
     if pool.get("meta", {}).get("oos_touched") is not False:
@@ -261,9 +280,15 @@ def run(pool_path: Path, config: Path, out_dir: Path, cache_dir: Path,
     dev = ar2_fast.dev_frame(ds.frame, plan)  # OOS bars physically removed
     features = FeatureStore.load_or_build(dev, {"point_size": POINT}, cache_dir)
     market, dates = ar2_fast._market(features), ar2_fast._dates(features)
-    ev = GenomeEvaluator(features, market, dates, plan, cfg, cache_dir, TrialLedger())
+    # Train minimum: CLI override, else the value the pool was searched with (its cache
+    # fingerprint must match), else the config default
+    if min_train_trades is None:
+        min_train_trades = pool["meta"].get("min_train_trades")
+    ev = GenomeEvaluator(features, market, dates, plan, cfg, cache_dir, TrialLedger(),
+                         min_train_trades=min_train_trades)
+    overrides = {} if c_min_trades is None else {"c_min_trades": int(c_min_trades)}
     pcfg = st.PipelineConfig.from_dict({"seed": cfg.get("seed", 20260930),
-                                        **cfg.get("pipeline", {})})
+                                        **cfg.get("pipeline", {}), **overrides})
 
     res = st.run_pipeline(pool, ev, pcfg, prior_trials, prior_unique_specs)
     e_surv = res.survivors("E")
@@ -309,9 +334,14 @@ def main(argv: list[str] | None = None) -> int:
                         help="trials of EARLIER campaigns on this data (default: meta, else 0)")
     parser.add_argument("--prior-unique-specs", type=int, default=None,
                         help="unique specs of earlier campaigns (default: pool meta, else 0)")
+    parser.add_argument("--min-train-trades", type=int, default=None,
+                        help="Train minimum (default: value recorded in pool meta, else config)")
+    parser.add_argument("--c-min-trades", "--c-min-val-trades", dest="c_min_trades", type=int,
+                        default=None, help="Stage C minimum Validation trades (default 25)")
     args = parser.parse_args(argv)
     summary = run(Path(args.pool), Path(args.config), Path(args.out_dir), Path(args.cache_dir),
-                  args.overlap, args.prior_trials, args.prior_unique_specs)
+                  args.overlap, args.prior_trials, args.prior_unique_specs,
+                  args.min_train_trades, args.c_min_trades)
     print(f"counts: {summary['counts']}")
     print(f"accounting: {summary['accounting']}")
     print(f"clusters: {len(summary['clusters'])}  neighbour param trials: "

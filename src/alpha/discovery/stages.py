@@ -45,7 +45,7 @@ from alpha.discovery.evaluate import (
 from alpha.discovery.genome import Genome, GenomeError
 from alpha.discovery.search import _quantile_clauses, param_space, with_params
 from alpha.fast.screen import _metrics, _subset
-from alpha.fast.sim import TradeArrays, simulate_fast
+from alpha.fast.sim import CandidateArrays, TradeArrays, simulate_fast
 from alpha.fast.spec import evaluate_spec
 
 STRESS_COSTS = (BASE_COST, "SPREAD_STRESS", "SLIPPAGE_STRESS", ADVERSE_COST)
@@ -80,15 +80,44 @@ class PipelineConfig:
     e_top3_share_max: float = 0.45
     e_loss_streak_max: int = 12
     e_max_dd_r_max: float = 25.0
+    # Stage E (iv) entry-timing robustness: decisions delayed by k M5 bars (original stop and
+    # target R kept, fill at the next bar open after the delayed decision), COMBINED_ADVERSE,
+    # pooled Train+Validation.  Required: pooled expectancy > e_timing_min_expectancy for every
+    # k in e_timing_required and for the seeded random-jitter variant (delay ~ U{0..jitter_max}).
+    e_timing_delays: tuple[int, ...] = (1, 2, 3)
+    e_timing_required: tuple[int, ...] = (1, 2)
+    e_timing_jitter_max: int = 3
+    e_timing_min_expectancy: float = 0.0
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any] | None) -> PipelineConfig:
         raw = raw or {}
         names = {f.name for f in dataclasses.fields(cls)}
-        return cls(**{k: v for k, v in raw.items() if k in names})
+        kw = {k: (tuple(v) if isinstance(v, list) else v) for k, v in raw.items() if k in names}
+        return cls(**kw)
 
 
 # --------------------------------------------------------------------------- pooled simulation
+def delay_candidates(cands: CandidateArrays, delays: int | np.ndarray, n_bars: int
+                     ) -> CandidateArrays:
+    """Shift every decision by ``delays`` M5 bars, keeping stop price, target R and direction.
+
+    Candidates whose shifted index is >= ``n_bars`` are dropped.  The simulator requires strictly
+    increasing decision indices, so shifted candidates are stably re-ordered and, if several land
+    on the same bar (only possible with per-candidate delays), the earliest original is kept.
+    """
+    idx = np.asarray(cands.decision_idx, dtype=np.int64)
+    shifted = idx + np.asarray(delays, dtype=np.int64)
+    keep = np.flatnonzero(shifted < n_bars)
+    order = keep[np.argsort(shifted[keep], kind="stable")]
+    s = shifted[order]
+    if len(s):
+        first = np.concatenate(([True], s[1:] != s[:-1]))
+        order, s = order[first], s[first]
+    return CandidateArrays(s, cands.direction[order], cands.stop[order], cands.target[order],
+                           cands.target_r[order], cands.exit_kind[order])
+
+
 def _f(x: Any) -> float | None:
     return None if x is None else float(x)
 
@@ -179,8 +208,14 @@ class PooledSim:
         key = (ghash, cost)
         if keep and key in self._memo:
             return self._memo[key]
+        out = self.pooled_from_candidates(self._candidates(canon, ghash, keep), cost)
+        if keep:
+            self._memo[key] = out
+        return out
+
+    def pooled_from_candidates(self, cands: Any, cost: str) -> PooledTrades:
+        """Simulate ``cands`` (a CandidateArrays) and reduce to pooled Train+Validation trades."""
         ev = self.ev
-        cands = self._candidates(canon, ghash, keep)
         if len(cands.decision_idx):
             trades = simulate_fast(ev.market, cands, COST_SCENARIOS[cost], ev.sizing, ev.rules)
             self.simulations += 1
@@ -197,9 +232,14 @@ class PooledSim:
             stats = stats_from_r(sub.r_multiple, sub.entry_day, screen=screen,
                                  lb_mult=self.cfg.d_lb_se_mult)
             out = PooledTrades(sub, is_val[mask], stats)
-        if keep:
-            self._memo[key] = out
         return out
+
+    def pooled_delayed(self, genome: Genome, cost: str, delays: int | np.ndarray) -> PooledTrades:
+        """Pooled trades with every decision delayed (scalar k or per-candidate array)."""
+        canon = canonicalize(genome)
+        cands = self._candidates(canon, canonical_hash(canon), True)
+        delayed = delay_candidates(cands, delays, len(self.ev.market.o))
+        return self.pooled_from_candidates(delayed, cost)
 
 
 def peek_evaluation(ev: GenomeEvaluator, genome: Genome) -> GenomeEval:
@@ -281,12 +321,23 @@ class ConcentrationResult:
 
 
 @dataclass
+class TimingResult:
+    passed: bool
+    reasons: list[str]
+    undelayed_expectancy: float | None
+    by_delay: dict[str, dict[str, float | int | None]]  # "k=1" -> {n_trades, expectancy_r, t_stat}
+    jitter: dict[str, float | int | None]
+
+
+@dataclass
 class StageEResult:
     passed: bool
     reasons: list[str]
     neighborhood: NeighborhoodResult
     regime: RegimeResult
     concentration: ConcentrationResult
+    timing: TimingResult | None = None
+    timing_ok: bool = True  # entry-timing robustness (delays + jitter); part of `passed`
 
 
 # --------------------------------------------------------------------------- Stage C
@@ -528,6 +579,37 @@ def judge_concentration(stats: PooledStats, cfg: PipelineConfig) -> Concentratio
                                stats.zero_trade_day_frac)
 
 
+def judge_timing(undelayed: float | None, by_delay: dict[int, PooledStats], jitter: PooledStats,
+                 cfg: PipelineConfig) -> TimingResult:
+    """Pure judgement: required delays and the jitter variant must keep expectancy > floor."""
+    floor = cfg.e_timing_min_expectancy
+    reasons: list[str] = []
+    for k in cfg.e_timing_required:
+        e = by_delay[k].expectancy_r if k in by_delay else None
+        if e is None or e <= floor:
+            reasons.append(f"delay k={k} pooled adverse expectancy {e} <= {floor}")
+    if jitter.expectancy_r is None or jitter.expectancy_r <= floor:
+        reasons.append(f"random-jitter pooled adverse expectancy {jitter.expectancy_r} <= {floor}")
+    rows = {f"k={k}": {"n_trades": s.n_trades, "expectancy_r": s.expectancy_r,
+                       "t_stat": s.t_stat} for k, s in by_delay.items()}
+    jrow = {"n_trades": jitter.n_trades, "expectancy_r": jitter.expectancy_r,
+            "t_stat": jitter.t_stat}
+    return TimingResult(not reasons, reasons, undelayed, rows, jrow)
+
+
+def stage_e_timing(candidate: Genome, cfg: PipelineConfig, sim: PooledSim) -> TimingResult:
+    canon = canonicalize(candidate)
+    ghash = canonical_hash(canon)
+    base = sim.pooled(candidate, ADVERSE_COST).stats
+    by_delay = {int(k): sim.pooled_delayed(candidate, ADVERSE_COST, int(k)).stats
+                for k in cfg.e_timing_delays}
+    cands = sim._candidates(canon, ghash, True)
+    rng = np.random.default_rng([cfg.seed, int(ghash[:8], 16)])
+    delays = rng.integers(0, cfg.e_timing_jitter_max + 1, size=len(cands.decision_idx))
+    jitter = sim.pooled_delayed(candidate, ADVERSE_COST, delays).stats
+    return judge_timing(base.expectancy_r, by_delay, jitter, cfg)
+
+
 def stage_e_stability(candidate: Genome, ev: GenomeEvaluator, cfg: PipelineConfig | None = None,
                       sim: PooledSim | None = None) -> StageEResult:
     cfg = cfg or PipelineConfig()
@@ -543,7 +625,9 @@ def stage_e_stability(candidate: Genome, ev: GenomeEvaluator, cfg: PipelineConfi
     reasons = [f"neighbourhood: {x}" for x in hood.reasons]
     reasons += [f"regime: {x}" for x in regime.reasons]
     reasons += [f"concentration: {x}" for x in conc.reasons]
-    return StageEResult(not reasons, reasons, hood, regime, conc)
+    timing = stage_e_timing(candidate, cfg, sim)
+    reasons += [f"timing: {x}" for x in timing.reasons]
+    return StageEResult(not reasons, reasons, hood, regime, conc, timing, timing.passed)
 
 
 # --------------------------------------------------------------------------- pipeline
@@ -701,11 +785,14 @@ __all__ = (
     "StageCResult",
     "StageDResult",
     "StageEResult",
+    "TimingResult",
+    "delay_candidates",
     "judge_concentration",
     "judge_neighborhood",
     "judge_regime",
     "judge_stage_c",
     "judge_stage_d",
+    "judge_timing",
     "ledger_snapshot",
     "neighbor_genomes",
     "peek_evaluation",
@@ -713,5 +800,6 @@ __all__ = (
     "stage_c_validation",
     "stage_d_cost_stress",
     "stage_e_stability",
+    "stage_e_timing",
     "to_plain",
 )

@@ -45,13 +45,18 @@ W_DD, DD_FREE = 0.05, 3.0
 W_SAMPLE, SAMPLE_FULL = 0.02, 300
 
 
-def train_fitness(view: TrainView) -> float:
-    """Higher is better.  See the module docstring for the exact definition."""
+def train_fitness(view: TrainView, min_trades: int | None = None) -> float:
+    """Higher is better.  See the module docstring for the exact definition.
+
+    ``min_trades`` (default ``MIN_TRAIN_TRADES``) is the campaign's Train minimum; below it the
+    score is graded-negative ``INVALID_FLOOR + n / min_trades``.
+    """
+    min_trades = MIN_TRAIN_TRADES if min_trades is None else int(min_trades)
     side = view.adverse
     screen = side.screen
     n = screen.n_trades
-    if n < MIN_TRAIN_TRADES or screen.expectancy_r is None:
-        return INVALID_FLOOR + n / MIN_TRAIN_TRADES
+    if n < min_trades or screen.expectancy_r is None:
+        return INVALID_FLOOR + n / min_trades
     score = screen.expectancy_r - W_SE * (side.se_r or 0.0)
     score -= W_COMPLEXITY * view.complexity
     top3 = screen.top_3_positive_r_share

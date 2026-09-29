@@ -131,7 +131,7 @@ class _Scorer:
         if ind.chash not in self.memo:
             ev = self.evaluator.evaluate(ind.genome, kind="structural")
             self.calls += 1
-            fit = train_fitness(ev.train)
+            fit = train_fitness(ev.train, self.evaluator.min_trades)
             cand = None if ev.rejected else Candidate(canonicalize(ind.genome), ev.genome_hash,
                                                       fit, ev)
             self.memo[ind.chash] = (fit, cand)

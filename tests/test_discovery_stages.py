@@ -399,3 +399,57 @@ def test_derive_weaknesses_flags_null_bound_and_stage_failures():
     for needle in ("stage D FAIL", "does not exceed null bound", "Bonferroni", "deflated-Sharpe",
                    "thin Validation sample", "small pooled sample", "cost sensitive", "< 25%"):
         assert needle in joined, needle
+
+
+# --------------------------------------------------------------------------- entry timing
+def _cands(idx, stops=None):
+    from alpha.fast.sim import EXIT_FIXED_R, CandidateArrays
+
+    n = len(idx)
+    return CandidateArrays(np.asarray(idx), np.ones(n, np.int8),
+                           np.asarray(stops if stops is not None else 100.0 - np.arange(n), float),
+                           np.full(n, np.nan), np.full(n, 2.0), np.full(n, EXIT_FIXED_R, np.int8))
+
+
+def test_delay_candidates_shift_drop_and_keep_stop():
+    c = _cands([1, 5, 8, 9], stops=[90.0, 91.0, 92.0, 93.0])
+    d = st.delay_candidates(c, 2, n_bars=11)
+    assert d.decision_idx.tolist() == [3, 7, 10] and d.stop.tolist() == [90.0, 91.0, 92.0]
+    assert np.all(d.target_r == 2.0) and np.all(d.direction == 1)  # target R kept
+    assert st.delay_candidates(c, 0, 100).decision_idx.tolist() == [1, 5, 8, 9]
+    assert st.delay_candidates(c, 5, n_bars=10).decision_idx.tolist() == [6]  # 5,8,9 + 5 dropped
+    # per-candidate jitter: collisions keep the earliest original, order stays increasing
+    j = st.delay_candidates(c, np.array([3, 0, 0, 0]), 100)
+    assert j.decision_idx.tolist() == [4, 5, 8, 9] and j.stop.tolist() == [90.0, 91.0, 92.0, 93.0]
+    j2 = st.delay_candidates(_cands([1, 2]), np.array([1, 0]), 100)
+    assert j2.decision_idx.tolist() == [2] and j2.stop.tolist() == [100.0]
+    j3 = st.delay_candidates(_cands([1, 2]), np.array([3, 0]), 100)  # reordered
+    assert j3.decision_idx.tolist() == [2, 4] and j3.stop.tolist() == [99.0, 100.0]
+
+
+def test_judge_timing_thresholds():
+    by = {1: _ps(0.05, 0.02), 2: _ps(0.03, 0.02), 3: _ps(-0.20, 0.02)}
+    ok = st.judge_timing(0.1, by, _ps(0.01, 0.02), CFG)  # k=3 negative is NOT required
+    assert ok.passed and ok.by_delay["k=3"]["expectancy_r"] == -0.20
+    assert not st.judge_timing(0.1, {**by, 2: _ps(0.0, 0.02)}, _ps(0.01, 0.02), CFG).passed
+    assert not st.judge_timing(0.1, {**by, 1: _ps(None, None)}, _ps(0.01, 0.02), CFG).passed
+    bad_j = st.judge_timing(0.1, by, _ps(-0.01, 0.02), CFG)
+    assert not bad_j.passed and any("jitter" in r for r in bad_j.reasons)
+    cfg = st.PipelineConfig.from_dict({"e_timing_required": [1, 2, 3]})
+    assert cfg.e_timing_required == (1, 2, 3)
+    assert not st.judge_timing(0.1, by, _ps(0.01, 0.02), cfg).passed
+
+
+def test_stage_e_timing_on_real_candidate(env, tmp_path):
+    ev = _evaluator(env, tmp_path)
+    g = _stage_a_survivor(env, ev)
+    sim = st.PooledSim(ev, CFG)
+    tm = st.stage_e_timing(g, CFG, sim)
+    assert set(tm.by_delay) == {"k=1", "k=2", "k=3"}
+    base = sim.pooled(g, st.ADVERSE_COST).stats
+    assert tm.undelayed_expectancy == base.expectancy_r
+    tm2 = st.stage_e_timing(g, CFG, st.PooledSim(ev, CFG))  # deterministic (seeded jitter)
+    assert st.to_plain(tm2) == st.to_plain(tm)
+    e = st.stage_e_stability(g, ev, CFG, sim)
+    assert e.timing_ok == e.timing.passed
+    assert e.passed is False or e.timing_ok  # a timing failure always fails Stage E

@@ -116,7 +116,8 @@ def run(args: argparse.Namespace) -> dict:
     assert_oos_untouched(plan, dates)  # OOS never enters any frame the evaluator sees
     pool = FeaturePool.from_features(features)
     ledger = TrialLedger()
-    evaluator = GenomeEvaluator(features, market, dates, plan, cfg, args.cache_dir, ledger)
+    evaluator = GenomeEvaluator(features, market, dates, plan, cfg, args.cache_dir, ledger,
+                                min_train_trades=args.min_train_trades)
     log(f"[setup] {len(dates)} dev bars, feature pool ready, seed={seed}, "
         f"max_unique_specs={args.max_unique_specs}")
 
@@ -153,7 +154,8 @@ def run(args: argparse.Namespace) -> dict:
         g = random_genome(rng, pool)
         ev = evaluator.evaluate(g, kind="structural")
         if not ev.rejected:
-            c = Candidate(canonicalize(g), ev.genome_hash, train_fitness(ev.train), ev)
+            fit = train_fitness(ev.train, evaluator.min_trades)
+            c = Candidate(canonicalize(g), ev.genome_hash, fit, ev)
             random_valid.append(c)
             cands.add(c, "random")
         if (i + 1) % 100 == 0:
@@ -216,6 +218,7 @@ def run(args: argparse.Namespace) -> dict:
         "evaluator_version": EVALUATOR_VERSION, "evaluator_fingerprint": evaluator._fp_static,
         "seed": seed, "git_commit": _git_commit(),
         "args": {k: v for k, v in vars(args).items() if k != "cache_dir"},
+        "min_train_trades": evaluator.min_trades,
         "ledger": ledger_json,
         # trials of EARLIER campaigns on the same data (cumulative multiple-testing N)
         "prior_trials": args.prior_trials, "prior_unique_specs": args.prior_unique_specs,
@@ -269,6 +272,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--deap-mutpb", type=float, default=0.4)
     p.add_argument("--pool-size", type=int, default=600)
     p.add_argument("--max-unique-specs", type=int, default=10000)
+    p.add_argument("--min-train-trades", type=int, default=None,
+                   help="Train minimum trades (Stage A + fitness); default: config "
+                        "sample_rules.min_trades_flag (60). Recorded in meta + cache fingerprint")
     p.add_argument("--prior-trials", type=int, default=0,
                    help="trials of earlier campaigns on this data; stored in pool meta and added "
                         "to N by ad1_survivors")

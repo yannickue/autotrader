@@ -93,7 +93,7 @@ def test_fitness_not_monotone_in_total_pnl():
 
 def test_fitness_takes_only_a_train_view():
     sig = inspect.signature(train_fitness)
-    assert list(sig.parameters) == ["view"]
+    assert list(sig.parameters) == ["view", "min_trades"]  # min_trades: plain int
     assert sig.parameters["view"].annotation in (TrainView, "TrainView")
     src = inspect.getsource(fitness_module)
     for token in ("ValidationView", "validation_gate_view", "_validation", ".validation"):
@@ -113,3 +113,9 @@ def _val(exp):
     from alpha.discovery.evaluate import ValidationView
 
     return ValidationView(_side(60, exp), _side(60, exp))
+
+
+def test_train_fitness_min_trades_is_a_parameter():
+    assert train_fitness(_view(n=200), 250) == pytest.approx(-10.0 + 200 / 250)
+    assert train_fitness(_view(n=249), 250) < -9.0 < train_fitness(_view(n=250), 250)
+    assert train_fitness(_view(n=100)) > -1.0  # default (60) unchanged

@@ -127,7 +127,7 @@ def optimize_structure(
             trial.report(-1.0, step=0)
             raise optuna.TrialPruned() from None
         ev = evaluator.evaluate(candidate, kind="param")
-        fit = train_fitness(ev.train)
+        fit = train_fitness(ev.train, evaluator.min_trades)
         hashes.append(ev.genome_hash)
         if ev.rejected:
             trial.report(fit, step=0)

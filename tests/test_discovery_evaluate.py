@@ -161,3 +161,14 @@ def test_stage_a_min_train_trades_is_60_and_version_bumped(env, tmp_path):
     assert MIN_TRAIN_TRADES == 60 and EVALUATOR_VERSION == "ad1-genome-eval-v2"
     ev = _evaluator(env, tmp_path)
     assert ev.min_trades == 60  # research/configs/ad1_discovery.json sample_rules
+
+
+def test_min_train_trades_parameter_changes_cache_fingerprint(env, tmp_path):
+    a = _evaluator(env, tmp_path / "a")
+    b = GenomeEvaluator(env["features"], env["market"], env["dates"], env["plan"], env["cfg"],
+                        tmp_path / "b", TrialLedger(), min_train_trades=250)
+    assert a.min_trades == 60 and b.min_trades == 250
+    assert a._fp_static != b._fp_static
+    g = _genomes(env, 1)[0]
+    assert a.fingerprint("h") != b.fingerprint("h")
+    assert b.evaluate(g).rejected or b.evaluate(g).train.adverse.screen.n_trades >= 250

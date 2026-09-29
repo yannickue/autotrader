@@ -234,6 +234,7 @@ class GenomeEvaluator:
     def __init__(
         self, store: Any, market: Any, dates: np.ndarray, split: SplitPlan, cfg: dict,
         cache_dir: Path | str, ledger: TrialLedger | None = None,
+        min_train_trades: int | None = None,
     ) -> None:
         self.store, self.market, self.split, self.cfg = store, market, split, cfg
         self.dates = np.asarray(dates).astype("datetime64[D]")
@@ -242,7 +243,9 @@ class GenomeEvaluator:
         self.ledger = ledger if ledger is not None else TrialLedger()
         self.sizing = SizingSpec(**cfg["sizing"])
         self.rules = SimRules(**cfg["rules"])
-        self.min_trades = cfg.get("sample_rules", {}).get("min_trades_flag", MIN_TRAIN_TRADES)
+        # Train minimum (Stage A + fitness); part of the cache fingerprint below
+        self.min_trades = int(min_train_trades if min_train_trades is not None else
+                              cfg.get("sample_rules", {}).get("min_trades_flag", MIN_TRAIN_TRADES))
         self.cache_root = Path(cache_dir) / "genome_evals"
         self.cache_root.mkdir(parents=True, exist_ok=True)
         self._memory: dict[str, dict] = {}
