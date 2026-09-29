@@ -1,0 +1,234 @@
+{
+  "config": "research/configs/ad1_discovery.json",
+  "cpu_utilisation": 0.538,
+  "dominating_family": "GROUP_A_OPENING_DRIVE",
+  "embargo_days": 5,
+  "features": {
+    "cold_build_s": 16.56,
+    "dev_bars": 75837,
+    "first_call_s": 16.09,
+    "warm_cache_hit": true,
+    "warm_load_s": 0.16
+  },
+  "first_pass": {
+    "cache_disk_hits": 0,
+    "cache_hit_rate": 0.0,
+    "cache_hits": 0,
+    "cache_lookup_s": 0.024,
+    "cache_misses": 100,
+    "candidates_per_s": 112846.7,
+    "generate_errors": 0,
+    "generate_s": 0.068,
+    "n": 100,
+    "per_family": {
+      "COMPRESSION_EXPANSION": {
+        "cache_hits": 0,
+        "candidates": 15953,
+        "generate_s": 0.009,
+        "n": 10,
+        "screen_s": 0.018
+      },
+      "FAILED_BREAKOUT_REVERSAL": {
+        "cache_hits": 0,
+        "candidates": 3453,
+        "generate_s": 0.005,
+        "n": 10,
+        "screen_s": 0.018
+      },
+      "GROUP_A_MOMENTUM_CONTINUATION": {
+        "cache_hits": 0,
+        "candidates": 719,
+        "generate_s": 0.004,
+        "n": 10,
+        "screen_s": 0.017
+      },
+      "GROUP_A_OPENING_DRIVE": {
+        "cache_hits": 0,
+        "candidates": 421,
+        "generate_s": 0.018,
+        "n": 10,
+        "screen_s": 0.019
+      },
+      "GROUP_A_TREND_PULLBACK": {
+        "cache_hits": 0,
+        "candidates": 895,
+        "generate_s": 0.005,
+        "n": 10,
+        "screen_s": 0.019
+      },
+      "OPENING_RANGE_BREAKOUT_RETEST": {
+        "cache_hits": 0,
+        "candidates": 1973,
+        "generate_s": 0.004,
+        "n": 10,
+        "screen_s": 0.021
+      },
+      "PREVIOUS_DAY_LEVELS": {
+        "cache_hits": 0,
+        "candidates": 6860,
+        "generate_s": 0.006,
+        "n": 10,
+        "screen_s": 0.019
+      },
+      "RANGE_MEAN_REVERSION": {
+        "cache_hits": 0,
+        "candidates": 10427,
+        "generate_s": 0.005,
+        "n": 10,
+        "screen_s": 0.021
+      },
+      "SESSION_SWEEP_REVERSAL": {
+        "cache_hits": 0,
+        "candidates": 1326,
+        "generate_s": 0.007,
+        "n": 10,
+        "screen_s": 0.021
+      },
+      "SESSION_TWAP_REFERENCE": {
+        "cache_hits": 0,
+        "candidates": 540,
+        "generate_s": 0.005,
+        "n": 10,
+        "screen_s": 0.019
+      }
+    },
+    "positive_informational": {
+      "both": 17,
+      "train": 24,
+      "validation": 42
+    },
+    "rejects": {
+      "too_few_trades": 39,
+      "zero_candidates": 1
+    },
+    "screen_s": 0.192,
+    "sims_per_s_excl_generation": 515.36,
+    "simulations_run": 99,
+    "total_candidates": 42567,
+    "variants_per_s": 265.1,
+    "wall_s": 0.377,
+    "zero_candidate_by_family": {
+      "GROUP_A_TREND_PULLBACK": 1
+    }
+  },
+  "jit_warmup_s": 0.61,
+  "n_requested": 100,
+  "param_generation": {
+    "attempts": 100,
+    "duplicates_rejected": 0,
+    "families": 10,
+    "first_hashes_sha": "42c6d309875333fd980ab00be8ef6673bcf10be1738f7e19dabef2bdd6e73832",
+    "invalid_params_skipped": 0,
+    "total_trials": 100,
+    "unique_specs": 100
+  },
+  "peak_rss_mb": 377.7,
+  "process_cpu_s": 19.31,
+  "process_wall_s": 35.9,
+  "profile": null,
+  "second_pass_warm_cache": {
+    "cache_disk_hits": 0,
+    "cache_hit_rate": 1.0,
+    "cache_hits": 100,
+    "cache_lookup_s": 0.006,
+    "cache_misses": 0,
+    "candidates_per_s": 6377556.4,
+    "generate_errors": 0,
+    "generate_s": 0.0,
+    "n": 100,
+    "per_family": {
+      "COMPRESSION_EXPANSION": {
+        "cache_hits": 10,
+        "candidates": 15953,
+        "generate_s": 0.0,
+        "n": 10,
+        "screen_s": 0.0
+      },
+      "FAILED_BREAKOUT_REVERSAL": {
+        "cache_hits": 10,
+        "candidates": 3453,
+        "generate_s": 0.0,
+        "n": 10,
+        "screen_s": 0.0
+      },
+      "GROUP_A_MOMENTUM_CONTINUATION": {
+        "cache_hits": 10,
+        "candidates": 719,
+        "generate_s": 0.0,
+        "n": 10,
+        "screen_s": 0.0
+      },
+      "GROUP_A_OPENING_DRIVE": {
+        "cache_hits": 10,
+        "candidates": 421,
+        "generate_s": 0.0,
+        "n": 10,
+        "screen_s": 0.0
+      },
+      "GROUP_A_TREND_PULLBACK": {
+        "cache_hits": 10,
+        "candidates": 895,
+        "generate_s": 0.0,
+        "n": 10,
+        "screen_s": 0.0
+      },
+      "OPENING_RANGE_BREAKOUT_RETEST": {
+        "cache_hits": 10,
+        "candidates": 1973,
+        "generate_s": 0.0,
+        "n": 10,
+        "screen_s": 0.0
+      },
+      "PREVIOUS_DAY_LEVELS": {
+        "cache_hits": 10,
+        "candidates": 6860,
+        "generate_s": 0.0,
+        "n": 10,
+        "screen_s": 0.0
+      },
+      "RANGE_MEAN_REVERSION": {
+        "cache_hits": 10,
+        "candidates": 10427,
+        "generate_s": 0.0,
+        "n": 10,
+        "screen_s": 0.0
+      },
+      "SESSION_SWEEP_REVERSAL": {
+        "cache_hits": 10,
+        "candidates": 1326,
+        "generate_s": 0.0,
+        "n": 10,
+        "screen_s": 0.0
+      },
+      "SESSION_TWAP_REFERENCE": {
+        "cache_hits": 10,
+        "candidates": 540,
+        "generate_s": 0.0,
+        "n": 10,
+        "screen_s": 0.0
+      }
+    },
+    "positive_informational": {
+      "both": 17,
+      "train": 24,
+      "validation": 42
+    },
+    "rejects": {
+      "too_few_trades": 39,
+      "zero_candidates": 1
+    },
+    "screen_s": 0.0,
+    "sims_per_s_excl_generation": null,
+    "simulations_run": 0,
+    "total_candidates": 42567,
+    "variants_per_s": 14982.4,
+    "wall_s": 0.007,
+    "zero_candidate_by_family": {
+      "GROUP_A_TREND_PULLBACK": 1
+    }
+  },
+  "seed": 20260929,
+  "target_met": true,
+  "target_seconds": 300.0,
+  "version": "AD1B-benchmark-1"
+}
