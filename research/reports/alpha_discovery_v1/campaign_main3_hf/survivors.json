@@ -1,0 +1,87 @@
+{
+  "finalists": [],
+  "summary": {
+    "accounting": {
+      "campaign_total_trials": 10111,
+      "campaign_unique_specs": 9927,
+      "n_total_trials": 30310,
+      "n_unique_specs": 29798,
+      "prior_trials": 20199,
+      "prior_unique_specs": 19871
+    },
+    "clusters": [],
+    "counts": {
+      "C": 0,
+      "D": 0,
+      "E": 0,
+      "pool": 800,
+      "stage_a": 800,
+      "train_and_validation_positive": 108,
+      "train_positive": 788,
+      "validation_positive": 109
+    },
+    "meta_ledger": {
+      "cache_hits": 184,
+      "duplicate_rejects": 184,
+      "invalid_rejects": 0,
+      "param_trials": 3200,
+      "structural_trials": 6911,
+      "total_trials": 10111,
+      "unique": 9927,
+      "unique_specs": 9927
+    },
+    "neighbor_param_trials": 0,
+    "null_bound_t": 4.542957840449732,
+    "oos_touched": false,
+    "overlap_threshold": 0.6,
+    "pipeline_ledger_after": {
+      "cache_hits": 0,
+      "duplicate_rejects": 0,
+      "invalid_rejects": 0,
+      "param_trials": 0,
+      "structural_trials": 0,
+      "total_trials": 0,
+      "unique_specs": 0
+    },
+    "pipeline_ledger_before": {
+      "cache_hits": 0,
+      "duplicate_rejects": 0,
+      "invalid_rejects": 0,
+      "param_trials": 0,
+      "structural_trials": 0,
+      "total_trials": 0,
+      "unique_specs": 0
+    },
+    "thresholds": {
+      "c_min_profit_factor": 1.0,
+      "c_min_trades": 100,
+      "c_top3_share_max": 0.6,
+      "d_lb_min": -0.02,
+      "d_lb_se_mult": 1.0,
+      "e_bucket_max_positive_share": 0.8,
+      "e_joint_perturbations": 30,
+      "e_loss_streak_max": 12,
+      "e_max_dd_r_max": 25.0,
+      "e_month_min_nonneg_frac": 0.6,
+      "e_month_min_trades": 5,
+      "e_neighbor_min_positive_frac": 0.6,
+      "e_neighbor_worst_min": -0.2,
+      "e_timing_delays": [
+        1,
+        2,
+        3
+      ],
+      "e_timing_jitter_max": 3,
+      "e_timing_min_expectancy": 0.0,
+      "e_timing_required": [
+        1,
+        2
+      ],
+      "e_top3_share_max": 0.45,
+      "seed": 20260929,
+      "validation_min_t": 1.0
+    },
+    "verdict": "NO",
+    "verdict_rule": "YES only if at least one overlap-cluster representative passes ALL stages (C, D, E) AND its pooled day-clustered t exceeds the selection null bound sqrt(2 ln N_total_trials); INCONCLUSIVE if some representative passes all stages but none exceeds the null bound; otherwise NO."
+  }
+}
