@@ -32,6 +32,24 @@ def _candidates(stops: list[float]) -> CandidateArrays:
     )
 
 
+def test_reject_reason_tolerates_decision_on_last_bar() -> None:
+    market = MarketArrays(
+        *[np.full(3, 100.0) for _ in range(4)], np.zeros(3), np.full(3, 600),
+        np.zeros(3), np.array([True, True, False]),
+    )
+    only_last = CandidateArrays(
+        np.array([2]), np.ones(1, dtype=np.int8), np.array([90.0]), np.full(1, np.nan),
+        np.full(1, 2.0), np.zeros(1, dtype=np.int8),
+    )
+    assert reject_reason(_spec(), only_last, min_trades=1, market=market
+                         ) == RejectReason.INVALID_STOP
+    mixed = CandidateArrays(
+        np.array([1, 2]), np.ones(2, dtype=np.int8), np.array([90.0, 90.0]), np.full(2, np.nan),
+        np.full(2, 2.0), np.zeros(2, dtype=np.int8),
+    )
+    assert reject_reason(_spec(), mixed, min_trades=1, market=market) is None
+
+
 def test_reject_reason_covers_stage_a_sanity_checks() -> None:
     spec = _spec()
     empty = _candidates([])

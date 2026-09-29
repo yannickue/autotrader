@@ -136,6 +136,26 @@ def _partition_screen(
     )
 
 
+def screen_trades(
+    trades: TradeArrays,
+    market: MarketArrays,
+    split: SplitPlan,
+    *,
+    dates: np.ndarray,
+    sizing: SizingSpec = DEFAULT_SIZING,
+) -> LightScreenResult:
+    """Reduce already-simulated trades to embargo-aware Train/Validation metrics."""
+    dates = np.asarray(dates).astype("datetime64[D]")
+    return LightScreenResult(
+        train=_partition_screen(
+            trades, market, dates, split, split.train, contract_size=sizing.contract_size
+        ),
+        validation=_partition_screen(
+            trades, market, dates, split, split.validation, contract_size=sizing.contract_size
+        ),
+    )
+
+
 def light_screen(
     market: MarketArrays,
     candidates: CandidateArrays,
@@ -151,14 +171,7 @@ def light_screen(
     if len(dates) != len(market.o):
         raise ValueError("dates must contain one Berlin date per market bar")
     trades = simulate_fast(market, candidates, cost, sizing, rules)
-    return LightScreenResult(
-        train=_partition_screen(
-            trades, market, dates, split, split.train, contract_size=sizing.contract_size
-        ),
-        validation=_partition_screen(
-            trades, market, dates, split, split.validation, contract_size=sizing.contract_size
-        ),
-    )
+    return screen_trades(trades, market, split, dates=dates, sizing=sizing)
 
 
 def light_screen_many(
@@ -197,15 +210,18 @@ def reject_reason(
     if market is not None:
         scenario = cost or CostScenario("STAGE_A", slippage_pts=0.0)
         entry_idx = candidates.decision_idx + 1
-        if np.all(entry_idx >= len(market.o)):
+        in_range = entry_idx < len(market.o)  # a decision on the last bar has no fill bar
+        if not in_range.any():
             return RejectReason.INVALID_STOP
+        entry_idx = entry_idx[in_range]
+        direction, stop = candidates.direction[in_range], candidates.stop[in_range]
         fill = np.where(
-            candidates.direction > 0,
+            direction > 0,
             market.o[entry_idx] + market.spread[entry_idx] * scenario.spread_mult
             + scenario.slippage_pts,
             market.o[entry_idx] - scenario.slippage_pts,
         )
-        risk_pts = candidates.direction * (fill - candidates.stop)
+        risk_pts = direction * (fill - stop)
         # the simulator skips individually invalid candidates; reject only impossible specs
         if np.all(
             ~np.isfinite(risk_pts)
@@ -220,5 +236,5 @@ def reject_reason(
 
 __all__ = (
     "LightScreenResult", "PartitionScreen", "RejectReason", "light_screen",
-    "light_screen_many", "reject_reason",
+    "light_screen_many", "reject_reason", "screen_trades",
 )

@@ -307,6 +307,7 @@ class TrialLedger:
     structural_trials: int = 0
     duplicate_rejects: int = 0
     invalid_rejects: int = 0
+    cache_hits: int = 0  # evaluations served from the result cache (still counted as trials)
 
     def record(self, genome: Genome, kind: str = "structural") -> str:
         """Count one trial; returns 'new', 'duplicate' or 'invalid'."""
@@ -340,6 +341,7 @@ class TrialLedger:
                 "param_trials": self.param_trials, "structural_trials": self.structural_trials,
                 "duplicate_rejects": self.duplicate_rejects,
                 "invalid_rejects": self.invalid_rejects, "unique": self.unique,
+                "cache_hits": self.cache_hits,
             },
             sort_keys=True,
         )
@@ -349,7 +351,7 @@ class TrialLedger:
         raw = json.loads(text)
         return cls(
             set(raw["seen"]), raw["total_trials"], raw["param_trials"], raw["structural_trials"],
-            raw["duplicate_rejects"], raw["invalid_rejects"],
+            raw["duplicate_rejects"], raw["invalid_rejects"], raw.get("cache_hits", 0),
         )
 
 

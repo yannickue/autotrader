@@ -1,0 +1,89 @@
+{
+  "VALIDATION_DIAGNOSTIC_NOT_USED_FOR_SELECTION": {
+    "random_baseline_all_200": {
+      "n": 200,
+      "train_positive_adverse": 0.235,
+      "validation_positive_adverse": 0.16,
+      "validation_positive_base": 0.31
+    },
+    "random_baseline_stage_a_passers": {
+      "n": 164,
+      "train_positive_adverse": 0.2317,
+      "validation_positive_adverse": 0.1951,
+      "validation_positive_base": 0.378
+    },
+    "spearman_train_fitness_vs_validation_adverse_expectancy_passers": 0.1719,
+    "top20_structures_before_optuna": {
+      "n": 20,
+      "train_positive_adverse": 1.0,
+      "validation_positive_adverse": 0.3,
+      "validation_positive_base": 0.45
+    },
+    "topk_by_train_fitness_after_optuna": {
+      "n": 20,
+      "train_positive_adverse": 1.0,
+      "validation_positive_adverse": 0.55,
+      "validation_positive_base": 0.65
+    }
+  },
+  "best_train_fitness_per_structure": {
+    "max": 0.2254,
+    "median": 0.0648,
+    "min": -0.1349
+  },
+  "ledger": {
+    "cache_hits": 23,
+    "duplicate_rejects": 23,
+    "invalid_rejects": 0,
+    "param_trials": 800,
+    "seen": 977,
+    "structural_trials": 200,
+    "total_trials": 1000,
+    "unique": 977
+  },
+  "n_random": 200,
+  "n_stage_a_passers": 164,
+  "n_top_structures": 20,
+  "optuna_cache_hit_rate": 0.0288,
+  "optuna_simulations_pairs": 1474,
+  "optuna_trials": 800,
+  "optuna_trials_per_s": 84.57,
+  "optuna_wall_s": 9.46,
+  "pooled_distinct_candidates": 100,
+  "pruned_trials": 55,
+  "seed": 20260930,
+  "structural_wall_s": 1.9,
+  "top_structure_train_fitness_before_optuna": {
+    "max": -0.0267,
+    "median": -0.0976,
+    "min": -0.1362
+  },
+  "topk": {
+    "k": 20,
+    "train_expectancy_positive_combined_adverse": 20,
+    "train_fitness": [
+      0.2254,
+      0.2075,
+      0.206,
+      0.1919,
+      0.179,
+      0.1651,
+      0.1627,
+      0.1605,
+      0.1545,
+      0.1535,
+      0.1397,
+      0.1339,
+      0.1282,
+      0.1091,
+      0.1063,
+      0.1036,
+      0.1024,
+      0.0834,
+      0.0745,
+      0.0674
+    ],
+    "train_fitness_positive": 20
+  },
+  "trials_per_structure": 40
+}
