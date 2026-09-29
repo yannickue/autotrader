@@ -12,7 +12,7 @@ name = "autotrader-infrastructure"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
-    { name = "metatrader5" },
+    { name = "metatrader5", marker = "sys_platform == 'win32'" },
     { name = "nautilus-trader" },
     { name = "pyarrow" },
 ]
@@ -25,7 +25,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "metatrader5", specifier = ">=5.0.6231" },
+    { name = "metatrader5", marker = "sys_platform == 'win32'", specifier = ">=5.0.6231" },
     { name = "nautilus-trader", specifier = "==1.231.0" },
     { name = "pyarrow", specifier = "==25.0.1" },
 ]
