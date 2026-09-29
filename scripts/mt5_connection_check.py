@@ -25,6 +25,12 @@ for path in (str(REPO_ROOT), str(SRC_ROOT)):
     if path not in sys.path:
         sys.path.insert(0, path)
 
+from adapters.activtrades_mt5.connection import ConnectionState, MT5Connection  # noqa: E402
+from adapters.activtrades_mt5.models import (  # noqa: E402
+    account_info_to_account_state,
+    terminal_info_to_terminal_state,
+)
+from adapters.activtrades_mt5.real_client import get_real_client  # noqa: E402
 from adapters.config import (  # noqa: E402
     MT5ConfigError,
     MT5ConnectionConfig,
@@ -32,13 +38,49 @@ from adapters.config import (  # noqa: E402
 )
 
 
-def _connect_and_report(config: MT5ConnectionConfig) -> None:
-    """TODO(mt5-adapter): once a real MT5 client exists in `src/adapters`,
-    replace this with an actual terminal connection and report of
-    terminal-path/account/server/currency/equity/margin/symbol-count/health.
-    The password (`config.password`) must never be printed or logged.
+def _connect_and_report(config: MT5ConnectionConfig) -> int:
+    """Connect to the configured MT5 terminal and report health.
+
+    Never prints `config.password`. Returns a process exit code.
     """
-    raise NotImplementedError("MT5 adapter not yet implemented")
+    connection = MT5Connection(get_real_client())
+    result = connection.connect(config)
+    if not result.success:
+        print(f"MT5 CONNECTION FAILED: {result.reason}", file=sys.stderr)
+        if result.error_code is not None:
+            print(
+                f"  last_error: code={result.error_code} description={result.error_description}",
+                file=sys.stderr,
+            )
+        return 1
+
+    print("MT5 CONNECTED")
+    try:
+        terminal_raw = connection.client.terminal_info()
+        account_raw = connection.client.account_info()
+        symbols = connection.client.symbols_get()
+    finally:
+        connection.disconnect()
+
+    if terminal_raw is not None:
+        terminal = terminal_info_to_terminal_state(terminal_raw)
+        print(f"  terminal: company={terminal.company!r} name={terminal.name!r}")
+        print(f"  terminal connected={terminal.connected} trade_allowed={terminal.trade_allowed}")
+    else:
+        print("  terminal_info() returned None", file=sys.stderr)
+
+    if account_raw is not None:
+        account = account_info_to_account_state(account_raw)
+        print(f"  server={config.server!r} login={config.login} is_demo={account.is_demo}")
+        print(f"  currency={account.currency} equity={account.equity} margin={account.margin}")
+    else:
+        print("  account_info() returned None -- account state unreadable", file=sys.stderr)
+        return 1
+
+    symbol_count = len(symbols) if symbols is not None else 0
+    print(f"  symbol_count={symbol_count}")
+    print(f"  health: {ConnectionState.CONNECTED.value} (run mt5_preflight for full READY check)")
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -52,16 +94,7 @@ def main(argv: list[str] | None = None) -> int:
         f"Config loaded: server={config.server!r}, login={config.login}, "
         f"terminal_path={config.terminal_path or '<default>'!r}."
     )
-    try:
-        _connect_and_report(config)
-    except NotImplementedError:
-        print(
-            "NOT YET IMPLEMENTED -- adapter pending: the MT5 adapter does not exist yet "
-            "in this repo. Once it lands, this script will report terminal/account/server/"
-            "currency/equity/margin/symbol-count/health here (never the password)."
-        )
-        return 1
-    return 0
+    return _connect_and_report(config)
 
 
 if __name__ == "__main__":

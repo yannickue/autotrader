@@ -25,11 +25,25 @@ for path in (str(REPO_ROOT), str(SRC_ROOT)):
     if path not in sys.path:
         sys.path.insert(0, path)
 
-from adapters.config import MT5ConfigError, load_mt5_connection_config  # noqa: E402
+from datetime import UTC, datetime  # noqa: E402
 
-# The full sequence this script will eventually run, in order. Every check
-# after "config" is a TODO(mt5-adapter) placeholder until the real adapter
-# and src/instruments mapping exist.
+from adapters.activtrades_mt5.connection import MT5Connection  # noqa: E402
+from adapters.activtrades_mt5.models import (  # noqa: E402
+    account_info_to_account_state,
+    symbol_info_raw_from_mt5,
+    symbol_info_to_instrument_spec,
+)
+from adapters.activtrades_mt5.orders import MarketOrderRequest, MT5OrderGateway  # noqa: E402
+from adapters.activtrades_mt5.orders import TradingMode as MT5TradingMode  # noqa: E402
+from adapters.activtrades_mt5.real_client import get_real_client  # noqa: E402
+from adapters.config import MT5ConfigError, load_mt5_connection_config  # noqa: E402
+from instruments.discovery import (  # noqa: E402
+    BrokerSymbolCandidate,
+    CanonicalInstrument,
+    MatchStatus,
+    match_symbols,
+)
+
 _CHECK_SEQUENCE = (
     "config",
     "terminal_connection",
@@ -38,14 +52,13 @@ _CHECK_SEQUENCE = (
     "order_check",
 )
 
-
-def _run_not_yet_implemented_check(name: str) -> tuple[str, str]:
-    """TODO(mt5-adapter): once a real MT5 client exists in `src/adapters`,
-    replace this placeholder with the real check for `name` (terminal
-    connection / account state / symbol availability / a dry-run
-    `order_check` that never sends a real order). Returns (status, message).
-    """
-    raise NotImplementedError(f"preflight check {name!r} not yet implemented")
+# Kept identical to mt5_symbol_discovery.py's list -- correct via
+# PENDING_USER_INPUT.md once real ActivTrades symbols are confirmed.
+_CANONICAL_INSTRUMENTS = [
+    CanonicalInstrument(canonical_symbol="DAX", aliases=("GER40", "DAX40", "DE40")),
+    CanonicalInstrument(canonical_symbol="NASDAQ100", aliases=("NAS100", "USTEC", "US100")),
+    CanonicalInstrument(canonical_symbol="WTI", aliases=("USOIL", "WTI", "XTIUSD")),
+]
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -67,17 +80,112 @@ def main(argv: list[str] | None = None) -> int:
         )
     )
 
-    for check_name in _CHECK_SEQUENCE[1:]:
-        try:
-            status, message = _run_not_yet_implemented_check(check_name)
-        except NotImplementedError:
-            results.append((check_name, "WARN", "not yet implemented -- adapter pending"))
-        else:  # pragma: no cover -- unreachable until the adapter lands
-            results.append((check_name, status, message))
+    connection = MT5Connection(get_real_client())
+    connect_result = connection.connect(config)
+    if not connect_result.success:
+        results.append(("terminal_connection", "FAIL", connect_result.reason))
+        for name in _CHECK_SEQUENCE[2:]:
+            results.append((name, "FAIL", "skipped -- no terminal connection"))
+        _print_report(results)
+        return 1
+    results.append(("terminal_connection", "PASS", "initialize() succeeded"))
+
+    try:
+        _run_account_state_check(connection, results)
+        matches = _run_symbol_availability_check(connection, results)
+        _run_order_check(connection, results, matches)
+    finally:
+        connection.disconnect()
 
     _print_report(results)
     any_fail = any(status == "FAIL" for _, status, _ in results)
     return 1 if any_fail else 0
+
+
+def _run_account_state_check(
+    connection: MT5Connection, results: list[tuple[str, str, str]]
+) -> None:
+    account_raw = connection.client.account_info()
+    if account_raw is None:
+        results.append(("account_state", "FAIL", "account_info() returned None"))
+        return
+    account = account_info_to_account_state(account_raw)
+    if not account.is_demo:
+        results.append(
+            ("account_state", "FAIL", "account is NOT a demo account -- refusing to proceed")
+        )
+        return
+    if not account.trade_allowed:
+        results.append(("account_state", "WARN", "account readable but trade_allowed=False"))
+        return
+    results.append(
+        (
+            "account_state",
+            "PASS",
+            f"demo account, currency={account.currency}, equity={account.equity}",
+        )
+    )
+
+
+def _run_symbol_availability_check(
+    connection: MT5Connection, results: list[tuple[str, str, str]]
+) -> dict[str, object]:
+    raw_symbols = connection.client.symbols_get()
+    if not raw_symbols:
+        results.append(("symbol_availability", "FAIL", "symbols_get() returned no symbols"))
+        return {}
+    candidates = [
+        BrokerSymbolCandidate(
+            broker_symbol=str(s.name), description=str(getattr(s, "description", ""))
+        )
+        for s in raw_symbols
+    ]
+    matches = match_symbols(candidates, _CANONICAL_INSTRUMENTS)
+    unresolved = [c for c, m in matches.items() if m.status is not MatchStatus.MATCHED]
+    if unresolved:
+        results.append(
+            (
+                "symbol_availability",
+                "WARN",
+                f"{len(unresolved)}/{len(matches)} canonical instrument(s) not confidently "
+                f"resolved: {unresolved} -- see PENDING_USER_INPUT.md",
+            )
+        )
+    else:
+        results.append(
+            ("symbol_availability", "PASS", f"all {len(matches)} canonical instruments resolved")
+        )
+    return matches
+
+
+def _run_order_check(
+    connection: MT5Connection, results: list[tuple[str, str, str]], matches: dict[str, object]
+) -> None:
+    resolved = [m for m in matches.values() if m.status is MatchStatus.MATCHED]  # type: ignore[union-attr]
+    if not resolved:
+        results.append(("order_check", "WARN", "no resolved symbol available to dry-run check"))
+        return
+    broker_symbol = resolved[0].broker_symbol  # type: ignore[union-attr]
+    raw_symbol = connection.client.symbol_info(broker_symbol)
+    tick = connection.client.symbol_info_tick(broker_symbol)
+    if raw_symbol is None or tick is None:
+        results.append(("order_check", "FAIL", f"symbol_info/tick unavailable for {broker_symbol}"))
+        return
+
+    spec_raw = symbol_info_raw_from_mt5(raw_symbol)
+    spec = symbol_info_to_instrument_spec(
+        spec_raw, canonical_symbol=broker_symbol, retrieved_at=datetime.now(UTC)
+    )
+    gateway = MT5OrderGateway(connection.client, mode=MT5TradingMode.DEMO)
+    request = MarketOrderRequest(symbol=broker_symbol, side="BUY", volume=spec.volume_min)
+    outcome = gateway.preflight_check(request, price=tick.ask)
+    if outcome.accepted:
+        results.append(
+            ("order_check", "PASS", f"dry-run order_check accepted for {broker_symbol} "
+             f"(volume={spec.volume_min}) -- no real order sent")
+        )
+    else:
+        results.append(("order_check", "FAIL", f"{broker_symbol}: {outcome.reason}"))
 
 
 def _print_report(results: list[tuple[str, str, str]]) -> None:

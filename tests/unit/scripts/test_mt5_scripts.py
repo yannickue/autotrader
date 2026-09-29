@@ -1,10 +1,14 @@
-"""Tests that each MT5 script skeleton can be invoked and reports a clear
-message instead of crashing, whether real MT5 env vars are absent (config
-missing) or present but the adapter doesn't exist yet (not yet implemented).
+"""Tests that each MT5 script can be invoked and reports a clear message
+instead of crashing, whether real MT5 env vars are absent (config missing)
+or present but no real MT5 terminal/account exists in this environment (a
+real connection attempt that fails cleanly).
 
 No real MT5 credentials are used anywhere here -- `monkeypatch` clears any
-real env vars for the "missing config" case and sets synthetic test values
-for the "adapter pending" case.
+real env vars for the "missing config" case and sets synthetic, obviously
+fake test values for the "connection fails" case (there is no live terminal
+in this test environment, so `initialize()` genuinely fails against them;
+these scripts now wire into the real `src/adapters/activtrades_mt5` adapter
+rather than a stub).
 """
 
 from __future__ import annotations
@@ -62,9 +66,13 @@ def test_script_reports_missing_config_without_crashing(
 
 
 @pytest.mark.parametrize("script_name", _SCRIPT_NAMES)
-def test_script_reports_adapter_pending_when_config_present(
+def test_script_fails_connection_cleanly_when_no_real_terminal(
     script_name: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    """With config present but no real MT5 terminal/account in this test
+    environment, every script must attempt a real connection (proving the
+    wiring is real, not a stub) and fail cleanly -- never crash with an
+    unhandled exception, and never leak the password."""
     monkeypatch.setenv("MT5_LOGIN", "12345")
     monkeypatch.setenv("MT5_PASSWORD", "test-password-not-real")
     monkeypatch.setenv("MT5_SERVER", "ActivTrades-Demo")
@@ -74,8 +82,10 @@ def test_script_reports_adapter_pending_when_config_present(
     exit_code = module.main()
 
     captured = capsys.readouterr()
-    assert exit_code in (0, 1)
-    assert "not yet implemented" in (captured.out + captured.err).lower()
+    assert exit_code in (1, 2)
+    combined = (captured.out + captured.err).lower()
+    assert "config loaded" in combined or "[pass] config" in combined
+    assert "connection failed" in combined or "[fail]" in combined
     # The password must never be printed anywhere in the script's output.
     assert "test-password-not-real" not in captured.out
     assert "test-password-not-real" not in captured.err

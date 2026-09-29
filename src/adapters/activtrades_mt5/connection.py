@@ -73,6 +73,13 @@ class MT5Connection:
         self._client = client
         self.state: ConnectionState = ConnectionState.DISCONNECTED
 
+    @property
+    def client(self) -> MT5ClientProtocol:
+        """The wrapped `MT5ClientProtocol` instance, for callers (e.g.
+        `scripts/mt5_*.py`) that need read-only calls this class doesn't
+        itself expose a dedicated method for (e.g. `symbols_get()`)."""
+        return self._client
+
     # -- connect / disconnect --------------------------------------------
 
     def connect(self, config: MT5ConnectionConfig) -> ConnectionResult:
