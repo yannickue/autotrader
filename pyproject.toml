@@ -21,6 +21,7 @@ research = [
 
 [tool.uv]
 package = false
+default-groups = ["dev", "research"]
 
 [tool.pytest.ini_options]
 addopts = "--strict-config --strict-markers"
