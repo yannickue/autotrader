@@ -101,10 +101,13 @@ class Mt5Session:
 
     def acquire(self) -> ConnectionResult | None:
         """Reference-counted connect: first user connects, others share the session."""
-        self._users += 1
         if self.is_connected:
+            self._users += 1
             return None
-        return self.connect()
+        result = self.connect()
+        if result.success:
+            self._users += 1  # count only users that actually hold a live connection
+        return result
 
     def release(self) -> None:
         self._users = max(0, self._users - 1)

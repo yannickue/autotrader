@@ -161,6 +161,7 @@ class Mt5LiveExecutionClient(LiveExecutionClient):
         self._now_fn = now  # injectable time source (deterministic tests); default: clock
         self.recon = ReconciliationTracker()
         self.ingest_stats = IngestStats()
+        self._failed_deals: set[int] = set()  # deals that failed and have not booked since
         self.last_sync_error: str | None = None
         self._sync_task: asyncio.Task | None = None
         self._backoff_index = 0
@@ -310,9 +311,11 @@ class Mt5LiveExecutionClient(LiveExecutionClient):
                 stats.external += 1
         except Exception as exc:  # booking failed midway: leave UN-marked so it is retried
             stats.failed += 1
+            self._failed_deals.add(deal.ticket)
             self.audit.append(f"deal {deal.ticket} booking failed: {exc!r}")
             return False
         # The fill IS booked in Nautilus now; only then is the deal "seen".
+        self._failed_deals.discard(deal.ticket)
         self._store.mark_ingested(deal.ticket, deal.order or None)
         stats.ingested += 1
         try:  # best-effort follow-up; idempotent and re-run by reconcile()
@@ -341,7 +344,7 @@ class Mt5LiveExecutionClient(LiveExecutionClient):
                 if (
                     candidate.kind == want
                     and candidate.position_ticket == deal.position_id
-                    and candidate.status == "ACCEPTED"
+                    and candidate.status in ("ACCEPTED", "DONE")
                 ):
                     return candidate
         return None
@@ -378,7 +381,11 @@ class Mt5LiveExecutionClient(LiveExecutionClient):
         client_order_id = ClientOrderId(row.client_order_id)
         order = self._cache.order(client_order_id)
         if order is None:
-            raise RuntimeError(f"order {row.client_order_id} not in Nautilus cache")
+            # Cold cache (restart): hand Nautilus the fill as reports; its own reconciliation
+            # de-duplicates by trade id. Not an external trade -> no mismatch flag.
+            return self._book_external_fill(deal, instrument_id, row=row, flag=False)
+        if TradeId(str(deal.ticket)) in order.trade_ids:
+            return  # crash window: Nautilus already has this trade; just let the caller mark it
         strategy_id = order.strategy_id
         # A protective order keeps the venue id it was accepted with ("SL:<ticket>"); Nautilus
         # rejects a fill whose venue_order_id differs from the accepted one.
@@ -424,12 +431,24 @@ class Mt5LiveExecutionClient(LiveExecutionClient):
             ts_event=common["ts_event"],
             info=common["info"],
         )
+        self._finalize_if_broker_terminal(row.client_order_id)
 
-    def _book_external_fill(self, deal: DealRecord, instrument_id: InstrumentId) -> None:
+    def _book_external_fill(
+        self,
+        deal: DealRecord,
+        instrument_id: InstrumentId,
+        *,
+        row: OrderRow | None = None,
+        flag: bool = True,
+    ) -> None:
         """A deal no Nautilus order accounts for: report it (order + fill) so Nautilus holds the
         truth, and flag reconciliation (handled in `_after_booking`)."""
         common = self._deal_common(deal, instrument_id)
-        venue_order_id = VenueOrderId(str(deal.order or deal.ticket))
+        venue_order_id = VenueOrderId(
+            (row.venue_order_id if row is not None and row.venue_order_id else None)
+            or str(deal.order or deal.ticket)
+        )
+        client_order_id = ClientOrderId(row.client_order_id) if row is not None else None
         now = self._now_ns()
         order_report = OrderStatusReport(
             account_id=self.account_id,
@@ -446,6 +465,7 @@ class Mt5LiveExecutionClient(LiveExecutionClient):
             ts_last=common["ts_event"],
             ts_init=now,
             avg_px=Decimal(str(deal.price)),
+            client_order_id=client_order_id,
         )
         fill_report = FillReport(
             account_id=self.account_id,
@@ -460,9 +480,12 @@ class Mt5LiveExecutionClient(LiveExecutionClient):
             report_id=UUID4(),
             ts_event=common["ts_event"],
             ts_init=now,
+            client_order_id=client_order_id,
         )
         self._send_order_status_report(order_report)
         self._send_fill_report(fill_report)
+        if not flag:
+            return
         self.recon.complete_mismatch(
             (
                 *self.recon.discrepancies,
@@ -535,11 +558,11 @@ class Mt5LiveExecutionClient(LiveExecutionClient):
             self.recon.invalidate(f"reconcile aborted: {exc}")
             return self.recon
         blocking = list(self.recon.discrepancies)  # e.g. EXTERNAL_ACTIVITY recorded on ingest
-        if self.ingest_stats.failed:
+        if self._failed_deals:
             blocking.append(
                 Discrepancy(
                     kind=DiscrepancyKind.DEAL_INGEST_FAILED,
-                    detail=f"{self.ingest_stats.failed} deal(s) could not be booked",
+                    detail=f"{len(self._failed_deals)} deal(s) could not be booked",
                 )
             )
         for row in self._store.unresolved():
@@ -579,7 +602,19 @@ class Mt5LiveExecutionClient(LiveExecutionClient):
                     status="ACCEPTED",
                     order_ticket=int(found.ticket),
                     position_ticket=int(found.position_id) or None,
+                    venue_order_id=str(int(found.ticket)),
                 )
+                if order is not None and order.status in (
+                    OrderStatus.SUBMITTED,
+                    OrderStatus.INITIALIZED,
+                ):
+                    self.generate_order_accepted(
+                        order.strategy_id,
+                        order.instrument_id,
+                        order.client_order_id,
+                        VenueOrderId(str(int(found.ticket))),
+                        self._now_ns(),
+                    )
                 continue  # its deals (if any) were/are ingested by sync_once via the token
             age = self._now() - datetime.fromtimestamp(row.created_ns / NS, tz=UTC)
             if age >= self._cfg.in_doubt_grace and order is not None:
@@ -824,6 +859,23 @@ class Mt5LiveExecutionClient(LiveExecutionClient):
             self._store.update_order(cid, status="REJECTED")
             return self._reject(order, f"ORDER_CHECK_{int(check.retcode)}:{check.comment}")
 
+        pre_volume: Decimal | None = None
+        if "position" in request:  # reduce-only: the broker position may have moved since admission
+            try:
+                rows = self._broker_positions_by_ticket(int(request["position"]))
+            except Mt5CallError as exc:
+                self._store.update_order(cid, status="REJECTED")
+                self.recon.invalidate(str(exc))
+                return self._reject(order, f"REDUCE_ONLY_RECHECK_UNAVAILABLE:{exc}")
+            wanted_side = "SELL" if request["type"] == 0 else "BUY"  # position side being closed
+            if (
+                not rows
+                or str(rows[0].side) != wanted_side
+                or rows[0].volume < Decimal(str(request["volume"]))
+            ):
+                self._store.update_order(cid, status="REJECTED")
+                return self._reject(order, "REDUCE_ONLY_POSITION_CHANGED_BEFORE_SEND")
+            pre_volume = rows[0].volume
         self._store.update_order(cid, status="SENT")
         try:
             result = self._session.client.order_send(request)
@@ -851,30 +903,66 @@ class Mt5LiveExecutionClient(LiveExecutionClient):
             order.strategy_id, instrument_id, order.client_order_id, venue_order_id, self._now_ns()
         )
         self._book_deals_of_order(int(result.order))
+        if pre_volume is not None:
+            self._verify_reduce_effect(int(request["position"]), pre_volume, request["symbol"])
         self._promote_children(cid)
-        self._finish_ioc_remainder(order, instrument_id, venue_order_id)
+        self._finalize_if_broker_terminal(cid)
+
+    def _verify_reduce_effect(self, ticket: int, pre_volume: Decimal, symbol: str) -> None:
+        """A reduce-only order must never leave MORE exposure than before (or a flipped side)."""
+        try:
+            rows = self._broker_positions(symbol)
+        except Mt5CallError:
+            self.recon.invalidate("reduce-only effect unverifiable")
+            return
+        for position in rows:
+            if position.volume > pre_volume or position.ticket != ticket:
+                self.recon.complete_mismatch(
+                    (
+                        *self.recon.discrepancies,
+                        Discrepancy(
+                            kind=DiscrepancyKind.POSITION_QTY_MISMATCH,
+                            detail=f"reduce-only left {position.volume} (was {pre_volume}) "
+                            f"on ticket {position.ticket}",
+                        ),
+                    )
+                )
 
     def _book_deals_of_order(self, order_ticket: int) -> None:
         for deal in self._broker_deals(self._now() - self._cfg.deal_lookback):
             if deal.order == order_ticket:
                 self._ingest_deal(deal)
 
-    def _finish_ioc_remainder(
-        self, order: Any, instrument_id: InstrumentId, venue_order_id: Any
-    ) -> None:
-        """IOC partial: the unfilled remainder is cancelled by the broker."""
-        live = self._cache.order(order.client_order_id)
+    def _finalize_if_broker_terminal(self, client_order_id: str) -> None:
+        """MT5 market orders never rest: once the broker's order is CANCELED/REJECTED/EXPIRED
+        (IOC remainder), Nautilus' still-open order must be closed too. Derived from broker
+        history (not from the send retcode) so a delayed deal cannot leave it PARTIALLY_FILLED."""
+        row = self._store.by_client_order_id(client_order_id)
+        order = self._cache.order(ClientOrderId(client_order_id))
         if (
-            live is not None
-            and live.is_open
-            and live.filled_qty > 0
-            and order.time_in_force in (TimeInForce.IOC, TimeInForce.FOK)
+            row is None
+            or order is None
+            or not order.is_open
+            or row.kind not in (KIND_MARKET, KIND_EXIT)
+            or row.order_ticket is None
         ):
+            return
+        try:
+            history = self._call(
+                "history_orders_get",
+                self._session.client.history_orders_get,
+                None,
+                None,
+                ticket=row.order_ticket,
+            )
+        except Mt5CallError:
+            return
+        if history and int(history[0].state) in (2, 5, 6):  # CANCELED / REJECTED / EXPIRED
             self.generate_order_canceled(
-                live.strategy_id,
-                instrument_id,
-                live.client_order_id,
-                venue_order_id,
+                order.strategy_id,
+                order.instrument_id,
+                order.client_order_id,
+                order.venue_order_id or VenueOrderId(str(row.order_ticket)),
                 self._now_ns(),
             )
 
@@ -1064,14 +1152,15 @@ class Mt5LiveExecutionClient(LiveExecutionClient):
             if order is not None:
                 self._store.update_order(cid, status="REJECTED")
                 self._reject(order, f"ORDER_SEND_{int(result.retcode)}:{result.comment}")
-            return None
+                return None
+            return f"ORDER_SEND_{int(result.retcode)}:{result.comment}"  # caller must know
         if outcome is SendOutcome.IN_DOUBT or (
             outcome is not SendOutcome.REJECTED and not verified
         ):
             if order is not None:
                 self._in_doubt(order, why if result is None else f"retcode {int(result.retcode)}")
             self.recon.invalidate("PROTECTIVE_OUTCOME_UNKNOWN")
-            return None
+            return None if order is not None else "PROTECTIVE_OUTCOME_UNKNOWN"
         if order is not None:
             venue_id = VenueOrderId(f"{'SL' if stop_loss is not None else 'TP'}:{position.ticket}")
             self._store.update_order(cid, status="ACCEPTED", venue_order_id=str(venue_id))
@@ -1243,6 +1332,24 @@ class Mt5LiveExecutionClient(LiveExecutionClient):
                 f"BROKER_UNREACHABLE:{exc}",
                 self._now_ns(),
             )
+        removed = True
+        try:
+            check = self._broker_positions_by_ticket(int(row.position_ticket))
+            if check:
+                still = check[0].stop_loss if row.kind == KIND_SL else check[0].take_profit
+                removed = still is None
+        except Mt5CallError:
+            removed = False
+        if not removed:
+            self.recon.invalidate("PROTECTIVE_CANCEL_UNVERIFIED")
+            return self.generate_order_cancel_rejected(
+                command.strategy_id,
+                command.instrument_id,
+                command.client_order_id,
+                command.venue_order_id,
+                "PROTECTION_STILL_PRESENT_AT_BROKER",
+                self._now_ns(),
+            )
         self._store.update_order(row.client_order_id, status="CANCELED")
         self.generate_order_canceled(
             command.strategy_id,
@@ -1338,7 +1445,10 @@ class Mt5LiveExecutionClient(LiveExecutionClient):
                 FillReport(
                     account_id=self.account_id,
                     instrument_id=mapping.instrument_id,
-                    venue_order_id=VenueOrderId(str(deal.order or deal.ticket)),
+                    venue_order_id=VenueOrderId(
+                        (row.venue_order_id if row is not None and row.venue_order_id else None)
+                        or str(deal.order or deal.ticket)
+                    ),
                     trade_id=TradeId(str(deal.ticket)),
                     order_side=common["side"],
                     last_qty=common["qty"],
