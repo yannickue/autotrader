@@ -223,6 +223,9 @@ class Mt5ExecClientConfig:
     # DRY RUN: run the whole admission path and the REAL order_check, then STOP before
     # order_send (the order is rejected locally with DRY_RUN_ORDER_CHECK_OK).
     dry_run: bool = False
+    # Re-verify the attached account (expected login) and, when True, DEMO trade mode right
+    # before EVERY exposure-changing order_send / SL-TP change.
+    require_demo_account: bool = False
 
 
 @dataclass(slots=True)
@@ -697,6 +700,19 @@ class Mt5LiveExecutionClient(LiveExecutionClient):
     async def reconcile_async(self) -> ReconciliationTracker:
         return await self._lane_run(self.reconcile)
 
+    def _identity_problem(self) -> str | None:
+        """None if the attached terminal is still the expected account (and demo if required)."""
+        try:
+            account = self._call("account_info", self._session.client.account_info)
+        except Mt5CallError as exc:
+            return f"ACCOUNT_IDENTITY_UNVERIFIABLE:{exc}"
+        expected = self._session.expected_login
+        if expected is not None and int(account.login) != int(expected):
+            return "ACCOUNT_IDENTITY_CHANGED"
+        if self._cfg.require_demo_account and int(account.trade_mode) != 0:
+            return "ACCOUNT_IS_NOT_DEMO"
+        return None
+
     def local_view(self) -> LocalView:
         positions: dict[str, Decimal] = {}
         for mapping in self._provider.registry.all():
@@ -713,8 +729,26 @@ class Mt5LiveExecutionClient(LiveExecutionClient):
             for r in self._store.all_orders()
             if r.kind in (KIND_SL, KIND_TP) and r.status == "ACCEPTED" and r.position_ticket
         )
+        sl_levels: dict[int, Decimal] = {}
+        tp_levels: dict[int, Decimal] = {}
+        for row in self._store.all_orders():
+            if row.kind not in (KIND_SL, KIND_TP) or row.status != "ACCEPTED":
+                continue
+            if not row.position_ticket:
+                continue
+            order = self._nt_cache.order(ClientOrderId(row.client_order_id))
+            if order is None:
+                continue
+            if row.kind == KIND_SL and getattr(order, "trigger_price", None) is not None:
+                sl_levels[row.position_ticket] = Decimal(str(order.trigger_price))
+            elif row.kind == KIND_TP and getattr(order, "price", None) is not None:
+                tp_levels[row.position_ticket] = Decimal(str(order.price))
         return LocalView(
-            positions=positions, protective_positions=protected, known_order_tickets=known
+            positions=positions,
+            protective_positions=protected,
+            known_order_tickets=known,
+            sl_levels=sl_levels,
+            tp_levels=tp_levels,
         )
 
     def reconcile(self) -> ReconciliationTracker:
@@ -879,6 +913,9 @@ class Mt5LiveExecutionClient(LiveExecutionClient):
     def submit_sync(self, order: Any, *, stop_loss: Any = None, take_profit: Any = None) -> None:
         """Deterministic core of submit (also driven directly by tests)."""
         with self._section(order.instrument_id):
+            if self._store.by_client_order_id(str(order.client_order_id)) is not None:
+                # Re-delivery of a ClientOrderId we already recorded: NEVER send a second request.
+                return self._deny(order, "DUPLICATE_CLIENT_ORDER_ID_ALREADY_RECORDED")
             self._submit_locked(order, stop_loss, take_profit)
 
     def _submit_locked(self, order: Any, stop_loss: Any, take_profit: Any) -> None:
@@ -1069,6 +1106,11 @@ class Mt5LiveExecutionClient(LiveExecutionClient):
             self._store.update_order(cid, status="REJECTED")
             self.audit.append(f"DRY_RUN order_check OK, order_send NOT called: {request}")
             return self._reject(order, f"DRY_RUN_ORDER_CHECK_OK:{check.comment}")
+        problem = self._identity_problem()
+        if problem is not None:
+            self._store.update_order(cid, status="REJECTED")
+            self.recon.invalidate(problem)
+            return self._reject(order, problem)
         self._store.update_order(cid, status="SENT")
         try:
             result = self._session.client.order_send(request)
@@ -1313,6 +1355,10 @@ class Mt5LiveExecutionClient(LiveExecutionClient):
             self.recon.invalidate(str(exc))
             return f"BROKER_UNREACHABLE:{exc}"
 
+        problem = self._identity_problem()
+        if problem is not None:
+            self.recon.invalidate(problem)
+            return problem
         cid = str(order.client_order_id) if order is not None else None
         kind_name = KIND_SL if stop_loss is not None else KIND_TP
         if order is not None:
@@ -1507,8 +1553,28 @@ class Mt5LiveExecutionClient(LiveExecutionClient):
                     take_profit=None if row.kind == KIND_TP else pos.take_profit,
                     magic=self._cfg.magic,
                 )
-                result = self._session.client.order_send(request)
-                if result is None or classify_send_retcode(int(result.retcode)) not in (
+                problem = self._identity_problem()
+                if problem is not None:
+                    self.recon.invalidate(problem)
+                    return self.generate_order_cancel_rejected(
+                        command.strategy_id,
+                        command.instrument_id,
+                        command.client_order_id,
+                        command.venue_order_id,
+                        problem,
+                        self._now_ns(),
+                    )
+                try:
+                    result = self._session.client.order_send(request)
+                except Exception:
+                    result = None
+                if result is None or classify_send_retcode(int(result.retcode)) is (
+                    SendOutcome.IN_DOUBT
+                ):
+                    # Unknown outcome: the SL may or may not be gone. Drop authority, then verify
+                    # against the broker below instead of guessing.
+                    self.recon.invalidate("PROTECTIVE_CANCEL_OUTCOME_UNKNOWN")
+                elif classify_send_retcode(int(result.retcode)) not in (
                     SendOutcome.ACCEPTED_FILLED,
                     SendOutcome.ACCEPTED_PLACED,
                 ):
@@ -1517,7 +1583,7 @@ class Mt5LiveExecutionClient(LiveExecutionClient):
                         command.instrument_id,
                         command.client_order_id,
                         command.venue_order_id,
-                        "BROKER_REFUSED_OR_UNKNOWN",
+                        "BROKER_REFUSED",
                         self._now_ns(),
                     )
         except Mt5CallError as exc:

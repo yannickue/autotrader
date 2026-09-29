@@ -34,6 +34,7 @@ class DiscrepancyKind(StrEnum):
     DEAL_INGEST_FAILED = "DEAL_INGEST_FAILED"
     UNKNOWN_SYMBOL_POSITION = "UNKNOWN_SYMBOL_POSITION"
     PROTECTION_MISSING_LOCALLY = "PROTECTION_MISSING_LOCALLY"
+    PROTECTION_LEVEL_MISMATCH = "PROTECTION_LEVEL_MISMATCH"
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -129,6 +130,9 @@ class LocalView:
     positions: dict[str, Decimal]  # broker symbol -> signed qty
     protective_positions: frozenset[int]  # broker position tickets we have a protective order for
     known_order_tickets: frozenset[int]
+    # Authoritative protective levels from the Nautilus child orders (position ticket -> level)
+    sl_levels: dict[int, Decimal] = field(default_factory=dict)
+    tp_levels: dict[int, Decimal] = field(default_factory=dict)
 
 
 def compare(
@@ -176,6 +180,28 @@ def compare(
             )
         if require_protection and pos.stop_loss is None:
             unprotected = True
+        expected_sl = local.sl_levels.get(pos.ticket)
+        if expected_sl is not None and (
+            pos.stop_loss is None or abs(pos.stop_loss - expected_sl) > Decimal("0.000001")
+        ):
+            found.append(
+                Discrepancy(
+                    kind=DiscrepancyKind.PROTECTION_LEVEL_MISMATCH,
+                    detail=f"position {pos.ticket}: Nautilus stop {expected_sl} vs broker "
+                    f"SL {pos.stop_loss}",
+                )
+            )
+        expected_tp = local.tp_levels.get(pos.ticket)
+        if expected_tp is not None and (
+            pos.take_profit is None or abs(pos.take_profit - expected_tp) > Decimal("0.000001")
+        ):
+            found.append(
+                Discrepancy(
+                    kind=DiscrepancyKind.PROTECTION_LEVEL_MISMATCH,
+                    detail=f"position {pos.ticket}: Nautilus target {expected_tp} vs broker "
+                    f"TP {pos.take_profit}",
+                )
+            )
     for symbol, qty in local.positions.items():
         if qty != ZERO and symbol not in seen_symbols:
             found.append(

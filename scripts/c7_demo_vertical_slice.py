@@ -85,6 +85,7 @@ async def _amain(mode: str, confirmed: bool) -> int:
             autostart_sync=True,
             sync_interval_secs=1.0,
             dry_run=(mode == "dry-run"),
+            require_demo_account=True,  # re-verified before EVERY exposure-changing send
             auto_reconcile_on_connect=(mode != "restart-proof"),
         ),
         data_config=Mt5DataClientConfig(poll_interval_secs=0.5),
@@ -121,7 +122,11 @@ async def _amain(mode: str, confirmed: bool) -> int:
         print("PRE-ENTRY CHECKS OK:", json.dumps(facts0))
 
         margin_est = None
-        m = await run_slice(asm, DemoSliceConfig())
+        from decimal import Decimal
+
+        m = await run_slice(
+            asm, DemoSliceConfig(), account_leverage=Decimal(str(facts0["leverage"]))
+        )
         facts = await asm.adapter.exec_client._lane_run(collect_broker_facts, asm.adapter, started)
         if "entry_fill_px" in m.values:
             margin_est = await asm.adapter.exec_client._lane_run(

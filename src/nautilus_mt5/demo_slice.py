@@ -368,6 +368,7 @@ async def run_slice(
     cfg: DemoSliceConfig,
     *,
     now_utc: Any = None,
+    account_leverage: Decimal | None = None,
 ) -> SliceMeasurements:
     """Run the one-shot strategy inside the assembled Nautilus kernel. Caller has already run
     `connect_and_verify`. Always ends flat-or-loud: on any abnormal end a still-open position is
@@ -375,7 +376,10 @@ async def run_slice(
     m = SliceMeasurements()
     done = asyncio.Event()
     now_utc = now_utc or (lambda: datetime.now(UTC))
-    bridge = NautilusRiskBridge(instrument_id=IID, policy=demo_risk_policy(), limits=_limits())
+    cap = min(account_leverage, Decimal("30")) if account_leverage else Decimal("30")
+    bridge = NautilusRiskBridge(
+        instrument_id=IID, policy=demo_risk_policy(), limits=_limits(), account_leverage_cap=cap
+    )
     strategy = DemoProofStrategy(
         DemoStrategyConfig(
             instrument_id=IID,

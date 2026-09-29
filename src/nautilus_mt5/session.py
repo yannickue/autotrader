@@ -106,6 +106,11 @@ class Mt5Session:
     # -- state -----------------------------------------------------------------
 
     @property
+    def expected_login(self) -> int | None:
+        """The account this session was pinned to at construction (never changes)."""
+        return int(self._config.login)
+
+    @property
     def client(self) -> Any:
         """The MT5 client. With a lane configured this is a guard proxy that refuses calls made
         from any thread but the lane's (raw access would bypass the serialization)."""
