@@ -29,19 +29,33 @@ class SplitPlan:
     train: Partition
     validation: Partition
     oos: Partition
+    embargo_days: int = 0
 
     def __post_init__(self) -> None:
         parts = (self.train, self.validation, self.oos)
         for a, b in pairwise(parts):
             if not a.end < b.start:
                 raise ValueError(f"partitions overlap or are unordered: {a.name} -> {b.name}")
+        if isinstance(self.embargo_days, bool) or not isinstance(self.embargo_days, int):
+            raise ValueError("embargo_days must be a non-negative integer")
+        validation_days = (
+            np.datetime64(self.validation.end) - np.datetime64(self.validation.start)
+        ).astype(int) + 1
+        if self.embargo_days < 0 or self.embargo_days >= validation_days:
+            raise ValueError("embargo_days must be non-negative and shorter than validation")
 
     def mask(self, dates: np.ndarray, part: Partition) -> np.ndarray:
         d = dates.astype("datetime64[D]")
-        return (d >= np.datetime64(part.start)) & (d <= np.datetime64(part.end))
+        start = np.datetime64(part.start)
+        if part == self.validation:
+            start += np.timedelta64(self.embargo_days, "D")
+        return (d >= start) & (d <= np.datetime64(part.end))
 
     def to_dict(self) -> dict:
-        return {p.name: [p.start, p.end] for p in (self.train, self.validation, self.oos)}
+        return {
+            **{p.name: [p.start, p.end] for p in (self.train, self.validation, self.oos)},
+            "embargo_days": self.embargo_days,
+        }
 
 
 class OosAccessError(RuntimeError):

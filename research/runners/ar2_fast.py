@@ -102,7 +102,10 @@ def dev_frame(df: pd.DataFrame, plan: SplitPlan) -> pd.DataFrame:
 
 
 def _plan(cfg: dict) -> SplitPlan:
-    return SplitPlan(**{name: Partition(name, *bounds) for name, bounds in cfg["splits"].items()})
+    return SplitPlan(
+        **{name: Partition(name, *bounds) for name, bounds in cfg["splits"].items()},
+        embargo_days=cfg.get("embargo_days", 0),
+    )
 
 
 def _dates(features: FeatureSet) -> np.ndarray:
@@ -138,11 +141,13 @@ def _subset(trades: TradeArrays, mask: np.ndarray) -> TradeArrays:
     return TradeArrays(*values)
 
 
-def _partition_mask(trades: TradeArrays, dates: np.ndarray, part: Partition) -> np.ndarray:
+def _partition_mask(
+    trades: TradeArrays, dates: np.ndarray, plan: SplitPlan, part: Partition
+) -> np.ndarray:
     if not len(trades):
         return np.zeros(0, dtype=bool)
     entry_dates = dates[trades.entry_idx]
-    return (entry_dates >= np.datetime64(part.start)) & (entry_dates <= np.datetime64(part.end))
+    return plan.mask(entry_dates, part)
 
 
 def _finite(value: float) -> float | None:
@@ -255,9 +260,11 @@ def complete_metrics(
     return result
 
 
-def _part_context(features: FeatureSet, part: Partition) -> tuple[np.ndarray, np.ndarray, int]:
+def _part_context(
+    features: FeatureSet, plan: SplitPlan, part: Partition
+) -> tuple[np.ndarray, np.ndarray, int]:
     dates = _dates(features)
-    in_part = (dates >= np.datetime64(part.start)) & (dates <= np.datetime64(part.end))
+    in_part = plan.mask(dates, part)
     minute = features["berlin_minute"]
     days = np.unique(
         features["berlin_day_id"][in_part & (minute >= ENTRY_START_MIN) & (minute < ENTRY_END_MIN)]
@@ -266,11 +273,13 @@ def _part_context(features: FeatureSet, part: Partition) -> tuple[np.ndarray, np
     return dates, days, window
 
 
-def _metric_for_part(cfg: dict, features: FeatureSet, trades: TradeArrays, part: Partition) -> dict:
-    dates, days, window = _part_context(features, part)
+def _metric_for_part(
+    cfg: dict, features: FeatureSet, trades: TradeArrays, plan: SplitPlan, part: Partition
+) -> dict:
+    dates, days, window = _part_context(features, plan, part)
     return complete_metrics(
         trades,
-        _partition_mask(trades, dates, part),
+        _partition_mask(trades, dates, plan, part),
         trading_days=days,
         window_bars=window,
         equity_eur=float(cfg["sizing"]["equity_eur"]),
@@ -626,7 +635,7 @@ def _matrix_rows(
     for rec in records:
         trades: TradeArrays = rec["_base_trades"]
         for part in (plan.train, plan.validation):
-            part_mask = _partition_mask(trades, dates, part)
+            part_mask = _partition_mask(trades, dates, plan, part)
             indices = np.flatnonzero(part_mask)
             for dimension in DIMENSIONS:
                 array = features[f"regime_{dimension.lower()}"]
@@ -672,7 +681,7 @@ def _cadence(records: list[dict], features: FeatureSet, plan: SplitPlan) -> list
     for rec in records:
         tr = rec["_base_trades"]
         for part in (plan.train, plan.validation):
-            mask = _partition_mask(tr, dates, part)
+            mask = _partition_mask(tr, dates, plan, part)
             values, counts = np.unique(tr.entry_day[mask], return_counts=True)
             for day, count in zip(values, counts, strict=True):
                 first = int(np.flatnonzero(features["berlin_day_id"] == day)[0])
@@ -895,12 +904,12 @@ def run_dev(
             reused_map[scenario] = reused
             progress("simulation", f"{variant_id} {scenario} {'reused' if reused else 'done'}")
         base = simulations["BASE"]
-        train = _metric_for_part(cfg, features, base, plan.train)
-        validation = _metric_for_part(cfg, features, base, plan.validation)
+        train = _metric_for_part(cfg, features, base, plan, plan.train)
+        validation = _metric_for_part(cfg, features, base, plan, plan.validation)
         dev_r = np.concatenate(
             [
-                base.r_multiple[_partition_mask(base, _dates(features), plan.train)],
-                base.r_multiple[_partition_mask(base, _dates(features), plan.validation)],
+                base.r_multiple[_partition_mask(base, _dates(features), plan, plan.train)],
+                base.r_multiple[_partition_mask(base, _dates(features), plan, plan.validation)],
             ]
         )
         winners = np.flatnonzero(dev_r > 0)
@@ -922,8 +931,8 @@ def run_dev(
             "validation": validation,
             "cost": {
                 scenario: {
-                    "train": _metric_for_part(cfg, features, tr, plan.train),
-                    "validation": _metric_for_part(cfg, features, tr, plan.validation),
+                    "train": _metric_for_part(cfg, features, tr, plan, plan.train),
+                    "validation": _metric_for_part(cfg, features, tr, plan, plan.validation),
                 }
                 for scenario, tr in simulations.items()
             },
@@ -933,9 +942,11 @@ def run_dev(
                     np.mean(
                         np.concatenate(
                             [
-                                tr.r_multiple[_partition_mask(tr, _dates(features), plan.train)],
                                 tr.r_multiple[
-                                    _partition_mask(tr, _dates(features), plan.validation)
+                                    _partition_mask(tr, _dates(features), plan, plan.train)
+                                ],
+                                tr.r_multiple[
+                                    _partition_mask(tr, _dates(features), plan, plan.validation)
                                 ],
                             ]
                         )
@@ -969,8 +980,8 @@ def run_dev(
                 dates = _dates(features)
                 dev_r = np.concatenate(
                     [
-                        tr.r_multiple[_partition_mask(tr, dates, plan.train)],
-                        tr.r_multiple[_partition_mask(tr, dates, plan.validation)],
+                        tr.r_multiple[_partition_mask(tr, dates, plan, plan.train)],
+                        tr.r_multiple[_partition_mask(tr, dates, plan, plan.validation)],
                     ]
                 )
                 rec["stress_expectancy_by_restriction"][key][scenario] = (
@@ -1140,7 +1151,7 @@ def run_oos(cfg: dict, out: Path, *, cache_dir: Path = DEFAULT_CACHE) -> int:
                 SizingSpec(**cfg["sizing"]),
                 SimRules(**cfg["rules"]),
             )
-            cost[scenario] = {"oos": _metric_for_part(cfg, features, trades, plan.oos)}
+            cost[scenario] = {"oos": _metric_for_part(cfg, features, trades, plan, plan.oos)}
         results.append(
             {
                 **item,
