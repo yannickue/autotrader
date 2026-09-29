@@ -49,9 +49,10 @@ def _eval(v_base, v_adv, reject=None):
 def test_stage_c_thresholds():
     ok = st.judge_stage_c(_eval(_side(), _side(e=0.05)), CFG)
     assert ok.passed and ok.reasons == [] and ok.t_adverse == pytest.approx(1.0)
-    bad_n = st.judge_stage_c(_eval(_side(n=14), _side(n=14)), CFG)
-    assert not bad_n.passed and any("trades 14" in r for r in bad_n.reasons)
-    assert st.judge_stage_c(_eval(_side(n=15), _side(n=15)), CFG).passed
+    assert CFG.c_min_trades == 25 and CFG.validation_min_t == 1.0
+    bad_n = st.judge_stage_c(_eval(_side(n=24), _side(n=24)), CFG)
+    assert not bad_n.passed and any("trades 24" in r for r in bad_n.reasons)
+    assert st.judge_stage_c(_eval(_side(n=25), _side(n=25)), CFG).passed
     assert not st.judge_stage_c(_eval(_side(e=0.0), _side()), CFG).passed
     assert not st.judge_stage_c(_eval(_side(), _side(e=-0.01)), CFG).passed  # adverse <= 0
     assert not st.judge_stage_c(_eval(_side(pf=1.0), _side()), CFG).passed  # PF must be > 1
@@ -59,6 +60,21 @@ def test_stage_c_thresholds():
     assert st.judge_stage_c(_eval(_side(top3=0.6), _side()), CFG).passed
     assert not st.judge_stage_c(_eval(_side(top3=0.61), _side()), CFG).passed
     assert not st.judge_stage_c(_eval(_side(), _side(), reject="too_few_trades"), CFG).passed
+
+
+def test_stage_c_validation_t_boundary():
+    # adverse expectancy > 0 but t = e/SE just below / at / above the 1.0 floor
+    below = st.judge_stage_c(_eval(_side(), _side(e=0.0499, se=0.05)), CFG)
+    assert not below.passed and any("validation adverse t" in r for r in below.reasons)
+    assert below.t_adverse == pytest.approx(0.998)
+    assert st.judge_stage_c(_eval(_side(), _side(e=0.05, se=0.05)), CFG).passed  # t == 1.0
+    assert st.judge_stage_c(_eval(_side(), _side(e=0.0501, se=0.05)), CFG).passed
+    # configurable through the 'pipeline' key
+    strict = st.PipelineConfig.from_dict({"validation_min_t": 2.0, "c_min_trades": 40})
+    assert not st.judge_stage_c(_eval(_side(), _side(e=0.05)), strict).passed
+    assert not st.judge_stage_c(_eval(_side(n=39), _side(n=39, e=0.2)), strict).passed
+    # undefined SE (no dispersion / no trades) cannot pass the t condition
+    assert not st.judge_stage_c(_eval(_side(), _side(se=None)), CFG).passed
 
 
 def _ps(e, se, **kw):
@@ -256,6 +272,36 @@ def test_pipeline_runs_counts_monotone_and_deterministic(env, tmp_path):
     assert json.dumps(st.to_plain(res2.candidates), sort_keys=True, allow_nan=False) == plain
     with pytest.raises(ValueError):
         st.run_pipeline({"meta": {"oos_touched": True}, "candidates": []}, ev, CFG)
+
+
+def test_unique_specs_accounting_regression(env, tmp_path):
+    """The ledger dict emitted by TrialLedger.to_json carries the REAL unique count under BOTH
+    keys; a pool meta that only has the raw ``unique`` key (as the campaign wrote) must still
+    yield N_eff = unique (was 0 -> report 'None')."""
+    ev = _evaluator(env, tmp_path)
+    pool = _build_pool(env, ev, 12)
+    raw = json.loads(ev.ledger.to_json())
+    raw.pop("seen")
+    assert raw["unique"] == raw["unique_specs"] == ev.ledger.unique > 0
+    assert sel.ledger_unique({"unique": 7}) == 7 and sel.ledger_unique({"unique_specs": 8}) == 8
+    assert sel.ledger_unique({}) is None
+    pool["meta"]["ledger"] = {k: v for k, v in raw.items() if k != "unique_specs"}
+    res = st.run_pipeline(pool, ev, CFG)
+    assert res.accounting["campaign_unique_specs"] == raw["unique"]
+    assert res.accounting["n_unique_specs"] == raw["unique"]
+    # cumulative N: prior trials/unique specs add on top; neighbour trials stay separate
+    res2 = st.run_pipeline(pool, ev, CFG, prior_trials=1000, prior_unique_specs=500)
+    a = res2.accounting
+    assert a["n_total_trials"] == raw["total_trials"] + 1000
+    assert a["n_unique_specs"] == raw["unique"] + 500 and a["prior_trials"] == 1000
+    for c in res2.candidates:
+        if c.selection is not None:
+            assert c.selection.n_unique_specs == a["n_unique_specs"] > 0
+            assert c.selection.n_total_trials == a["n_total_trials"]
+            assert c.selection.null_bound_t == pytest.approx(
+                sel.expected_max_null_t(a["n_total_trials"]))
+    pool["meta"]["prior_trials"], pool["meta"]["prior_unique_specs"] = 40, 30  # via pool meta
+    assert st.run_pipeline(pool, ev, CFG).accounting["n_total_trials"] == raw["total_trials"] + 40
 
 
 def test_stage_c_and_d_on_real_candidate_consistent_with_eval(env, tmp_path):

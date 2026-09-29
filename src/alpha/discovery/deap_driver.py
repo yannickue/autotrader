@@ -41,7 +41,7 @@ from alpha.discovery.evaluate import GenomeEvaluator
 from alpha.discovery.fitness import train_fitness
 from alpha.discovery.genome import Genome, is_valid
 from alpha.discovery.optuna_driver import Candidate
-from alpha.discovery.search import crossover, mutate_structure
+from alpha.discovery.search import crossover, lineage_family, mutate_structure
 
 TOURNAMENT_SIZE = 3
 LINEAGE_CAP_FRACTION = 0.25
@@ -50,19 +50,6 @@ STRATA = (*sorted(ARCHETYPES), "HYBRID")
 
 if not hasattr(creator, "AD1FitnessMax"):
     creator.create("AD1FitnessMax", base.Fitness, weights=(1.0,))
-
-
-def lineage_family(lineage: str) -> str:
-    """Root family of a lineage tag: 'MUT:A' -> 'A', 'X:A|B' -> 'A', 'X:MUT:A|B' -> 'A'."""
-    s = lineage
-    while True:
-        if s.startswith("MUT:"):
-            s = s[4:]
-        elif s.startswith("X:"):
-            s = s[2:]
-        else:
-            break
-    return s.split("|")[0]
 
 
 class Individual:

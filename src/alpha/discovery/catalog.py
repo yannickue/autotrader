@@ -51,6 +51,9 @@ class CatalogEntry:
     ops: tuple[str, ...] = CONTINUOUS_OPS
     q_lo: float = 0.1
     q_hi: float = 0.9
+    # Optional lower bound of the RESOLVED threshold (in feature units): value = max(quantile,
+    # floor).  Keeps e.g. brk_* ("ATR distance beyond the prior N-bar extreme") a genuine breakout.
+    floor: float | None = None
     mirror: Mirror = field(default_factory=Mirror)
     rule_feature: str | None = None  # feature the Rule reads (defaults to name)
     other_feature: str | None = None  # for kind == "level": close <op> other_feature
@@ -142,7 +145,7 @@ for _n, _why in _FLAGS.items():
 # ------------------------------------------------------------------ TRIGGER (M5)
 _add("m5_adx14", "TRIGGER", "continuous", "M5 trend strength at entry", q_lo=0.3, q_hi=0.9)
 _add("m5_rsi14", "TRIGGER", "continuous", "M5 RSI: exhaustion (mean reversion) or strength",
-     mirror=Mirror("reflect", center=50.0), q_lo=0.05, q_hi=0.95)
+     mirror=Mirror("reflect", center=50.0), q_lo=0.10, q_hi=0.90)
 _add("m5_volatility_percentile", "TRIGGER", "continuous",
      "M5 volatility percentile: expansion bars")
 _add("m5_bollinger_width", "TRIGGER", "continuous", "M5 band width: squeeze vs expansion at entry")
@@ -158,12 +161,12 @@ _add("bar_range_atr", "TRIGGER", "continuous", "entry-bar range/ATR: expansion b
 _add("bar_body_ratio", "TRIGGER", "continuous", "body share of the bar: conviction",
      q_lo=0.2, q_hi=0.95)
 _add("bar_close_loc", "TRIGGER", "continuous", "where the bar closed within its range",
-     mirror=Mirror("reflect", center=0.5), q_lo=0.1, q_hi=0.95)
+     mirror=Mirror("reflect", center=0.5), q_lo=0.1, q_hi=0.90)
 _a, _b = _pair("upper_wick_ratio", "lower_wick_ratio")
 _add("upper_wick_ratio", "TRIGGER", "continuous", "upper wick share: rejection of higher prices",
-     mirror=_a, q_lo=0.3, q_hi=0.95)
+     mirror=_a, q_lo=0.3, q_hi=0.90)
 _add("lower_wick_ratio", "TRIGGER", "continuous", "lower wick share: rejection of lower prices",
-     mirror=_b, q_lo=0.3, q_hi=0.95)
+     mirror=_b, q_lo=0.3, q_hi=0.90)
 _add("bar_dir", "TRIGGER", "fixed", "signed bar direction (+1 up / -1 down)", mirror=_R,
      fixed_value=0.0)
 for _k in (3, 6, 12):
@@ -171,12 +174,14 @@ for _k in (3, 6, 12):
          q_lo=0.2, q_hi=0.95)
 for _n in (20, 48):
     _a, _b = _pair(f"brk_up_{_n}", f"brk_dn_{_n}")
+    # lower-bound only ('>'), high quantiles, resolved threshold floored at 0: a breakout clause
+    # must mean "closed beyond the prior extreme" (a '<' or a negative threshold is not one)
     _add(f"brk_up_{_n}", "TRIGGER", "continuous",
          f"ATR distance of close above the prior {_n}-bar high (>0 = fresh breakout)",
-         mirror=_a, q_lo=0.5, q_hi=0.95)
+         ops=(">",), mirror=_a, q_lo=0.90, q_hi=0.99, floor=0.0)
     _add(f"brk_dn_{_n}", "TRIGGER", "continuous",
          f"ATR distance of close below the prior {_n}-bar low (>0 = fresh breakdown)",
-         mirror=_b, q_lo=0.5, q_hi=0.95)
+         ops=(">",), mirror=_b, q_lo=0.90, q_hi=0.99, floor=0.0)
 _a, _b = _pair("from_high_24_atr", "from_low_24_atr")
 _add("from_high_24_atr", "TRIGGER", "continuous",
      "pullback depth from the 24-bar high in ATR", mirror=_a, q_lo=0.2, q_hi=0.9)
@@ -201,10 +206,11 @@ for _h, _l, _lab in (
     _a, _b = _pair(_h, _l, reflect=True)
     # session extremes include the current bar, so their distances are one-sided (<=0 / >=0)
     _k = "continuous" if "sess" in _h else "signed"
+    # q_hi 0.85: the reflected SHORT clause reads the PARTNER's distribution, so 0.9 was > 95% true
     _add(_h, "LEVEL", _k, f"signed ATR distance to {_lab} (high side)", mirror=_a,
-         q_lo=0.1, q_hi=0.9)
+         q_lo=0.1, q_hi=0.85)
     _add(_l, "LEVEL", _k, f"signed ATR distance to {_lab} (low side)", mirror=_b,
-         q_lo=0.1, q_hi=0.9)
+         q_lo=0.1, q_hi=0.85)
 _add("dist_pdc_atr", "LEVEL", "signed", "signed ATR distance to previous close", mirror=_R,
      q_lo=0.1, q_hi=0.9)
 _add("dist_sess_open_atr", "LEVEL", "signed", "signed ATR distance to session open", mirror=_R,
@@ -215,13 +221,17 @@ for _h, _l, _hf, _lf, _ops, _lab in (
     ("lvl_c_pdh", "lvl_c_pdl", "previous_day_high", "previous_day_low", (">", "<"),
      "previous-day high/low"),
     ("lvl_c_sess_high", "lvl_c_sess_low", "session_high", "session_low", (">=", "<="),
-     "session high/low"),
+     "session high/low"),  # ops narrowed below: session extremes include the current bar
     ("lvl_c_swing_high", "lvl_c_swing_low", "last_swing_high", "last_swing_low", (">", "<"),
      "last swing"),
 ):
-    _add(_h, "LEVEL", "level", f"close relative to the {_lab} (high side)", ops=_ops,
+    if _h.startswith("lvl_c_sess_"):  # 'close <= session high' is ALWAYS true (and >= low)
+        _ops_h, _ops_l = (">=",), ("<=",)
+    else:
+        _ops_h = _ops_l = _ops
+    _add(_h, "LEVEL", "level", f"close relative to the {_lab} (high side)", ops=_ops_h,
          rule_feature="c", other_feature=_hf, mirror=Mirror("level", partner=_l))
-    _add(_l, "LEVEL", "level", f"close relative to the {_lab} (low side)", ops=_ops,
+    _add(_l, "LEVEL", "level", f"close relative to the {_lab} (low side)", ops=_ops_l,
          rule_feature="c", other_feature=_lf, mirror=Mirror("level", partner=_h))
 _add("lvl_c_sess_open", "LEVEL", "level", "close above/below the session open (intraday bias)",
      ops=(">", "<"), rule_feature="c", other_feature="session_open", mirror=Mirror("level"))

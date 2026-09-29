@@ -58,7 +58,11 @@ class PipelineConfig:
 
     seed: int = 20260930
     # Stage C (Validation, post-embargo, no parameter change)
-    c_min_trades: int = 15
+    # Validation sample guards (from standard error, not tuned to results): with per-trade
+    # sd(R) ~ 1..1.5 a mean is only resolved to ~0.2-0.3 R at n = 25; t >= 1.0 asks that the
+    # day-clustered (CR1) COMBINED_ADVERSE Validation expectancy is at least one SE above 0.
+    c_min_trades: int = 25
+    validation_min_t: float = 1.0
     c_top3_share_max: float = 0.6  # top-3 winners' share of positive R (BASE, Validation)
     c_min_profit_factor: float = 1.0  # strictly greater, BASE
     # Stage D (pooled Train+Validation, COMBINED_ADVERSE)
@@ -286,6 +290,10 @@ class StageEResult:
 
 
 # --------------------------------------------------------------------------- Stage C
+def _fmt_t(t: float | None) -> str:
+    return "n/a" if t is None else f"{t:.3f}"
+
+
 def judge_stage_c(ev_result: GenomeEval, cfg: PipelineConfig) -> StageCResult:
     """Pure judgement over a GenomeEval (the only reader of Validation numbers)."""
     view = validation_gate_view(ev_result)
@@ -302,12 +310,14 @@ def judge_stage_c(ev_result: GenomeEval, cfg: PipelineConfig) -> StageCResult:
         reasons.append(f"validation expectancy BASE {e_base} <= 0")
     if e_adv is None or e_adv <= 0:
         reasons.append(f"validation expectancy COMBINED_ADVERSE {e_adv} <= 0")
+    se = adv.se_r
+    t = None if (se is None or se <= 0 or e_adv is None) else e_adv / se
+    if t is None or t < cfg.validation_min_t:
+        reasons.append(f"validation adverse t {_fmt_t(t)} < {cfg.validation_min_t}")
     if n and pf is not None and pf <= cfg.c_min_profit_factor:  # None = no losing trade -> inf
         reasons.append(f"validation PF BASE {pf:.3f} <= {cfg.c_min_profit_factor}")
     if top3 is not None and top3 > cfg.c_top3_share_max:
         reasons.append(f"validation top-3 share {top3:.3f} > {cfg.c_top3_share_max}")
-    se = adv.se_r
-    t = None if (se is None or se <= 0 or e_adv is None) else e_adv / se
     return StageCResult(not reasons, reasons, n, _f(e_base), _f(e_adv), _f(pf), _f(top3),
                         _f(se), _f(t))
 
@@ -570,6 +580,8 @@ class PipelineResult:
     ledger_before: dict[str, int]
     ledger_after: dict[str, int]
     sim: PooledSim = field(repr=False, default=None)  # type: ignore[assignment]
+    # N used by the selection statistics: campaign totals + prior (earlier campaigns') trials
+    accounting: dict[str, int] = field(default_factory=dict)
 
     def survivors(self, stage: str) -> list[CandidateResult]:
         attr = {"C": "stage_c", "D": "stage_d", "E": "stage_e"}[stage]
@@ -585,10 +597,16 @@ def ledger_snapshot(ev: GenomeEvaluator) -> dict[str, int]:
             "cache_hits": led.cache_hits}
 
 
-def run_pipeline(pool: dict[str, Any], ev: GenomeEvaluator, cfg: PipelineConfig | None = None
+def run_pipeline(pool: dict[str, Any], ev: GenomeEvaluator, cfg: PipelineConfig | None = None,
+                 prior_trials: int | None = None, prior_unique_specs: int | None = None
                  ) -> PipelineResult:
-    """Stage A (done in search) -> C -> D -> E over the candidate pool; only survivors advance."""
-    from alpha.discovery.selection import selection_stats  # local: selection imports stages
+    """Stage A (done in search) -> C -> D -> E over the candidate pool; only survivors advance.
+
+    Selection statistics use N = this campaign's total trials + ``prior_trials`` (and unique
+    specs + ``prior_unique_specs`` for Bonferroni); the priors default to
+    ``meta.prior_trials`` / ``meta.prior_unique_specs`` of the pool, else 0.
+    """
+    from alpha.discovery.selection import ledger_unique, selection_stats  # selection imports stages
 
     cfg = cfg or PipelineConfig()
     meta = pool.get("meta", {})
@@ -596,8 +614,17 @@ def run_pipeline(pool: dict[str, Any], ev: GenomeEvaluator, cfg: PipelineConfig 
         raise ValueError("pool meta must assert oos_touched == false; refusing to run")
     ledger_before = ledger_snapshot(ev)
     sim = PooledSim(ev, cfg)
-    n_total = int(meta.get("ledger", {}).get("total_trials") or ev.ledger.total_trials)
-    n_unique = int(meta.get("ledger", {}).get("unique_specs") or ev.ledger.unique)
+    if prior_trials is None:
+        prior_trials = int(meta.get("prior_trials") or 0)
+    if prior_unique_specs is None:
+        prior_unique_specs = int(meta.get("prior_unique_specs") or 0)
+    camp_total = int(meta.get("ledger", {}).get("total_trials") or ev.ledger.total_trials)
+    camp_unique = int(ledger_unique(meta.get("ledger")) or ev.ledger.unique)
+    n_total = camp_total + int(prior_trials)
+    n_unique = camp_unique + int(prior_unique_specs)
+    accounting = {"campaign_total_trials": camp_total, "campaign_unique_specs": camp_unique,
+                  "prior_trials": int(prior_trials), "prior_unique_specs": int(prior_unique_specs),
+                  "n_total_trials": n_total, "n_unique_specs": n_unique}
     counts = {"pool": 0, "stage_a": 0, "train_positive": 0, "validation_positive": 0,
               "train_and_validation_positive": 0, "C": 0, "D": 0, "E": 0}
     seen: set[str] = set()
@@ -638,7 +665,7 @@ def run_pipeline(pool: dict[str, Any], ev: GenomeEvaluator, cfg: PipelineConfig 
         cand.stage_e = stage_e_stability(canon, ev, cfg, sim)
         if cand.stage_e.passed:
             counts["E"] += 1
-    return PipelineResult(out, counts, ledger_before, ledger_snapshot(ev), sim)
+    return PipelineResult(out, counts, ledger_before, ledger_snapshot(ev), sim, accounting)
 
 
 def _num(x: Any) -> Any:

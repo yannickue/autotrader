@@ -1,0 +1,257 @@
+{
+ "deap": {
+  "budget_exhausted": false,
+  "generations_run": 8,
+  "per_generation": [
+   {
+    "best": 0.17222115970944324,
+    "cache_hit_rate": 0.26666666666666666,
+    "cap_relaxed": false,
+    "evaluations_used": 60,
+    "generation": 0,
+    "lineage_histogram": {
+     "BREAKOUT": 4,
+     "BREAKOUT_RETEST": 4,
+     "COMPRESSION_EXPANSION": 4,
+     "FAILED_BREAKOUT": 4,
+     "HYBRID": 3,
+     "MEAN_REVERSION": 4,
+     "MOMENTUM_CONTINUATION": 4,
+     "OPENING_DRIVE": 4,
+     "PA_CONTINUATION": 4,
+     "PA_REVERSAL": 4,
+     "PREV_DAY_LEVEL": 4,
+     "RANGE_REJECTION": 4,
+     "SESSION_SWEEP": 4,
+     "TREND_CONTINUATION": 3,
+     "TREND_PULLBACK": 3,
+     "VOL_TRANSITION": 3
+    },
+    "median": -0.5064441222264768,
+    "unique_hashes": 60
+   },
+   {
+    "best": 0.17222115970944324,
+    "cache_hit_rate": 0.13333333333333333,
+    "cap_relaxed": false,
+    "evaluations_used": 120,
+    "generation": 1,
+    "lineage_histogram": {
+     "BREAKOUT": 8,
+     "BREAKOUT_RETEST": 2,
+     "COMPRESSION_EXPANSION": 6,
+     "FAILED_BREAKOUT": 4,
+     "HYBRID": 1,
+     "MEAN_REVERSION": 3,
+     "MOMENTUM_CONTINUATION": 3,
+     "OPENING_DRIVE": 8,
+     "PA_CONTINUATION": 12,
+     "PA_REVERSAL": 4,
+     "PREV_DAY_LEVEL": 4,
+     "TREND_PULLBACK": 1,
+     "VOL_TRANSITION": 4
+    },
+    "median": -0.26505691995941943,
+    "unique_hashes": 60
+   },
+   {
+    "best": 0.17222115970944324,
+    "cache_hit_rate": 0.08888888888888889,
+    "cap_relaxed": false,
+    "evaluations_used": 180,
+    "generation": 2,
+    "lineage_histogram": {
+     "BREAKOUT": 14,
+     "COMPRESSION_EXPANSION": 15,
+     "FAILED_BREAKOUT": 3,
+     "MOMENTUM_CONTINUATION": 2,
+     "OPENING_DRIVE": 10,
+     "PA_CONTINUATION": 2,
+     "PA_REVERSAL": 8,
+     "PREV_DAY_LEVEL": 1,
+     "VOL_TRANSITION": 5
+    },
+    "median": -0.12452819869447831,
+    "unique_hashes": 60
+   },
+   {
+    "best": 0.17222115970944324,
+    "cache_hit_rate": 0.06666666666666667,
+    "cap_relaxed": false,
+    "evaluations_used": 240,
+    "generation": 3,
+    "lineage_histogram": {
+     "BREAKOUT": 15,
+     "COMPRESSION_EXPANSION": 10,
+     "FAILED_BREAKOUT": 2,
+     "MOMENTUM_CONTINUATION": 2,
+     "OPENING_DRIVE": 15,
+     "PA_REVERSAL": 12,
+     "PREV_DAY_LEVEL": 1,
+     "VOL_TRANSITION": 3
+    },
+    "median": -0.08384668410069243,
+    "unique_hashes": 60
+   },
+   {
+    "best": 0.17222115970944324,
+    "cache_hit_rate": 0.05333333333333334,
+    "cap_relaxed": false,
+    "evaluations_used": 300,
+    "generation": 4,
+    "lineage_histogram": {
+     "BREAKOUT": 15,
+     "COMPRESSION_EXPANSION": 6,
+     "FAILED_BREAKOUT": 2,
+     "OPENING_DRIVE": 15,
+     "PA_REVERSAL": 15,
+     "PREV_DAY_LEVEL": 1,
+     "VOL_TRANSITION": 6
+    },
+    "median": -0.06822128152329526,
+    "unique_hashes": 60
+   },
+   {
+    "best": 0.17222115970944324,
+    "cache_hit_rate": 0.044444444444444446,
+    "cap_relaxed": false,
+    "evaluations_used": 360,
+    "generation": 5,
+    "lineage_histogram": {
+     "BREAKOUT": 15,
+     "COMPRESSION_EXPANSION": 5,
+     "FAILED_BREAKOUT": 2,
+     "OPENING_DRIVE": 15,
+     "PA_REVERSAL": 15,
+     "VOL_TRANSITION": 8
+    },
+    "median": -0.04961891242989613,
+    "unique_hashes": 60
+   },
+   {
+    "best": 0.17222115970944324,
+    "cache_hit_rate": 0.03818615751789976,
+    "cap_relaxed": false,
+    "evaluations_used": 419,
+    "generation": 6,
+    "lineage_histogram": {
+     "BREAKOUT": 15,
+     "COMPRESSION_EXPANSION": 4,
+     "OPENING_DRIVE": 15,
+     "PA_REVERSAL": 15,
+     "VOL_TRANSITION": 11
+    },
+    "median": -0.03510129246516416,
+    "unique_hashes": 60
+   },
+   {
+    "best": 0.17222115970944324,
+    "cache_hit_rate": 0.03375527426160337,
+    "cap_relaxed": false,
+    "evaluations_used": 474,
+    "generation": 7,
+    "lineage_histogram": {
+     "BREAKOUT": 15,
+     "COMPRESSION_EXPANSION": 4,
+     "OPENING_DRIVE": 15,
+     "PA_REVERSAL": 14,
+     "VOL_TRANSITION": 12
+    },
+    "median": -0.013342410992720122,
+    "unique_hashes": 60
+   },
+   {
+    "best": 0.17222115970944324,
+    "cache_hit_rate": 0.0300187617260788,
+    "cap_relaxed": false,
+    "evaluations_used": 533,
+    "generation": 8,
+    "lineage_histogram": {
+     "BREAKOUT": 15,
+     "COMPRESSION_EXPANSION": 3,
+     "OPENING_DRIVE": 15,
+     "PA_REVERSAL": 12,
+     "VOL_TRANSITION": 15
+    },
+    "median": 0.0032634605693486036,
+    "unique_hashes": 60
+   }
+  ],
+  "unique_evaluations": 533
+ },
+ "ledger": {
+  "cache_hits": 38,
+  "duplicate_rejects": 38,
+  "invalid_rejects": 0,
+  "param_trials": 400,
+  "structural_trials": 733,
+  "total_trials": 1133,
+  "unique": 1095,
+  "unique_specs": 1095
+ },
+ "oos_touched": false,
+ "overall_cache_hit_rate": 0.0335,
+ "overall_evals_per_s": 99.06,
+ "phases": {
+  "deap": {
+   "best_train_fitness": 0.172221,
+   "cache_hit_rate": 0.03,
+   "evals_per_s": 142.07,
+   "evaluations": 533,
+   "unique_specs_added": 517,
+   "valid_candidates_added": 391,
+   "wall_s": 3.75
+  },
+  "optuna": {
+   "best_train_fitness": 0.154284,
+   "cache_hit_rate": 0.055,
+   "evals_per_s": 107.16,
+   "evaluations": 400,
+   "unique_specs_added": 378,
+   "valid_candidates_added": 100,
+   "wall_s": 3.73
+  },
+  "random": {
+   "best_train_fitness": -0.007717,
+   "cache_hit_rate": 0.0,
+   "evals_per_s": 116.09,
+   "evaluations": 200,
+   "unique_specs_added": 200,
+   "valid_candidates_added": 125,
+   "wall_s": 1.72
+  }
+ },
+ "pool": {
+  "lineage_family_histogram": {
+   "BREAKOUT": 126,
+   "BREAKOUT_RETEST": 5,
+   "COMPRESSION_EXPANSION": 33,
+   "FAILED_BREAKOUT": 23,
+   "HYBRID": 23,
+   "MEAN_REVERSION": 17,
+   "MOMENTUM_CONTINUATION": 16,
+   "OPENING_DRIVE": 123,
+   "PA_CONTINUATION": 46,
+   "PA_REVERSAL": 89,
+   "PREV_DAY_LEVEL": 12,
+   "RANGE_REJECTION": 4,
+   "SESSION_SWEEP": 11,
+   "TREND_CONTINUATION": 7,
+   "TREND_PULLBACK": 8,
+   "VOL_TRANSITION": 51
+  },
+  "origin_histogram": {
+   "deap": 381,
+   "optuna": 88,
+   "random": 125
+  },
+  "size": 594,
+  "train_fitness": {
+   "max": 0.1722,
+   "median": -0.163,
+   "min": -0.9793
+  }
+ },
+ "total_wall_s": 11.44,
+ "unique_specs_total": 1095
+}

@@ -28,10 +28,14 @@ from alpha.discovery.genome import (
     validate,
 )
 from alpha.discovery.search import (
+    LINEAGE_MAX_LEN,
     _quantile_clauses,
     crossover,
+    lineage_family,
+    make_lineage,
     mutate_structure,
     param_space,
+    parse_lineage,
     with_params,
 )
 from alpha.fast.spec import evaluate_spec
@@ -442,7 +446,7 @@ def test_mutate_and_crossover_return_valid_genomes_with_lineage(env):
         validate(m)
         if canonical_hash(m) != canonical_hash(g):
             changed += 1
-            assert m.lineage.startswith("MUT:")
+            assert ">MUT" in m.lineage and lineage_family(m.lineage) == lineage_family(g.lineage)
         c1, c2 = crossover(g, genomes[int(rng.integers(len(genomes)))], rng)
         validate(c1)
         validate(c2)
@@ -450,4 +454,19 @@ def test_mutate_and_crossover_return_valid_genomes_with_lineage(env):
     assert changed >= 50
     a, b = genomes[0], genomes[1]
     x, _ = crossover(a, b, np.random.default_rng(2))
-    assert x.lineage.startswith("X:")
+    assert ">X1" in x.lineage and lineage_family(x.lineage) == lineage_family(a.lineage)
+
+
+def test_lineage_stays_bounded_and_keeps_family(env):
+    rng = np.random.default_rng(5)
+    pool = env["pool"]
+    g = _genomes(pool, 7, 4)[0]
+    fam = lineage_family(g.lineage)
+    a, b = g, _genomes(pool, 8, 4)[0]
+    for _ in range(300):
+        a = mutate_structure(a, rng, pool)
+        a, b = crossover(a, b, rng)
+        assert len(a.lineage) <= LINEAGE_MAX_LEN and len(b.lineage) <= LINEAGE_MAX_LEN
+    assert lineage_family(a.lineage) == fam
+    assert parse_lineage("MUT:X:MUT:A|B|C") == ("A", 2, 1)  # legacy strings still parse
+    assert len(make_lineage("F" * 200, 5000, 5000)) <= LINEAGE_MAX_LEN

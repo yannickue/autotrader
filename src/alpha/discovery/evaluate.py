@@ -42,8 +42,10 @@ from alpha.fast.screen import PartitionScreen, RejectReason, reject_reason, scre
 from alpha.fast.sim import TradeArrays, simulate_fast
 from alpha.fast.spec import evaluate_spec
 
-EVALUATOR_VERSION = "ad1-genome-eval-v1"
-MIN_TRAIN_TRADES = 30
+EVALUATOR_VERSION = "ad1-genome-eval-v2"  # v2: MIN_TRAIN_TRADES 60, floored brk_* thresholds
+# Stage A / fitness minimum of Train trades (COMBINED_ADVERSE).  Principled from the standard
+# error: at n = 60 with sd(R) ~ 1..1.5 the mean is resolved to ~0.13-0.19 R (1 SE).
+MIN_TRAIN_TRADES = 60
 N_CHUNKS = 3
 Z95 = 1.959963984540054
 BASE_COST = "BASE"

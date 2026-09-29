@@ -29,7 +29,7 @@
  },
  "exit_baseline": "strategy-declared structural/ATR-proxy stop with fixed-R target (params.target_r); next-bar-open fill; stop-first; forced flat 21:30 Berlin",
  "cost_model": "AR1 COST_SCENARIOS (BASE spread x1.0 + 0.5pt slippage); stress: SPREAD_STRESS, SLIPPAGE_STRESS, COMBINED_ADVERSE; commission 0 observed; no overnight so no swap",
- "sample_rules": {"min_trades_flag": 30},
+ "sample_rules": {"min_trades_flag": 60},
  "freeze_rule": {
   "note": "Pre-registered before any AR2 run. Uses TRAIN and VALIDATION only. Never tuned on OOS.",
   "min_train_trades": 60,

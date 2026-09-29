@@ -55,7 +55,7 @@ def derive_weaknesses(c: st.CandidateResult, train_adverse_exp: float | None) ->
             and sc.expectancy_adverse < 0.25 * train_adverse_exp):
         w.append(f"Validation adverse expectancy {sc.expectancy_adverse:.3f} R is < 25% of "
                  f"Train {train_adverse_exp:.3f} R (decay / overfit signature)")
-    if sc and 15 <= sc.n_trades < 30:
+    if sc and sc.n_trades < 50:
         w.append(f"thin Validation sample ({sc.n_trades} trades)")
     if sd:
         adv = sd.by_cost[st.ADVERSE_COST]
@@ -125,21 +125,49 @@ def _screen_row(name: str, d: dict[str, Any]) -> str:
             f"{_fmt(d.get('max_drawdown_r'), 1)} | {_fmt(d.get('max_loss_streak'))} |")
 
 
+def _glance_table(finalists: list[dict[str, Any]]) -> list[str]:
+    """Compact 'finalists at a glance' table (also used as the headline numbers)."""
+    from alpha.discovery.search import lineage_family
+
+    out = ["## Finalists at a glance", "",
+           "| # | hash | origin | lineage family | Train n | Train E[R] | Val n | Val E[R] | "
+           "Val t | Val Bonf. p | pooled t | null bound |",
+           "|---|---|---|---|---|---|---|---|---|---|---|---|"]
+    for i, f in enumerate(finalists, 1):
+        tr, sc, s = f["train"]["adverse"], f["stage_c"] or {}, f["selection"] or {}
+        out.append(
+            f"| {i} | `{f['canonical_hash'][:12]}` | {f['origin']} | "
+            f"{lineage_family(f['lineage'] or 'HYBRID')} | {_fmt(tr.get('n_trades'))} | "
+            f"{_fmt(tr.get('expectancy_r'))} | {_fmt(sc.get('n_trades'))} | "
+            f"{_fmt(sc.get('expectancy_adverse'))} | {_fmt(sc.get('t_adverse'), 2)} | "
+            f"{_fmt(s.get('validation_bonferroni_p'))} | {_fmt(s.get('pooled_t'), 2)} | "
+            f"{_fmt(s.get('null_bound_t'), 2)} |")
+    return [*out, ""]
+
+
 def render_report(summary: dict[str, Any], finalists: list[dict[str, Any]]) -> str:
     m, counts = summary["meta_ledger"], summary["counts"]
+    acc = summary["accounting"]
     out = ["# AD1 survivors report (Train + Validation only)", "",
            "OOS TOUCHED: NO", "",
            f"**{VERDICT_PREFIX}: {summary['verdict']}**", "",
+           *(_glance_table(finalists) if finalists else []),
            f"Verdict rule: {sel.VERDICT_RULE}", "",
            "## Search accounting (from pool meta.ledger)", "",
            "| total trials | unique specs | param | structural | duplicate rejects | invalid "
            "rejects | cache hits |", "|---|---|---|---|---|---|---|",
-           f"| {m.get('total_trials')} | {m.get('unique_specs')} | {m.get('param_trials')} | "
+           f"| {m.get('total_trials')} | {acc['campaign_unique_specs']} | "
+           f"{m.get('param_trials')} | "
            f"{m.get('structural_trials')} | {m.get('duplicate_rejects')} | "
            f"{m.get('invalid_rejects')} | {m.get('cache_hits')} |", "",
            f"Selection null bound: E[max t] ~ sqrt(2 ln N) = {summary['null_bound_t']:.2f} for "
-           f"N={m.get('total_trials')} (rough extreme-value bound, NOT a proof); "
-           f"Bonferroni N_eff = {m.get('unique_specs')} unique canonical specs.", "",
+           f"N={acc['n_total_trials']} (rough extreme-value bound, NOT a proof); "
+           f"Bonferroni N_eff = {acc['n_unique_specs']} unique canonical specs.", "",
+           f"Cumulative N: this campaign {acc['campaign_total_trials']} trials / "
+           f"{acc['campaign_unique_specs']} unique specs + prior campaigns "
+           f"{acc['prior_trials']} trials / {acc['prior_unique_specs']} unique specs "
+           f"(`--prior-trials`, `--prior-unique-specs`) = {acc['n_total_trials']} / "
+           f"{acc['n_unique_specs']}.", "",
            f"Stage-E neighbour evaluations added {summary['neighbor_param_trials']} param trials "
            "(pipeline ledger delta, not part of the search N).", "",
            "## Survivors per stage", "",
@@ -222,7 +250,8 @@ def render_report(summary: dict[str, Any], finalists: list[dict[str, Any]]) -> s
 
 # --------------------------------------------------------------------------- driver
 def run(pool_path: Path, config: Path, out_dir: Path, cache_dir: Path,
-        overlap: float = OVERLAP_THRESHOLD) -> dict[str, Any]:
+        overlap: float = OVERLAP_THRESHOLD, prior_trials: int | None = None,
+        prior_unique_specs: int | None = None) -> dict[str, Any]:
     cfg = json.loads(config.read_text(encoding="utf-8"))
     pool = json.loads(pool_path.read_text(encoding="utf-8"))
     if pool.get("meta", {}).get("oos_touched") is not False:
@@ -236,7 +265,7 @@ def run(pool_path: Path, config: Path, out_dir: Path, cache_dir: Path,
     pcfg = st.PipelineConfig.from_dict({"seed": cfg.get("seed", 20260930),
                                         **cfg.get("pipeline", {})})
 
-    res = st.run_pipeline(pool, ev, pcfg)
+    res = st.run_pipeline(pool, ev, pcfg, prior_trials, prior_unique_specs)
     e_surv = res.survivors("E")
     clusters = sel.overlap_clusters(e_surv, ev, overlap, sim=res.sim)
     reps = [c.representative for c in clusters]
@@ -248,10 +277,10 @@ def run(pool_path: Path, config: Path, out_dir: Path, cache_dir: Path,
                                       f"{c.furthest_stage}{'+' if c.passed_all else ''})")
                      for c in _near_misses(res)]
     meta_ledger = pool["meta"].get("ledger", {})
-    n_total = int(meta_ledger.get("total_trials") or ev.ledger.total_trials)
+    n_total = res.accounting["n_total_trials"]
     summary = {
         "verdict": verdict, "verdict_rule": sel.VERDICT_RULE, "oos_touched": False,
-        "counts": res.counts, "meta_ledger": meta_ledger,
+        "counts": res.counts, "meta_ledger": meta_ledger, "accounting": res.accounting,
         "null_bound_t": sel.expected_max_null_t(n_total),
         "overlap_threshold": overlap,
         "clusters": [{"representative": c.representative.canonical_hash, "size": c.size,
@@ -276,10 +305,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out-dir", required=True)
     parser.add_argument("--cache-dir", default=str(DEFAULT_CACHE))
     parser.add_argument("--overlap", type=float, default=OVERLAP_THRESHOLD)
+    parser.add_argument("--prior-trials", type=int, default=None,
+                        help="trials of EARLIER campaigns on this data (default: meta, else 0)")
+    parser.add_argument("--prior-unique-specs", type=int, default=None,
+                        help="unique specs of earlier campaigns (default: pool meta, else 0)")
     args = parser.parse_args(argv)
     summary = run(Path(args.pool), Path(args.config), Path(args.out_dir), Path(args.cache_dir),
-                  args.overlap)
+                  args.overlap, args.prior_trials, args.prior_unique_specs)
     print(f"counts: {summary['counts']}")
+    print(f"accounting: {summary['accounting']}")
     print(f"clusters: {len(summary['clusters'])}  neighbour param trials: "
           f"{summary['neighbor_param_trials']}")
     print(f"{VERDICT_PREFIX}: {summary['verdict']}   OOS TOUCHED: NO")

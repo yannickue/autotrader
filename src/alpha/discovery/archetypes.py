@@ -204,7 +204,7 @@ def breakout_retest(rng, pool):
 def compression_expansion(rng, pool):
     return _build(
         "COMPRESSION_EXPANSION", pool, rng,
-        regime=[_s(_c("regime_vol_state", labels=("COMPRESSION", "EXPANSION")),
+        regime=[_s(_c("regime_vol_state", labels=("COMPRESSION",)),  # both labels = always true
                    _c("h1_bollinger_width", "<", (0.2, 0.6)), p=0.3)],
         context=[_s(_c("range_ratio_12_48", "<", (0.25, 0.6)), _c("compression_expansion_ratio", "<", (0.3, 0.6)),
                     _c("context_compression"))],

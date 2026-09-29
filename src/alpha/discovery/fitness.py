@@ -11,8 +11,8 @@ data.
 Definition (all statistics from the TRAIN partition under COMBINED_ADVERSE costs, so cost
 robustness is inside the objective)::
 
-    n < 30                     ->  -10 + n/30             (graded, below every valid candidate)
-    n >= 30:
+    n < MIN_TRAIN_TRADES (60)  ->  -10 + n/60             (graded, below every valid candidate)
+    n >= MIN_TRAIN_TRADES:
       base   = E[R] - 1.0 * SE                    day-clustered SE => a ~84% lower bound
       - 0.02 * complexity                          clause/OR/stop-kind count
       - 0.5  * max(0, top3_share - 0.35)           top-3 winners' share of positive R
@@ -25,16 +25,16 @@ robustness is inside the objective)::
       + 0.02 * min(1, n / 300)                     small sample-size bonus, saturating
 
 Chunks without trades are ignored by the consistency term (their emptiness already shows in
-trades/day, and n>=30 bounds the damage); ``None`` metrics contribute 0.
+trades/day, and n>=60 bounds the damage); ``None`` metrics contribute 0.
 """
 
 from __future__ import annotations
 
 import math
 
-from alpha.discovery.evaluate import TrainView
+from alpha.discovery.evaluate import MIN_TRAIN_TRADES, TrainView
 
-MIN_TRADES = 30
+MIN_TRADES = MIN_TRAIN_TRADES  # backward-compatible alias
 INVALID_FLOOR = -10.0  # below any attainable valid fitness
 W_SE = 1.0
 W_COMPLEXITY = 0.02
@@ -50,8 +50,8 @@ def train_fitness(view: TrainView) -> float:
     side = view.adverse
     screen = side.screen
     n = screen.n_trades
-    if n < MIN_TRADES or screen.expectancy_r is None:
-        return INVALID_FLOOR + n / MIN_TRADES
+    if n < MIN_TRAIN_TRADES or screen.expectancy_r is None:
+        return INVALID_FLOOR + n / MIN_TRAIN_TRADES
     score = screen.expectancy_r - W_SE * (side.se_r or 0.0)
     score -= W_COMPLEXITY * view.complexity
     top3 = screen.top_3_positive_r_share
@@ -68,4 +68,4 @@ def train_fitness(view: TrainView) -> float:
     return float(score)
 
 
-__all__ = ("train_fitness",)
+__all__ = ("INVALID_FLOOR", "MIN_TRAIN_TRADES", "train_fitness")

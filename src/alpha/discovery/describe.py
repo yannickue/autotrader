@@ -27,7 +27,7 @@ def describe_clause(c: Clause, resolver: Any = None) -> str:
         cond = f"{c.feature} {c.op} Train-quantile {c.q:.2f}"
         if resolver is not None and c.q is not None:
             with contextlib.suppress(ValueError):
-                cond += f" (= {resolver.value(e.feature, c.q):.4g})"
+                cond += f" (= {resolver.value(e.feature, c.q, e.floor):.4g})"
     return f"{cond}  [{e.role}]"
 
 

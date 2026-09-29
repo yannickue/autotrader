@@ -216,7 +216,10 @@ def run(args: argparse.Namespace) -> dict:
         "evaluator_version": EVALUATOR_VERSION, "evaluator_fingerprint": evaluator._fp_static,
         "seed": seed, "git_commit": _git_commit(),
         "args": {k: v for k, v in vars(args).items() if k != "cache_dir"},
-        "ledger": ledger_json, "phase_timings_s": {k: v["wall_s"] for k, v in phases.items()},
+        "ledger": ledger_json,
+        # trials of EARLIER campaigns on the same data (cumulative multiple-testing N)
+        "prior_trials": args.prior_trials, "prior_unique_specs": args.prior_unique_specs,
+        "phase_timings_s": {k: v["wall_s"] for k, v in phases.items()},
         "total_wall_s": round(total_s, 2), "pool_size": len(merged),
         "pool_lineage_cap_fraction": POOL_LINEAGE_CAP, "fitness": "train_fitness (Train only)",
         "oos_touched": False,  # written only after assert_oos_untouched() held (twice)
@@ -266,6 +269,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--deap-mutpb", type=float, default=0.4)
     p.add_argument("--pool-size", type=int, default=600)
     p.add_argument("--max-unique-specs", type=int, default=10000)
+    p.add_argument("--prior-trials", type=int, default=0,
+                   help="trials of earlier campaigns on this data; stored in pool meta and added "
+                        "to N by ad1_survivors")
+    p.add_argument("--prior-unique-specs", type=int, default=0)
     p.add_argument("--cache-dir", default=str(DEFAULT_CACHE))
     return p
 

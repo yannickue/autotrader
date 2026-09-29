@@ -106,8 +106,45 @@ def with_params(genome: Genome, values: Mapping[str, float] | Sequence[float]) -
 
 
 # --------------------------------------------------------------------------- structure operators
-def _root(lineage: str) -> str:
-    return lineage[4:] if lineage.startswith("MUT:") else lineage
+LINEAGE_MAX_LEN = 60
+_FAMILY_MAX = 40
+_COUNTER_MAX = 999
+
+
+def parse_lineage(lineage: str) -> tuple[str, int, int]:
+    """(family, n_mutations, n_crossovers) of a lineage tag.
+
+    Compact form ``<FAMILY>[>MUT<n>][>X<m>]`` (e.g. ``HYBRID>MUT3>X2``); the legacy growing
+    form (``MUT:X:A|B`` ...) is still parsed so old pools/caches stay readable.
+    """
+    if ">" in lineage:
+        family, *parts = lineage.split(">")
+        mut = x = 0
+        for part in parts:
+            if part.startswith("MUT") and part[3:].isdigit():
+                mut = int(part[3:])
+            elif part.startswith("X") and part[1:].isdigit():
+                x = int(part[1:])
+        return family, mut, x
+    mut, x, s = lineage.count("MUT:"), lineage.count("X:"), lineage
+    while s.startswith(("MUT:", "X:")):
+        s = s[4:] if s.startswith("MUT:") else s[2:]
+    return s.split("|")[0], mut, x
+
+
+def make_lineage(family: str, mut: int = 0, x: int = 0) -> str:
+    """Bounded (<= LINEAGE_MAX_LEN chars) provenance tag; excluded from the canonical hash."""
+    out = family[:_FAMILY_MAX]
+    if mut:
+        out += f">MUT{min(mut, _COUNTER_MAX)}"
+    if x:
+        out += f">X{min(x, _COUNTER_MAX)}"
+    return out
+
+
+def lineage_family(lineage: str) -> str:
+    """Root family of a lineage tag ('HYBRID>MUT3>X2' -> 'HYBRID'; legacy 'X:MUT:A|B' -> 'A')."""
+    return parse_lineage(lineage)[0]
 
 
 def _random_window(rng: np.random.Generator) -> tuple[int, int]:
@@ -156,12 +193,14 @@ def _mutate_once(g: Genome, rng: np.random.Generator, pool: FeaturePool) -> Geno
 def mutate_structure(genome: Genome, rng: np.random.Generator, pool: FeaturePool,
                      *, max_tries: int = 25) -> Genome:
     """Add/remove/replace a clause, flip the stop kind, switch the time window or toggle an OR
-    group.  Returns a canonical, validate()-passing genome (lineage ``MUT:<root>``)."""
+    group.  Returns a canonical, validate()-passing genome (lineage ``<family>>MUT<n>...``,
+    bounded; see ``make_lineage``)."""
     for _ in range(max_tries):
         child = _mutate_once(genome, rng, pool)
         if child is None:
             continue
-        child = canonicalize(replace(child, lineage=f"MUT:{_root(genome.lineage)}"))
+        fam, mut, xo = parse_lineage(genome.lineage)
+        child = canonicalize(replace(child, lineage=make_lineage(fam, mut + 1, xo)))
         if is_valid(child) and child != canonicalize(genome):
             return child
     return genome
@@ -174,7 +213,9 @@ def crossover(
     a: Genome, b: Genome, rng: np.random.Generator, *, max_tries: int = 25
 ) -> tuple[Genome, Genome]:
     """Uniform crossover over clause groups / stop / window / target; children validate()."""
-    lineage = f"X:{_root(a.lineage)}|{_root(b.lineage)}"
+    fam_a, mut_a, x_a = parse_lineage(a.lineage)
+    _fam_b, mut_b, x_b = parse_lineage(b.lineage)
+    lineage = make_lineage(fam_a, max(mut_a, mut_b), max(x_a, x_b) + 1)  # family of parent a
     for _ in range(max_tries):
         swap = [bool(x) for x in rng.random(len(_SWAPPABLE) + 1) < 0.5]
         fields_a = {f: getattr(a, f) for f in _SWAPPABLE}
@@ -190,4 +231,5 @@ def crossover(
     return a, b
 
 
-__all__ = ("crossover", "mutate_structure", "param_space", "with_params")
+__all__ = ("crossover", "lineage_family", "make_lineage", "mutate_structure", "param_space",
+           "parse_lineage", "with_params")

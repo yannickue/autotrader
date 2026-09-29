@@ -8,7 +8,7 @@ import pytest
 
 from alpha.discovery import fitness as fitness_module
 from alpha.discovery.evaluate import GenomeEval, SideMetrics, TrainView, validation_gate_view
-from alpha.discovery.fitness import train_fitness
+from alpha.discovery.fitness import MIN_TRAIN_TRADES, train_fitness
 from alpha.fast.screen import PartitionScreen
 
 
@@ -32,8 +32,10 @@ def _view(n=200, exp=0.10, se=0.05, complexity=3, chunks=(0.1, 0.1, 0.1), base_e
 
 def test_too_few_trades_is_graded_negative():
     assert train_fitness(_view(n=0)) == -10.0
-    assert train_fitness(_view(n=15)) == pytest.approx(-9.5)
-    assert -9.04 < train_fitness(_view(n=29)) < -9.0  # graded, far below any valid candidate
+    assert MIN_TRAIN_TRADES == 60
+    assert train_fitness(_view(n=30)) == pytest.approx(-9.5)
+    assert -9.02 < train_fitness(_view(n=59)) < -9.0  # graded, far below any valid candidate
+    assert train_fitness(_view(n=60)) > -1.0  # first valid sample size
     assert train_fitness(_view(exp=0.40, se=0.05, complexity=3)) > 0
     assert train_fitness(_view(n=10)) < train_fitness(_view(n=20)) < -9
 

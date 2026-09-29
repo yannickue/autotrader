@@ -65,11 +65,15 @@ class ThresholdResolver:
             self._sorted[feature] = cached
         return cached
 
-    def value(self, feature: str, q: float) -> float:
+    def value(self, feature: str, q: float, floor: float | None = None) -> float:
+        """TRAIN quantile of ``feature``; ``floor`` (catalog domain) lower-bounds the result."""
         values = self._train_values(feature)
         if not len(values):
             raise ValueError(f"no finite TRAIN values for {feature}")
-        return float(round(float(np.quantile(values, q)), 6))
+        v = float(np.quantile(values, q))
+        if floor is not None:
+            v = max(v, float(floor))
+        return float(round(v, 6))
 
 
 # --------------------------------------------------------------------------- canonicalisation
@@ -89,7 +93,8 @@ def _snap_clause(c: Clause) -> Clause:
     if c.q is None:
         return Clause(c.feature, c.op, None, ())
     q = _snap(c.q, Q_GRID, entry.q_lo, entry.q_hi)
-    return Clause(c.feature, c.op, round(q, 2), ())
+    q = min(q, entry.q_hi)  # grid rounding must not leave the domain (e.g. q_hi = 0.995)
+    return Clause(c.feature, c.op, round(q, 3), ())
 
 
 def _is_lower_bound(op: str) -> bool:
@@ -216,7 +221,7 @@ def mirror_rule_parts(
     else:
         if resolver is None:
             raise ValueError("resolver required for quantile clauses")
-        value = resolver.value(entry.feature, float(clause.q))
+        value = resolver.value(entry.feature, float(clause.q), entry.floor)
     feature = entry.feature
     if short:
         kind, center = entry.mirror.kind, entry.mirror.center
@@ -341,6 +346,7 @@ class TrialLedger:
                 "param_trials": self.param_trials, "structural_trials": self.structural_trials,
                 "duplicate_rejects": self.duplicate_rejects,
                 "invalid_rejects": self.invalid_rejects, "unique": self.unique,
+                "unique_specs": self.unique,  # alias: pool meta / stages / report read this key
                 "cache_hits": self.cache_hits,
             },
             sort_keys=True,

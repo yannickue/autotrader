@@ -30,6 +30,18 @@ VERDICT_NO = "NO"
 VERDICT_INCONCLUSIVE = "INCONCLUSIVE"
 
 
+def ledger_unique(ledger: dict[str, Any] | None) -> int | None:
+    """Unique-spec count of a ledger dict; accepts BOTH ``unique_specs`` and ``unique``.
+
+    (``TrialLedger.to_json`` historically emitted ``unique`` while the stages/report read
+    ``unique_specs``, silently yielding N_eff = 0; both keys are now emitted and accepted.)
+    """
+    if not ledger:
+        return None
+    v = ledger.get("unique_specs", ledger.get("unique"))
+    return None if v is None else int(v)
+
+
 def expected_max_null_t(n_trials: int) -> float:
     """Rough bound on the max of N standard-normal t-stats: sqrt(2 ln N) (0 for N <= 1).
 
@@ -188,6 +200,7 @@ __all__ = (
     "entry_set",
     "expected_max_null_t",
     "jaccard",
+    "ledger_unique",
     "overlap_clusters",
     "robust_verdict",
     "selection_stats",
