@@ -83,6 +83,7 @@ class FakeMT5Broker:
         self.fail_calls_when_disconnected = True
         self.initialize_calls: list[dict[str, Any]] = []
         self.order_send_calls = 0
+        self.rates: dict[int, Any] = {}  # mt5 timeframe -> structured numpy array
 
     # -- helpers -------------------------------------------------------------
 
@@ -193,7 +194,14 @@ class FakeMT5Broker:
         return self._guard("copy_rates_from") and None
 
     def copy_rates_from_pos(self, symbol, timeframe, start_pos, count):
-        return self._guard("copy_rates_from_pos") and None
+        """Newest `count` rows ending `start_pos` bars back (last row = forming bar)."""
+        if not self._guard("copy_rates_from_pos") or symbol != self.symbol_info_obj.name:
+            return None
+        rows = self.rates.get(int(timeframe))
+        if rows is None:
+            return None
+        end = len(rows) - int(start_pos)
+        return rows[max(0, end - int(count)) : end]
 
     def copy_rates_range(self, symbol, timeframe, date_from, date_to):
         return self._guard("copy_rates_range") and None
