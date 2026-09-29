@@ -1,0 +1,50 @@
+{
+  "version": "AR1-phase1-config-1",
+  "dataset_root": "data/ar1_ger40",
+  "instrument": "GER40",
+  "timeframe": "M5",
+  "seed": 20260929,
+  "splits": {
+    "train": ["2025-02-01", "2025-11-30"],
+    "validation": ["2025-12-01", "2026-04-30"],
+    "oos": ["2026-05-01", "2026-08-31"]
+  },
+  "exits": [
+    {"kind": "fixed_r", "r": 1.0},
+    {"kind": "fixed_r", "r": 1.5},
+    {"kind": "fixed_r", "r": 2.5},
+    {"kind": "trail", "r": 1.5}
+  ],
+  "pre_registered_canonical": {
+    "_note": "Fixed BEFORE the development grid was run. Evaluated on OOS regardless of dev results (unbiased family estimate, no selection).",
+    "exit": {"kind": "fixed_r", "r": 1.5},
+    "MOMENTUM": {"lookback": 24, "thr": 1.5, "stop_mult": 2.5},
+    "BREAKOUT": {"kind": "orb", "or_bars": 6, "buffer_atr": 0.25, "stop_mode": "or_mid"},
+    "PULLBACK": {"ema_fast": 21, "depth": 1.0, "stop_mode": "swing"}
+  },
+  "selection_rule": {
+    "min_train_trades": 150,
+    "min_validation_trades": 60,
+    "require_positive_expectancy_r": ["train", "validation"],
+    "neighbour_median_expectancy_r_gt": 0.0,
+    "rank_by": "min(train_expectancy_r, validation_expectancy_r)",
+    "note": "one representative per family only to decide what is frozen for OOS; never used to call anything production-ready"
+  },
+  "verdict_rule": {
+    "min_total_trades": 200,
+    "expectancy_r_gt_0_in": ["train", "validation", "oos"],
+    "expectancy_r_gt_0_under": ["BASE", "SPREAD_STRESS", "SLIPPAGE_STRESS"],
+    "pooled_profit_factor_gt": 1.05,
+    "max_drawdown_pct_le": 20.0
+  },
+  "sizing": {
+    "equity_eur": 10000.0,
+    "risk_fraction": 0.005,
+    "lot_step": 0.25,
+    "min_lot": 0.25,
+    "max_leverage": 10.0,
+    "min_risk_pts": 5.0,
+    "max_risk_pts": 400.0
+  },
+  "rules": {"max_trades_per_day": 6, "max_entry_spread_pts": 8.0}
+}
