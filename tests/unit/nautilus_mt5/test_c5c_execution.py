@@ -81,7 +81,7 @@ def test_bracket_entry_fills_in_nautilus_with_atomic_broker_side_stop(h, broker)
     row = h.store.by_client_order_id(str(entry.client_order_id))
     assert row.status == "ACCEPTED" and row.order_ticket == broker.history_orders[0].ticket
     assert row.position_ticket == broker.positions_get()[0].ticket
-    deal = broker.history_deals_get()[0]
+    deal = broker.visible_deals()[0]
     assert h.store.is_ingested(deal.ticket)
     fill_event = filled.events[-1]
     assert str(fill_event.trade_id) == str(deal.ticket)

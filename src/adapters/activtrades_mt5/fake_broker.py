@@ -59,7 +59,8 @@ class FakeMT5Broker:
     def __init__(self, symbol_info: Any, config: FakeBrokerConfig | None = None) -> None:
         self.cfg = config or FakeBrokerConfig()
         self.symbol_info_obj = symbol_info
-        self.server_time = 1_790_000_000  # server-clock epoch seconds
+        self._server_time = 1_790_000_000  # server-clock epoch seconds
+        self.live_offset_s: int | None = None  # if set: server_time follows the real clock
         self.bid = 25_000.00
         self.ask = 25_001.50
         self.connected = True
@@ -121,6 +122,16 @@ class FakeMT5Broker:
             setattr(self, name, self._tracked(name, getattr(self, name)))
 
     # -- helpers -------------------------------------------------------------
+
+    @property
+    def server_time(self) -> int:
+        if self.live_offset_s is not None:
+            return int(time.time()) + self.live_offset_s
+        return self._server_time
+
+    @server_time.setter
+    def server_time(self, value: int) -> None:
+        self._server_time = value
 
     def _tracked(self, name: str, fn: Any) -> Any:
         def wrapper(*args: Any, **kwargs: Any) -> Any:
@@ -280,8 +291,15 @@ class FakeMT5Broker:
 
     # -- protocol: state queries ---------------------------------------------------
 
-    def positions_get(self, symbol=None, *, group=None, ticket=None):
-        if not self._guard("positions_get"):
+    def _reject_unnamed(self, args: tuple) -> bool:
+        """Real MetaTrader5: positions_get/orders_get accept ONLY keyword filters."""
+        if args:
+            self._last_error = (-2, "Unnamed arguments not allowed")
+            return True
+        return False
+
+    def positions_get(self, *args, symbol=None, group=None, ticket=None):
+        if not self._guard("positions_get") or self._reject_unnamed(args):
             return None
         rows = [
             p
@@ -290,8 +308,8 @@ class FakeMT5Broker:
         ]
         return tuple(rows)
 
-    def orders_get(self, symbol=None, *, group=None, ticket=None):
-        if not self._guard("orders_get"):
+    def orders_get(self, *args, symbol=None, group=None, ticket=None):
+        if not self._guard("orders_get") or self._reject_unnamed(args):
             return None
         rows = [
             o
@@ -300,10 +318,25 @@ class FakeMT5Broker:
         ]
         return tuple(rows)
 
+    def visible_deals(self) -> tuple:
+        """Test helper (NOT part of the MT5 API): every deal currently visible in history."""
+        return tuple(d for d in self.deals if d.ticket not in self._hidden)
+
+    def _history_args_invalid(self, date_from, date_to, group, position, ticket) -> bool:
+        """Real MetaTrader5: (None, None) without ticket/position is 'Invalid arguments'."""
+        if (date_from is None) != (date_to is None) or (
+            date_from is None and ticket is None and position is None and group is None
+        ):
+            self._last_error = (-2, "Invalid arguments")
+            return True
+        return False
+
     def history_orders_get(
         self, date_from=None, date_to=None, *, group=None, position=None, ticket=None
     ):
         if not self._guard("history_orders_get"):
+            return None
+        if self._history_args_invalid(date_from, date_to, group, position, ticket):
             return None
         rows = [
             o
@@ -311,6 +344,9 @@ class FakeMT5Broker:
             if (ticket is None or o.ticket == ticket)
             and (position is None or o.position_id == position)
         ]
+        if ticket is not None and not rows:
+            self._last_error = (-2, "Terminal: Invalid params")  # unknown ticket == None, as real
+            return None
         return tuple(rows)
 
     def history_deals_get(
@@ -318,14 +354,19 @@ class FakeMT5Broker:
     ):
         if not self._guard("history_deals_get"):
             return None
+        if self._history_args_invalid(date_from, date_to, group, position, ticket):
+            return None
         visible = [d for d in self.deals if d.ticket not in self._hidden]
         rows = [
             d
             for d in visible
             if (ticket is None or d.ticket == ticket)
             and (position is None or d.position_id == position)
-            and self._in_range(d.time, date_from, date_to)
+            and (date_from is None or self._in_range(d.time, date_from, date_to))
         ]
+        if ticket is not None and not rows:
+            self._last_error = (-2, "Terminal: Invalid params")
+            return None
         for ticket_ in self._duplicate_visible:  # same deal listed twice (observed-N-times case)
             rows.extend(d for d in visible if d.ticket == ticket_)
         return tuple(rows)

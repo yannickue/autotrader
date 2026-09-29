@@ -220,6 +220,9 @@ class Mt5ExecClientConfig:
     # Caller-side wait for an exposure-changing operation on the MT5 lane. Expiry is NOT a
     # rejection: the operation may still complete at the broker (outcome unknown -> reconcile).
     exposure_timeout_secs: float = 30.0
+    # DRY RUN: run the whole admission path and the REAL order_check, then STOP before
+    # order_send (the order is rejected locally with DRY_RUN_ORDER_CHECK_OK).
+    dry_run: bool = False
 
 
 @dataclass(slots=True)
@@ -345,12 +348,21 @@ class Mt5LiveExecutionClient(LiveExecutionClient):
         return self._session.call(what, function, *args, **kwargs)
 
     def _broker_positions(self, symbol: str | None = None) -> list[PositionRecord]:
-        raw = self._call("positions_get", self._session.client.positions_get, symbol)
+        if symbol is None:
+            raw = self._call("positions_get", self._session.client.positions_get)
+        else:  # real MT5: filters are keyword-only
+            raw = self._call("positions_get", self._session.client.positions_get, symbol=symbol)
         return [position_to_position_record(p) for p in raw]
 
     def _broker_open_orders(self) -> list[OrderRecord]:
         raw = self._call("orders_get", self._session.client.orders_get)
         return [order_to_order_record(o) for o in raw]
+
+    def _history_window(self) -> tuple[datetime, datetime]:
+        policy = self._session.time_policy
+        start = policy.utc_to_request_datetime(self._now() - self._cfg.deal_lookback)
+        end = policy.utc_to_request_datetime(self._now() + timedelta(days=1))
+        return start, end
 
     def _broker_deals(self, since: datetime) -> list[DealRecord]:
         policy = self._session.time_policy
@@ -657,7 +669,7 @@ class Mt5LiveExecutionClient(LiveExecutionClient):
     def _after_booking(self, deal: DealRecord, instrument_id: InstrumentId) -> None:
         """Keep protective (SL/TP) order state consistent with what the broker did."""
         remaining = self._call(
-            "positions_get", self._session.client.positions_get, None, ticket=deal.position_id
+            "positions_get", self._session.client.positions_get, ticket=deal.position_id
         )
         position_closed = len(remaining) == 0
         self._push_account_state()
@@ -756,7 +768,8 @@ class Mt5LiveExecutionClient(LiveExecutionClient):
         """Orders written ahead but never confirmed: adopt the broker's record by token, or
         (after the grace period, with no trace at the broker) reject as never executed."""
         client = self._session.client
-        history = self._call("history_orders_get", client.history_orders_get, None, None) or ()
+        start, end = self._history_window()
+        history = self._call("history_orders_get", client.history_orders_get, start, end)
         by_token = {str(o.comment).split("[")[0].strip(): o for o in history if o.comment}
         for row in self._store.unresolved():
             if row.parent_client_order_id:
@@ -1052,6 +1065,10 @@ class Mt5LiveExecutionClient(LiveExecutionClient):
                 self._store.update_order(cid, status="REJECTED")
                 return self._reject(order, "REDUCE_ONLY_POSITION_CHANGED_BEFORE_SEND")
             pre_volume = rows[0].volume
+        if self._cfg.dry_run:
+            self._store.update_order(cid, status="REJECTED")
+            self.audit.append(f"DRY_RUN order_check OK, order_send NOT called: {request}")
+            return self._reject(order, f"DRY_RUN_ORDER_CHECK_OK:{check.comment}")
         self._store.update_order(cid, status="SENT")
         try:
             result = self._session.client.order_send(request)
@@ -1127,8 +1144,6 @@ class Mt5LiveExecutionClient(LiveExecutionClient):
             history = self._call(
                 "history_orders_get",
                 self._session.client.history_orders_get,
-                None,
-                None,
                 ticket=row.order_ticket,
             )
         except Mt5CallError:
@@ -1362,7 +1377,7 @@ class Mt5LiveExecutionClient(LiveExecutionClient):
         return (sl is None or pos.stop_loss == sl) and (tp is None or pos.take_profit == tp)
 
     def _broker_positions_by_ticket(self, ticket: int) -> list[PositionRecord]:
-        raw = self._call("positions_get", self._session.client.positions_get, None, ticket=ticket)
+        raw = self._call("positions_get", self._session.client.positions_get, ticket=ticket)
         return [position_to_position_record(p) for p in raw]
 
     def emergency_protect(self, position_ticket: int, stop_loss: Decimal) -> str | None:

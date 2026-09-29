@@ -209,7 +209,7 @@ def test_market_buy_with_attached_stop_creates_netting_position_and_deal(broker)
     assert result.retcode == Retcode.DONE
     (pos,) = broker.positions_get()
     assert (pos.volume, pos.sl, pos.type) == (0.25, 24_900.0, 0)
-    (deal,) = broker.history_deals_get()
+    (deal,) = broker.visible_deals()
     assert deal.entry == 0 and deal.position_id == pos.identifier and deal.order == result.order
 
 
@@ -222,7 +222,7 @@ def test_broker_executes_attached_stop_and_books_a_reason_sl_deal(broker):
     broker.order_send(market(broker, sl=24_900.0))
     broker.set_quote(24_890.0, 24_891.5)
     assert broker.positions_get() == ()
-    deals = broker.history_deals_get()
+    deals = broker.visible_deals()
     assert [d.entry for d in deals] == [0, 1] and deals[-1].reason == 4  # DEAL_REASON_SL
 
 
@@ -230,12 +230,12 @@ def test_partial_and_progressive_fills_hide_deals_until_released(broker):
     broker.progressive = True
     broker.fill_plan.append([(0.25, 25_001.5), (0.25, 25_001.75), (0.5, 25_002.0)])
     assert broker.order_send(market(broker, volume=1.0)).retcode == Retcode.DONE
-    assert broker.history_deals_get() == ()  # nothing visible yet
+    assert broker.visible_deals() == ()  # nothing visible yet
     first = sorted(d.ticket for d in broker.deals)[0]
     broker.release_deals(first)
-    assert len(broker.history_deals_get()) == 1
+    assert len(broker.visible_deals()) == 1
     broker.release_deals()
-    assert len(broker.history_deals_get()) == 3
+    assert len(broker.visible_deals()) == 3
 
 
 def test_ioc_partial_returns_done_partial(broker):

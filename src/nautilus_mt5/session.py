@@ -47,7 +47,9 @@ class _LaneGuardedClient:
 
         def guarded(*args: Any, **kwargs: Any) -> Any:
             self._lane.assert_in_lane(f"MT5 client.{name}")
-            return attr(*args, **kwargs)
+            # REAL-API QUIRK (found on the ActivTrades terminal): forwarding an EMPTY **kwargs makes
+            # MetaTrader5 builtins reject positional arguments ("Unnamed arguments not allowed").
+            return attr(*args, **kwargs) if kwargs else attr(*args)
 
         return guarded
 
@@ -204,7 +206,8 @@ class Mt5Session:
         if self.state not in (SessionState.CONNECTED,):
             raise Mt5CallError(what, (0, f"session {self.state}"))
         try:
-            result = function(*args, **kwargs)
+            # Never forward an empty **kwargs to a MetaTrader5 builtin (see _LaneGuardedClient).
+            result = function(*args, **kwargs) if kwargs else function(*args)
         except Exception as exc:
             self._on_failure(what, str(exc))
             raise Mt5CallError(what, self.last_error()) from exc

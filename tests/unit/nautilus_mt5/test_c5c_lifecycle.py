@@ -44,7 +44,7 @@ def test_reduce_only_close_realizes_pnl_in_nautilus_and_retires_the_protective_s
     (closed,) = h.cache.positions_closed()
     nautilus_pnl = float(closed.realized_pnl.as_decimal())
     assert abs(nautilus_pnl - (25_010.0 - 25_001.5) * 0.25) < 0.01  # computed by Nautilus
-    assert abs(nautilus_pnl - broker.history_deals_get()[-1].profit) < 0.01  # broker agrees
+    assert abs(nautilus_pnl - broker.visible_deals()[-1].profit) < 0.01  # broker agrees
 
 
 def test_reduce_only_never_clamps_and_checks_side_and_position(h, broker):
@@ -110,7 +110,7 @@ def test_broker_side_stop_execution_is_booked_even_while_halted_and_unreconciled
     h.client.sync_once()  # INBOUND: never consults the gates
     assert h.order(stop).status is OrderStatus.FILLED  # the SL deal maps to the stop order
     assert h.cache.positions_open() == [] and len(h.cache.positions_closed()) == 1
-    sl_deal = broker.history_deals_get()[-1]
+    sl_deal = broker.visible_deals()[-1]
     assert sl_deal.reason == 4 and h.store.is_ingested(sl_deal.ticket)
     (closed,) = h.cache.positions_closed()
     assert closed.realized_pnl.as_decimal() < 0
