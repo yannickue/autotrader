@@ -10,10 +10,10 @@ written in the LONG frame; the ``mirror`` rule says how the same clause reads fo
 * ``pair_reflect``  partner feature, op flipped, value reflected (dist_pdh<->dist_pdl)
 * ``level``         ``close <op> level`` rules: partner level (or the same level) with op flipped
 
-Semantic assumptions for features that a parallel worktree adds (documented, not verifiable
-until they exist): dist_*_atr = (close - level)/ATR signed; brk_up_N = close above the prior
-N-bar high; from_high_N_atr = (N-bar high - close)/ATR >= 0; sweep_hi_N = wick above prior
-N-bar high with close back below; bar_close_loc in [0,1]; wick/body/range ratios unsigned.
+Feature semantics are pinned to ``store._price_action_arrays`` (verified on real arrays in
+tests): dist_*_atr = (c - level)/ATR signed; brk_up_N = (c - prior N-bar high)/ATR and
+brk_dn_N = (prior N-bar low - c)/ATR are CONTINUOUS (>0 = fresh breakout); from_high/low_24_atr
+>= 0; sweep_* are 0/1 flags; bar_close_loc and wick/body ratios in [0,1]; bar_dir in {-1,0,1}.
 """
 
 from __future__ import annotations
@@ -171,10 +171,12 @@ for _k in (3, 6, 12):
          q_lo=0.2, q_hi=0.95)
 for _n in (20, 48):
     _a, _b = _pair(f"brk_up_{_n}", f"brk_dn_{_n}")
-    _add(f"brk_up_{_n}", "TRIGGER", "flag", f"close breaks the prior {_n}-bar high",
-         ops=("==",), mirror=_a)
-    _add(f"brk_dn_{_n}", "TRIGGER", "flag", f"close breaks the prior {_n}-bar low",
-         ops=("==",), mirror=_b)
+    _add(f"brk_up_{_n}", "TRIGGER", "continuous",
+         f"ATR distance of close above the prior {_n}-bar high (>0 = fresh breakout)",
+         mirror=_a, q_lo=0.5, q_hi=0.95)
+    _add(f"brk_dn_{_n}", "TRIGGER", "continuous",
+         f"ATR distance of close below the prior {_n}-bar low (>0 = fresh breakdown)",
+         mirror=_b, q_lo=0.5, q_hi=0.95)
 _a, _b = _pair("from_high_24_atr", "from_low_24_atr")
 _add("from_high_24_atr", "TRIGGER", "continuous",
      "pullback depth from the 24-bar high in ATR", mirror=_a, q_lo=0.2, q_hi=0.9)
@@ -197,9 +199,11 @@ for _h, _l, _lab in (
     ("dist_swing_high_atr", "dist_swing_low_atr", "last swing high/low"),
 ):
     _a, _b = _pair(_h, _l, reflect=True)
-    _add(_h, "LEVEL", "signed", f"signed ATR distance to {_lab} (high side)", mirror=_a,
+    # session extremes include the current bar, so their distances are one-sided (<=0 / >=0)
+    _k = "continuous" if "sess" in _h else "signed"
+    _add(_h, "LEVEL", _k, f"signed ATR distance to {_lab} (high side)", mirror=_a,
          q_lo=0.1, q_hi=0.9)
-    _add(_l, "LEVEL", "signed", f"signed ATR distance to {_lab} (low side)", mirror=_b,
+    _add(_l, "LEVEL", _k, f"signed ATR distance to {_lab} (low side)", mirror=_b,
          q_lo=0.1, q_hi=0.9)
 _add("dist_pdc_atr", "LEVEL", "signed", "signed ATR distance to previous close", mirror=_R,
      q_lo=0.1, q_hi=0.9)

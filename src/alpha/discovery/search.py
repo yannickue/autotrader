@@ -11,10 +11,9 @@ from dataclasses import replace
 
 import numpy as np
 
-from alpha.discovery.archetypes import random_clause
+from alpha.discovery.archetypes import SAFE_STOP_LEVELS, random_clause
 from alpha.discovery.catalog import (
     CATALOG,
-    STOP_LEVELS,
     STOP_MULT_DOMAIN,
     STOP_OFFSET_DOMAIN,
     TARGET_R_DOMAIN,
@@ -138,7 +137,7 @@ def _mutate_once(g: Genome, rng: np.random.Generator, pool: FeaturePool) -> Geno
         stop = (StopGene("atr_multiple", float(rng.uniform(*STOP_MULT_DOMAIN)))
                 if kind == "atr_multiple"
                 else StopGene("last_swing", None, None, 0.0) if kind == "last_swing"
-                else StopGene("session_level", None, str(rng.choice(STOP_LEVELS)),
+                else StopGene("session_level", None, str(rng.choice(SAFE_STOP_LEVELS)),
                               float(rng.uniform(*STOP_OFFSET_DOMAIN))))
         return replace(g, stop=stop)
     elif op == "time":

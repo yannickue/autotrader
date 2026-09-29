@@ -34,9 +34,8 @@ from alpha.discovery.search import (
     param_space,
     with_params,
 )
-from alpha.fast import spec as spec_module
 from alpha.fast.spec import evaluate_spec
-from alpha.fast.store import FeatureSet, FeatureStore
+from alpha.fast.store import FeatureSet, FeatureStore, _price_action_arrays
 
 REPO = Path(__file__).resolve().parents[1]
 CONFIG = REPO / "research/configs/ad1_discovery.json"
@@ -49,8 +48,6 @@ NEW_FEATURES = [
     "bar_dir", "mom_3_atr", "mom_6_atr", "mom_12_atr", "sweep_hi_20", "sweep_lo_20",
     "sweep_pdh", "sweep_pdl", "gap_atr",
 ]
-FLAGS = {"brk_up_20", "brk_dn_20", "brk_up_48", "brk_dn_48", "sweep_hi_20", "sweep_lo_20",
-         "sweep_pdh", "sweep_pdl"}
 
 
 @pytest.fixture(scope="module")
@@ -87,7 +84,6 @@ def test_pool_is_catalog_intersection_and_adapts(env):
     pool = env["pool"]
     assert pool.names <= set(CATALOG)
     assert {"h1_adx14", "m5_rsi14", "context_pullback", "regime_direction"} <= pool.names
-    assert not (pool.names & set(NEW_FEATURES))  # absent from the store today
     assert all(f in env["features"] or f == "c" for e in pool.entries.values()
                for f in e.required_features())
 
@@ -261,39 +257,122 @@ def test_mirror_is_involutive_for_every_catalog_entry():
             assert (CATALOG[back.partner].name == name) if back.partner else True
 
 
-def _augmented(env, monkeypatch, seed=0):
-    f = env["features"]
-    n = len(f["c"])
-    rng = np.random.default_rng(seed)
-    arrays = dict(f)
-    for name in NEW_FEATURES:
-        arrays[name] = (rng.random(n) < 0.05) if name in FLAGS else rng.normal(size=n)
-        if name.endswith("_ratio") or name in ("bar_close_loc",):
-            arrays[name] = rng.random(n)
-    names = frozenset(spec_module.FEATURE_NAMES | set(NEW_FEATURES))
-    monkeypatch.setattr(spec_module, "FEATURE_NAMES", names)
-    return FeatureSet(arrays, f.metadata)
+def _negated(f):
+    """Price-negated frame: o,h,l,c -> -o,-l,-h,-c and all levels swapped/negated."""
+    g = dict(f)
+    g.update(o=-f["o"], h=-f["l"], l=-f["h"], c=-f["c"],
+             previous_day_high=-f["previous_day_low"], previous_day_low=-f["previous_day_high"],
+             previous_day_close=-f["previous_day_close"], session_open=-f["session_open"],
+             session_high=-f["session_low"], session_low=-f["session_high"],
+             last_swing_high=-f["last_swing_low"], last_swing_low=-f["last_swing_high"])
+    return _price_action_arrays(g)
 
 
-def test_pool_uses_new_features_when_present_and_mirrors_pairs(env, monkeypatch):
-    aug = _augmented(env, monkeypatch)
-    pool = FeaturePool.from_features(aug)
+def _same(x, y):
+    return np.allclose(x, y, rtol=1e-9, atol=1e-9, equal_nan=True)
+
+
+def test_pool_contains_new_features_and_mirror_matches_real_negated_frame(env):
+    """Every price-action catalog mirror rule is exactly what a price-negated frame produces."""
+    f, pool = env["features"], env["pool"]
     assert set(NEW_FEATURES) <= pool.names
-    res = ThresholdResolver(aug, env["plan"].mask(env["dates"], env["plan"].train))
-    base = dict(trigger=(Clause("brk_up_20", "=="), Clause("from_high_24_atr", ">", 0.5),
+    neg = _negated(f)
+    checked = 0
+    for name in NEW_FEATURES:
+        entry = CATALOG[name]
+        m = entry.mirror
+        real = np.asarray(f[entry.feature], dtype=float)
+        if m.kind == "self":
+            expected = real
+        elif m.kind == "reflect":
+            expected = 2 * m.center - real
+        elif m.kind == "pair":
+            expected = np.asarray(f[CATALOG[m.partner].feature], dtype=float)
+        elif m.kind == "pair_reflect":
+            expected = 2 * m.center - np.asarray(f[CATALOG[m.partner].feature], dtype=float)
+        else:
+            raise AssertionError(f"unexpected mirror kind for {name}")
+        # value of the feature in the negated frame == its mirrored value in the real frame
+        # (pair/pair_reflect: negated-frame `name` equals reflected partner, so compare that way)
+        if m.kind in ("pair", "pair_reflect"):
+            assert _same(neg[name], expected), name
+        else:
+            assert _same(neg[name], expected), name
+        checked += 1
+    assert checked == len(NEW_FEATURES)
+
+
+def test_catalog_kind_and_domain_match_real_arrays(env):
+    f = env["features"]
+    for name in NEW_FEATURES:
+        entry = CATALOG[name]
+        a = np.asarray(f[name], dtype=float)
+        a = a[np.isfinite(a)]
+        assert len(a) > 1000, name
+        if entry.kind == "flag":
+            assert set(np.unique(a)) <= {0.0, 1.0}, name
+        elif entry.kind == "fixed":
+            assert set(np.unique(a)) <= {-1.0, 0.0, 1.0}, name
+        elif name == "dist_sess_high_atr":
+            assert a.max() <= 0, name  # session high includes the current bar
+        elif name == "dist_sess_low_atr":
+            assert a.min() >= 0, name
+        elif entry.kind == "signed":
+            assert a.min() < 0 < a.max(), name  # both sides populated
+        elif entry.mirror.kind == "reflect":
+            assert a.min() < entry.mirror.center < a.max(), name
+        if name in ("bar_close_loc", "bar_body_ratio", "upper_wick_ratio", "lower_wick_ratio"):
+            assert a.min() >= 0 and a.max() <= 1, name
+        if name in ("from_high_24_atr", "from_low_24_atr", "bar_range_atr"):
+            assert a.min() >= 0, name
+        if name == "range_ratio_12_48":
+            assert a.min() > 0 and a.max() <= 1 + 1e-9
+    for name in ("brk_up_20", "brk_up_48", "brk_dn_20", "brk_dn_48"):
+        assert CATALOG[name].kind == "continuous" and CATALOG[name].mirror.kind == "pair"
+        a = np.asarray(f[name], dtype=float)
+        assert np.nanmin(a) < 0 < np.nanmax(a)  # >0 = fresh breakout, <0 = inside range
+
+
+def test_brk_and_dist_definitions_on_real_arrays(env):
+    f = env["features"]
+    c, h, low, atr = f["c"], f["h"], f["l"], f["m5_atr14"]
+    day = f["berlin_day_id"]
+    checked = 0
+    for i in range(60, len(c), 997):
+        if not np.isfinite(f["brk_up_20"][i]) or day[i - 20] != day[i]:
+            continue
+        assert f["brk_up_20"][i] == pytest.approx((c[i] - h[i - 20:i].max()) / atr[i])
+        assert f["brk_dn_20"][i] == pytest.approx((low[i - 20:i].min() - c[i]) / atr[i])
+        checked += 1
+    assert checked > 10
+    assert _same(f["dist_pdh_atr"], (c - f["previous_day_high"]) / atr)
+    assert _same(f["dist_pdl_atr"], (c - f["previous_day_low"]) / atr)
+
+
+def test_short_compile_of_pair_clauses_uses_partner_features(env):
+    res = env["resolver"]
+    base = dict(trigger=(Clause("brk_up_20", ">", 0.9), Clause("from_high_24_atr", ">", 0.5),
                          Clause("dist_pdh_atr", ">", 0.6)), stop=StopGene(), target_r=2.0)
     ls = compile_genome(Genome(direction="LONG", **base), res)
     ss = compile_genome(Genome(direction="SHORT", **base), res)
     lr = {r.feature: r for r in ls.entry_rules}
     sr = {r.feature: r for r in ss.entry_rules}
-    assert sr["brk_dn_20"].threshold is True
+    assert sr["brk_dn_20"].op == ">" and sr["brk_dn_20"].threshold == lr["brk_up_20"].threshold
     fl, fh = sr["from_low_24_atr"], lr["from_high_24_atr"]
     assert fl.op == ">" and fl.threshold == fh.threshold
     dl, dh = sr["dist_pdl_atr"], lr["dist_pdh_atr"]
     assert dl.op == "<" and dl.threshold == pytest.approx(-dh.threshold)
-    for g in _genomes(pool, 4, 400):
-        evaluate_spec(aug, compile_genome(g, res))
-    assert any({c.feature for c in g.clauses} & set(NEW_FEATURES) for g in _genomes(pool, 4, 100))
+    flags = Genome(direction="SHORT", trigger=(Clause("sweep_lo_20", "=="),), stop=StopGene(),
+                   target_r=2.0)
+    assert compile_genome(flags, res).entry_rules[0].feature == "sweep_hi_20"
+
+
+def test_every_archetype_has_workable_candidate_counts_on_real_data(env):
+    rng = np.random.default_rng(101)
+    for name, fn in ARCHETYPES.items():
+        specs = [compile_genome(fn(rng, env["pool"]), env["resolver"]) for _ in range(40)]
+        counts = [len(evaluate_spec(env["features"], sp).decision_idx) for sp in specs]
+        assert np.median(counts) >= 30, (name, np.median(counts))
 
 
 def test_trial_ledger_counts_and_json_roundtrip(env):

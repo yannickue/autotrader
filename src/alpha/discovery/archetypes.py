@@ -15,7 +15,6 @@ from collections.abc import Callable, Sequence
 import numpy as np
 
 from alpha.discovery.catalog import (
-    STOP_LEVELS,
     STOP_MULT_DOMAIN,
     STOP_OFFSET_DOMAIN,
     TARGET_R_DOMAIN,
@@ -77,8 +76,11 @@ def _window(rng: np.random.Generator, starts: Sequence[int], lengths: Sequence[i
     return start, min(start + int(rng.choice(lengths)), TIME_DOMAIN[1])
 
 
-def _stop(rng: np.random.Generator, weights: tuple[float, float, float] = (0.6, 0.2, 0.2),
-          levels: Sequence[str] = STOP_LEVELS) -> StopGene:
+SAFE_STOP_LEVELS = ("previous_day_low", "session_low")  # LONG frame: below price by construction
+
+
+def _stop(rng: np.random.Generator, weights: tuple[float, float, float] = (0.75, 0.1, 0.15),
+          levels: Sequence[str] = SAFE_STOP_LEVELS) -> StopGene:
     kind = rng.choice(["atr_multiple", "last_swing", "session_level"], p=np.asarray(weights) / sum(weights))
     if kind == "atr_multiple":
         return StopGene("atr_multiple", float(rng.uniform(*STOP_MULT_DOMAIN)))
@@ -143,11 +145,11 @@ def trend_pullback(rng, pool):
     return _build(
         "TREND_PULLBACK", pool, rng,
         regime=[_s(_c("regime_direction", labels=("UP",)), _c("h1_ema_slope", ">", (0.5, 0.85))),
-                _s(_c("h1_adx14", ">", (0.4, 0.8)), p=0.8)],
-        context=[_s(_c("context_pullback"))],
-        trigger=[_s(_c("mom_3_atr", ">", (0.5, 0.85)), _c("m5_normalized_return", ">", (0.5, 0.85))),
-                 _s(_c("from_high_24_atr", ">", (0.4, 0.75)), _c("m5_rsi14", "<", (0.25, 0.55))),
-                 _s(_c("from_high_24_atr", "<", (0.8, 0.95)), _c("m5_range_position", "<", (0.4, 0.7)), p=0.6)],
+                _s(_c("h1_adx14", ">", (0.4, 0.8)), p=0.5)],
+        context=[_s(_c("context_pullback"), p=0.5)],
+        trigger=[_s(_c("from_high_24_atr", ">", (0.35, 0.65)), _c("m5_rsi14", "<", (0.25, 0.55))),
+                 _s(_c("mom_3_atr", ">", (0.5, 0.8)), _c("m5_normalized_return", ">", (0.5, 0.85))),
+                 _s(_c("from_high_24_atr", "<", (0.8, 0.95)), p=0.4)],
     )
 
 
@@ -165,10 +167,10 @@ def momentum_continuation(rng, pool):
 def opening_drive(rng, pool):
     return _build(
         "OPENING_DRIVE", pool, rng,
-        context=[_s(_c("m15_adx14", ">", (0.3, 0.7)), _c("m15_efficiency_ratio", ">", (0.4, 0.8)), p=0.6)],
-        trigger=[_s(_c("bar_range_atr", ">", (0.5, 0.9)), _c("m5_volatility_percentile", ">", (0.5, 0.9))),
-                 _s(_c("mom_6_atr", ">", (0.5, 0.9)), _c("m5_ema_slope", ">", (0.5, 0.9))),
-                 _s(_c("brk_up_20"), _c("lvl_c_sess_high", ">="), p=0.6)],
+        context=[_s(_c("m15_adx14", ">", (0.3, 0.6)), _c("m15_efficiency_ratio", ">", (0.4, 0.7)), p=0.4)],
+        trigger=[_s(_c("bar_range_atr", ">", (0.4, 0.8)), _c("m5_volatility_percentile", ">", (0.4, 0.8))),
+                 _s(_c("mom_6_atr", ">", (0.5, 0.85)), _c("m5_ema_slope", ">", (0.5, 0.85))),
+                 _s(_c("brk_up_20", ">", (0.6, 0.9)), _c("lvl_c_sess_high", ">="), p=0.5)],
         window=_window(rng, (540, 555, 570), (60, 90, 120)),
     )
 
@@ -176,12 +178,12 @@ def opening_drive(rng, pool):
 def breakout(rng, pool):
     return _build(
         "BREAKOUT", pool, rng,
-        regime=[_s(_c("h1_volatility_percentile", ">", (0.3, 0.7)), p=0.5)],
-        context=[_s(_c("context_breakout_setup"), _c("context_consolidation"))],
-        trigger=[_s(_c("brk_up_20"), _c("brk_up_48"), _c("lvl_c_pdh"), _c("lvl_c_sess_high", ">=")),
-                 _s(_c("bar_body_ratio", ">", (0.5, 0.85)), _c("m5_volatility_percentile", ">", (0.5, 0.9))),
-                 _s(_c("bar_close_loc", ">", (0.6, 0.9)), _c("m5_range_position", ">", (0.6, 0.9)), p=0.7)],
-        stop=_stop(rng, (0.5, 0.2, 0.3)),
+        regime=[_s(_c("h1_volatility_percentile", ">", (0.3, 0.7)), p=0.4)],
+        context=[_s(_c("context_breakout_setup"), _c("context_consolidation"), p=0.3)],
+        trigger=[_s(_c("brk_up_20", ">", (0.85, 0.95)), _c("brk_up_48", ">", (0.8, 0.95)),
+                    _c("lvl_c_pdh"), _c("lvl_c_sess_high", ">=")),
+                 _s(_c("bar_body_ratio", ">", (0.4, 0.75)), _c("m5_volatility_percentile", ">", (0.4, 0.8))),
+                 _s(_c("bar_close_loc", ">", (0.6, 0.85)), _c("m5_range_position", ">", (0.6, 0.85)), p=0.5)],
     )
 
 
@@ -202,23 +204,27 @@ def breakout_retest(rng, pool):
 def compression_expansion(rng, pool):
     return _build(
         "COMPRESSION_EXPANSION", pool, rng,
-        regime=[_s(_c("regime_vol_state", labels=("COMPRESSION",)), _c("h1_bollinger_width", "<", (0.15, 0.5)), p=0.7)],
-        context=[_s(_c("context_compression"), _c("compression_expansion_ratio", "<", (0.2, 0.5)),
-                    _c("range_ratio_12_48", "<", (0.2, 0.5)))],
-        trigger=[_s(_c("bar_range_atr", ">", (0.6, 0.95)), _c("m5_volatility_percentile", ">", (0.6, 0.95))),
-                 _s(_c("brk_up_20"), _c("m5_range_position", ">", (0.7, 0.95)), _c("lvl_c_sess_high", ">=")),
-                 _s(_c("m5_bollinger_width", ">", (0.4, 0.8)), p=0.5)],
+        regime=[_s(_c("regime_vol_state", labels=("COMPRESSION", "EXPANSION")),
+                   _c("h1_bollinger_width", "<", (0.2, 0.6)), p=0.3)],
+        context=[_s(_c("range_ratio_12_48", "<", (0.25, 0.6)), _c("compression_expansion_ratio", "<", (0.3, 0.6)),
+                    _c("context_compression"))],
+        trigger=[_s(_c("brk_up_20", ">", (0.8, 0.95)), _c("bar_range_atr", ">", (0.6, 0.9)),
+                    _c("m5_volatility_percentile", ">", (0.6, 0.95))),
+                 _s(_c("bar_body_ratio", ">", (0.4, 0.75)), _c("m5_range_position", ">", (0.6, 0.9)), p=0.7)],
     )
 
 
 def failed_breakout(rng, pool):
+    # LONG frame = failed breakdown that reclaims; SHORT mirror = failed breakout (sweep_hi/pdh)
+    sweep = ("sweep_lo_20", "sweep_pdl") if rng.random() < 0.6 else ("sweep_pdl", "sweep_lo_20")
     return _build(
         "FAILED_BREAKOUT", pool, rng,
-        context=[_s(_c("context_failed_breakout"), _c("context_reversal_context"))],
-        trigger=[_s(_c("sweep_lo_20"), _c("sweep_pdl"), _c("lvl_c_sess_low", "<=")),
-                 _s(_c("lower_wick_ratio", ">", (0.5, 0.9)), _c("m5_rsi14", "<", (0.1, 0.3))),
-                 _s(_c("bar_close_loc", ">", (0.5, 0.85)), _c("m5_range_position", ">", (0.3, 0.6)), p=0.7)],
-        stop=_stop(rng, (0.4, 0.2, 0.4), ("session_low", "previous_day_low")),
+        context=[_s(_c("context_failed_breakout"), _c("context_reversal_context"), p=0.25)],
+        trigger=[_s(_c(sweep[0]), _c(sweep[1])),
+                 _s(_c("bar_close_loc", ">", (0.4, 0.75)), _c("lower_wick_ratio", ">", (0.3, 0.7)),
+                    _c("m5_range_position", ">", (0.3, 0.6))),
+                 _s(_c("lower_wick_ratio", ">", (0.3, 0.6)), _c("m5_rsi14", "<", (0.2, 0.5)), p=0.4)],
+        stop=_stop(rng, (0.6, 0.15, 0.25), ("session_low", "previous_day_low")),
     )
 
 
@@ -247,22 +253,24 @@ def range_rejection(rng, pool):
 def prev_day_level_reaction(rng, pool):
     return _build(
         "PREV_DAY_LEVEL", pool, rng,
-        regime=[_s(_c("regime_direction", labels=("UP",)), p=0.4)],
-        trigger=[_s(_c("dist_pdl_atr", ">", (0.35, 0.5)), _c("lvl_c_pdl", ">")),
-                 _s(_c("dist_pdl_atr", "<", (0.5, 0.75)), _c("dist_pdc_atr", "<", (0.4, 0.7)), _c("lvl_c_pdc", "<")),
-                 _s(_c("sweep_pdl"), _c("lower_wick_ratio", ">", (0.5, 0.9)), _c("m5_rsi14", "<", (0.15, 0.4)))],
-        stop=_stop(rng, (0.4, 0.2, 0.4), ("previous_day_low", "session_low")),
+        regime=[_s(_c("regime_direction", labels=("UP",)), _c("h1_ema_slope", ">", (0.4, 0.8)), p=0.4)],
+        trigger=[_s(_c("dist_pdl_atr", "<", (0.1, 0.3)), _c("lvl_c_pdl", ">")),
+                 _s(_c("bar_close_loc", ">", (0.5, 0.8)), _c("lower_wick_ratio", ">", (0.3, 0.6)),
+                    _c("mom_3_atr", ">", (0.5, 0.8))),
+                 _s(_c("sweep_pdl"), _c("lower_wick_ratio", ">", (0.4, 0.8)), p=0.35)],
+        stop=_stop(rng, (0.6, 0.15, 0.25), ("previous_day_low", "session_low")),
     )
 
 
 def session_sweep_reclaim(rng, pool):
+    sweep = ("sweep_pdl", "sweep_lo_20") if rng.random() < 0.4 else ("sweep_lo_20", "sweep_pdl")
     return _build(
         "SESSION_SWEEP", pool, rng,
-        context=[_s(_c("context_failed_breakout"), _c("context_reversal_context"), p=0.5)],
-        trigger=[_s(_c("sweep_lo_20"), _c("sweep_pdl"), _c("lvl_c_sess_low", "<=")),
-                 _s(_c("bar_close_loc", ">", (0.55, 0.9)), _c("m5_range_position", ">", (0.4, 0.75))),
-                 _s(_c("dist_sess_low_atr", "<", (0.15, 0.4)), _c("m5_rsi14", "<", (0.15, 0.4)), p=0.7)],
-        stop=_stop(rng, (0.4, 0.2, 0.4), ("session_low", "previous_day_low")),
+        regime=[_s(_c("regime_direction", labels=("UP",)), _c("h1_ema_slope", ">", (0.4, 0.8)), p=0.6)],
+        trigger=[_s(_c(sweep[0]), _c(sweep[1]), _c("lvl_c_sess_low", "<=")),
+                 _s(_c("bar_close_loc", ">", (0.4, 0.75)), _c("m5_range_position", ">", (0.3, 0.7))),
+                 _s(_c("dist_sess_low_atr", "<", (0.2, 0.5)), _c("m5_rsi14", "<", (0.2, 0.5)), p=0.4)],
+        stop=_stop(rng, (0.6, 0.15, 0.25), ("session_low", "previous_day_low")),
     )
 
 
@@ -291,10 +299,10 @@ def price_action_continuation(rng, pool):
 def price_action_reversal(rng, pool):
     return _build(
         "PA_REVERSAL", pool, rng,
-        context=[_s(_c("context_reversal_context"), _c("m15_range_position", "<", (0.05, 0.3)))],
-        trigger=[_s(_c("lower_wick_ratio", ">", (0.5, 0.9)), _c("m5_rsi14", "<", (0.15, 0.4))),
-                 _s(_c("bar_close_loc", ">", (0.55, 0.9)), _c("m5_range_position", ">", (0.3, 0.6))),
-                 _s(_c("bar_dir", ">"), _c("m5_normalized_return", ">", (0.5, 0.85)), p=0.7)],
+        context=[_s(_c("context_reversal_context"), _c("m15_range_position", "<", (0.1, 0.4)), p=0.4)],
+        trigger=[_s(_c("lower_wick_ratio", ">", (0.4, 0.8)), _c("m5_rsi14", "<", (0.2, 0.45))),
+                 _s(_c("bar_close_loc", ">", (0.5, 0.8)), _c("m5_range_position", ">", (0.3, 0.6))),
+                 _s(_c("from_high_24_atr", ">", (0.6, 0.9)), _c("bar_dir", ">"), p=0.6)],
     )
 
 
