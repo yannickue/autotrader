@@ -29,7 +29,7 @@ from adapters.activtrades_mt5.bounded import (  # noqa: E402
 )
 from adapters.activtrades_mt5.connection import MT5Connection  # noqa: E402
 from adapters.activtrades_mt5.real_client import get_real_client  # noqa: E402
-from adapters.config import MT5ConfigError, load_mt5_connection_config  # noqa: E402
+from adapters.config import MT5ConfigError, load_attach_only_config  # noqa: E402
 
 _TIMEFRAME_M1 = 1
 _COPY_TICKS_ALL = -1
@@ -41,7 +41,7 @@ def _run_worker() -> int:
     symbol = argv[worker_index + 1] if len(argv) > worker_index + 1 else "Ger40"
 
     try:
-        config = load_mt5_connection_config()
+        config = load_attach_only_config()
     except MT5ConfigError as exc:
         print(f"Config error: {exc}", file=sys.stderr)
         return 2
@@ -104,7 +104,7 @@ def main(argv: list[str] | None = None) -> int:
         return _run_worker()
 
     try:
-        config = load_mt5_connection_config()
+        config = load_attach_only_config()
     except MT5ConfigError as exc:
         print(f"Config error: {exc}", file=sys.stderr)
         return 2

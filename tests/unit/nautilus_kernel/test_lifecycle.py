@@ -7,6 +7,7 @@ No MT5 access; nothing here is a metrics-only check.
 
 import hashlib
 import json
+from dataclasses import replace
 from decimal import Decimal
 from itertools import pairwise
 
@@ -100,9 +101,10 @@ def test_sizes_respect_broker_volume_step_and_limits(run):
 
 
 def test_fills_use_executable_side_never_better_than_the_bar(run, c3_dataset):
-    """BUY at/above ask, SELL at/below bid of the decision bar (+/- 1 tick slippage)."""
+    """BUY at/above ask, SELL at/below bid of the execution bar (+/- 1 tick slippage)."""
     records, _ = read_bar_dataset(c3_dataset)
     by_close = {bar_close_ns(r, "5m"): r for r in records}
+    order = sorted(by_close)
     tick = Decimal("0.01")
     checked = 0
     for fill in run.result.fills_report:
@@ -110,7 +112,8 @@ def test_fills_use_executable_side_never_better_than_the_bar(run, c3_dataset):
         if not any(t.startswith("risk:") for t in tags):
             continue  # entry fills only; exits may be stop-triggered intrabar
         signal_ns = int(next(t for t in tags if t.startswith("risk:")).rsplit("-", 1)[1])
-        rec = by_close[signal_ns]
+        # Execution model: delayed one bar -> priced at the LATER bar, never the decision bar.
+        rec = by_close[order[order.index(signal_ns) + 1]]
         px = Decimal(str(fill["avg_px"]))
         spread = Decimal(rec.spread_points) * Decimal("0.01")
         if fill["side"] == "BUY":
@@ -160,3 +163,24 @@ def test_evidence_document_is_json_serialisable(run):
     text = json.dumps(doc, default=str)
     assert "lifecycle_checkpoints" in doc and len(text) > 1000
     assert doc["dataset_provenance"]["broker_account_kind"] == "DEMO"
+
+
+def test_dataset_with_warnings_is_refused_unless_explicitly_accepted(
+    c3_dataset, symbol_info_path, tmp_path, monkeypatch
+):
+    import nautilus_kernel.proof as proof_module
+
+    records, prov = proof_module.read_bar_dataset(c3_dataset)
+    warned = replace(
+        prov, validation_status="PASSED_WITH_WARNINGS", validation_summary={"SUSPICIOUS_GAP": 1}
+    )
+    monkeypatch.setattr(proof_module, "read_bar_dataset", lambda _p: (records, warned))
+    with pytest.raises(ValueError, match="accept_warnings"):
+        run_proof(dataset_path=c3_dataset, symbol_info_path=symbol_info_path, work_dir=tmp_path)
+    ok = run_proof(
+        dataset_path=c3_dataset,
+        symbol_info_path=symbol_info_path,
+        work_dir=tmp_path,
+        accept_warnings=True,
+    )
+    assert ok.result.metrics["bars"] == 1185

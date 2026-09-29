@@ -187,3 +187,19 @@ def load_mt5_connection_config(
         terminal_path=merged.get(_TERMINAL_PATH_VAR) or None,
         allow_account_login=allow_account_login,
     )
+
+
+def load_attach_only_config(
+    env: dict[str, str] | None = None, *, env_file: Path | None = None
+) -> MT5ConnectionConfig:
+    """Like `load_mt5_connection_config`, but for read-only/attach-only tooling:
+    refuses to proceed when `MT5_ALLOW_ACCOUNT_LOGIN=1` is set, so an inherited
+    opt-in can never make a diagnostic or download script authenticate or switch
+    the terminal's account."""
+    config = load_mt5_connection_config(env, env_file=env_file)
+    if config.allow_account_login:
+        raise MT5ConfigError(
+            "MT5_ALLOW_ACCOUNT_LOGIN=1 is set: this attach-only tool refuses to run "
+            "(unset it; account login is never used by read-only tooling)"
+        )
+    return config

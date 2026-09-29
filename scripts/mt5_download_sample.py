@@ -30,7 +30,7 @@ from adapters.activtrades_mt5.connection import MT5Connection  # noqa: E402
 from adapters.activtrades_mt5.history import ServerTimePolicy, fetch_rates_range  # noqa: E402
 from adapters.activtrades_mt5.history_download import download_bars, download_ticks  # noqa: E402
 from adapters.activtrades_mt5.real_client import get_real_client  # noqa: E402
-from adapters.config import MT5ConfigError, load_mt5_connection_config  # noqa: E402
+from adapters.config import MT5ConfigError, load_attach_only_config  # noqa: E402
 
 # Fully closed sample week (Mon-Fri, CEST throughout, no DST transition).
 WEEK_START = datetime(2026, 9, 21, tzinfo=UTC)
@@ -41,7 +41,7 @@ CANONICAL = "GER40"
 
 
 def _run_worker(out: Path) -> int:
-    config = load_mt5_connection_config()
+    config = load_attach_only_config()
     connection = MT5Connection(get_real_client())
     result = connection.connect(config)
     if not result.success:
@@ -128,7 +128,7 @@ def main() -> int:
         return _run_worker(Path(rest[0]) if rest else REPO_ROOT / "data" / "c3_sample")
     out = Path(argv[0]) if argv else REPO_ROOT / "data" / "c3_sample"
     try:
-        config = load_mt5_connection_config()
+        config = load_attach_only_config()
     except MT5ConfigError as exc:
         print(f"Config error: {exc}", file=sys.stderr)
         return 2

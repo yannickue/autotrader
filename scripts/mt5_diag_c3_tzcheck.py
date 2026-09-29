@@ -23,8 +23,9 @@ from adapters.activtrades_mt5.bounded import (  # noqa: E402
     run_worker_bounded,
 )
 from adapters.activtrades_mt5.connection import MT5Connection  # noqa: E402
+from adapters.activtrades_mt5.history import ServerTimePolicy  # noqa: E402
 from adapters.activtrades_mt5.real_client import get_real_client  # noqa: E402
-from adapters.config import load_mt5_connection_config  # noqa: E402
+from adapters.config import MT5ConfigError, load_attach_only_config  # noqa: E402
 
 WEEKS = [
     "2026-01-12",
@@ -41,7 +42,11 @@ WEEKS = [
 
 
 def _worker() -> int:
-    config = load_mt5_connection_config()
+    try:
+        config = load_attach_only_config()
+    except MT5ConfigError as exc:
+        print(f"Config error: {exc}", file=sys.stderr)
+        return 2
     conn = MT5Connection(get_real_client())
     r = conn.connect(config)
     if not r.success:
@@ -51,7 +56,13 @@ def _worker() -> int:
         c = conn.client
         for w in WEEKS:
             start = datetime.fromisoformat(w).replace(tzinfo=UTC)
-            rates = c.copy_rates_range("Ger40", 5, start, start + timedelta(days=7))
+            pol = ServerTimePolicy()
+            rates = c.copy_rates_range(
+                "Ger40",
+                5,
+                pol.utc_to_request_datetime(start),
+                pol.utc_to_request_datetime(start + timedelta(days=7)),
+            )
             if rates is None or len(rates) == 0:
                 print(w, "NO DATA", c.last_error())
                 continue
@@ -81,7 +92,11 @@ def _worker() -> int:
 def main() -> int:
     if "--worker" in sys.argv:
         return _worker()
-    config = load_mt5_connection_config()
+    try:
+        config = load_attach_only_config()
+    except MT5ConfigError as exc:
+        print(f"Config error: {exc}", file=sys.stderr)
+        return 2
     t = default_staged_timeout_seconds()
     res = run_worker_bounded(Path(__file__), config, timeout=t, extra_args=())
     sys.stdout.write(res.stdout)

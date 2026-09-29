@@ -205,3 +205,9 @@ def test_symbol_resolution_fails_closed():
     client.set_symbol_info("Ger40", _info("Ger40", "Futures\\Ger40"))
     with pytest.raises(MT5SymbolResolutionError):
         resolve_broker_symbol(client, "GER40")
+
+
+def test_same_field_names_but_changed_dtype_rejected():
+    drifted = np.zeros(1, dtype=[(n, "<f8") for n in RATES_DTYPE.names])
+    with pytest.raises(MT5SchemaError, match="dtypes"):
+        _bars(drifted)

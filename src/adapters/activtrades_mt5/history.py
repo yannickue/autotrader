@@ -71,6 +71,9 @@ RATES_FIELDS = (
     "real_volume",
 )
 TICKS_FIELDS = ("time", "bid", "ask", "last", "volume", "time_msc", "flags", "volume_real")
+# Full observed dtypes (MetaTrader5 5.0.6231, live ActivTrades demo, 2026-09-29).
+RATES_DTYPES = ("<i8", "<f8", "<f8", "<f8", "<f8", "<u8", "<i4", "<u8")
+TICKS_DTYPES = ("<i8", "<f8", "<f8", "<f8", "<u8", "<i8", "<u4", "<f8")
 
 # Canonical instrument -> candidate broker symbols (exact match, in priority
 # order). 'Ger40Dec26' (dated future-style contract) is deliberately absent.
@@ -134,18 +137,22 @@ class ServerTimePolicy:
         return {"zone": self.zone_name, "basis": self.basis}
 
 
-def _check_fields(arr: Any, expected: tuple[str, ...], what: str) -> None:
-    names = getattr(getattr(arr, "dtype", None), "names", None)
-    if tuple(names or ()) != expected:
-        raise MT5SchemaError(f"{what}: expected fields {expected}, got {names}")
+def _check_fields(arr: Any, names: tuple[str, ...], dtypes: tuple[str, ...], what: str) -> None:
+    dtype = getattr(arr, "dtype", None)
+    got_names = tuple(getattr(dtype, "names", None) or ())
+    if got_names != names:
+        raise MT5SchemaError(f"{what}: expected fields {names}, got {got_names}")
+    got = tuple(dtype[n].str for n in got_names)
+    if got != dtypes:
+        raise MT5SchemaError(f"{what}: expected dtypes {dtypes}, got {got}")
 
 
 def validate_rates_schema(arr: Any) -> None:
-    _check_fields(arr, RATES_FIELDS, "copy_rates")
+    _check_fields(arr, RATES_FIELDS, RATES_DTYPES, "copy_rates")
 
 
 def validate_ticks_schema(arr: Any) -> None:
-    _check_fields(arr, TICKS_FIELDS, "copy_ticks")
+    _check_fields(arr, TICKS_FIELDS, TICKS_DTYPES, "copy_ticks")
 
 
 def resolve_broker_symbol(client: Any, canonical: str) -> str:

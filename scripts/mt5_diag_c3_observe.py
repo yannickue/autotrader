@@ -23,15 +23,16 @@ from adapters.activtrades_mt5.bounded import (  # noqa: E402
     run_worker_bounded,
 )
 from adapters.activtrades_mt5.connection import MT5Connection  # noqa: E402
+from adapters.activtrades_mt5.history import ServerTimePolicy  # noqa: E402
 from adapters.activtrades_mt5.real_client import get_real_client  # noqa: E402
-from adapters.config import MT5ConfigError, load_mt5_connection_config  # noqa: E402
+from adapters.config import MT5ConfigError, load_attach_only_config  # noqa: E402
 
 
 def _run_worker() -> int:
     argv = sys.argv[1:]
     idx = argv.index("--worker")
     symbol = argv[idx + 1] if len(argv) > idx + 1 else "Ger40"
-    config = load_mt5_connection_config()
+    config = load_attach_only_config()
     connection = MT5Connection(get_real_client())
     result = connection.connect(config)
     if not result.success:
@@ -56,7 +57,13 @@ def _run_worker() -> int:
         print("terminal_info.time? ", getattr(c.terminal_info(), "_asdict", lambda: {})())
         now = datetime.now(UTC)
         for tf, name in ((1, "M1"), (5, "M5")):
-            rates = c.copy_rates_range(symbol, tf, now - timedelta(days=3), now)
+            pol = ServerTimePolicy()
+            rates = c.copy_rates_range(
+                symbol,
+                tf,
+                pol.utc_to_request_datetime(now - timedelta(days=3)),
+                pol.utc_to_request_datetime(now),
+            )
             print(
                 f"=== copy_rates_range {name} last 3d ===",
                 None if rates is None else len(rates),
@@ -64,7 +71,12 @@ def _run_worker() -> int:
             )
             if rates is not None and len(rates):
                 print("first", rates[0], "last", rates[-1])
-        ticks = c.copy_ticks_range(symbol, now - timedelta(hours=1), now, -1)
+        ticks = c.copy_ticks_range(
+            symbol,
+            pol.utc_to_request_datetime(now - timedelta(hours=1)),
+            pol.utc_to_request_datetime(now),
+            -1,
+        )
         print("=== copy_ticks_range 1h ===", None if ticks is None else len(ticks), c.last_error())
         return 0
     finally:
@@ -77,7 +89,7 @@ def main(argv: list[str] | None = None) -> int:
     if "--worker" in argv:
         return _run_worker()
     try:
-        config = load_mt5_connection_config()
+        config = load_attach_only_config()
     except MT5ConfigError as exc:
         print(f"Config error: {exc}", file=sys.stderr)
         return 2

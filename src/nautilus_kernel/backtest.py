@@ -36,7 +36,6 @@ from nautilus_kernel.risk_bridge import NautilusRiskBridge
 LABELS = ("TECHNICAL_BACKTEST", "NOT_YET_BROKER_CALIBRATED")
 STARTING_BALANCE_EUR = 10_000
 NS = 1_000_000_000
-LATENCY_NANOS = 1_000_000_000
 
 
 @dataclass(slots=True)
@@ -88,10 +87,13 @@ def run_technical_backtest(
             margin_model=StandardMarginModel(),
             # Conservative: every marketable fill slips one tick (deterministic seed).
             fill_model=FillModel(prob_fill_on_limit=1.0, prob_slippage=1.0, random_seed=42),
-            # 1 s command latency: without it Nautilus fills the strategy's order against
-            # the book of the PREVIOUS bar (verified: fill = prev bar close -/+ 1 tick),
-            # i.e. a price older than the decision -- a look-ahead-favourable bias.
-            latency_model=LatencyModel(base_latency_nanos=LATENCY_NANOS),
+            # Execution model EXECUTION_DELAYED_ONE_BAR: every command reaches the venue one
+            # bar + 1 ns after the decision and fills at THAT later bar's close (executable
+            # side, +1 tick). Verified alternatives: no latency => fills against the PREVIOUS
+            # bar's book; latency <= 1 bar => fills at the decision bar's own close, a price
+            # not executable once the close is known (look-ahead-favourable). Pessimistic,
+            # not next-open (bars carry one timestamp; Nautilus cannot fill at a bar open).
+            latency_model=LatencyModel(base_latency_nanos=_tf_ns(timeframe) + 1),
             bar_execution=True,
         )
         engine.add_instrument(inst)
@@ -166,6 +168,7 @@ def _collect(
     account_obj = engine.portfolio.account(VENUE)
     metrics = {
         "labels": list(LABELS),
+        "execution_model": "EXECUTION_DELAYED_ONE_BAR_AT_LATER_BAR_CLOSE_PLUS_1_TICK",
         "instrument": str(inst.id),
         "broker_symbol": str(inst.raw_symbol),
         "timeframe": timeframe,

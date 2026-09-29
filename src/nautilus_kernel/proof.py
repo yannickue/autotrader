@@ -37,8 +37,15 @@ def run_proof(
     work_dir: Path | str,
     bridge: NautilusRiskBridge | None = None,
     strategy_overrides: dict | None = None,
+    accept_warnings: bool = False,
 ) -> ProofRun:
     records, provenance = read_bar_dataset(dataset_path)  # verifies content hash + schema
+    if provenance.validation_status != "PASSED" and not accept_warnings:
+        raise ValueError(
+            f"dataset validation_status={provenance.validation_status} "
+            f"({provenance.validation_summary}); refusing to backtest without explicit "
+            "accept_warnings=True"
+        )
     snapshot = load_symbol_info_snapshot(
         symbol_info_path, canonical=provenance.canonical_instrument
     )
