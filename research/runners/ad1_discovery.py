@@ -103,14 +103,17 @@ def assert_oos_untouched(plan, dates: np.ndarray) -> None:
     assert dates.max() <= np.datetime64(plan.validation.end), "bars beyond validation end"
 
 
-def run(args: argparse.Namespace) -> dict:
+def run(args: argparse.Namespace, dev_override=None) -> dict:
     t_start = time.perf_counter()
     config = Path(args.config)
     cfg = json.loads(config.read_text(encoding="utf-8"))
     seed = args.seed if args.seed is not None else cfg["seed"]
     plan = ar2_fast._plan(cfg)
-    ds = load_research_dataset(REPO_ROOT / cfg["dataset_root"])
-    dev = ar2_fast.dev_frame(ds.frame, plan)
+    if dev_override is not None:  # injected (e.g. synthetic null) dev frame; OOS already absent
+        dev = dev_override
+    else:
+        ds = load_research_dataset(REPO_ROOT / cfg["dataset_root"])
+        dev = ar2_fast.dev_frame(ds.frame, plan)
     features = FeatureStore.load_or_build(dev, {"point_size": POINT}, Path(args.cache_dir))
     market, dates = ar2_fast._market(features), ar2_fast._dates(features)
     assert_oos_untouched(plan, dates)  # OOS never enters any frame the evaluator sees

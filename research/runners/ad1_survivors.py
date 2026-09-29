@@ -251,14 +251,17 @@ def render_report(summary: dict[str, Any], finalists: list[dict[str, Any]]) -> s
 # --------------------------------------------------------------------------- driver
 def run(pool_path: Path, config: Path, out_dir: Path, cache_dir: Path,
         overlap: float = OVERLAP_THRESHOLD, prior_trials: int | None = None,
-        prior_unique_specs: int | None = None) -> dict[str, Any]:
+        prior_unique_specs: int | None = None, dev_override=None) -> dict[str, Any]:
     cfg = json.loads(config.read_text(encoding="utf-8"))
     pool = json.loads(pool_path.read_text(encoding="utf-8"))
     if pool.get("meta", {}).get("oos_touched") is not False:
         raise SystemExit("refusing: pool meta must assert oos_touched == false")
     plan = ar2_fast._plan(cfg)
-    ds = load_research_dataset(REPO_ROOT / cfg["dataset_root"])
-    dev = ar2_fast.dev_frame(ds.frame, plan)  # OOS bars physically removed
+    if dev_override is not None:  # injected (e.g. synthetic null) dev frame
+        dev = dev_override
+    else:
+        ds = load_research_dataset(REPO_ROOT / cfg["dataset_root"])
+        dev = ar2_fast.dev_frame(ds.frame, plan)  # OOS bars physically removed
     features = FeatureStore.load_or_build(dev, {"point_size": POINT}, cache_dir)
     market, dates = ar2_fast._market(features), ar2_fast._dates(features)
     ev = GenomeEvaluator(features, market, dates, plan, cfg, cache_dir, TrialLedger())

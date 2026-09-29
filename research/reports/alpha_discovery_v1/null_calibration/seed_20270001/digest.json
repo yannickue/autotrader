@@ -1,0 +1,95 @@
+{
+ "best_train_fitness": {
+  "deap": 0.390604,
+  "optuna": 0.185731,
+  "pool_max": 0.3906,
+  "random": 0.084752
+ },
+ "clusters": 18,
+ "counts": {
+  "C": 49,
+  "D": 49,
+  "E": 25,
+  "pool": 800,
+  "stage_a": 800,
+  "train_and_validation_positive": 381,
+  "train_positive": 800,
+  "validation_positive": 381
+ },
+ "finalists_passed_all": [
+  {
+   "exceeds_null": false,
+   "hash": "2e25668e4674",
+   "null_bound": 4.542899733852769,
+   "pooled_t": 2.571676959015029,
+   "val_t": 1.3576669770783232
+  },
+  {
+   "exceeds_null": false,
+   "hash": "5735a951a5c7",
+   "null_bound": 4.542899733852769,
+   "pooled_t": 2.4648668459148864,
+   "val_t": 1.109422920619652
+  },
+  {
+   "exceeds_null": false,
+   "hash": "2e610c94c40a",
+   "null_bound": 4.542899733852769,
+   "pooled_t": 2.757332338988744,
+   "val_t": 1.1222720622538855
+  },
+  {
+   "exceeds_null": false,
+   "hash": "9171adce1e04",
+   "null_bound": 4.542899733852769,
+   "pooled_t": 2.305536407207346,
+   "val_t": 1.1208310110597188
+  },
+  {
+   "exceeds_null": false,
+   "hash": "6c46eefa6462",
+   "null_bound": 4.542899733852769,
+   "pooled_t": 1.8163397499506535,
+   "val_t": 1.014664023451981
+  },
+  {
+   "exceeds_null": false,
+   "hash": "b7adcb613233",
+   "null_bound": 4.542899733852769,
+   "pooled_t": 2.5340332598548145,
+   "val_t": 1.5048216353246346
+  },
+  {
+   "exceeds_null": false,
+   "hash": "160c32f80eca",
+   "null_bound": 4.542899733852769,
+   "pooled_t": 2.1719690198107013,
+   "val_t": 1.546635155169261
+  },
+  {
+   "exceeds_null": false,
+   "hash": "b5584e60d0c9",
+   "null_bound": 4.542899733852769,
+   "pooled_t": 2.22247785027398,
+   "val_t": 1.2860720724109937
+  },
+  {
+   "exceeds_null": false,
+   "hash": "535dce35d9ff",
+   "null_bound": 4.542899733852769,
+   "pooled_t": 1.84050345724048,
+   "val_t": 1.1885585472236633
+  },
+  {
+   "exceeds_null": false,
+   "hash": "822f83134fad",
+   "null_bound": 4.542899733852769,
+   "pooled_t": 1.7757402708707941,
+   "val_t": 1.2253092980071774
+  }
+ ],
+ "near_misses": [],
+ "seed": 20270001,
+ "verdict": "INCONCLUSIVE",
+ "wall_s": 130.6
+}
