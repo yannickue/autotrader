@@ -122,6 +122,69 @@ def test_result_cache_reuses_identical_fingerprint_and_invalidates(tmp_path: Pat
     np.testing.assert_array_equal(first.as_matrix(), changed.as_matrix())
 
 
+def test_validation_embargo_excludes_exact_dates_and_leaves_train_oos_unchanged() -> None:
+    plan = SplitPlan(
+        Partition("train", "2025-01-01", "2025-01-03"),
+        Partition("validation", "2025-01-04", "2025-01-07"),
+        Partition("oos", "2025-01-08", "2025-01-09"),
+        embargo_days=2,
+    )
+    dates = np.arange(
+        np.datetime64("2025-01-01"), np.datetime64("2025-01-10"), dtype="datetime64[D]"
+    )
+
+    assert dates[plan.mask(dates, plan.train)].astype(str).tolist() == [
+        "2025-01-01", "2025-01-02", "2025-01-03"
+    ]
+    assert dates[plan.mask(dates, plan.validation)].astype(str).tolist() == [
+        "2025-01-06", "2025-01-07"
+    ]
+    assert dates[plan.mask(dates, plan.oos)].astype(str).tolist() == [
+        "2025-01-08", "2025-01-09"
+    ]
+
+
+def test_split_plan_rejects_invalid_embargo_and_serializes_it() -> None:
+    parts = (
+        Partition("train", "2025-01-01", "2025-01-03"),
+        Partition("validation", "2025-01-04", "2025-01-05"),
+        Partition("oos", "2025-01-06", "2025-01-07"),
+    )
+    with pytest.raises(ValueError, match="embargo_days"):
+        SplitPlan(*parts, embargo_days=-1)
+    with pytest.raises(ValueError, match="embargo_days"):
+        SplitPlan(*parts, embargo_days=2)
+    assert SplitPlan(*parts, embargo_days=1).to_dict()["embargo_days"] == 1
+
+
+def test_embargo_changes_simulation_fingerprint_and_config_plan() -> None:
+    cfg = json.loads(ar2_fast.DEFAULT_CONFIG.read_text(encoding="utf-8"))
+    family = next(iter(discover().values()))
+    features = type("F", (), {"metadata": {"cache_key": "k"}})()
+    base = ar2_fast._simulation_fingerprint(
+        features=features, dataset_hash="d", family=family, params=family.variants[0],
+        scenario="BASE", split={"embargo_days": 0}, sizing=cfg["sizing"], rules=cfg["rules"],
+    )
+    changed = ar2_fast._simulation_fingerprint(
+        features=features, dataset_hash="d", family=family, params=family.variants[0],
+        scenario="BASE", split={"embargo_days": 5}, sizing=cfg["sizing"], rules=cfg["rules"],
+    )
+    assert stable_hash(base) != stable_hash(changed)
+    assert ar2_fast._plan({**cfg, "embargo_days": 5}).embargo_days == 5
+    frame = pd.DataFrame(
+        {"ts": pd.date_range("2025-01-01", periods=2, freq="D", tz="UTC")}
+    )
+    provenance_0 = ar2_fast._dev_provenance({**cfg, "embargo_days": 0}, None, frame)
+    provenance_5 = ar2_fast._dev_provenance({**cfg, "embargo_days": 5}, None, frame)
+    assert provenance_0["config_hash"] != provenance_5["config_hash"]
+
+    discovery = json.loads(
+        (ar2_fast.REPO_ROOT / "research/configs/ad1_discovery.json").read_text(encoding="utf-8")
+    )
+    assert "embargo_days" not in cfg
+    assert (discovery["version"], discovery["embargo_days"]) == ("AD1-config-1", 5)
+
+
 def _reference_frame(trades: ar2_fast.TradeArrays, dates: np.ndarray) -> pd.DataFrame:
     return pd.DataFrame(
         {

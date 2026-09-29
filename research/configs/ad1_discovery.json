@@ -1,0 +1,51 @@
+{
+ "version": "AD1-config-1",
+ "dataset_root": "data/ar1_ger40",
+ "instrument": "GER40",
+ "timeframes": {
+  "execution": "M5",
+  "context": "M15",
+  "regime": "H1"
+ },
+ "seed": 20260929,
+ "splits": {
+  "train": ["2025-02-01", "2025-11-30"],
+  "validation": ["2025-12-01", "2026-04-30"],
+  "oos": ["2026-05-01", "2026-08-31"]
+ },
+ "embargo_days": 5,
+ "sizing": {
+  "equity_eur": 10000.0,
+  "risk_fraction": 0.005,
+  "lot_step": 0.25,
+  "min_lot": 0.25,
+  "max_leverage": 10.0,
+  "min_risk_pts": 5.0,
+  "max_risk_pts": 400.0
+ },
+ "rules": {
+  "max_trades_per_day": 6,
+  "max_entry_spread_pts": 8.0
+ },
+ "exit_baseline": "strategy-declared structural/ATR-proxy stop with fixed-R target (params.target_r); next-bar-open fill; stop-first; forced flat 21:30 Berlin",
+ "cost_model": "AR1 COST_SCENARIOS (BASE spread x1.0 + 0.5pt slippage); stress: SPREAD_STRESS, SLIPPAGE_STRESS, COMBINED_ADVERSE; commission 0 observed; no overnight so no swap",
+ "sample_rules": {"min_trades_flag": 30},
+ "freeze_rule": {
+  "note": "Pre-registered before any AR2 run. Uses TRAIN and VALIDATION only. Never tuned on OOS.",
+  "min_train_trades": 60,
+  "min_validation_trades": 30,
+  "require_positive_expectancy_r": ["train", "validation"],
+  "min_profit_factor_each_partition": 1.05,
+  "max_drawdown_pct_le": 20.0,
+  "expectancy_r_gt_0_after_removing_top_n_winners": 2,
+  "expectancy_r_gt_0_under": ["SPREAD_STRESS", "SLIPPAGE_STRESS"],
+  "sibling_variant_pooled_expectancy_r_gt": 0.0,
+  "regime_restriction": {
+   "min_train_trades": 30,
+   "min_validation_trades": 15,
+   "note": "at most ONE restriction (regime dimension + values) per variant: values with positive expectancy in BOTH train and validation and N above the minima; best by min(train, validation) expectancy"
+  },
+  "rejected_early": "all variants of a strategy have negative expectancy in both TRAIN and VALIDATION"
+ },
+ "oos_rule": "single evaluation of the frozen set through `ar2_compare.py --oos`; refuses on hash mismatch; OosGate binds full experiment fingerprint"
+}
