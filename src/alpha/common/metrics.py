@@ -37,6 +37,24 @@ def bootstrap_mean_ci(
     return _f(np.quantile(means, alpha / 2)), _f(np.quantile(means, 1 - alpha / 2))
 
 
+def bootstrap_day_clustered_mean_ci(
+    trades: pd.DataFrame, *, seed: int, n_boot: int = 2000, alpha: float = 0.05
+) -> tuple[float | None, float | None]:
+    """Seeded CI resampling Berlin entry dates, then pooling their trades."""
+    dates = trades["date"].drop_duplicates().to_numpy()
+    if len(dates) < 2 or len(trades) < 5:
+        return None, None
+    clusters = {
+        date: trades.loc[trades["date"] == date, "r_multiple"].to_numpy(float) for date in dates
+    }
+    rng = np.random.default_rng(seed)
+    means = np.empty(n_boot)
+    for index in range(n_boot):
+        drawn = rng.choice(dates, size=len(dates), replace=True)
+        means[index] = np.concatenate([clusters[date] for date in drawn]).mean()
+    return _f(np.quantile(means, alpha / 2)), _f(np.quantile(means, 1 - alpha / 2))
+
+
 def compute_metrics(
     trades: pd.DataFrame,
     *,
@@ -69,14 +87,16 @@ def compute_metrics(
     daily = trades.groupby("date")["pnl_eur"].sum()
     daily_full = daily.reindex(pd.Index(trading_days), fill_value=0.0)
     per_day_counts = trades.groupby("date").size().reindex(pd.Index(trading_days), fill_value=0)
-    ci_lo, ci_hi = bootstrap_mean_ci(r, seed=seed)
+    trade_ci = bootstrap_mean_ci(r, seed=seed)
+    day_ci = bootstrap_day_clustered_mean_ci(trades, seed=seed)
     se = r.std(ddof=1) / math.sqrt(len(r)) if len(r) > 1 else float("nan")
     m.update(
         net_pnl_eur=_f(pnl.sum()),
         gross_pnl_eur=_f(trades["gross_pnl_eur"].sum()),
         expectancy_eur=_f(pnl.mean()),
         expectancy_r=_f(r.mean()),
-        expectancy_r_ci95=[ci_lo, ci_hi],
+        expectancy_r_ci95_trade_iid=list(trade_ci),
+        expectancy_r_ci95_day_clustered=list(day_ci),
         expectancy_r_tstat=_f(r.mean() / se) if se and not math.isnan(se) and se > 0 else None,
         profit_factor=_f(gross_win / gross_loss) if gross_loss > 0 else None,
         win_rate=_f((pnl > 0).mean()),
@@ -94,8 +114,12 @@ def compute_metrics(
         median_trades_per_day=_f(per_day_counts.median()) if n_days else None,
         max_trades_in_a_day=int(per_day_counts.max()) if n_days else 0,
         zero_trade_days=int((per_day_counts == 0).sum()),
-        exposure_time_frac=_f(trades["bars_held"].sum() / window_bars) if window_bars else None,
-        avg_holding_minutes=_f(trades["bars_held"].mean() * bar_minutes),
+        exposure_time_frac=(
+            _f(trades["holding_minutes"].sum() / (window_bars * bar_minutes))
+            if window_bars
+            else None
+        ),
+        avg_holding_minutes=_f(trades["holding_minutes"].mean()),
         avg_leverage=_f(trades["leverage"].mean()),
         max_leverage=_f(trades["leverage"].max()),
         leverage_capped_trades=int(trades["leverage_capped"].sum()),

@@ -101,8 +101,8 @@ TRADE_COLUMNS = [
     "entry_price", "exit_price", "stop_initial", "target", "risk_pts", "qty", "notional_eur",
     "leverage", "pnl_pts", "pnl_eur", "r_multiple", "spread_cost_pts", "slippage_cost_pts",
     "commission_eur", "cost_eur", "gross_pnl_eur", "exit_reason", "mfe_pts", "mae_pts", "mfe_r",
-    "mae_r", "bars_to_mfe", "bars_held", "entry_spread_pts", "entry_minute", "session",
-    "leverage_capped", "crossed_rollover",
+    "mae_r", "bars_to_mfe", "bars_held", "holding_minutes", "entry_spread_pts", "entry_minute",
+    "session", "leverage_capped", "crossed_rollover",
 ]  # fmt: skip
 
 
@@ -127,6 +127,7 @@ def simulate(
     skips = {
         "no_next_bar": 0, "gap_before_entry": 0, "outside_window": 0, "day_cap": 0,
         "spread_filter": 0, "stop_invalid": 0, "risk_out_of_range": 0, "size_below_min": 0,
+        "entry_gap_stop": 0,
     }  # fmt: skip
     rows: list[tuple] = []
     cand = np.flatnonzero(sig.side != 0)
@@ -156,8 +157,10 @@ def simulate(
         stop = float(sig.stop[i])
         e_sp = max(sp[i], sp[j])
         fill = o[j] + e_sp + slip if side > 0 else o[j] - slip
-        risk = (fill - stop) if side > 0 else (stop - fill)
-        if not np.isfinite(stop) or risk <= 0:
+        fill_risk = (fill - stop) if side > 0 else (stop - fill)
+        entry_gap_stop = fill_risk <= 0
+        risk = abs(c[i] - stop) if entry_gap_stop else fill_risk
+        if not np.isfinite(stop):
             skips["stop_invalid"] += 1
             continue
         risk_pts = risk
@@ -195,6 +198,11 @@ def simulate(
         reason = ""
         k = j
         while True:
+            if entry_gap_stop:
+                exit_px = o[j] - slip if side > 0 else o[j] + sp[j] + slip
+                exit_idx, reason = j, "ENTRY_GAP_STOP"
+                skips["entry_gap_stop"] += 1
+                break
             # same-day data gap / forced flat are handled at the OPEN of bar k (k > j only)
             if k > j and not fr.contig_next[k - 1]:
                 px = o[k] - slip if side > 0 else o[k] + sp[k] + slip
@@ -206,7 +214,7 @@ def simulate(
                 break
             # stop
             if side > 0:
-                if k > j and o[k] <= cur_stop:
+                if o[k] <= cur_stop:
                     exit_idx, exit_px, reason = k, o[k] - slip, "STOP_GAP"
                 elif lo[k] <= cur_stop:
                     exit_idx, exit_px, reason = k, cur_stop - slip, "STOP"
@@ -214,14 +222,12 @@ def simulate(
                 adv = fill - lo[k]
             else:
                 ask_o, ask_h = o[k] + sp[k], h[k] + sp[k]
-                if k > j and ask_o >= cur_stop:
+                if ask_o >= cur_stop:
                     exit_idx, exit_px, reason = k, ask_o + slip, "STOP_GAP"
                 elif ask_h >= cur_stop:
                     exit_idx, exit_px, reason = k, cur_stop + slip, "STOP"
                 fav = fill - (lo[k] + sp[k])  # short exit is a BUY: marked on the ask low
                 adv = ask_h - fill
-            if fav > mfe:
-                mfe, bars_to_mfe = fav, k - j
             if adv > mae:
                 mae = adv
             if reason:
@@ -230,9 +236,15 @@ def simulate(
             if exit_spec.kind == "fixed_r":
                 if side > 0 and h[k] >= target + pen:
                     exit_idx, exit_px, reason = k, target, "TARGET"
+                    if target - fill > mfe:
+                        bars_to_mfe = k - j
+                    mfe = target - fill
                     break
                 if side < 0 and lo[k] + sp[k] <= target - pen:
                     exit_idx, exit_px, reason = k, target, "TARGET"
+                    if fill - target > mfe:
+                        bars_to_mfe = k - j
+                    mfe = fill - target
                     break
             else:  # ratchet from completed bar k; applies from bar k+1
                 if side > 0:
@@ -241,6 +253,8 @@ def simulate(
                 else:
                     best = min(best, lo[k] + sp[k])
                     cur_stop = min(cur_stop, best + trail_dist)
+            if fav > mfe:
+                mfe, bars_to_mfe = fav, k - j
             # backstop: last bar of the Berlin day (or of the data) -> close, never carry overnight
             if k + 1 >= n or fr.day[k + 1] != fr.day[k]:
                 px = c[k] - slip if side > 0 else c[k] + sp[k] + slip
@@ -259,13 +273,14 @@ def simulate(
         r_mult = pnl_eur / (risk * qty * sizing.contract_size)
         notional = qty * fill * sizing.contract_size
         trades_on_day[int(fr.day[j])] = trades_on_day.get(int(fr.day[j]), 0) + 1
+        bars_held = exit_idx - j if reason in {"SESSION_END", "DATA_GAP"} else exit_idx - j + 1
         rows.append(
             (
                 int(i), int(j), int(exit_idx), side, fr.ts[j], fr.ts[exit_idx], fr.date[j],
                 fill, exit_px, stop, target, risk_pts, qty, notional, notional / sizing.equity_eur,
                 pnl_pts, pnl_eur, r_mult, spread_cost, slip_cost, commission, cost_eur,
                 pnl_eur + cost_eur, reason, mfe, mae, mfe / risk, mae / risk,
-                bars_to_mfe, exit_idx - j + 1, entry_spread_pts, int(fr.minute[j]),
+                bars_to_mfe, bars_held, bars_held * 5, entry_spread_pts, int(fr.minute[j]),
                 session_bucket(int(fr.minute[j])), capped,
                 bool(fr.date[exit_idx] != fr.date[j]),
             )

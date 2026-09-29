@@ -12,7 +12,14 @@ import pytest
 
 from alpha.common.dataset import _admit
 from alpha.common.metrics import breakdown, compute_metrics, material_difference
-from alpha.common.protocol import OosAccessError, OosGate, Partition, SplitPlan, stable_hash
+from alpha.common.protocol import (
+    OosAccessError,
+    OosGate,
+    Partition,
+    SplitPlan,
+    run_record,
+    stable_hash,
+)
 
 D = np.datetime64
 
@@ -23,7 +30,8 @@ def make_trades(pnl: list[float], days: list[str]) -> pd.DataFrame:
         {
             "entry_idx": np.arange(n), "pnl_eur": pnl, "r_multiple": np.array(pnl) / 50.0,
             "gross_pnl_eur": np.array(pnl) + 2.0, "cost_eur": 2.0, "date": [D(d) for d in days],
-            "bars_held": 4, "leverage": 3.0, "leverage_capped": False, "entry_spread_pts": 2.5,
+            "bars_held": 4, "holding_minutes": 20, "leverage": 3.0,
+            "leverage_capped": False, "entry_spread_pts": 2.5,
             "spread_cost_pts": 2.5, "slippage_cost_pts": 1.0, "exit_reason": "STOP",
             "mfe_r": 0.5, "mae_r": 0.5, "crossed_rollover": False, "side": 1,
         }
@@ -50,7 +58,9 @@ def test_metrics_match_hand_computation():
     assert m["worst_day_eur"] == pytest.approx(-25.0) and m["best_day_eur"] == pytest.approx(0.0)
     assert m["trades_per_day"] == pytest.approx(6 / 5) and m["median_trades_per_day"] == 1.0
     assert m["exposure_time_frac"] == pytest.approx(24 / 1000)
-    assert m["expectancy_r_ci95"][0] is not None
+    assert m["expectancy_r_ci95_trade_iid"][0] is not None
+    assert m["expectancy_r_ci95_day_clustered"][0] is not None
+    assert m["avg_holding_minutes"] == 20
 
 
 def test_metrics_empty_partition_is_all_zero_trade_days():
@@ -63,8 +73,8 @@ def test_metrics_empty_partition_is_all_zero_trade_days():
 def test_bootstrap_is_seed_deterministic():
     t = make_trades([10.0, -5.0, 20.0, -50.0, 5.0, 12.0], ["2025-03-03"] * 6)
     days = np.array([D("2025-03-03")])
-    a = compute_metrics(t, trading_days=days, window_bars=10, seed=5)["expectancy_r_ci95"]
-    b = compute_metrics(t, trading_days=days, window_bars=10, seed=5)["expectancy_r_ci95"]
+    a = compute_metrics(t, trading_days=days, window_bars=10, seed=5)
+    b = compute_metrics(t, trading_days=days, window_bars=10, seed=5)
     assert a == b
 
 
@@ -93,14 +103,35 @@ def test_split_plan_requires_disjoint_ordered_partitions():
         )
 
 
-def test_oos_gate_allows_identical_rerun_but_refuses_a_different_candidate_set(tmp_path):
+def test_oos_gate_allows_identical_fingerprint_refuses_change_and_reset_starts_new_epoch(tmp_path):
     gate = OosGate(tmp_path / "log.json")
     h1, h2 = stable_hash([{"a": 1}]), stable_hash([{"a": 2}])
-    gate.evaluate(h1, "first")
+    components = {"candidates": "a", "config": "b", "datasets": {"m": "c"}, "sources": {}}
+    gate.evaluate(h1, "first", components=components)
     gate.evaluate(h1, "reproducibility re-run")
     with pytest.raises(OosAccessError):
         gate.evaluate(h2, "tuned after peeking")
-    assert len(json.loads((tmp_path / "log.json").read_text())) == 2
+    gate.reset("approved new experiment after code review")
+    gate.evaluate(h2, "new experiment")
+    log = json.loads((tmp_path / "log.json").read_text())
+    assert [entry["kind"] for entry in log] == ["evaluation", "evaluation", "reset", "evaluation"]
+    assert log[0]["components"] == components
+    with pytest.raises(ValueError, match="20"):
+        gate.reset("too short")
+
+
+def test_run_record_stores_source_hashes_and_experiment_fingerprint(tmp_path):
+    source_hashes = {"src/alpha/common/sim.py": "abc", "research/runners/ar1_compare.py": "def"}
+    record = run_record(
+        repo=tmp_path,
+        config={"seed": 1},
+        dataset_provenance={"months": [], "n_bars": 0},
+        seed=1,
+        source_hashes=source_hashes,
+        experiment_fingerprint="fingerprint",
+    )
+    assert record["source_hashes"] == source_hashes
+    assert record["experiment_fingerprint"] == "fingerprint"
 
 
 def test_dataset_admission_policy():

@@ -49,11 +49,11 @@ class OosAccessError(RuntimeError):
 
 
 class OosGate:
-    """Records every OOS evaluation; a second, different candidate set is refused.
+    """Records every OOS evaluation; a second, different experiment is refused.
 
-    Each evaluation must present the frozen configuration hash. The log file is part of the
-    reviewable evidence (research/reports). Re-running the identical frozen set is allowed
-    (pure reproducibility) and logged; changing the set after seeing OOS is not.
+    Each evaluation must present the full experiment fingerprint. The log file is part of the
+    reviewable evidence (research/reports). Re-running the identical experiment is allowed
+    (pure reproducibility) and logged; changing it after seeing OOS is not.
     """
 
     def __init__(self, log_path: Path) -> None:
@@ -64,15 +64,39 @@ class OosGate:
             return []
         return json.loads(self.log_path.read_text(encoding="utf-8"))
 
-    def evaluate(self, frozen_hash: str, note: str) -> None:
+    def evaluate(
+        self, experiment_fingerprint: str, note: str, *, components: dict | None = None
+    ) -> None:
         log = self._read()
-        first = next((e for e in log if e["kind"] == "evaluation"), None)
-        if first is not None and first["frozen_hash"] != frozen_hash:
+        last_reset = max(
+            (index for index, entry in enumerate(log) if entry["kind"] == "reset"), default=-1
+        )
+        epoch = log[last_reset + 1 :]
+        first = next((entry for entry in epoch if entry["kind"] == "evaluation"), None)
+        if first is not None and first["experiment_fingerprint"] != experiment_fingerprint:
             raise OosAccessError(
-                "OOS already evaluated for a different frozen candidate set "
-                f"({first['frozen_hash'][:12]} != {frozen_hash[:12]}); refusing to peek again"
+                "OOS already evaluated for a different experiment fingerprint "
+                f"({first['experiment_fingerprint'][:12]} != "
+                f"{experiment_fingerprint[:12]}); refusing to peek again"
             )
-        log.append({"kind": "evaluation", "frozen_hash": frozen_hash, "note": note})
+        entry = {
+            "kind": "evaluation",
+            "experiment_fingerprint": experiment_fingerprint,
+            "note": note,
+        }
+        if components is not None:
+            entry["components"] = components
+        log.append(entry)
+        self._write(log)
+
+    def reset(self, reason: str) -> None:
+        if len(reason.strip()) < 20:
+            raise ValueError("reset reason must contain at least 20 characters")
+        log = self._read()
+        log.append({"kind": "reset", "reason": reason})
+        self._write(log)
+
+    def _write(self, log: list[dict]) -> None:
         self.log_path.parent.mkdir(parents=True, exist_ok=True)
         self.log_path.write_text(json.dumps(log, indent=1), encoding="utf-8")
 
@@ -100,7 +124,15 @@ def git_commit(repo: Path) -> str:
         return "UNKNOWN"
 
 
-def run_record(*, repo: Path, config: dict, dataset_provenance: dict, seed: int) -> dict:
+def run_record(
+    *,
+    repo: Path,
+    config: dict,
+    dataset_provenance: dict,
+    seed: int,
+    source_hashes: dict[str, str],
+    experiment_fingerprint: str,
+) -> dict:
     def version(pkg: str) -> str:
         try:
             return metadata.version(pkg)
@@ -113,6 +145,8 @@ def run_record(*, repo: Path, config: dict, dataset_provenance: dict, seed: int)
         "config": config,
         "dataset_hashes": {m["month"]: m["content_sha256"] for m in dataset_provenance["months"]},
         "dataset_bars": dataset_provenance["n_bars"],
+        "source_hashes": source_hashes,
+        "experiment_fingerprint": experiment_fingerprint,
         "seed": seed,
         "python": sys.version.split()[0],
         "platform": platform.platform(),

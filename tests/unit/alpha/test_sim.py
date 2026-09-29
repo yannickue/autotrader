@@ -90,6 +90,56 @@ def test_gap_through_stop_fills_at_open_not_at_stop():
     assert t.exit_price == pytest.approx(23900.0 - 0.5)
 
 
+def test_entry_bar_gap_through_stop_fills_at_executable_open():
+    bars = bars_with({1: (23978, 23990, 23970, 23980)})
+    t = run(micro_frame(START, bars, spread_pts=700.0), sig(12, 0, +1, 23980.0))[0].iloc[0]
+    assert t.exit_reason == "STOP_GAP" and t.exit_idx == 1
+    assert t.entry_price == pytest.approx(23985.5)
+    assert t.exit_price == pytest.approx(23977.5)
+    assert t.mfe_pts == 0
+
+
+def test_entry_fill_beyond_stop_uses_nominal_risk_and_keeps_immediate_loss():
+    bars = bars_with({0: (24000, 24000, 24000, 24000), 1: (23970, 23980, 23960, 23970)})
+    trades, skips = run(micro_frame(START, bars), sig(12, 0, +1, 23980.0))
+    t = trades.iloc[0]
+    assert t.risk_pts == pytest.approx(20.0)  # decision close 24000 - stop 23980
+    assert t.exit_reason == "ENTRY_GAP_STOP"
+    assert t.entry_price == pytest.approx(23972.5)
+    assert t.exit_price == pytest.approx(23969.5)
+    assert t.r_multiple == pytest.approx(-3.0 / 20.0)
+    assert skips["entry_gap_stop"] == 1
+    assert t.bars_held == 1 and t.holding_minutes == 5
+
+
+def test_target_caps_mfe_at_target_distance():
+    bars = bars_with({1: (24000, 24100, 24000, 24000)})
+    t = run(micro_frame(START, bars), sig(12, 0, +1, 23950.0))[0].iloc[0]
+    assert t.exit_reason == "TARGET"
+    assert t.mfe_pts == pytest.approx(t.target - t.entry_price)
+
+
+def test_open_exit_holding_excludes_exit_bar_and_intrabar_exit_includes_it():
+    session = run(
+        micro_frame("2025-01-15 19:50", flat_bars(30)), sig(30, 0, +1, 23950.0)
+    )[0].iloc[0]
+    assert session.exit_reason == "SESSION_END"
+    assert session.bars_held == session.exit_idx - session.entry_idx
+    assert session.holding_minutes == session.bars_held * 5
+
+    gap = run(
+        micro_frame(START, flat_bars(10), skip=(3, 4, 5)), sig(7, 0, +1, 23950.0)
+    )[0].iloc[0]
+    assert gap.exit_reason == "DATA_GAP"
+    assert gap.bars_held == gap.exit_idx - gap.entry_idx
+
+    stopped = run(
+        micro_frame(START, bars_with({1: (24000, 24000, 23970, 23990)})),
+        sig(12, 0, +1, 23980.0),
+    )[0].iloc[0]
+    assert stopped.bars_held == stopped.exit_idx - stopped.entry_idx + 1
+
+
 def test_short_stop_triggers_on_ask_high_not_bid_high():
     # bid high 24017 + spread 2.0 = ask 24019 < stop 24020 -> NOT stopped
     quiet = bars_with({1: (24000, 24017, 24000, 24000)})
