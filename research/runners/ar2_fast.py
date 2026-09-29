@@ -344,6 +344,8 @@ def _simulation_fingerprint(
     params: Any,
     scenario: str,
     split: dict,
+    sizing: dict,
+    rules: dict,
 ) -> dict:
     return {
         "dataset_hash": dataset_hash,
@@ -354,6 +356,12 @@ def _simulation_fingerprint(
         "cost_model": _plain(COST_SCENARIOS[scenario]),
         "split": split,
         "evaluator_version": EVALUATOR_VERSION,
+        "sizing": _plain(sizing),
+        "rules": _plain(rules),
+        # fill/session semantics live in the shared AR1 modules, not only in the kernels
+        "semantics_sources": {
+            name: _sha(REPO_ROOT / "src/alpha/common" / name) for name in ("frame.py", "sim.py")
+        },
         "source_hashes": _kernel_hashes(),
     }
 
@@ -462,6 +470,15 @@ def _restriction_for(rec: dict, rule: dict) -> dict | None:
     return best[1] if best else None
 
 
+def _restriction_trials(records: list[dict]) -> int:
+    """Number of (variant, dimension, value) regime slices examined by the restriction search."""
+    total = 0
+    for rec in records:
+        rows = rec.get("_regime_rows", [])
+        total += sum(len({row[dimension] for row in rows}) for dimension in DIMENSIONS)
+    return total
+
+
 def _survives_stress(rec: dict, restriction: dict | None, rule: dict) -> bool:
     key = "whole" if restriction is None else stable_hash(restriction)
     values = rec.get("stress_expectancy_by_restriction", {}).get(
@@ -546,7 +563,16 @@ def freeze_rule(cfg: dict, records: list[dict]) -> tuple[list[dict], list[dict]]
                 and train["trades"] > 0
                 and _survives_stress(rec, restriction, rule)
             ):
-                frozen.append({"role": "REGIME_RESTRICTED", **base, "restriction": restriction})
+                frozen.append(
+                    {
+                        "role": "REGIME_RESTRICTED",
+                        **base,
+                        "restriction": restriction,
+                        # best-of-many over 4 dimensions and all their values, mined on TRAIN and
+                        # VALIDATION: a hypothesis for OOS, NOT equivalent to a pre-registered rule
+                        "selection": "VALIDATION_MINED_BEST_OF_MANY",
+                    }
+                )
     return frozen, rejected
 
 
@@ -852,6 +878,8 @@ def run_dev(
                 params=params,
                 scenario=scenario,
                 split=plan.to_dict(),
+                sizing=cfg["sizing"],
+                rules=cfg["rules"],
             )
             simulations[scenario], reused = result_cache.get_or_run(
                 fingerprint,
@@ -938,8 +966,15 @@ def run_dev(
                     SimRules(**cfg["rules"]),
                 )
                 simulation_count += 1
+                dates = _dates(features)
+                dev_r = np.concatenate(
+                    [
+                        tr.r_multiple[_partition_mask(tr, dates, plan.train)],
+                        tr.r_multiple[_partition_mask(tr, dates, plan.validation)],
+                    ]
+                )
                 rec["stress_expectancy_by_restriction"][key][scenario] = (
-                    float(tr.r_multiple.mean()) if len(tr) else None
+                    float(dev_r.mean()) if len(dev_r) else None
                 )
         records.append(rec)
     timings["candidates_simulation_metrics"] = time.perf_counter() - candidate_started
@@ -960,26 +995,23 @@ def run_dev(
     frozen_hash = stable_hash(frozen)
     _json(
         out / "frozen_candidates.json",
-        {"hash": frozen_hash, "set": frozen, "rejected_early": rejected},
+        {
+            "hash": frozen_hash,
+            "set": frozen,
+            "rejected_early": rejected,
+            "dev_provenance": _dev_provenance(cfg, ds, full),
+        },
     )
     progress("freeze", f"{len(frozen)} survivors")
     _json(out / "dev_results.json", [_public_record(rec) for rec in records])
     hashes = source_hashes()
-    dataset_hashes = (
-        {month.month: month.content_sha256 for month in ds.months}
-        if ds is not None
-        else {
-            "injected": stable_hash(
-                {
-                    "rows": len(full),
-                    "first": str(full["ts"].iloc[0]),
-                    "last": str(full["ts"].iloc[-1]),
-                }
-            )
-        }
-    )
+    dataset_hashes = _dataset_hashes(ds, full)
     run_data = {
-        "trial_accounting": {"variants": len(variants), "simulations_evaluated": simulation_count},
+        "trial_accounting": {
+            "variants": len(variants),
+            "simulations_evaluated": simulation_count,
+            "regime_restrictions_considered": _restriction_trials(records),
+        },
         "config_hash": stable_hash(cfg),
         "dataset_hash": stable_hash(dataset_hashes),
         "dataset_hashes": dataset_hashes,
@@ -1024,6 +1056,26 @@ def _peak_rss_mb() -> float | None:
         return None
 
 
+def _dataset_hashes(ds: Any, full: pd.DataFrame) -> dict[str, str]:
+    if ds is not None:
+        return {month.month: month.content_sha256 for month in ds.months}
+    return {
+        "injected": stable_hash(
+            {"rows": len(full), "first": str(full["ts"].iloc[0]), "last": str(full["ts"].iloc[-1])}
+        )
+    }
+
+
+def _dev_provenance(cfg: dict, ds: Any, full: pd.DataFrame) -> dict:
+    """Everything the freeze depended on; the OOS run must present the identical provenance."""
+    return {
+        "config_hash": stable_hash(cfg),
+        "dataset_hashes": _dataset_hashes(ds, full),
+        "evaluator_version": EVALUATOR_VERSION,
+        "source_hashes": source_hashes(),
+    }
+
+
 def experiment_components(cfg: dict, ds: Any, frozen_hash: str, feature_key: str) -> dict:
     return {
         "git_commit": git_commit(REPO_ROOT),
@@ -1048,6 +1100,15 @@ def run_oos(cfg: dict, out: Path, *, cache_dir: Path = DEFAULT_CACHE) -> int:
     if not payload["set"]:
         raise SystemExit("Nothing frozen: no candidate met the pre-registered rule; OOS not run")
     ds = load_research_dataset(REPO_ROOT / cfg["dataset_root"])
+    provenance = payload.get("dev_provenance")
+    if provenance is None:
+        raise SystemExit("REFUSED: frozen file carries no dev provenance")
+    current = _dev_provenance(cfg, ds, ds.frame)
+    changed = sorted(key for key in current if provenance.get(key) != current[key])
+    if changed:
+        raise SystemExit(
+            f"REFUSED: experiment changed since the freeze (provenance mismatch: {changed})"
+        )
     plan = _plan(cfg)
     features = FeatureStore.load_or_build(ds.frame, {"point_size": POINT}, cache_dir)
     components = experiment_components(cfg, ds, payload["hash"], features.metadata["cache_key"])

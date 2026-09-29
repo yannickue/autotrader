@@ -1,4 +1,8 @@
-"""Numba generator for the range mean-reversion family."""
+"""Numba generator for the range mean-reversion family.
+
+The M15 range comes straight from the context frame (``context_range_low/high`` store arrays),
+exactly like the semantic strategy; no bucket reconstruction happens in the kernel.
+"""
 
 from __future__ import annotations
 
@@ -12,40 +16,18 @@ from alpha.strategies.mean_reversion.strategy import VARIANTS
 
 
 @njit(cache=True)
-def _kernel(ts, o, h, low, c, m15_o, m15_h, m15_l, m15_c, m15_range, h1_range, trend, extreme,
+def _kernel(o, h, low, c, m15_h, trend, extreme, range_low_a, range_high_a,
             extreme_fraction, stop_buffer, target_r):
     n = len(c)
     idx = np.empty(n, np.int64)
     side = np.empty(n, np.int8)
     stops = np.empty(n, np.float64)
     count = 0
-    completed_h = np.empty(n, np.float64)
-    completed_l = np.empty(n, np.float64)
-    completed_count = 0
-    last_key = np.int64(-9223372036854775807)
-    last_o = last_h = last_l = last_c = np.nan
     for i in range(n):
-        # M5 decisions are made at the close: the 09:10 bar already knows the
-        # M15 bucket that becomes available at 09:15.
-        key = (ts[i] + 300000000000) // 900000000000 - 1
-        changed = (m15_o[i] != last_o or m15_h[i] != last_h or m15_l[i] != last_l
-                   or m15_c[i] != last_c)
-        if key != last_key and changed and np.isfinite(m15_h[i]) and np.isfinite(m15_l[i]):
-            completed_h[completed_count] = m15_h[i]
-            completed_l[completed_count] = m15_l[i]
-            completed_count += 1
-            last_key = key
-            last_o, last_h, last_l, last_c = m15_o[i], m15_h[i], m15_l[i], m15_c[i]
-        if trend[i] != 1 or not extreme[i] or completed_count < 13:
+        if trend[i] != 1 or not extreme[i] or not np.isfinite(m15_h[i]):
             continue
-        start = completed_count - 13
-        range_high = completed_h[start]
-        range_low = completed_l[start]
-        for j in range(start + 1, completed_count - 1):
-            if completed_h[j] > range_high:
-                range_high = completed_h[j]
-            if completed_l[j] < range_low:
-                range_low = completed_l[j]
+        range_low = range_low_a[i]
+        range_high = range_high_a[i]
         if not range_low < range_high:
             continue
         width = range_high - range_low
@@ -76,10 +58,9 @@ def _kernel(ts, o, h, low, c, m15_o, m15_h, m15_l, m15_c, m15_range, h1_range, t
 @register("RANGE_MEAN_REVERSION", VARIANTS)
 def generate(features: FeatureSet, params) -> CandidateArrays:
     idx, side, stops = _kernel(
-        features["ts_ns"], features["o"], features["h"], features["l"], features["c"],
-        features["m15_o"], features["m15_h"], features["m15_l"], features["m15_c"],
-        features["m15_range"], features["h1_range"],
+        features["o"], features["h"], features["l"], features["c"], features["m15_h"],
         features["regime_trend_strength"], features["context_range_extreme"],
+        features["context_range_low"], features["context_range_high"],
         params.extreme_fraction, params.stop_buffer, params.target_r,
     )
     n = len(idx)

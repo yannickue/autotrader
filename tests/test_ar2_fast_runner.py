@@ -220,3 +220,60 @@ def test_e2e_golden_slice_writes_every_output(
     assert code == 0
     assert expected <= {path.name for path in out.iterdir()}
     assert (out / "report.md").stat().st_size > 100
+
+
+def test_oos_refuses_frozen_file_without_or_with_stale_provenance(tmp_path: Path) -> None:
+    cfg = json.loads(ar2_fast.DEFAULT_CONFIG.read_text(encoding="utf-8"))
+    frozen = [{"strategy_id": "X", "variant": 0}]
+    payload = {"set": frozen, "hash": stable_hash(frozen)}
+    path = tmp_path / "frozen_candidates.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(SystemExit, match="no dev provenance"):
+        ar2_fast.run_oos(cfg, tmp_path)
+    stale = {**payload, "dev_provenance": {"config_hash": "0" * 64}}
+    path.write_text(json.dumps(stale), encoding="utf-8")
+    with pytest.raises(SystemExit, match="provenance mismatch"):
+        ar2_fast.run_oos(cfg, tmp_path)
+    assert not (tmp_path / "oos_access_log.json").exists()  # the gate was never touched
+
+
+def test_simulation_fingerprint_covers_sizing_rules_and_semantics_sources() -> None:
+    cfg = json.loads(ar2_fast.DEFAULT_CONFIG.read_text(encoding="utf-8"))
+    family = next(iter(discover().values()))
+    features = type("F", (), {"metadata": {"cache_key": "k"}})()
+
+    def fp(sizing: dict, rules: dict) -> dict:
+        return ar2_fast._simulation_fingerprint(
+            features=features,
+            dataset_hash="d",
+            family=family,
+            params=family.variants[0],
+            scenario="BASE",
+            split={},
+            sizing=sizing,
+            rules=rules,
+        )
+
+    base = fp(cfg["sizing"], cfg["rules"])
+    assert fp({**cfg["sizing"], "max_leverage": 5.0}, cfg["rules"]) != base
+    assert fp(cfg["sizing"], {**cfg["rules"], "max_trades_per_day": 1}) != base
+    assert {"frame.py", "sim.py"} <= set(base["semantics_sources"])
+
+
+def test_feature_cache_key_binds_library_versions() -> None:
+    from alpha.fast import store
+
+    components = store._key_components(
+        pd.DataFrame(
+            {
+                "ts": pd.date_range("2025-01-01", periods=3, freq="5min", tz="UTC"),
+                "open": 1.0,
+                "high": 1.0,
+                "low": 1.0,
+                "close": 1.0,
+                "spread_pts": 1.0,
+            }
+        ),
+        store.FeatureConfig(),
+    )
+    assert {"ta-lib", "numpy", "pandas"} <= set(components["library_versions"])

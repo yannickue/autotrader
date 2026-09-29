@@ -11,7 +11,8 @@ Parity arrays are ``m5_atr14`` and, for ``m15`` and ``h1``, ``{tf}_o/h/l/c/range
 Regime dimensions are ``regime_direction``, ``regime_trend_strength``,
 ``regime_volatility``, ``regime_vol_state`` (int16); context flags are
 ``context_trend_continuation/pullback/consolidation/compression/range_extreme/``
-``breakout_setup/retest/failed_breakout/momentum_continuation/reversal_context`` (bool).
+``breakout_setup/retest/failed_breakout/momentum_continuation/reversal_context`` (bool);
+``context_range_low/high`` (float64, M15 range bounds from the context frame, NaN unknown).
 Integer-to-string maps live in metadata and the cache manifest.
 
 For each of ``m5``, ``m15`` and ``h1``, the curated arrays are ``{tf}_atr14``,
@@ -49,7 +50,7 @@ from alpha.context import CONTEXT_LABELS, ContextConfig, classify_context
 from alpha.regime import REGIME_DIMENSIONS, RegimeConfig, classify_regime
 from alpha.timeframe import MtfView
 
-FEATURE_SCHEMA_VERSION = 1
+FEATURE_SCHEMA_VERSION = 2
 _PHASES = ("EUROPEAN_OPEN", "MORNING", "MIDDAY", "US_CASH_OPEN_OVERLAP", "LATE")
 _TA_NAMES = (
     "atr14",
@@ -145,6 +146,19 @@ def _code_fingerprint() -> str:
     return digest.hexdigest()
 
 
+def _library_versions() -> dict[str, str]:
+    """Feature values depend on these libraries (TA-Lib warm-up, pandas rolling, numpy)."""
+    from importlib import metadata
+
+    versions = {}
+    for name in ("ta-lib", "numpy", "pandas"):
+        try:
+            versions[name] = metadata.version(name)
+        except metadata.PackageNotFoundError:
+            versions[name] = "NOT_INSTALLED"
+    return versions
+
+
 def _key_components(frame: pd.DataFrame, config: FeatureConfig) -> dict[str, Any]:
     return {
         "dataset_hash": _hash_frame(frame),
@@ -152,6 +166,7 @@ def _key_components(frame: pd.DataFrame, config: FeatureConfig) -> dict[str, Any
         "timeframes": list(config.timeframes),
         "parameters": _plain(config),
         "code_fingerprint": _code_fingerprint(),
+        "library_versions": _library_versions(),
     }
 
 
@@ -299,6 +314,9 @@ def _encoded_labels(
         maps["regime"][dimension] = {str(code): label for label, code in encode.items()}
     for label in CONTEXT_LABELS:
         arrays[f"context_{label.lower()}"] = context[label].to_numpy(bool)
+    # M15 range bounds exactly as the semantic mean-reversion strategy reads them (NaN = unknown)
+    arrays["context_range_low"] = context["range_low"].to_numpy(float)
+    arrays["context_range_high"] = context["range_high"].to_numpy(float)
     return arrays, maps
 
 
