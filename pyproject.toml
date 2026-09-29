@@ -17,6 +17,8 @@ dev = [
 research = [
     "numba==0.67.0",
     "ta-lib==0.8.1",
+    "optuna==5.0.0",
+    "deap==1.4.4",
 ]
 
 [tool.uv]
