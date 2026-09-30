@@ -4,6 +4,7 @@ from decimal import Decimal
 
 import pytest
 from nautilus_trader.model.enums import OrderSide, OrderStatus
+from nautilus_trader.model.identifiers import ClientOrderId
 from nautilus_trader.model.objects import Price, Quantity
 
 from risk.models import ReconciliationState, RuntimeMode
@@ -71,20 +72,76 @@ def test_reduce_only_blocked_when_local_and_broker_positions_disagree(h, broker)
     assert "LOCAL_BROKER_POSITION_MISMATCH" in h.denial(order)
 
 
-@pytest.mark.parametrize(
-    "state",
-    [
-        ReconciliationState.NOT_RECONCILED,
-        ReconciliationState.RECONCILING,
-        ReconciliationState.MISMATCH,
-    ],
-)
-def test_reduce_only_blocked_unless_reconciled(h, state):
+UNRECONCILED = [
+    ReconciliationState.NOT_RECONCILED,
+    ReconciliationState.RECONCILING,
+    ReconciliationState.MISMATCH,
+]
+
+
+@pytest.mark.parametrize("state", UNRECONCILED)
+@pytest.mark.parametrize("runtime", [RuntimeMode.READY, RuntimeMode.HALTED, RuntimeMode.DEGRADED])
+def test_full_close_of_a_verified_own_position_is_allowed_in_any_reconciliation_state(
+    h, broker, state, runtime
+):
+    """H2: the flatten of last resort must not be blockable by a reconciliation MISMATCH."""
     open_long(h)
+    h.client.recon.state = state
+    h.client.recon.runtime = runtime
+    order = h.market(SELL, "0.25", reduce_only=True)
+    h.submit(order)
+    assert status_of(h, order) is OrderStatus.FILLED
+    assert broker.positions_get() == ()
+
+
+@pytest.mark.parametrize("state", UNRECONCILED)
+def test_unreconciled_close_survives_stale_local_bookkeeping(h, broker, state):
+    open_long(h)
+    h.client.recon.state = state
+    broker.positions_get()[0].volume = 0.5  # local != broker
+    order = h.market(SELL, "0.5", reduce_only=True)
+    h.submit(order)
+    assert status_of(h, order) is OrderStatus.FILLED and broker.positions_get() == ()
+
+
+@pytest.mark.parametrize("state", UNRECONCILED)
+def test_unreconciled_reduce_only_never_increases_exposure(h, broker, state):
+    open_long(h)
+    h.client.recon.state = state
+    oversized = h.market(SELL, "0.5", reduce_only=True)
+    wrong_side = h.market(BUY, "0.25", reduce_only=True)
+    for order in (oversized, wrong_side):
+        h.submit(order)
+        assert status_of(h, order) is OrderStatus.DENIED
+    assert "NOT_VENUE_RECONCILED" in h.denial(oversized)
+    assert "NOT_VENUE_RECONCILED" in h.denial(wrong_side)
+    assert broker.positions_get()[0].volume == 0.25 and broker.order_send_calls == 1
+
+
+@pytest.mark.parametrize("state", UNRECONCILED)
+def test_unreconciled_close_of_a_foreign_position_is_denied(h, broker, state):
+    open_long(h)
+    broker.positions_get()[0].magic = 424242  # not ours
     h.client.recon.state = state
     order = h.market(SELL, "0.25", reduce_only=True)
     h.submit(order)
     assert status_of(h, order) is OrderStatus.DENIED and "NOT_VENUE_RECONCILED" in h.denial(order)
+    assert len(broker.positions_get()) == 1
+
+
+@pytest.mark.parametrize("state", UNRECONCILED)
+def test_unreconciled_close_without_a_broker_position_is_denied(h, state):
+    h.client.recon.state = state
+    order = h.market(SELL, "0.25", reduce_only=True)
+    h.submit(order)
+    assert status_of(h, order) is OrderStatus.DENIED and "NOT_VENUE_RECONCILED" in h.denial(order)
+
+
+@pytest.mark.parametrize("state", UNRECONCILED)
+def test_new_exposure_stays_blocked_when_unreconciled(h, state):
+    h.client.recon.state = state
+    entry, _ = h.submit_bracket(BUY, "0.25", 24_900.0)
+    assert status_of(h, entry) is OrderStatus.DENIED and "NOT_VENUE_RECONCILED" in h.denial(entry)
 
 
 def test_reduce_only_allowed_when_halted_but_reconciled_new_exposure_is_not(h):
@@ -253,3 +310,61 @@ def test_exception_before_execution_is_rejected_only_after_grace_with_no_broker_
     h.client.reconcile()
     assert status_of(h, entry) is OrderStatus.REJECTED
     assert h.client.recon.state is ReconciliationState.RECONCILED
+
+
+# -- H4: after a restart the Nautilus cache is empty; broker truth still resolves unresolved rows
+
+
+def _restart(broker, tmp_path, first):
+    first.shutdown()
+    return ExecHarness(broker, tmp_path)
+
+
+def test_crash_between_write_ahead_row_and_send_is_resolved_by_broker_truth_after_restart(
+    broker, tmp_path
+):
+    first = ExecHarness(broker, tmp_path)
+    parent = first.store.record_intent(
+        client_order_id="O-crashed", strategy_id="S-001", instrument_id=str(IID), kind="MARKET",
+        side="BUY", quantity="0.25", created_ns=first.client._now_ns(),
+    )
+    first.store.record_intent(
+        client_order_id="O-crashed-SL", strategy_id="S-001", instrument_id=str(IID), kind="SL",
+        side="SELL", quantity="0.25", parent_client_order_id="O-crashed",
+    )
+    assert parent.startswith("NT")
+    second = _restart(broker, tmp_path, first)  # fresh process: empty Nautilus cache
+    try:
+        assert second.cache.order(ClientOrderId("O-crashed")) is None
+        sends_before = broker.order_send_calls
+        second.client.reconcile()  # too early: inside the in-doubt grace, authority stays withheld
+        assert second.store.by_client_order_id("O-crashed").status == "INTENT"
+        assert second.client.recon.state is not ReconciliationState.RECONCILED
+        broker.server_time += 600  # past the grace, still no trace at the broker
+        second.client.reconcile()
+        row = second.store.by_client_order_id("O-crashed")
+        assert row.status == "REJECTED"
+        assert second.store.by_client_order_id("O-crashed-SL").status == "REJECTED"
+        assert second.store.unresolved() == []
+        assert second.client.recon.state is ReconciliationState.RECONCILED
+        assert any("NO_TRACE O-crashed" in line for line in second.client.audit)
+        assert broker.order_send_calls == sends_before  # NEVER re-sent
+    finally:
+        second.shutdown()
+
+
+def test_restart_does_not_reject_a_row_the_broker_has_a_trace_for(broker, tmp_path):
+    first = ExecHarness(broker, tmp_path)
+    broker.lose_response_after_execute = 1
+    entry, _ = first.submit_bracket(BUY, "0.25", 24_900.0)
+    assert first.store.by_client_order_id(str(entry.client_order_id)).status == "IN_DOUBT"
+    assert len(broker.positions_get()) == 1
+    second = _restart(broker, tmp_path, first)
+    try:
+        broker.server_time += 600
+        second.client.reconcile()
+        row = second.store.by_client_order_id(str(entry.client_order_id))
+        assert row.status != "REJECTED"  # the executed order is never called "never executed"
+        assert len(broker.positions_get()) == 1 and broker.order_send_calls == 1
+    finally:
+        second.shutdown()

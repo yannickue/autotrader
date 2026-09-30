@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import dataclasses
+import os
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
@@ -16,7 +18,7 @@ from demo.execution.events import (
     ProtectionConfirmed,
     Rejected,
 )
-from demo.execution.live import ShadowGuardClient, ShadowModeViolation, StackConfig
+from demo.execution.live import ShadowGuardClient, ShadowModeViolation, StackConfig, _Reject
 from demo.execution.stack_port import StackFailClosed
 from nautilus_mt5.constants import Retcode
 from tests.unit.demo.execution.stack_harness import (
@@ -191,6 +193,42 @@ def test_leverage_above_ceiling_and_foreign_currency_are_refused(tmp_path):
         make_stack(build_broker(currency="USD"), tmp_path / "b").start()
 
 
+def test_leverage_refusal_names_the_observed_leverage(tmp_path):
+    with pytest.raises(StackFailClosed, match=r"observed account leverage 1:500.*30x ceiling"):
+        make_stack(build_broker(leverage=500), tmp_path).start()
+
+
+@pytest.mark.parametrize("hours", [1, 2, -1, -2])
+def test_start_refuses_when_the_inferred_server_timezone_is_off_by_whole_hours(tmp_path, hours):
+    """M5: a DST change (2026-10-25) or another server zone shifts every tick by 1-2 h."""
+    broker = build_broker()
+    broker.live_offset_s += 3600 * hours
+    stack = make_stack(broker, tmp_path)
+    with pytest.raises(StackFailClosed, match="server_time_offset_mismatch"):
+        stack.start()
+    assert broker.order_send_calls == 0
+    assert not (tmp_path / "terminal.lock").exists()
+
+
+def test_start_publishes_the_measured_server_offset(env):
+    _broker, stack = env
+    snapshot = stack.start()
+    offset = snapshot.extra["server_vs_local_offset_s"]
+    assert offset is not None and abs(offset) < 60
+    assert snapshot.extra["start_notes"]["server_vs_local_offset_s"] == round(offset, 1)
+
+
+def test_a_stale_closed_market_tick_is_logged_not_judged(tmp_path):
+    broker = build_broker()
+    broker.live_offset_s -= 5 * 3600 + 1234  # weekend-like: ticks hours old, not a whole-hour offset
+    stack = make_stack(broker, tmp_path)
+    try:
+        snapshot = stack.start()
+        assert snapshot.extra["server_vs_local_offset_s"] > 3600
+    finally:
+        stack.stop()
+
+
 def test_unreconciled_book_rejects_new_exposure_fail_closed(env):
     broker, stack = env
     stack.start()
@@ -317,16 +355,83 @@ def test_broker_reject_leaves_nothing_open(env):
     assert broker.positions_get() == () and stack.open_intents() == ()
 
 
-def test_exposure_changing_request_is_never_retried_when_the_outcome_is_unknown(env):
-    broker, stack = env
+# no sync loop racing the assertions: the unknown-outcome path must not depend on scheduling
+QUIET = dataclasses.replace(FAST, sync_interval_s=3600.0, submit_wait_s=1.0)
+
+
+@pytest.fixture
+def quiet_env(tmp_path):
+    broker = build_broker()
+    stack = make_stack(broker, tmp_path, config=QUIET)
+    yield broker, stack
+    stack.stop()
+
+
+@pytest.mark.parametrize("repeat", range(int(os.environ.get("DEMO_REPEAT", "2"))))
+def test_exposure_changing_request_is_never_retried_when_the_outcome_is_unknown(
+    tmp_path, repeat
+):
+    broker = build_broker()
+    stack = make_stack(broker, tmp_path, config=QUIET)
+    try:
+        stack.start()
+        broker.raise_on_send = [RuntimeError("IPC died")]
+        events = stack.submit(make_intent())
+        assert reason(events) == "order_outcome_unknown"
+        assert events[-1].risk_detail is not None
+        assert broker.order_send_calls == 1  # no automatic retry
+        assert stack.account_snapshot().kill_switch
+        assert stack._registry.get("intent-1").status == "IN_DOUBT"
+        assert reason(stack.submit(make_intent(intent_id="n2"))) == "halted"
+        assert broker.order_send_calls == 1
+    finally:
+        stack.stop()
+
+
+@pytest.mark.parametrize("failure", ["disconnect", "soft_reject", "degraded_session"])
+def test_a_failing_confirmation_never_raises_past_submit_and_stays_in_doubt(quiet_env, failure):
+    """H3: a disconnect / lane error while confirming an unknown send is order_outcome_unknown."""
+    broker, stack = quiet_env
     stack.start()
     broker.raise_on_send = [RuntimeError("IPC died")]
-    events = stack.submit(make_intent())
+    if failure == "disconnect":
+        def boom(*a, **k):
+            raise StackFailClosed("broker_disconnect:positions_get")
+    elif failure == "soft_reject":
+        def boom(*a, **k):
+            raise _Reject("broker_call_failed")
+    else:
+        boom = None
+    real = stack._lane_confirm_entry
+    if boom is not None:
+        stack._lane_confirm_entry = boom
+    try:
+        events = stack.submit(make_intent())
+    finally:
+        stack._lane_confirm_entry = real
+    assert kinds(events) == ["Accepted", "Rejected"], events
     assert reason(events) == "order_outcome_unknown"
-    assert broker.order_send_calls == 1  # no automatic retry
-    assert stack.account_snapshot().kill_switch
-    assert reason(stack.submit(make_intent(intent_id="n2"))) == "halted"
+    assert events[-1].risk_detail["reject_code"] == "order_outcome_unknown"
     assert broker.order_send_calls == 1
+    assert stack._registry.get("intent-1").status == "IN_DOUBT"
+    assert stack.halted_reason == "order_outcome_unknown"
+
+
+def test_unknown_outcome_is_recorded_and_halted_before_the_broker_is_read(quiet_env):
+    broker, stack = quiet_env
+    stack.start()
+    broker.raise_on_send = [RuntimeError("IPC died")]
+    seen = {}
+    real = stack._lane_confirm_entry
+
+    def spy(*args, **kwargs):
+        seen["row"] = stack._registry.get("intent-1").status
+        seen["halt"] = stack.halted_reason
+        return real(*args, **kwargs)
+
+    stack._lane_confirm_entry = spy
+    stack.submit(make_intent())
+    assert seen == {"row": "IN_DOUBT", "halt": "order_outcome_unknown"}
 
 
 def test_partial_fill_reports_the_actual_quantity_and_protects_it(env):
@@ -405,6 +510,35 @@ def test_eight_consecutive_losses_halt_and_a_win_resets_the_streak(tmp_path):
         assert kinds(stack2.submit(make_intent()))[-1] == "ProtectionConfirmed"
     finally:
         stack2.stop()
+
+
+def test_manual_and_previous_day_losses_never_block_new_exposure(tmp_path):
+    """M3: the streak counts OUR OWN trades closed in the CURRENT UTC day only."""
+    broker = build_broker()
+    for _ in range(8):
+        inject_closed_trade(broker, profit=-0.1, magic=0)  # manual trades: not ours
+    for _ in range(8):
+        inject_closed_trade(broker, profit=-0.1, age_s=3 * 86_400)  # ours, but days ago
+    stack = make_stack(broker, tmp_path)
+    try:
+        stack.start()
+        assert stack.submit(make_intent())[-1].__class__.__name__ == "ProtectionConfirmed"
+    finally:
+        stack.stop()
+
+
+def test_foreign_win_neither_breaks_nor_extends_our_streak(tmp_path):
+    broker = build_broker()
+    for i in range(8):
+        inject_closed_trade(broker, profit=-0.1)
+        if i == 3:
+            inject_closed_trade(broker, profit=50.0, magic=0)  # a manual win in between
+    stack = make_stack(broker, tmp_path)
+    try:
+        stack.start()
+        assert reason(stack.submit(make_intent())) == "consecutive_loss_limit"
+    finally:
+        stack.stop()
 
 
 def test_max_drawdown_halt_is_25_percent_of_peak_equity(tmp_path):
@@ -497,12 +631,57 @@ def test_stale_feed_and_clock_anomaly(env):
     broker.live_offset_s -= 300  # 6 minutes old: the feed is dead
     with pytest.raises(StackFailClosed, match="stale_feed"):
         stack.submit(make_intent(intent_id="dead"))
-    broker.live_offset_s += 345 + 30  # quote 30 s in the future: clock anomaly
-    with pytest.raises(StackFailClosed, match="clock_anomaly"):
-        stack.submit(make_intent(intent_id="future"))
-    with pytest.raises(StackFailClosed):
-        stack.poll_events()  # the anomaly latched the stack
-    assert broker.order_send_calls == 0
+    broker.live_offset_s += 345  # back to a live feed
+    assert kinds(stack.submit(make_intent(intent_id="ok")))[-1] == "ProtectionConfirmed"
+
+
+def test_small_clock_skew_rejects_that_market_temporarily_and_recovers(tmp_path):
+    """M4: a PC clock 6-30 s slow used to kill the whole stack; now it is a metric + a reject."""
+    broker = build_broker()
+    stack = make_stack(broker, tmp_path)
+    try:
+        stack.start()
+        broker.live_offset_s += 20  # quote 20 s in the future
+        assert reason(stack.submit(make_intent(intent_id="skewed"))) == "clock_skew"
+        assert broker.order_send_calls == 0 and stack.max_clock_skew_s >= 19
+        stack.poll_events()  # the stack is NOT latched
+        broker.live_offset_s -= 20
+        assert kinds(stack.submit(make_intent(intent_id="fine")))[-1] == "ProtectionConfirmed"
+    finally:
+        stack.stop()
+
+
+def test_only_a_sustained_large_clock_skew_is_fatal(tmp_path):
+    broker = build_broker()
+    stack = make_stack(broker, tmp_path)
+    try:
+        stack.start()
+        broker.live_offset_s += 120  # two minutes ahead
+        n = FAST.clock_skew_sustain_obs
+        for i in range(n - 1):  # not yet sustained: temporary rejects
+            assert reason(stack.submit(make_intent(intent_id=f"s{i}"))) == "clock_skew"
+        with pytest.raises(StackFailClosed, match="clock_anomaly"):
+            stack.submit(make_intent(intent_id="sustained"))
+        with pytest.raises(StackFailClosed):
+            stack.poll_events()  # the anomaly latched the stack
+        assert broker.order_send_calls == 0
+    finally:
+        stack.stop()
+
+
+def test_a_single_large_skew_observation_is_not_fatal(tmp_path):
+    broker = build_broker()
+    stack = make_stack(broker, tmp_path)
+    try:
+        stack.start()
+        broker.live_offset_s += 120
+        assert reason(stack.submit(make_intent(intent_id="blip"))) == "clock_skew"
+        broker.live_offset_s -= 120
+        assert kinds(stack.submit(make_intent(intent_id="ok")))[-1] == "ProtectionConfirmed"
+        broker.live_offset_s += 120  # a blip again: the window was reset by the healthy observation
+        assert reason(stack.submit(make_intent(intent_id="blip2"))) == "clock_skew"
+    finally:
+        stack.stop()
 
 
 # -- shadow mode ---------------------------------------------------------------------------------------------------
@@ -665,3 +844,98 @@ def test_rows_that_never_reached_the_broker_do_not_block_their_market_after_a_cr
         assert kinds(second.submit(make_intent(intent_id="fresh")))[-1] == "ProtectionConfirmed"
     finally:
         second.stop()
+
+
+def test_flatten_of_our_unprotected_position_survives_a_reconciliation_mismatch(env):
+    """H2 audit scenario: SL lost, price beyond the structural stop, emergency_protect refused
+    (INVALID_STOPS), reconciliation MISMATCH: the position must still be flattened, not stay open."""
+    broker, stack = env
+    stack.start()
+    stack.submit(make_intent())
+    (position,) = broker.positions_get()
+    position.sl = 0.0
+    broker.set_quote(24940.0, 24941.0)  # beyond the 24950 stop: a stop can no longer be placed
+    from risk.models import ReconciliationState
+
+    recon = stack._adapter.exec_client.recon
+    real_reconcile = stack._adapter.exec_client.reconcile
+
+    def failing_reconcile():
+        recon.state = ReconciliationState.MISMATCH
+        return recon
+
+    stack._adapter.exec_client.reconcile = failing_reconcile
+    recon.state = ReconciliationState.MISMATCH
+    try:
+        events = stack.poll_events()
+    finally:
+        stack._adapter.exec_client.reconcile = real_reconcile
+    assert broker.positions_get() == (), events
+    assert any(isinstance(e, PositionClosed) for e in events)
+
+
+# -- M6: bounded retry of lane READS (never of writes) -------------------------------------------
+
+
+def _flaky_positions(broker, failures: int):
+    """positions_get returns None (=> Mt5CallError) for the next ``failures`` calls."""
+    real = broker.positions_get
+    state = {"left": failures, "calls": 0}
+
+    def flaky(*args, **kwargs):
+        state["calls"] += 1
+        if state["left"] > 0:
+            state["left"] -= 1
+            return None
+        return real(*args, **kwargs)
+
+    broker.positions_get = flaky
+    return state
+
+
+def test_a_transient_read_failure_is_retried_and_does_not_fail_the_runner(quiet_env):
+    broker, stack = quiet_env
+    stack.start()
+    state = _flaky_positions(broker, 2)
+    assert stack.has_position("GER40") is False  # no _Reject / StackFailClosed
+    assert state["calls"] == 3
+
+
+def test_a_persistent_read_failure_fails_closed_after_the_bound(quiet_env):
+    broker, stack = quiet_env
+    stack.start()
+    state = _flaky_positions(broker, 99)
+    with pytest.raises(StackFailClosed, match="broker_call_failed_persistent"):
+        stack.has_position("GER40")
+    assert state["calls"] == QUIET.read_retry_attempts
+
+
+def test_forced_flat_clock_survives_a_transient_read_failure(quiet_env):
+    broker, stack = quiet_env
+    stack.start()
+    stack.submit(make_intent(flat_in_s=3600))
+    state = _flaky_positions(broker, 1)
+    events = stack.on_clock(datetime.now(UTC) + timedelta(hours=2))
+    assert state["calls"] >= 2
+    assert any(isinstance(e, PositionClosed) for e in events)
+    assert broker.positions_get() == ()
+
+
+def test_writes_are_never_retried_by_the_lane_helper(quiet_env):
+    from nautilus_mt5.session import Mt5CallError
+
+    _, stack = quiet_env
+    stack.start()
+    calls = {"n": 0}
+
+    def failing():
+        calls["n"] += 1
+        raise Mt5CallError("positions_get", None)
+
+    with pytest.raises(_Reject):
+        stack._on_lane(failing)
+    assert calls["n"] == QUIET.read_retry_attempts
+    calls["n"] = 0
+    with pytest.raises(_Reject):
+        stack._on_lane(failing, retry_reads=False)
+    assert calls["n"] == 1

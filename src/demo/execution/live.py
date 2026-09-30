@@ -41,10 +41,12 @@ Safety properties (all tested against the fake broker, zero real MT5):
 from __future__ import annotations
 
 import asyncio
+import collections
 import concurrent.futures
 import contextlib
 import hashlib
 import json
+import logging
 import os
 import threading
 import time
@@ -127,6 +129,7 @@ from nautilus_mt5.symbols import SymbolRegistry, demo_registry
 from risk.models import ReconciliationState
 
 ZERO = Decimal(0)
+_LOG = logging.getLogger(__name__)
 M5_SECONDS = 300
 MT5_TIMEFRAME_M5 = 5
 DEAL_TYPES_TRADE = (0, 1)
@@ -177,7 +180,12 @@ class StackConfig:
     deviation_points: int = 20
     max_quote_age_s: float = 30.0  # older => intent Rejected("stale_feed")
     feed_fatal_age_s: float = 180.0  # older => StackFailClosed("stale_feed")
-    clock_skew_s: float = 5.0  # quote timestamped this far in the FUTURE => clock anomaly
+    clock_skew_s: float = 5.0  # quote this far in the FUTURE => warning + reject that market (M4)
+    clock_fatal_skew_s: float = 60.0  # SUSTAINED skew above this => fatal clock_anomaly
+    server_tz_tolerance_s: float = 300.0  # start self-check: tick offset within this of a whole hour
+    read_retry_attempts: int = 3  # bounded retries of a failed lane READ (never of a write)
+    read_retry_backoff_s: float = 0.2  # sleep before retry n is n x this
+    clock_skew_sustain_obs: int = 3  # consecutive entry-time observations that make it "sustained"
     submit_wait_s: float = 35.0  # caller-side bound for one entry (adapter bound is 30 s)
     exposure_timeout_s: float = 30.0  # adapter lane timeout for exposure-changing operations
     flatten_wait_s: float = 35.0
@@ -186,7 +194,7 @@ class StackConfig:
     lock_heartbeat_s: float = 20.0  # lock is considered stale after 90 s
     sync_interval_s: float = 1.0
     start_timeout_s: float = 90.0
-    lookback_days: int = 30  # deal history for consecutive losses
+    lookback_days: int = 30  # deal history window (daily P&L, closures); the loss streak is UTC-day only
     close_grace_s: float = 90.0  # wait for exit deals to become visible before EXTERNAL/None
     flatten_max_failures: int = 3
     bar_settle_s: float = 1.0  # a bar counts as closed this long after its nominal close
@@ -526,6 +534,11 @@ class Mt5DemoStack:
         self._disconnected_since: float | None = None
         self._last_reconcile_attempt = 0.0
         self._flatten_failures: dict[str, int] = {}
+        self._skew_obs: collections.deque[float] = collections.deque(
+            maxlen=max(1, self._cfg.clock_skew_sustain_obs)
+        )
+        self.server_vs_local_offset_s: float | None = None  # start self-check (local - tick UTC)
+        self.max_clock_skew_s: float = 0.0  # logged metric: largest future skew seen (seconds)
         self._last_snap = _Snap()
         self._closing_seen: dict[str, float] = {}
         self._foreign: tuple[str, ...] = ()
@@ -576,22 +589,47 @@ class Mt5DemoStack:
     def halt_new_exposure(self, reason: str) -> None:
         self._halt(reason)
 
-    def _on_lane(self, fn: Callable[..., Any], *args: Any, timeout: float | None = None) -> Any:
-        """Run ``fn`` on the MT5 lane thread and wait. Broker-call failures become fail-closed."""
+    def _on_lane(
+        self,
+        fn: Callable[..., Any],
+        *args: Any,
+        timeout: float | None = None,
+        retry_reads: bool = True,
+        strict: bool = False,
+    ) -> Any:
+        """Run ``fn`` on the MT5 lane thread and wait. Broker-call failures become fail-closed.
+
+        A failed MT5 READ while the terminal is still attached is retried a bounded number of times
+        with a short backoff (M6): reads are safe to repeat and a single transient IPC hiccup must
+        not kill the runner. ``retry_reads=False`` is mandatory for anything that can change the
+        broker (exposure-changing requests are NEVER retried). Persistent failure raises
+        ``_Reject(broker_call_failed)``, or ``StackFailClosed`` when ``strict`` (callers that cannot
+        turn a soft refusal into an event: has_position / on_clock / flatten / poll)."""
         if self._lane is None:
             raise StackFailClosed("stack_not_started")
         limit = self._cfg.lane_call_timeout_s if timeout is None else timeout
-        try:
-            return self._lane.run_sync(fn, *args, timeout=limit)
-        except LaneTimeout as exc:
-            # A blocked C call cannot be cancelled: the terminal state is unknown => fail closed.
-            self._set_fatal("mt5_lane_timeout")
-            raise StackFailClosed("mt5_lane_timeout") from exc
-        except Mt5CallError as exc:
-            session = self._adapter.session if self._adapter else None
-            if session is None or session.state is not SessionState.CONNECTED:
-                raise StackFailClosed(f"broker_disconnect:{exc.what}") from exc
-            raise _Reject(G.R_BROKER_CALL_FAILED) from exc
+        attempts = max(1, self._cfg.read_retry_attempts) if retry_reads else 1
+        for attempt in range(1, attempts + 1):
+            try:
+                return self._lane.run_sync(fn, *args, timeout=limit)
+            except LaneTimeout as exc:
+                # A blocked C call cannot be cancelled: the terminal state is unknown => fail closed.
+                self._set_fatal("mt5_lane_timeout")
+                raise StackFailClosed("mt5_lane_timeout") from exc
+            except Mt5CallError as exc:
+                session = self._adapter.session if self._adapter else None
+                if session is None or session.state is not SessionState.CONNECTED:
+                    raise StackFailClosed(f"broker_disconnect:{exc.what}") from exc
+                if attempt < attempts:
+                    _LOG.warning(
+                        "MT5 read %s failed (%s), retry %d/%d", exc.what, fn.__name__, attempt, attempts
+                    )
+                    time.sleep(self._cfg.read_retry_backoff_s * attempt)
+                    continue
+                if strict:
+                    raise StackFailClosed(f"broker_call_failed_persistent:{exc.what}") from exc
+                raise _Reject(G.R_BROKER_CALL_FAILED) from exc
+        raise AssertionError("unreachable")  # pragma: no cover
 
     # ---------------------------------------------------------------------------------- start
 
@@ -667,6 +705,7 @@ class Mt5DemoStack:
                 exposure_timeout_secs=self._cfg.exposure_timeout_s,
                 dry_run=self._dry_run,
                 require_demo_account=True,
+                expected_server=self._cfg.expected_server or self._connection.server or None,
             ),
             data_config=Mt5DataClientConfig(autostart_poller=False),
             allow_multiplier_and_cross_currency=True,
@@ -744,7 +783,12 @@ class Mt5DemoStack:
         if str(account.currency) != self._cfg.account_currency:
             raise StackFailClosed(f"unsupported_account_currency:{account.currency}")
         if int(account.leverage) > int(BROKER_LEVERAGE_CEILING):
-            raise StackFailClosed("broker_leverage_above_ceiling")
+            raise StackFailClosed(
+                f"broker_leverage_above_ceiling: observed account leverage 1:{int(account.leverage)} "
+                f"is above the hard {int(BROKER_LEVERAGE_CEILING)}x ceiling; refusing to start "
+                f"(the ceiling is never raised: use an account with leverage <= "
+                f"{int(BROKER_LEVERAGE_CEILING)})"
+            )
         session.account_mode()  # RETAIL_NETTING only, else UnsupportedAccountMode
         markets: dict[str, _MarketInfo] = {}
         for mapping in self._symbols.all():
@@ -786,6 +830,49 @@ class Mt5DemoStack:
             if canonical not in markets:
                 raise StackFailClosed(f"market_not_registered:{canonical}")
         self._markets = markets
+        self._check_server_time_offset(session)
+
+    def _check_server_time_offset(self, session: Any) -> None:
+        """Start-up self-check of the INFERRED server timezone (M5).
+
+        ``history.py`` infers Europe/Berlin (NOT_BROKER_CONFIRMED). If that inference is wrong (a
+        DST change, e.g. 2026-10-25, or a server on another zone), every quote timestamp shifts by
+        a whole number of hours. The newest tick of all markets, converted with the time policy,
+        must land near the local UTC clock; landing within ``server_tz_tolerance_s`` of a NONZERO
+        whole 1-2 hour offset is the DST / wrong-zone signature => fail closed with a clear
+        message. Any other age (weekend, closed market) cannot be judged and is only logged. The
+        measured offset (local_now - tick_utc, seconds) is published in ``AccountSnapshot.extra``.
+        """
+        newest: datetime | None = None
+        for info in self._markets.values():
+            try:
+                tick = session.call(
+                    "symbol_info_tick", session.client.symbol_info_tick, info.broker_symbol
+                )
+                moment = session.time_policy.server_epoch_to_utc(
+                    float(getattr(tick, "time_msc", 0) or tick.time * 1000) / 1000.0
+                )
+            except (Mt5CallError, AmbiguousServerTime):
+                continue
+            if newest is None or moment > newest:
+                newest = moment
+        if newest is None:
+            self._start_notes["server_time_check"] = "no_tick_available"
+            return
+        delta = (self._now().astimezone(UTC) - newest).total_seconds()  # + = tick is in the past
+        self.server_vs_local_offset_s = delta
+        self._start_notes["server_vs_local_offset_s"] = round(delta, 1)
+        hours = round(abs(delta) / 3600.0)
+        if (
+            hours in (1, 2)
+            and abs(abs(delta) - 3600.0 * hours) <= self._cfg.server_tz_tolerance_s
+        ):
+            raise StackFailClosed(
+                f"server_time_offset_mismatch: the newest tick converted with the assumed server "
+                f"timezone is {delta:+.0f}s ({hours} h) away from the local UTC clock; the inferred "
+                f"Europe/Berlin server time is probably wrong (DST change or another server zone). "
+                f"Refusing to start: quote freshness cannot be trusted"
+            )
 
     # -- restart adoption ---------------------------------------------------------------------------
 
@@ -987,6 +1074,7 @@ class Mt5DemoStack:
                 "foreign_positions": list(self._foreign),
                 "spec_diffs": {m: list(i.diffs) for m, i in self._markets.items() if i.diffs},
                 "start_notes": dict(self._start_notes),
+                "server_vs_local_offset_s": self.server_vs_local_offset_s,
                 "lane_max_concurrent": self._lane.stats.max_concurrent,
             },
         )
@@ -1031,7 +1119,7 @@ class Mt5DemoStack:
             for r in self._registry.open_for_market(market)
         ):
             return True
-        return bool(self._on_lane(self._lane_symbol_positions, info.broker_symbol))
+        return bool(self._on_lane(self._lane_symbol_positions, info.broker_symbol, strict=True))
 
     def _lane_symbol_positions(self, broker_symbol: str) -> list[Any]:
         assert self._adapter is not None
@@ -1204,7 +1292,8 @@ class Mt5DemoStack:
         atr = self._decimal_or_none(context.get("atr"))
         multiplier = self._decimal_or_none(context.get("risk_budget_multiplier"))
         parity = parity_reject(
-            intent, bid=prepared.bid, ask=prepared.ask, max_spread=info.spec.max_spread
+            intent, bid=prepared.bid, ask=prepared.ask, max_spread=info.spec.max_spread,
+            tick_size=info.spec.tick_size,
         )
         if parity:
             pre = self._gate.size(
@@ -1357,9 +1446,34 @@ class Mt5DemoStack:
         if status == "dry_run_ok":
             self._registry.update(intent.intent_id, status=reg.SHADOW, detail=outcome.reason[:200])
             return [accepted]
-        confirm = self._on_lane(
-            self._lane_confirm_entry, info, intent, prepared, sent_at, latency_ms
-        )
+        # Unknown send outcome (no adapter verdict within the bound / strategy failure): record the
+        # doubt and latch the halt BEFORE the broker read, so no disconnect / lane error during the
+        # confirmation can leave the row SENT or new exposure un-halted (H3).
+        unknown_outcome = status not in ("filled", "denied", "rejected", "protection_denied")
+        if unknown_outcome:
+            self._registry.update(intent.intent_id, status=reg.IN_DOUBT, detail=outcome.reason[:200])
+            self._halt(G.R_OUTCOME_UNKNOWN)
+        try:
+            confirm = self._on_lane(
+                self._lane_confirm_entry, info, intent, prepared, sent_at, latency_ms
+            )
+        except (StackFailClosed, _Reject) as exc:
+            if status in ("denied", "rejected"):
+                # the adapter refused before any send: nothing to confirm; the poll loop still
+                # catches any position that could exist later
+                confirm = None
+            else:
+                # the broker read failed (disconnect / degraded session / lane error): the outcome
+                # is UNKNOWN. Never retried, never raised past submit(); reconciliation settles it.
+                self._registry.update(
+                    intent.intent_id, status=reg.IN_DOUBT,
+                    detail=f"confirm_failed:{type(exc).__name__}:{exc}"[:200],
+                )
+                self._halt(G.R_OUTCOME_UNKNOWN)
+                detail["confirm_error"] = str(exc)[:200]
+                return self._reject_after_accept(
+                    intent, accepted, G.R_OUTCOME_UNKNOWN, detail, context
+                )
         if confirm is None:
             if status in ("denied", "rejected"):
                 reason = _machine_refusal(outcome.reason)
@@ -1395,7 +1509,7 @@ class Mt5DemoStack:
         self._flatten(info, tag=f"protection-fail:{intent.intent_id}", hint="MANUAL")
         row = self._registry.get(intent.intent_id)
         if row is not None:
-            closed = self._on_lane(self._lane_build_closed, row)
+            closed = self._on_lane(self._lane_build_closed, row, strict=True)
             if closed is not None:
                 events.append(closed)
         events.extend(
@@ -1445,7 +1559,7 @@ class Mt5DemoStack:
             outcome: JobOutcome = job.future.result(timeout=self._cfg.flatten_wait_s)
         except concurrent.futures.TimeoutError:
             outcome = JobOutcome("failed", "flatten_timeout")
-        still_open = self._on_lane(self._lane_symbol_positions, info.broker_symbol)
+        still_open = self._on_lane(self._lane_symbol_positions, info.broker_symbol, strict=True)
         if outcome.status == "flat" and not still_open:
             self._flatten_failures.pop(info.canonical, None)
             return True
@@ -1486,7 +1600,10 @@ class Mt5DemoStack:
             self._set_fatal("unexpected_server")
             raise StackFailClosed("unexpected_server")
         if int(account.leverage) > int(BROKER_LEVERAGE_CEILING):
-            raise StackFailClosed("broker_leverage_above_ceiling")
+            raise StackFailClosed(
+                f"broker_leverage_above_ceiling: observed account leverage 1:{int(account.leverage)} "
+                f"is above the hard {int(BROKER_LEVERAGE_CEILING)}x ceiling"
+            )
         # New exposure needs a FRESH venue-snapshot comparison (read-only): the last comparison may
         # predate a manual trade, a foreign working order or a lost response.
         adapter.exec_client.reconcile()
@@ -1547,13 +1664,27 @@ class Mt5DemoStack:
                 realized_today += net
             elif not exact:
                 realized_today += min(net, ZERO)  # unknown day: losses only (fail closed)
-            by_position.setdefault(int(d.position_id), []).append((when, net, int(d.entry)))
+            by_position.setdefault(int(d.position_id), []).append(
+                (when, net, int(d.entry), int(getattr(d, "magic", 0) or 0) == self._cfg.magic)
+            )
         open_ids = {int(p.ticket) for p in positions}
+        # Consecutive-loss streak (limit ``max_consecutive_losses``): ONLY our own trades (deals
+        # carrying our magic; manual / foreign trades neither count nor break the streak) that
+        # CLOSED in the current UTC trading day. It therefore resets every UTC day and can never
+        # become a permanent block that only a win could lift (M3). The 30-day deal lookback is
+        # still used for other purposes, never for this counter.
         closed = []
         for pid, items in by_position.items():
-            if pid in open_ids or not any(e in (ENTRY_OUT, ENTRY_INOUT, ENTRY_OUT_BY) for _, _, e in items):
+            if pid in open_ids or not any(
+                e in (ENTRY_OUT, ENTRY_INOUT, ENTRY_OUT_BY) for _, _, e, _ in items
+            ):
                 continue
-            closed.append((max(t for t, _, _ in items), sum((n for _, n, _ in items), ZERO)))
+            if not any(own for _, _, _, own in items):
+                continue  # not ours
+            closed_at = max(t for t, _, _, _ in items)
+            if closed_at < day_start:
+                continue  # previous UTC day
+            closed.append((closed_at, sum((n for _, n, _, _ in items), ZERO)))
         closed.sort(key=lambda item: item[0])
         losses = 0
         for _, net in reversed(closed):
@@ -1649,9 +1780,7 @@ class Mt5DemoStack:
         except AmbiguousServerTime:
             raise StackFailClosed("ambiguous_server_time") from None
         age = (now - quote_utc).total_seconds()
-        if age < -self._cfg.clock_skew_s:
-            self._set_fatal("clock_anomaly")
-            raise StackFailClosed("clock_anomaly")
+        self._check_clock_skew(-age, intent.market)
         if age > self._cfg.feed_fatal_age_s:
             raise StackFailClosed("stale_feed")
         if age > self._cfg.max_quote_age_s:
@@ -1696,6 +1825,29 @@ class Mt5DemoStack:
             bid=bid, ask=ask, quote_utc=quote_utc, account=gate_account, facts=facts,
             positions_seen=len(positions), existing=existing, existing_family=family,
         )
+
+    def _check_clock_skew(self, skew_s: float, market: str) -> None:
+        """Server quote AHEAD of the local clock by ``skew_s`` seconds (M4).
+
+        The quote time is the broker-derived UTC (session time policy). A small skew (a PC clock a
+        few seconds slow) is a logged warning + metric and a TEMPORARY reject of this market only;
+        the stack keeps running and the market recovers when the clocks agree again. Only a
+        SUSTAINED skew above ``clock_fatal_skew_s`` (the last ``clock_skew_sustain_obs``
+        observations ALL above it) means the local clock cannot be trusted: fatal."""
+        self._skew_obs.append(skew_s)
+        if skew_s > self.max_clock_skew_s:
+            self.max_clock_skew_s = skew_s
+        if skew_s <= self._cfg.clock_skew_s:
+            return
+        _LOG.warning("clock skew: %s quote is %.1fs ahead of the local clock", market, skew_s)
+        sustained = (
+            len(self._skew_obs) == self._skew_obs.maxlen
+            and min(self._skew_obs) > self._cfg.clock_fatal_skew_s
+        )
+        if sustained:
+            self._set_fatal("clock_anomaly")
+            raise StackFailClosed("clock_anomaly")
+        raise _Reject(G.R_CLOCK_SKEW)
 
     def _lane_margin_per_lot(
         self, intent: TradeIntent, info: _MarketInfo, price: Decimal
@@ -2013,7 +2165,7 @@ class Mt5DemoStack:
         self._halt("unprotected_position")
         if row is not None:
             try:
-                denial = self._on_lane(self._lane_protect, ticket, Decimal(row.stop))
+                denial = self._on_lane(self._lane_protect, ticket, Decimal(row.stop), retry_reads=False)
             except (StackFailClosed, _Reject):
                 denial = "protect_unavailable"
             if denial is None:
@@ -2028,7 +2180,7 @@ class Mt5DemoStack:
         if row is None:
             return []
         fresh = self._registry.get(row.intent_id) if self._registry else None
-        closed = self._on_lane(self._lane_build_closed, fresh or row)
+        closed = self._on_lane(self._lane_build_closed, fresh or row, strict=True)
         return [closed] if closed is not None else []
 
     def _lane_protect(self, ticket: int, stop: Decimal) -> str | None:
@@ -2044,7 +2196,7 @@ class Mt5DemoStack:
         return None
 
     def _repair_unprotected_at_start(self) -> None:
-        repairs = self._on_lane(self._lane_unprotected_positions)
+        repairs = self._on_lane(self._lane_unprotected_positions, strict=True)
         for row, position in repairs:
             self._add_pending(*self._repair_protection(row, position))
 
@@ -2068,13 +2220,13 @@ class Mt5DemoStack:
                 if row.forced_flat_utc is None or current < parse_utc(row.forced_flat_utc):
                     continue
                 info = self._markets[row.market]
-                still_open = self._on_lane(self._lane_symbol_positions, info.broker_symbol)
+                still_open = self._on_lane(self._lane_symbol_positions, info.broker_symbol, strict=True)
                 if still_open and not self._flatten(
                     info, tag=f"forced-flat:{row.intent_id}", hint="SESSION_END"
                 ):
                     continue
                 fresh = self._registry.get(row.intent_id) or row
-                closed = self._on_lane(self._lane_build_closed, fresh)
+                closed = self._on_lane(self._lane_build_closed, fresh, strict=True)
                 if closed is not None:
                     events.append(closed)
             return events

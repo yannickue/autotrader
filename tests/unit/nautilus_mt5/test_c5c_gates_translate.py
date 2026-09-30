@@ -82,6 +82,20 @@ def test_reduce_only_allowed_when_ready_or_halted_if_reconciled_only():
         assert not admit(OutboundKind.REDUCE_ONLY, status(RuntimeMode.HALTED, state)).ok
 
 
+def test_verified_reduce_only_is_admitted_in_any_state_but_nothing_else_is():
+    for state in (
+        ReconciliationState.NOT_RECONCILED,
+        ReconciliationState.RECONCILING,
+        ReconciliationState.MISMATCH,
+    ):
+        for runtime in RuntimeMode:
+            s = status(runtime, state)
+            assert admit(OutboundKind.REDUCE_ONLY, s, position_verified=True).ok
+            assert not admit(OutboundKind.REDUCE_ONLY, s).ok
+            for kind in (OutboundKind.NEW_EXPOSURE, OutboundKind.PROTECT_LOOSEN_REMOVE):
+                assert not admit(kind, s, position_verified=True).ok
+
+
 def test_unprotected_position_blocks_new_exposure_but_not_reduce_only():
     s = status(RuntimeMode.READY, RECONCILED, unprotected=True)
     assert not admit(OutboundKind.NEW_EXPOSURE, s).ok

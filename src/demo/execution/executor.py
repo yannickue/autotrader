@@ -145,7 +145,9 @@ class DemoExecutor:
             Decimal(str(intent.target)) if intent.target is not None else None
         )
         entry_ref = Decimal(str(intent.entry_ref))
-        parity_reason = parity_reject(intent, bid=bid, ask=ask, max_spread=spec.max_spread)
+        parity_reason = parity_reject(
+            intent, bid=bid, ask=ask, max_spread=spec.max_spread, tick_size=spec.tick_size
+        )
         if parity_reason:
             result = self._reject(intent, parity_reason)
             self._results[intent.intent_id] = result

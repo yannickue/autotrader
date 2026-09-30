@@ -226,6 +226,8 @@ class Mt5ExecClientConfig:
     # Re-verify the attached account (expected login) and, when True, DEMO trade mode right
     # before EVERY exposure-changing order_send / SL-TP change.
     require_demo_account: bool = False
+    # When set, the attached account's server must equal it right before every send (L1).
+    expected_server: str | None = None
 
 
 @dataclass(slots=True)
@@ -711,6 +713,10 @@ class Mt5LiveExecutionClient(LiveExecutionClient):
             return "ACCOUNT_IDENTITY_CHANGED"
         if self._cfg.require_demo_account and int(account.trade_mode) != 0:
             return "ACCOUNT_IS_NOT_DEMO"
+        if self._cfg.expected_server and str(getattr(account, "server", "")) != str(
+            self._cfg.expected_server
+        ):
+            return "ACCOUNT_SERVER_CHANGED"
         return None
 
     def local_view(self) -> LocalView:
@@ -805,6 +811,7 @@ class Mt5LiveExecutionClient(LiveExecutionClient):
         start, end = self._history_window()
         history = self._call("history_orders_get", client.history_orders_get, start, end)
         by_token = {str(o.comment).split("[")[0].strip(): o for o in history if o.comment}
+        other_trace: set[str] | None = None  # tokens seen in open orders / positions / deals
         for row in self._store.unresolved():
             if row.parent_client_order_id:
                 continue  # children are resolved together with their parent
@@ -831,8 +838,21 @@ class Mt5LiveExecutionClient(LiveExecutionClient):
                     )
                 continue  # its deals (if any) were/are ingested by sync_once via the token
             age = self._now() - datetime.fromtimestamp(row.created_ns / NS, tz=UTC)
-            if age >= self._cfg.in_doubt_grace and order is not None:
-                self._store.update_order(row.client_order_id, status="REJECTED")
+            if age < self._cfg.in_doubt_grace:
+                continue
+            if other_trace is None:
+                other_trace = self._broker_trace_tokens()
+            if row.token in other_trace:
+                continue  # broker shows the order/position/deal: adopted via ingest
+            # No trace at the broker (history, open orders, positions, deals of the lookback) after
+            # the grace period: the send never happened. Decided from BROKER TRUTH, so it works
+            # after a restart too, when the Nautilus cache is empty (order is None). Never re-sent.
+            self._store.update_order(row.client_order_id, status="REJECTED")
+            self.audit.append(
+                f"NO_TRACE {row.client_order_id} token={row.token}: no order/position/deal at the "
+                f"broker within the lookback; marked REJECTED, NOT re-sent"
+            )
+            if order is not None:
                 self.generate_order_rejected(
                     order.strategy_id,
                     order.instrument_id,
@@ -841,6 +861,20 @@ class Mt5LiveExecutionClient(LiveExecutionClient):
                     self._now_ns(),
                 )
                 self._deny_children(order, "PARENT_NO_BROKER_RECORD")
+            else:
+                for child in self._store.children_of(row.client_order_id):
+                    if child.status in ("INTENT", "SENT", "IN_DOUBT", "ACCEPTED"):
+                        self._store.update_order(child.client_order_id, status="REJECTED")
+
+    def _broker_trace_tokens(self) -> set[str]:
+        """Tokens of OUR requests visible anywhere at the broker (open orders, positions, deals)."""
+        comments: list[str] = []
+        comments.extend(o.comment for o in self._broker_open_orders())
+        comments.extend(p.comment for p in self._broker_positions())
+        comments.extend(
+            d.comment for d in self._broker_deals(self._now() - self._cfg.deal_lookback)
+        )
+        return {str(c).split("[")[0].strip() for c in comments if c}
 
     # ------------------------------------------------------------- controlled sync --
 
@@ -929,16 +963,27 @@ class Mt5LiveExecutionClient(LiveExecutionClient):
         else:
             self._deny(order, f"UNSUPPORTED_ORDER_TYPE_{order.order_type.name}")
 
-    def _prepare(self, order: Any, kind: OutboundKind, *, position_verified: bool = False) -> Any:
-        """Shared pre-flight: session, gate. Returns spec+mapping or None (already denied)."""
+    def _prepare(
+        self,
+        order: Any,
+        kind: OutboundKind,
+        *,
+        position_verified: bool = False,
+        defer_admission: bool = False,
+    ) -> Any:
+        """Shared pre-flight: session, gate. Returns spec+mapping or None (already denied).
+
+        ``defer_admission``: the caller admits itself after reading the broker position (the
+        reduce-only path, whose gate depends on a broker-verified own position)."""
         self._check_generation()
         if not self._session.is_connected:
             self._deny(order, f"SESSION_{self._session.state.value}")
             return None
-        admission = admit(kind, self.status, position_verified=position_verified)
-        if not admission.ok:
-            self._deny(order, admission.reason)
-            return None
+        if not defer_admission:
+            admission = admit(kind, self.status, position_verified=position_verified)
+            if not admission.ok:
+                self._deny(order, admission.reason)
+                return None
         mapping = self._provider.registry.by_instrument_id(order.instrument_id)
         return mapping, self._provider.spec(order.instrument_id)
 
@@ -1016,22 +1061,41 @@ class Mt5LiveExecutionClient(LiveExecutionClient):
         self._send_market(order, request, mapping.instrument_id, sl_order, tp_order)
 
     def _submit_reduce_only(self, order: Any) -> None:
-        prepared = self._prepare(order, OutboundKind.REDUCE_ONLY)
+        prepared = self._prepare(order, OutboundKind.REDUCE_ONLY, defer_admission=True)
         if prepared is None:
             return
         mapping, spec = prepared
         try:
             positions = self._broker_positions(mapping.broker_symbol)
+            base = admit(OutboundKind.REDUCE_ONLY, self.status)  # normal (reconciled) authority
             if len(positions) != 1:
-                return self._deny(order, f"REDUCE_ONLY_BROKER_POSITIONS_{len(positions)}")
+                return self._deny(
+                    order,
+                    f"REDUCE_ONLY_BROKER_POSITIONS_{len(positions)}"
+                    if base.ok
+                    else base.reason,
+                )
             position = positions[0]
-            broker_signed = position.volume if str(position.side) == "BUY" else -position.volume
-            if self._local_signed(order.instrument_id) != broker_signed:
-                return self._deny(order, "REDUCE_ONLY_LOCAL_BROKER_POSITION_MISMATCH")
             position_is_long = str(position.side) == "BUY"
+            quantity = Decimal(str(order.quantity))
+            # A position read from the broker just now, OWN (our magic), closed by an order on the
+            # opposite side that is not larger than the position can only REDUCE exposure: it is
+            # allowed in every runtime/reconciliation state (the flatten of last resort).
+            verified = (
+                int(position.magic) == int(self._cfg.magic)
+                and (order.side == OrderSide.SELL) == position_is_long
+                and quantity <= position.volume
+            )
+            admission = admit(OutboundKind.REDUCE_ONLY, self.status, position_verified=verified)
+            if not admission.ok:
+                return self._deny(order, admission.reason)
+            broker_signed = position.volume if position_is_long else -position.volume
+            if base.ok and self._local_signed(order.instrument_id) != broker_signed:
+                # Only enforced under normal authority; an unreconciled state is exactly when
+                # local bookkeeping may be stale, and broker truth already proves the reduction.
+                return self._deny(order, "REDUCE_ONLY_LOCAL_BROKER_POSITION_MISMATCH")
             if (order.side == OrderSide.SELL) != position_is_long:
                 return self._deny(order, "REDUCE_ONLY_WRONG_SIDE")
-            quantity = Decimal(str(order.quantity))
             if quantity > position.volume:
                 return self._deny(order, "REDUCE_ONLY_EXCEEDS_POSITION")  # never clamp silently
             token = self._store.record_intent(

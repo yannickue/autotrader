@@ -114,6 +114,11 @@ R_NO_BROKER_RECORD = "no_broker_record"
 R_EXECUTION_DENIED = "execution_denied"
 R_NO_STOP = "no_stop"
 R_QUANTITY_PRECISION = "quantity_precision"
+R_CLOCK_SKEW = "clock_skew"
+
+# entry-drift tolerance default (parity.entry_tolerance): max(2 x current spread, 2 x tick)
+ENTRY_TOLERANCE_SPREAD_MULTIPLE = 2
+ENTRY_TOLERANCE_TICK_MULTIPLE = 2
 
 _G = Gate
 S, T, Q, L, X = (
@@ -175,9 +180,10 @@ _ENTRIES: tuple[Gate, ...] = (
     _G(R_NO_BROKER_RECORD, S, True, "send never reached the broker (resolved by reconciliation)"),
     _G(R_EXECUTION_DENIED, S, True, "execution layer denied the order (see suffix)"),
     _G(R_NO_STOP, S, True, "a broker-side stop is mandatory for every entry"),
+    _G(R_CLOCK_SKEW, S, True, "server quote ahead of the local clock by more than the tolerance but below the fatal threshold: this market is rejected temporarily (logged metric), the stack keeps running"),
     _G(R_QUANTITY_PRECISION, T, True, "quantity not representable on the instrument step"),
     # -- STRUCTURAL ----------------------------------------------------------------------------------------
-    _G(R_ENTRY_OVERSHOOT, T, True, "intent geometry: executable price is already beyond the intended entry on the adverse side"),
+    _G(R_ENTRY_OVERSHOOT, T, True, "intent geometry: the executable price drifted beyond the intended entry on the adverse side by MORE than the tolerance (TradeIntent.entry_tolerance, else max(2 x spread, 2 x tick))"),
     _G(R_TARGET_CROSSED, T, True, "intent geometry: the target is already crossed at the executable price"),
     _G(R_STOP_LEVEL, T, True, "broker constraint: stop inside the broker minimum stop distance"),
     _G(R_INVALID_VOLUME, T, True, "broker constraint: volume outside min/max/step"),
@@ -203,8 +209,9 @@ _ENTRIES: tuple[Gate, ...] = (
     _G("unexpected_server", S, True, "attached server differs from the expected DEMO server", emits="fatal"),
     _G("account_server_unknown", S, True, "server name unreadable", emits="fatal"),
     _G("unsupported_account_currency", S, True, "account currency not EUR", emits="fatal"),
-    _G("broker_leverage_above_ceiling", S, True, "account leverage above the hard 30x ceiling", emits="fatal"),
-    _G("clock_anomaly", S, True, "server quote timestamped in the future: local clock cannot be trusted", emits="fatal"),
+    _G("broker_leverage_above_ceiling", S, True, "account leverage above the hard 30x ceiling (the observed leverage is part of the message; the ceiling is never raised)", emits="fatal"),
+    _G("clock_anomaly", S, True, "server quote SUSTAINEDLY (last N observations) ahead of the local clock by more than clock_fatal_skew_s: local clock cannot be trusted", emits="fatal"),
+    _G("server_time_offset_mismatch", S, True, "start self-check: the newest tick, converted with the inferred server timezone, is a whole 1-2 hours away from the local UTC clock (DST change / wrong zone): quote freshness cannot be trusted", emits="fatal"),
     _G("ambiguous_server_time", S, True, "newest tick inside an ambiguous DST hour", emits="fatal"),
     _G("unprotected_exposure", S, True, "own exposure without a broker stop", emits="fatal"),
     _G("terminal_lock_lost", S, True, "single-owner terminal lock lost", emits="fatal"),
