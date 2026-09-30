@@ -11,10 +11,10 @@ Two modes over the SAME frozen production spec and the SAME static demo policy:
 * ``mode="stream"`` (slow, ~50 ms per bar): drives the real ``OpportunityEngine`` bar by bar over a
   ``ReplayBarSource`` and returns full ``(OpportunitySnapshot, Decision)`` pairs.
 
-Position gating (``ONE_POSITION_PER_INSTRUMENT``) needs to know how long an accepted trade would be open.
-``SimplePositionTracker`` walks the following BID bars (stop first, then target, then the spec's clock
-exit, then day end) -- a conservative flow model, NOT a P&L simulation. The result reports the flow
-with and without that gating.
+There is NO position gating: the engine emits every technically valid opportunity (same-symbol
+add-on handling belongs to the execution stack). ``SimplePositionTracker`` is retained only as an
+optional analysis oracle ("how many of these would overlap a still-open earlier one?") and is never
+consulted by the policy or the engine.
 
 Nothing at or after 2026-09-01 can be replayed (``dev_frame`` refuses it).
 """
@@ -70,9 +70,6 @@ class ReplayResult:
     def summary(self) -> dict[str, Any]:
         n = len(self.rows)
         acc = sum(1 for r in self.rows if r.accepted)
-        no_pos = sum(
-            1 for r in self.rows if r.accepted or r.reasons == ("ONE_POSITION_PER_INSTRUMENT",)
-        )
         days = max(1, self.n_active_days)
         reasons: Counter[str] = Counter()
         for r in self.rows:
@@ -83,8 +80,6 @@ class ReplayResult:
             "market": self.market, "start": self.start, "end": self.end, "mode": self.mode,
             "active_days": self.n_active_days, "opportunities": n, "accepted": acc,
             "opportunities_per_day": round(n / days, 2),
-            "valid_before_position_gate": no_pos,
-            "valid_before_position_gate_per_day": round(no_pos / days, 2),
             "accepted_per_day": round(acc / days, 2),
             "reason_histogram": dict(sorted(reasons.items(), key=lambda kv: -kv[1])),
             "by_family": dict(sorted(fam.items())),
@@ -222,24 +217,12 @@ def _batch(
                 continue
             items.append((i, order, make_candidate(market, ms, fs, data, cands, k), fs))
     items.sort(key=lambda x: (x[0], x[1]))
-    tracker = SimplePositionTracker()
     seen = InMemorySeenStore()
-    pending_bar = -1
-    pending_accept = False
-    for i, _order, cand, fs in items:
-        if i != pending_bar:
-            pending_bar, pending_accept = i, False
-        tracker.now_bar_open_ns = int(data.ts_ns[i])
+    for _i, _order, cand, fs in items:
         if not seen.add_if_new(opportunity_id_of(cand)):
             continue
         quote = Quote(ts_utc=cand.signal_ts, bid=cand.close, ask=cand.close + cand.bar_spread)
-        a = pol.assess(
-            cand, quote, cand.signal_ts, ms,
-            position_open=pending_accept or tracker.is_open(market),
-        )
-        if a.accepted:
-            pending_accept = True
-            tracker.register(market, data, cand, a.exec_price, a.geometry.target)
+        a = pol.assess(cand, quote, cand.signal_ts, ms)
         result.rows.append(ReplayRow(
             cand.signal_ts.isoformat(), fs.family, fs.strategy_id, cand.direction, a.accepted, a.reasons,
         ))
@@ -252,20 +235,9 @@ def _stream(
     phase: Phase, t0: pd.Timestamp, t1: pd.Timestamp,
 ) -> ReplayResult:
     src = ReplayBarSource(frames, {m: s.point_size for m, s in mspecs.items()})
-    cal = MarketCalendar.from_market_spec(ms)
     fr = frames[market]
-    leaders = {
-        ld: build_leader_features(fr, frames[ld], MarketCalendar.from_market_spec(mspecs[ld]), ld)
-        for ld in leadlag.PAIRS.get(market, ()) if ld in frames
-    }
-    full = build_family_data(
-        fr, cal, name=market, point_size=ms.point_size, tick_size=ms.tick_size,
-        asset_class=ms.asset_class, cross=leaders,
-    )
-    tracker = SimplePositionTracker()
     engine = OpportunityEngine(
-        src, production=prod, market_specs=mspecs, policy=policy, phase=phase,
-        position_open=tracker.is_open, commit="replay",
+        src, production=prod, market_specs=mspecs, policy=policy, phase=phase, commit="replay",
     )
     ts = pd.DatetimeIndex(fr["ts"])
     for i in np.flatnonzero((ts >= t0 - pd.Timedelta(seconds=M5_SECONDS)) & (ts < t1)):
@@ -273,16 +245,12 @@ def _stream(
         if pd.Timestamp(now) < t0:
             continue
         src.set_time(now)
-        tracker.now_bar_open_ns = int(ts[i].value)
         for snap, dec in engine.on_m5_close(market, now):
             result.pairs.append((snap, dec))
             result.rows.append(ReplayRow(
                 snap.signal_ts_utc, snap.signal["family"], snap.signal["strategy_id"], snap.direction,
                 dec.accepted, dec.reasons,
             ))
-            if dec.accepted:
-                intent = engine.last_intents[-1]
-                tracker.register(market, full, engine.last_candidates[-1], intent.entry_ref, intent.target)
     return result
 
 
