@@ -329,7 +329,7 @@ class FakeMT5Broker:
         return self._guard("copy_ticks_range") and None
 
     def order_calc_margin(self, action, symbol, volume, price):
-        return volume * price * self.cfg.margin_rate
+        return volume * price * self.cfg.margin_rate * self._mult(symbol)
 
     def order_calc_profit(self, action, symbol, volume, price_open, price_close):
         sign = 1 if action == 0 else -1

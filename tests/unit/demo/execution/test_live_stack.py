@@ -378,56 +378,6 @@ def test_short_uses_the_bid_for_the_executable_price(env):
     assert broker.request_log[0]["type"] == 1
 
 
-def test_one_position_per_instrument_from_broker_truth(env):
-    _broker, stack = env
-    stack.start()
-    stack.submit(make_intent(intent_id="a"))
-    assert reason(stack.submit(make_intent(intent_id="b"))) == "position_exists"
-
-
-# -- risk policy in the live path --------------------------------------------------------------------------------
-
-
-def test_size_below_min_and_the_two_percent_min_lot_rule(tmp_path):
-    small = build_broker(balance=500.0)
-    stack = make_stack(small, tmp_path)
-    try:
-        stack.start()
-        # 1 % of 500 = 5 EUR is below one 0.25 lot at a 50-point stop (risk ~ 3.3 %): reject
-        assert reason(stack.submit(make_intent(intent_id="wide"))) == "size_below_min"
-        # a 20-point stop makes the min lot risk ~1.9 % of equity: allowed, actual risk recorded
-        events = stack.submit(make_intent(intent_id="tight", stop=24981.0, target=25100.0))
-        accepted = events[0]
-        assert kinds(events) == ["Accepted", "Fill", "ProtectionConfirmed"]
-        assert accepted.quantity == Decimal("0.25")
-        assert Decimal("0.01") < accepted.risk_fraction <= Decimal("0.02")
-    finally:
-        stack.stop()
-
-
-def test_total_open_risk_cap_of_four_percent_is_enforced_across_clusters(env):
-    broker, stack = env
-    stack.start()
-    plan = (
-        ("XAUUSD", "GOLD", 4170.0, 4150.0, 4215.0),
-        ("GER40", "Ger40", 25002.0, 24950.0, 25150.0),
-        ("NAS100", "UsaTec", 21002.0, 20950.0, 21150.0),
-        ("EURUSD", "EURUSD", 1.1701, 1.1650, 1.1800),  # 4 x ~0.98 % = ~3.9 %: inside the 4 % cap
-    )
-    for market, sym, entry, stop, target in plan:
-        events = stack.submit(
-            make_intent(intent_id=market, market=market, broker_symbol=sym, entry_ref=entry,
-                        stop=stop, target=target, min_space_r=1.0)
-        )
-        assert kinds(events)[-1] == "ProtectionConfirmed", (market, events)
-    events = stack.submit(
-        make_intent(intent_id="spx", market="SPX500", broker_symbol="Usa500", entry_ref=6001.0,
-                    stop=5980.0, target=6050.0, min_space_r=1.0)
-    )
-    assert reason(events) == "total_open_risk_limit" and kinds(events) == ["Rejected"]
-    assert len(broker.positions_get()) == 4
-
-
 def test_daily_loss_stop_halts_new_exposure(env):
     broker, stack = env
     inject_closed_trade(broker, profit=-650.0)  # start of day equity 10 650 -> -6.1 %

@@ -1,5 +1,5 @@
 # ruff: noqa: E501
-"""demo-discovery-policy-v1: pure risk gate (sizing, min-lot rule, cluster and loss limits)."""
+"""demo-discovery-policy-v1 gate: evaluator safety gates + DemoPositionSizer, full risk detail."""
 
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -15,9 +15,10 @@ from demo.execution.risk_policy import (
     GateAccount,
     MarketFacts,
     OpenRisk,
-    SizedApproval,
+    RiskOutcome,
     build_policy,
 )
+from demo.execution.sizing import RiskCaps
 from risk.models import MAX_SYSTEM_LEVERAGE
 
 NOW = datetime(2026, 10, 1, 9, 30, tzinfo=UTC)
@@ -55,141 +56,119 @@ def intent(market="GER40", *, stop=24950.0, entry=25000.0, rf=0.01, direction=1,
     return TradeIntent(**data)
 
 
-def size(acct=None, mkt=None, itn=None, bid="25000", ask="25001"):
-    return DemoRiskGate().size(
+def size(acct=None, mkt=None, itn=None, bid="25000", ask="25001", gate=None, **kw) -> RiskOutcome:
+    return (gate or DemoRiskGate()).size(
         intent=itn or intent(), market=mkt or ger40(), account=acct or account(),
-        bid=D(bid), ask=D(ask), quote_time=NOW, now=NOW,
+        bid=D(bid), ask=D(ask), quote_time=NOW, now=NOW, **kw,
     )
 
 
-def test_one_percent_risk_sizing_on_the_broker_step_and_policy_values():
-    result = size()
-    assert isinstance(result, SizedApproval)
-    assert result.policy_id == POLICY_ID == "demo-discovery-policy-v1"
-    assert result.quantity % D("0.25") == 0
-    assert D("0.009") < result.risk_fraction <= D("0.01")
-    assert result.risk_budget == D("100.00")
-    assert result.leverage < D("20") and not result.min_lot_override
-    policy = build_policy(account())
+def test_policy_values_are_configurable_caps_not_rules():
+    policy = build_policy(account(), RiskCaps())
+    assert policy.policy_id == POLICY_ID == "demo-discovery-policy-v1"
     assert policy.max_leverage == MAX_SYSTEM_LEVERAGE == D(30)
-    assert policy.max_daily_loss == D("600.00")  # 6 % of start-of-day equity
-    assert policy.max_drawdown == D("2500.00")  # 25 % of peak equity
+    assert policy.max_daily_loss == D("600.00") and policy.max_drawdown == D("2500.00")
     assert policy.max_consecutive_losses == 8
+    tweaked = build_policy(account(), RiskCaps(max_daily_loss_fraction=D("0.03")))
+    assert tweaked.max_daily_loss == D("300.00")
 
 
-def test_min_lot_is_used_only_if_risk_at_most_two_percent():
-    # equity 500: 1 % = 5 EUR -> below 0.25 lot; min lot with a tight 20-point stop risks ~1.9 %
-    ok = size(account("500"), itn=intent(stop=24981.0))
-    assert isinstance(ok, SizedApproval) and ok.min_lot_override
-    assert ok.quantity == D("0.25")
-    assert D("0.01") < ok.risk_fraction <= D("0.02")
-    assert ok.risk_budget == ok.risk_fraction * D(500)  # actual risk recorded, not the 1 % budget
+def test_approval_carries_the_actual_risk_and_the_full_detail():
+    out = size(family="BREAKOUT", atr=D(20))
+    assert out.reason is None and out.approval is not None
+    a = out.approval
+    assert a.quantity % D("0.25") == 0 and a.risk_fraction <= D("0.01")
+    assert a.risk_budget == D(100) and a.leverage < 20 and not a.min_lot_used
+    d = out.detail
+    assert d["decision"] == "TRADE" and d["policy_id"] == POLICY_ID
+    assert d["structural_stop"] == D("24950.0") and d["stop_distance"] == D("51")
+    assert d["family"] == "BREAKOUT" and d["stop_distance_atr"] == D("51") / 20
+    assert d["stop_risk_eur"] == a.stop_risk_money == a.quantity * D(51)
 
 
-def test_size_below_min_when_min_lot_risk_exceeds_two_percent():
-    assert size(account("500"), itn=intent(stop=24950.0)) == "size_below_min"
+def test_min_lot_is_accepted_with_whatever_actual_risk_it_has():
+    out = size(account("500"))
+    assert out.approval is not None and out.approval.min_lot_used
+    assert out.approval.quantity == D("0.25")
+    assert D("0.02") < out.approval.risk_fraction < D("0.05")
+    assert out.approval.risk_budget == D("5.00")  # the TARGET budget; the actual risk is larger
 
 
-def test_min_lot_never_bypasses_the_leverage_cap():
-    # min lot 0.25 x 25000 = 6250 notional vs equity 150 -> 41x > 30x hard ceiling
-    assert size(account("150"), itn=intent(stop=24995.0)) == "size_below_min"
+def test_min_lot_over_a_hard_cap_is_size_below_min_naming_the_cap():
+    out = size(account("500"), itn=intent(stop=24900.0))
+    assert out.reason == "size_below_min" and out.approval is None
+    assert out.detail["violated_cap"] == "max_position_stop_risk_fraction"
+    assert out.detail["gate_reject_class"] == "SAFETY" and out.detail["decision"] == "SKIP"
+    relaxed = size(account("500"), itn=intent(stop=24900.0),
+                   gate=DemoRiskGate(caps=RiskCaps(max_position_stop_risk_fraction=D("0.10"))))
+    assert relaxed.approval is not None  # the cap is configuration, not a universal rule
 
 
-def test_leverage_is_capped_at_the_hard_ceiling_never_a_target():
-    result = size(account("1000"), itn=intent(stop=24990.0), mkt=ger40(max_leverage=D(30)))
-    assert isinstance(result, SizedApproval)
-    assert result.leverage <= D(30)
+def test_daily_loss_drawdown_and_consecutive_loss_halts_remain():
+    assert size(account(realized_pnl_today=D(-500))).approval is not None
+    assert size(account(realized_pnl_today=D(-600))).reason == "daily_loss_limit"
+    assert size(account(realized_pnl_today=D(-300), unrealized_pnl=D(-300))).reason == "daily_loss_limit"
+    assert size(account("8000", peak_equity=D(10000))).approval is not None
+    assert size(account("7400", peak_equity=D(10000))).reason == "drawdown_limit"
+    assert size(account(consecutive_losses=7)).approval is not None
+    assert size(account(consecutive_losses=8)).reason == "consecutive_loss_limit"
+    out = size(account(realized_pnl_today=D(-700)))
+    assert out.detail["realized_pnl_today"] == D(-700) and out.reason == "daily_loss_limit"
 
 
-def test_risk_fraction_above_policy_cap_is_rejected():
-    assert size(itn=intent(rf=0.02)) == "risk_fraction_above_cap"
+def test_halt_thresholds_come_from_the_caps_dataclass():
+    gate = DemoRiskGate(caps=RiskCaps(max_consecutive_losses=3, max_daily_loss_fraction=D("0.02")))
+    assert size(account(consecutive_losses=3), gate=gate).reason == "consecutive_loss_limit"
+    assert size(account(realized_pnl_today=D(-250)), gate=gate).reason == "daily_loss_limit"
 
 
-def test_daily_loss_stop_is_six_percent_of_start_of_day_equity():
-    ok = size(account(realized_pnl_today=D(-500)))
-    assert isinstance(ok, SizedApproval)
-    assert size(account(realized_pnl_today=D(-600))) == "daily_loss_limit"
-    # floating loss counts as well
-    assert size(account(realized_pnl_today=D(-300), unrealized_pnl=D(-300))) == "daily_loss_limit"
-
-
-def test_max_drawdown_halt_is_25_percent_of_peak():
-    assert isinstance(size(account("8000", peak_equity=D(10000))), SizedApproval)
-    assert size(account("7400", peak_equity=D(10000))) == "drawdown_limit"
-
-
-def test_eight_consecutive_losses_halt():
-    assert isinstance(size(account(consecutive_losses=7)), SizedApproval)
-    assert size(account(consecutive_losses=8)) == "consecutive_loss_limit"
-
-
-def test_index_cluster_is_one_cluster_not_independent_positions():
+def test_cluster_open_risk_is_summed_across_nasdaq_spx_and_dax():
     assert CLUSTERS["GER40"] == CLUSTERS["NAS100"] == CLUSTERS["SPX500"] == "INDEX"
-    assert CLUSTERS["XAUUSD"] == "METAL" and CLUSTERS["EURUSD"] == "FX"
-    two_open = tuple(OpenRisk(market=m, cluster="INDEX", risk_money=D(125)) for m in ("NAS100", "SPX500"))
-    # 250 EUR open (2.5 %) + ~1 % new > 3 % cluster cap, though far below the 4 % total cap
-    assert size(account(open_risks=two_open)) == "cluster_risk_limit"
-    # the same open risk does not block another cluster
+    two_open = tuple(
+        OpenRisk(market=m, cluster="INDEX", risk_money=D(85), family="F") for m in ("NAS100", "SPX500")
+    )
+    gate = DemoRiskGate(caps=RiskCaps(max_cluster_stop_risk_fraction=D("0.018")))
+    out = size(account(open_risks=two_open), gate=gate)
+    assert out.reason == "size_below_min" and out.detail["violated_cap"] == "max_cluster_stop_risk_fraction"
+    assert out.detail["cluster_risk_before"] == 170 and out.detail["cluster"] == "INDEX"
     metal = size(
         account(open_risks=two_open),
-        mkt=MarketFacts(
-            market="XAUUSD", contract_size=D(100), volume_min=D("0.01"), volume_step=D("0.01"),
-            volume_max=D(50), max_leverage=D(10), max_spread=D("0.47"), fx=D("0.85"),
-        ),
-        itn=intent("XAUUSD", stop=4150.0, entry=4170.0),
-        bid="4169.5", ask="4169.97",
+        mkt=MarketFacts(market="XAUUSD", contract_size=D(100), volume_min=D("0.01"), volume_step=D("0.01"),
+                        volume_max=D(50), max_leverage=D(10), max_spread=D("0.47"), fx=D("0.85")),
+        itn=intent("XAUUSD", stop=4150.0, entry=4170.0), bid="4169.5", ask="4169.97", gate=gate,
     )
-    assert isinstance(metal, SizedApproval)
-
-
-def test_total_open_risk_cap_is_four_percent():
-    opens = (
-        OpenRisk(market="NAS100", cluster="INDEX", risk_money=D(150)),
-        OpenRisk(market="XAUUSD", cluster="METAL", risk_money=D(150)),
-        OpenRisk(market="EURUSD", cluster="FX", risk_money=D(60)),
-    )
-    # 360 open + ~100 new > 400 total cap, while every single cluster is fine
-    assert size(account(open_risks=opens)) == "total_open_risk_limit"
+    assert metal.approval is not None and metal.detail["cluster_risk_before"] == 0
 
 
 def test_money_model_gold_and_eurusd_use_contract_size_and_fx():
-    gold = MarketFacts(
-        market="XAUUSD", contract_size=D(100), volume_min=D("0.01"), volume_step=D("0.01"),
-        volume_max=D(50), max_leverage=D(10), max_spread=D("0.47"), fx=D("0.85"),
-    )
-    result = size(
-        itn=intent("XAUUSD", stop=4150.0, entry=4170.0), mkt=gold, bid="4169.5", ask="4169.97"
-    )
-    assert isinstance(result, SizedApproval)
-    # stop risk in EUR = lots x 100 oz x 19.97 USD x 0.85 EUR/USD must be within 1 % of 10000
-    assert result.stop_risk_money == result.quantity * 100 * D("19.97") * D("0.85")
-    assert result.stop_risk_money <= D(100)
-
-    fx = MarketFacts(
-        market="EURUSD", contract_size=D(100000), volume_min=D("0.01"), volume_step=D("0.01"),
-        volume_max=D(50), max_leverage=D(30), max_spread=D("0.00053"), fx=D(1) / D("1.17"),
-    )
-    r2 = size(
-        itn=intent("EURUSD", stop=1.1650, entry=1.1700), mkt=fx, bid="1.16995", ask="1.17000"
-    )
-    assert isinstance(r2, SizedApproval)
-    assert r2.stop_risk_money <= D(100) and r2.quantity >= D("0.01")
+    gold = MarketFacts(market="XAUUSD", contract_size=D(100), volume_min=D("0.01"), volume_step=D("0.01"),
+                       volume_max=D(50), max_leverage=D(10), max_spread=D("0.47"), fx=D("0.85"))
+    out = size(itn=intent("XAUUSD", stop=4150.0, entry=4170.0), mkt=gold, bid="4169.5", ask="4169.97")
+    assert out.approval is not None
+    assert out.approval.stop_risk_money == out.approval.quantity * 100 * D("19.97") * D("0.85")
+    assert out.approval.stop_risk_money <= D(100)
+    fx = MarketFacts(market="EURUSD", contract_size=D(100000), volume_min=D("0.01"), volume_step=D("0.01"),
+                     volume_max=D(50), max_leverage=D(30), max_spread=D("0.00053"), fx=D(1) / D("1.17"))
+    r2 = size(itn=intent("EURUSD", stop=1.1650, entry=1.1700), mkt=fx, bid="1.16995", ask="1.17000")
+    assert r2.approval is not None and r2.approval.stop_risk_money <= D(100)
 
 
-def test_every_reject_has_a_machine_reason_code():
-    for acct in (
-        account(consecutive_losses=8),
-        account("7400", peak_equity=D(10000)),
-        account(realized_pnl_today=D(-700)),
-    ):
-        reason = size(acct)
-        assert isinstance(reason, str) and reason == reason.lower() and " " not in reason
+def test_every_reject_has_a_machine_code_and_a_class():
+    for acct in (account(consecutive_losses=8), account("7400", peak_equity=D(10000)),
+                 account(realized_pnl_today=D(-700))):
+        out = size(acct)
+        assert out.reason == out.reason.lower() and " " not in out.reason
+        assert out.detail["reject_code"] == out.reason and out.detail["gate_reject_class"] == "SAFETY"
 
 
-def test_unknown_cluster_is_rejected():
-    assert size(mkt=ger40(market="FOO"), itn=intent("FOO")) == "unknown_cluster"
+def test_unknown_cluster_and_non_positive_equity_are_rejected():
+    assert size(mkt=ger40(market="FOO"), itn=intent("FOO")).reason == "unknown_cluster"
+    assert size(replace(account(), equity=D(0))).reason == "equity_non_positive"
 
 
-@pytest.mark.parametrize("bad", [D(0), D(-1)])
-def test_non_positive_equity_rejected(bad):
-    assert size(replace(account(), equity=bad)) == "equity_non_positive"
+@pytest.mark.parametrize("target", [0.002, 0.01, 0.03])
+def test_target_risk_fraction_is_only_an_input(target):
+    out = size(itn=intent(rf=target))
+    assert out.approval is not None
+    assert out.approval.risk_fraction <= D(str(target))
+    assert out.detail["target_risk_fraction"] == D(str(target))

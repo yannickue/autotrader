@@ -1,25 +1,27 @@
+# ruff: noqa: E501
 """``demo-discovery-policy-v1``: the risk policy of the ActivTrades DEMO discovery phase.
 
-Pure and deterministic (no I/O, no clock reads). Built on the repository's ``RiskPolicyEvaluator`` /
-``PositionSizer`` / ``InstrumentRiskLimits`` - it adds three things the generic policy lacks and
-never removes or relaxes any existing gate:
+Pure and deterministic (no I/O, no clock reads). Built on the repository's ``RiskPolicyEvaluator``
+(all of its safety gates stay: data freshness, reference-price deviation, spread, margin /
+liquidation-distance check, daily-loss / drawdown / consecutive-loss halts, reconciliation) with the
+sizing step replaced by ``DemoPositionSizer`` (``demo.execution.sizing``):
 
-* percent-of-equity limits (daily loss 6 % of start-of-day equity, drawdown 25 % of peak equity)
-  are turned into the absolute ``RiskPolicy`` amounts fresh for every evaluation;
-* the *min-lot rule*: if the 1 %-sized quantity is below the broker minimum lot, the minimum lot is
-  used ONLY if its actual risk is <= 2 % of equity, otherwise ``size_below_min``;
-* a correlated-cluster / total-open-risk gate (INDEX{GER40,NAS100,SPX500}, METAL{XAUUSD},
-  FX{EURUSD}: total simultaneously open initial risk <= 4 % of equity, per cluster <= 3 %).
+    structural stop (never moved) -> broker min lot / step -> ACTUAL loss at the stop -> ACTUAL EUR
+    risk -> ACTUAL equity risk % -> leverage -> portfolio / cluster / family risk -> HARD CAPS ->
+    TRADE / SKIP
 
-Money model. ``PositionSizer`` assumes "1 unit costs ``price`` account-currency units". CFD lots do
-not: XAUUSD is 100 oz per lot in USD, EURUSD 100 000 EUR per lot quoted in USD. The gate therefore
-sizes a *virtual instrument*: quantity in contract UNITS (lots x contract size) and every price
-multiplied by ``fx`` (account currency per profit-currency unit). Then ``stop distance x quantity``
-is exactly the loss in account currency and ``price x quantity`` is exactly the notional, so the
-sizer's risk / leverage arithmetic is money-correct for every market without touching ``src/risk``.
+There is NO fixed "1 % risk" or "2 % min-lot" rule: ``target_risk_fraction`` is only the default
+input of the sizer, and the minimum lot is accepted whatever its actual risk is, unless it would
+violate a configured hard cap (``RiskCaps``, one frozen dataclass). Sizing is independent of
+signal quality; there is no automatic risk escalation and the automatic risk reduction of the
+generic policy sizer is NOT applied.
 
-Leverage: 30 is a hard ceiling (``MAX_SYSTEM_LEVERAGE``), never a target; the effective cap is
-``min(30, policy, instrument, account leverage)``.
+Money model. The evaluator assumes "1 unit costs ``price`` account-currency units". CFD lots do
+not, so the gate hands it a *virtual instrument*: quantity in contract UNITS (lots x contract size)
+and every price multiplied by ``fx`` (account currency per profit-currency unit). Then
+``stop distance x quantity`` is exactly the loss in account currency and ``price x quantity`` the
+notional, for every market (XAUUSD 100 oz USD, EURUSD 100 000 quoted in USD), without touching
+``src/risk``.
 """
 
 from __future__ import annotations
@@ -28,10 +30,20 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from decimal import Decimal
+from typing import Any
 
 from data.models import DataQuality, MarketSnapshot
 from demo.contracts import TradeIntent
+from demo.execution import gates as G
 from demo.execution.parity import executable_price
+from demo.execution.sizing import (
+    DemoPositionSizer,
+    PortfolioRisk,
+    RiskCaps,
+    SizingDecision,
+    SizingInput,
+)
+from demo.execution.tranches import UNKNOWN_FAMILY
 from risk.models import (
     MAX_SYSTEM_LEVERAGE,
     AccountRiskState,
@@ -39,26 +51,19 @@ from risk.models import (
     PositionSizingRequest,
     ReconciliationState,
     RiskPolicy,
-    RiskReason,
     RiskSide,
     RuntimeMode,
     RuntimeRiskState,
 )
-from risk.policy import PolicyRejection, RiskHookContext, RiskPolicyEvaluator
+from risk.policy import PolicyRejection, RiskPolicyEvaluator
 from risk.sizing import ExposureCapacity, PositionSizer, RiskRejection, SizingResult
 
 ZERO = Decimal(0)
 TEN_THOUSAND = Decimal(10000)
 
 POLICY_ID = "demo-discovery-policy-v1"
-RISK_FRACTION = Decimal("0.01")  # of equity per trade
-MIN_LOT_MAX_RISK_FRACTION = Decimal("0.02")  # min-lot override ceiling
+POLICY_REVISION = "2-tunable-hard-caps"
 BROKER_LEVERAGE_CEILING = MAX_SYSTEM_LEVERAGE  # 30, hard, never a target
-DAILY_LOSS_FRACTION = Decimal("0.06")  # of start-of-day equity
-MAX_DRAWDOWN_FRACTION = Decimal("0.25")  # of peak equity
-MAX_CONSECUTIVE_LOSSES = 8
-TOTAL_OPEN_RISK_FRACTION = Decimal("0.04")
-CLUSTER_RISK_FRACTION = Decimal("0.03")
 CLUSTERS: Mapping[str, str] = {
     "GER40": "INDEX",
     "NAS100": "INDEX",
@@ -68,13 +73,8 @@ CLUSTERS: Mapping[str, str] = {
 }
 MAX_QUOTE_AGE = timedelta(seconds=30)
 
-# machine reason codes emitted by this module (in addition to lower-cased ``RiskReason`` values)
-REASON_SIZE_BELOW_MIN = "size_below_min"
-REASON_TOTAL_OPEN_RISK = "total_open_risk_limit"
-REASON_CLUSTER_RISK = "cluster_risk_limit"
-REASON_UNKNOWN_CLUSTER = "unknown_cluster"
-REASON_RISK_FRACTION_ABOVE_CAP = "risk_fraction_above_cap"
-REASON_UNPROTECTED_POSITION = "unprotected_position"
+REASON_SIZE_BELOW_MIN = G.R_SIZE_BELOW_MIN
+REASON_UNKNOWN_CLUSTER = G.R_UNKNOWN_CLUSTER
 
 
 def cluster_of(market: str) -> str | None:
@@ -83,11 +83,13 @@ def cluster_of(market: str) -> str | None:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class OpenRisk:
-    """Initial risk (entry -> broker stop, account currency) of one currently open position."""
+    """Initial stop-risk (entry -> broker stop, account currency) of one open tranche."""
 
     market: str
     cluster: str
     risk_money: Decimal
+    family: str = UNKNOWN_FAMILY
+    intent_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -108,6 +110,7 @@ class GateAccount:
     account_leverage: Decimal
     day_start: datetime
     open_risks: tuple[OpenRisk, ...] = ()
+    free_margin: Decimal | None = None
     state_version: str = "demo-account"
 
 
@@ -120,40 +123,51 @@ class MarketFacts:
     volume_min: Decimal
     volume_step: Decimal
     volume_max: Decimal
-    max_leverage: Decimal
+    max_leverage: Decimal  # observed broker margin leverage of the instrument (<= 30)
     max_spread: Decimal  # price units
     fx: Decimal  # account currency per profit-currency unit (1 for an EUR-profit market)
+    margin_per_lot: Decimal | None = None  # order_calc_margin(1.0 lot), account currency
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class SizedApproval:
     quantity: Decimal  # LOTS (broker volume units), on the broker step
     equity: Decimal
-    risk_fraction: Decimal  # ACTUAL fraction of equity risked (incl. cost allowance)
-    risk_budget: Decimal  # account currency; the actual risk when the min-lot rule applied
+    risk_fraction: Decimal  # ACTUAL fraction of equity at risk at the structural stop
+    risk_budget: Decimal  # target budget (target_risk_fraction x multiplier x equity), EUR
     leverage: Decimal
     notional: Decimal
-    stop_risk_money: Decimal  # quantity x |executable - stop| in account currency
+    stop_risk_money: Decimal  # quantity x contract x |executable - stop| x fx (EUR)
     binding_constraint: str
-    min_lot_override: bool
+    min_lot_used: bool
+    detail: dict[str, Any]
     policy_id: str = POLICY_ID
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class RiskOutcome:
+    """Approval or rejection - both carry the complete risk detail for logging."""
+
+    approval: SizedApproval | None
+    reason: str | None
+    detail: dict[str, Any]
+
+
 def build_policy(
-    account: GateAccount, *, risk_fraction: Decimal = RISK_FRACTION
+    account: GateAccount, caps: RiskCaps, *, risk_fraction: Decimal | None = None
 ) -> RiskPolicy:
     """The named policy with percent limits resolved to absolute amounts for THIS account state."""
     if account.equity <= 0:
         raise ValueError("equity must be positive")
     return RiskPolicy(
         policy_id=POLICY_ID,
-        risk_fraction=risk_fraction,
-        max_leverage=BROKER_LEVERAGE_CEILING,
-        max_gross_notional=account.equity * BROKER_LEVERAGE_CEILING,
-        max_net_notional=account.equity * BROKER_LEVERAGE_CEILING,
-        max_daily_loss=max(account.start_of_day_equity, Decimal("0.01")) * DAILY_LOSS_FRACTION,
-        max_drawdown=max(account.peak_equity, Decimal("0.01")) * MAX_DRAWDOWN_FRACTION,
-        max_consecutive_losses=MAX_CONSECUTIVE_LOSSES,
+        risk_fraction=risk_fraction or caps.target_risk_fraction,
+        max_leverage=caps.max_leverage,
+        max_gross_notional=account.equity * caps.max_leverage,
+        max_net_notional=account.equity * caps.max_leverage,
+        max_daily_loss=max(account.start_of_day_equity, Decimal("0.01")) * caps.max_daily_loss_fraction,
+        max_drawdown=max(account.peak_equity, Decimal("0.01")) * caps.max_drawdown_fraction,
+        max_consecutive_losses=caps.max_consecutive_losses,
         liquidity_fraction=Decimal("0.5"),
         max_data_age=MAX_QUOTE_AGE,
         max_signal_age=MAX_QUOTE_AGE,
@@ -161,15 +175,22 @@ def build_policy(
     )
 
 
-class DemoDiscoverySizer(PositionSizer):
-    """``PositionSizer`` plus the min-lot rule (min lot only if its risk <= 2 % of equity)."""
+def machine_reason(rejection: PolicyRejection) -> str:
+    code = str(getattr(rejection.reason_code, "value", rejection.reason_code))
+    if code.startswith("HOOK:"):
+        return code[len("HOOK:") :]
+    return code.lower()
 
-    def __init__(
-        self, policy: RiskPolicy, *, min_lot_max_risk: Decimal = MIN_LOT_MAX_RISK_FRACTION
-    ) -> None:
+
+class _PolicySizer(PositionSizer):
+    """Plugs ``DemoPositionSizer`` into the evaluator. The generic sizer's 1 %-budget arithmetic and
+    its automatic risk reduction are replaced; ``reference_price`` / ``stop_distance`` /
+    ``max_leverage`` (structural-stop side check, hard leverage ceiling) are inherited."""
+
+    def __init__(self, policy: RiskPolicy, build_input: Any, holder: dict[str, Any]) -> None:
         super().__init__(policy)
-        self._policy_ref = policy
-        self._min_lot_max_risk = min_lot_max_risk
+        self._build_input = build_input
+        self._holder = holder
 
     def size(  # type: ignore[override]
         self,
@@ -183,104 +204,31 @@ class DemoDiscoverySizer(PositionSizer):
         capacity: ExposureCapacity,
         pending_gross: Decimal,
     ) -> SizingResult:
-        try:
-            return super().size(
-                request=request,
-                account=account,
-                instrument=instrument,
-                reference_price=reference_price,
-                stop_distance=stop_distance,
-                max_leverage=max_leverage,
-                capacity=capacity,
-                pending_gross=pending_gross,
-            )
-        except RiskRejection as rejection:
-            if rejection.reason_code != RiskReason.SIZE_BELOW_MINIMUM:
-                raise
-        return self._min_lot(
-            request=request,
-            account=account,
-            instrument=instrument,
-            reference_price=reference_price,
-            stop_distance=stop_distance,
-            max_leverage=max_leverage,
-            capacity=capacity,
-            pending_gross=pending_gross,
-        )
-
-    def _min_lot(
-        self,
-        *,
-        request: PositionSizingRequest,
-        account: AccountRiskState,
-        instrument: InstrumentRiskLimits,
-        reference_price: Decimal,
-        stop_distance: Decimal,
-        max_leverage: Decimal,
-        capacity: ExposureCapacity,
-        pending_gross: Decimal,
-    ) -> SizingResult:
-        policy = self._policy_ref
-        reduce_risk, _fraction = self.risk_reduction(account)
-        minimum = instrument.min_quantity
-        entry = reference_price
-        round_trip_cost = entry * policy.estimated_cost_bps * 2 / TEN_THOUSAND
-        per_unit_loss = stop_distance + round_trip_cost
-        risk = minimum * per_unit_loss
-        # Every NON-risk cap must still admit the minimum lot (the override only relaxes the
-        # 1 % risk budget, never leverage / exposure / liquidity limits).
-        caps = {
-            "leverage_cap": max_leverage * account.equity / entry,
-            "instrument_max_notional": instrument.max_notional / entry,
-            "liquidity": policy.liquidity_fraction * request.available_liquidity_notional / entry,
-            "gross_capacity": capacity.remaining_gross / entry,
-            "portfolio_leverage_capacity": capacity.remaining_portfolio_leverage / entry,
-            "net_capacity": capacity.remaining_net / entry,
-        }
-        # A risk-reduced state (drawdown / loss streak) must not be sidestepped by the min lot:
-        # the override ceiling shrinks with the same multiplier.
-        ceiling = self._min_lot_max_risk * (
-            policy.reduce_risk_multiplier if reduce_risk else Decimal(1)
-        )
-        if (
-            minimum <= 0
-            or risk > account.equity * ceiling
-            or any(minimum > value for value in caps.values())
-            or minimum * entry < instrument.min_notional
-        ):
-            raise RiskRejection(REASON_SIZE_BELOW_MIN)
-        notional = minimum * entry
-        leverage = notional / account.equity
-        if leverage > max_leverage:
-            raise RiskRejection(REASON_SIZE_BELOW_MIN)
-        if (account.gross_notional + pending_gross + notional) / account.equity > max_leverage:
-            raise RiskRejection(REASON_SIZE_BELOW_MIN)
+        decision: SizingDecision = DemoPositionSizer().size(self._build_input())
+        self._holder["decision"] = decision
+        if not decision.accepted:
+            raise RiskRejection(decision.reason or REASON_SIZE_BELOW_MIN, decision.detail.get("message"))
+        detail = decision.detail
+        units = decision.quantity * detail["contract_size"]
         return SizingResult(
-            quantity=minimum,
-            notional=notional,
+            quantity=units,
+            notional=detail["notional_eur"],
             reference_price=reference_price,
-            binding_constraint="min_lot_override",
-            risk_budget=risk,
-            per_unit_loss=per_unit_loss,
-            effective_risk_fraction=risk / account.equity,
-            reduce_risk=reduce_risk,
+            binding_constraint=str(detail["binding_cap"]),
+            risk_budget=detail["equity"] * detail["target_risk_fraction"] * detail["risk_budget_multiplier"],
+            per_unit_loss=detail["loss_per_lot_at_stop"] / detail["contract_size"],
+            effective_risk_fraction=detail["equity_risk_fraction"],
+            reduce_risk=False,
             max_leverage=max_leverage,
-            leverage=leverage,
+            leverage=detail["leverage"],
         )
-
-
-def machine_reason(rejection: PolicyRejection) -> str:
-    code = str(getattr(rejection.reason_code, "value", rejection.reason_code))
-    if code.startswith("HOOK:"):
-        return code[len("HOOK:") :]
-    return code.lower()
 
 
 @dataclass(slots=True)
 class DemoRiskGate:
-    """Stateless facade: (intent, quote, broker-truth account) -> SizedApproval | reason code."""
+    """Facade: (intent, quote, broker-truth account) -> ``RiskOutcome`` with full risk detail."""
 
-    sizer_min_lot_risk: Decimal = MIN_LOT_MAX_RISK_FRACTION
+    caps: RiskCaps = field(default_factory=RiskCaps)
     _decisions: int = field(default=0, init=False)
 
     def size(
@@ -293,38 +241,50 @@ class DemoRiskGate:
         ask: Decimal,
         quote_time: datetime,
         now: datetime,
-    ) -> SizedApproval | str:
+        family: str = UNKNOWN_FAMILY,
+        atr: Decimal | None = None,
+        risk_budget_multiplier: Decimal | None = None,
+        stop_price: Decimal | None = None,
+    ) -> RiskOutcome:
+        """``stop_price`` defaults to the intent's STRUCTURAL stop (the only production use); a
+        different value is only used to evaluate a hypothetical shared-stop add-on."""
         self._decisions += 1
-        rf = Decimal(str(intent.risk_fraction))
-        if rf <= 0:
-            return "risk_fraction_invalid"
-        if rf > RISK_FRACTION:
-            return REASON_RISK_FRACTION_ABOVE_CAP
+        caps = self.caps
+        structural = stop_price if stop_price is not None else Decimal(str(intent.stop))
+        target = Decimal(str(intent.risk_fraction))
+        multiplier = risk_budget_multiplier or caps.risk_budget_multiplier
         cluster = cluster_of(market.market)
+        executable = executable_price(intent.direction, bid, ask)
+        base = self._pre_sizing_detail(
+            intent, market, account, cluster, family, structural, executable, bid, ask, target, multiplier, atr
+        )
+        if target <= 0:
+            return self._skip(G.R_RISK_FRACTION_INVALID, base)
         if cluster is None:
-            return REASON_UNKNOWN_CLUSTER
+            return self._skip(REASON_UNKNOWN_CLUSTER, base)
         if market.fx <= 0 or market.contract_size <= 0:
-            return "invalid_market_facts"
+            return self._skip(G.R_INVALID_MARKET_FACTS, base)
         if account.equity <= 0:
-            return "equity_non_positive"
+            return self._skip(G.R_EQUITY, base)
 
         fx, units = market.fx, market.contract_size
         side = RiskSide.BUY if intent.direction == 1 else RiskSide.SELL
         v_bid, v_ask = bid * fx, ask * fx
-        v_exec = executable_price(intent.direction, v_bid, v_ask)
-        v_stop = Decimal(str(intent.stop)) * fx
+        v_exec = executable * fx
+        v_stop = structural * fx
         mid = (v_bid + v_ask) / 2
         if mid <= 0:
-            return "invalid_quote"
+            return self._skip(G.R_INVALID_QUOTE, base)
+        instrument_leverage = min(market.max_leverage, BROKER_LEVERAGE_CEILING)
         limits = InstrumentRiskLimits(
             instrument=market.market,
-            max_leverage=min(market.max_leverage, BROKER_LEVERAGE_CEILING),
+            max_leverage=instrument_leverage,
             quantity_step=market.volume_step * units,
             min_quantity=market.volume_min * units,
             min_notional=ZERO,
-            max_notional=market.volume_max * units * mid,
+            max_notional=market.volume_max * units * mid * 1000,
             max_spread_bps=(market.max_spread * fx) / mid * TEN_THOUSAND + Decimal("0.0001"),
-            maintenance_margin_rate=Decimal(1) / min(market.max_leverage, BROKER_LEVERAGE_CEILING),
+            maintenance_margin_rate=Decimal(1) / instrument_leverage,
         )
         risk_state = AccountRiskState(
             state_version=account.state_version,
@@ -342,28 +302,44 @@ class DemoRiskGate:
             leverage_cap=min(account.account_leverage, BROKER_LEVERAGE_CEILING),
             consecutive_losses=account.consecutive_losses,
         )
-        policy = build_policy(account, risk_fraction=rf)
-        open_total = sum((r.risk_money for r in account.open_risks), ZERO)
-        open_cluster = sum((r.risk_money for r in account.open_risks if r.cluster == cluster), ZERO)
-        equity = account.equity
+        portfolio = self._portfolio(account)
+        holder: dict[str, Any] = {}
 
-        def hook(context: RiskHookContext) -> str | None:
-            request = context.request
-            new_risk = context.proposed_quantity * abs(request.entry_price - request.stop_price)
-            if open_total + new_risk > equity * TOTAL_OPEN_RISK_FRACTION:
-                return REASON_TOTAL_OPEN_RISK
-            if open_cluster + new_risk > equity * CLUSTER_RISK_FRACTION:
-                return REASON_CLUSTER_RISK
-            return None
+        def build_input() -> SizingInput:
+            return SizingInput(
+                market=market.market,
+                cluster=cluster,
+                family=family,
+                direction=intent.direction,
+                executable_price=executable,
+                structural_stop=structural,
+                contract_size=market.contract_size,
+                volume_min=market.volume_min,
+                volume_step=market.volume_step,
+                volume_max=market.volume_max,
+                fx=market.fx,
+                equity=account.equity,
+                target_risk_fraction=target,
+                risk_budget_multiplier=multiplier,
+                caps=caps,
+                instrument_max_leverage=instrument_leverage,
+                account_leverage=min(account.account_leverage, BROKER_LEVERAGE_CEILING),
+                portfolio=portfolio,
+                free_margin=account.free_margin,
+                margin_per_lot=market.margin_per_lot,
+                atr=atr,
+                spread=ask - bid,
+                maintenance_margin_rate=limits.maintenance_margin_rate,
+                liquidation_safety_bps=(
+                    policy.liquidation_uncertainty_buffer_bps + policy.min_stop_liquidation_distance_bps
+                ),
+            )
 
-        evaluator = RiskPolicyEvaluator(
-            policy,
-            hooks=(hook,),
-            sizer=DemoDiscoverySizer(policy, min_lot_max_risk=self.sizer_min_lot_risk),
-        )
+        policy = build_policy(account, caps, risk_fraction=min(target, Decimal(1)))
+        evaluator = RiskPolicyEvaluator(policy, sizer=_PolicySizer(policy, build_input, holder))
         snapshot = MarketSnapshot(
             instrument=market.market,
-            timestamp=quote_time,
+            timestamp=min(quote_time, now),
             bid=v_bid,
             ask=v_ask,
             last=mid,
@@ -381,7 +357,7 @@ class DemoRiskGate:
             side=side,
             entry_price=v_exec,
             stop_price=v_stop,
-            confidence=Decimal(1),
+            confidence=Decimal(1),  # constant: sizing never sees signal confidence
             available_liquidity_notional=account.equity * BROKER_LEVERAGE_CEILING * 10,
             metadata={},
         )
@@ -398,24 +374,119 @@ class DemoRiskGate:
                 now=now,
             )
         except (RiskRejection, ArithmeticError) as exc:  # fail closed on any internal error
-            return f"risk_error:{type(exc).__name__}"
+            return self._skip(f"{G.R_RISK_ERROR}:{type(exc).__name__}", {**base, **self._sized(holder)})
         if isinstance(result, PolicyRejection):
-            return machine_reason(result)
-        lots = result.quantity / units
-        if lots < market.volume_min or lots > market.volume_max:
-            return REASON_SIZE_BELOW_MIN if lots < market.volume_min else "size_above_max"
-        stop_risk = result.quantity * abs(v_exec - v_stop)
-        per_unit_loss = Decimal(str(result.metadata["per_unit_loss"]))
-        actual_fraction = result.quantity * per_unit_loss / account.equity
-        override = result.metadata["binding_constraint"] == "min_lot_override"
-        return SizedApproval(
-            quantity=lots,
-            equity=account.equity,
-            risk_fraction=actual_fraction,
-            risk_budget=result.risk_budget,
-            leverage=result.leverage,
-            notional=result.notional,
-            stop_risk_money=stop_risk,
-            binding_constraint=str(result.metadata["binding_constraint"]),
-            min_lot_override=override,
+            return self._skip(machine_reason(result), {**base, **self._sized(holder)})
+        decision: SizingDecision = holder["decision"]
+        detail = {**base, **decision.detail}
+        detail.update(
+            {"decision": "TRADE", "reject_code": None, "gate_reject_class": None,
+             "policy_id": POLICY_ID, "policy_revision": POLICY_REVISION}
         )
+        approval = SizedApproval(
+            quantity=decision.quantity,
+            equity=account.equity,
+            risk_fraction=detail["equity_risk_fraction"],
+            risk_budget=account.equity * target * multiplier,
+            leverage=detail["leverage"],
+            notional=detail["notional_eur"],
+            stop_risk_money=detail["stop_risk_eur"],
+            binding_constraint=str(detail["binding_cap"]),
+            min_lot_used=bool(detail["min_lot_used"]),
+            detail=detail,
+        )
+        return RiskOutcome(approval=approval, reason=None, detail=detail)
+
+    # -- helpers -----------------------------------------------------------------------------------------
+
+    @staticmethod
+    def _sized(holder: dict[str, Any]) -> dict[str, Any]:
+        decision = holder.get("decision")
+        return {} if decision is None else dict(decision.detail)
+
+    @staticmethod
+    def _portfolio(account: GateAccount) -> PortfolioRisk:
+        by_market: dict[str, Decimal] = {}
+        by_cluster: dict[str, Decimal] = {}
+        by_family: dict[str, Decimal] = {}
+        for r in account.open_risks:
+            by_market[r.market] = by_market.get(r.market, ZERO) + r.risk_money
+            by_cluster[r.cluster] = by_cluster.get(r.cluster, ZERO) + r.risk_money
+            by_family[r.family] = by_family.get(r.family, ZERO) + r.risk_money
+        return PortfolioRisk(
+            total=sum((r.risk_money for r in account.open_risks), ZERO),
+            by_market=by_market,
+            by_cluster=by_cluster,
+            by_family=by_family,
+            gross_notional=account.gross_notional,
+        )
+
+    def _skip(self, reason: str, detail: dict[str, Any]) -> RiskOutcome:
+        gate = G.gate_for(reason)
+        merged = dict(detail)
+        merged.update(
+            {
+                "decision": "SKIP",
+                "reject_code": reason,
+                "gate_reject_class": gate.gate_class.value if gate else None,
+                "policy_id": POLICY_ID,
+                "policy_revision": POLICY_REVISION,
+            }
+        )
+        return RiskOutcome(approval=None, reason=reason, detail=merged)
+
+    def _pre_sizing_detail(
+        self,
+        intent: TradeIntent,
+        market: MarketFacts,
+        account: GateAccount,
+        cluster: str | None,
+        family: str,
+        structural: Decimal,
+        executable: Decimal,
+        bid: Decimal,
+        ask: Decimal,
+        target: Decimal,
+        multiplier: Decimal,
+        atr: Decimal | None,
+    ) -> dict[str, Any]:
+        """Everything worth logging even if the trade is skipped before sizing."""
+        portfolio = self._portfolio(account)
+        equity = account.equity if account.equity > 0 else Decimal(1)
+        detail: dict[str, Any] = {
+            "market": market.market,
+            "cluster": cluster,
+            "family": family,
+            "direction": intent.direction,
+            "structural_stop": structural,
+            "stop_distance": abs(executable - structural),
+            "executable_price": executable,
+            "entry_ref": Decimal(str(intent.entry_ref)),
+            "target": None if intent.target is None else Decimal(str(intent.target)),
+            "broker_min_lot": market.volume_min,
+            "lot_step": market.volume_step,
+            "contract_size": market.contract_size,
+            "fx": market.fx,
+            "equity": account.equity,
+            "target_risk_fraction": target,
+            "risk_budget_multiplier": multiplier,
+            "spread": ask - bid,
+            "atr": atr,
+            "free_margin": account.free_margin,
+            "portfolio_risk_before": portfolio.total,
+            "portfolio_risk_fraction_before": portfolio.total / equity,
+            "cluster_risk_before": portfolio.by_cluster.get(cluster or "", ZERO),
+            "family_risk_before": portfolio.by_family.get(family, ZERO),
+            "gross_leverage_before": account.gross_notional / equity,
+            "realized_pnl_today": account.realized_pnl_today,
+            "start_of_day_equity": account.start_of_day_equity,
+            "peak_equity": account.peak_equity,
+            "consecutive_losses": account.consecutive_losses,
+            "caps": self.caps.as_dict(),
+        }
+        if atr is not None and atr > 0:
+            detail["stop_distance_atr"] = detail["stop_distance"] / atr
+        distance = abs(executable - structural)
+        if intent.target is not None and distance > 0:
+            detail["planned_r_to_target"] = abs(Decimal(str(intent.target)) - executable) / distance
+        return detail

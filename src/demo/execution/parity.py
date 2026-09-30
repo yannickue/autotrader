@@ -12,6 +12,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 
 from demo.contracts import TradeIntent
+from demo.execution import gates as G
 
 
 def parse_utc(value: str) -> datetime:
@@ -34,23 +35,23 @@ def parity_reject(
     target = Decimal(str(intent.target)) if intent.target is not None else None
     entry_ref = Decimal(str(intent.entry_ref))
     if ask - bid > max_spread:
-        return "spread_cap"
+        return G.R_SPREAD_CAP
     if (intent.direction == 1 and executable > entry_ref) or (
         intent.direction == -1 and executable < entry_ref
     ):
-        return "entry_overshoot"
+        return G.R_ENTRY_OVERSHOOT
     if (intent.direction == 1 and executable <= stop) or (
         intent.direction == -1 and executable >= stop
     ):
-        return "structural_invalidation_crossed"
+        return G.R_INVALIDATION_CROSSED
     if target is not None:
         if (intent.direction == 1 and executable >= target) or (
             intent.direction == -1 and executable <= target
         ):
-            return "target_crossed_at_fill"
+            return G.R_TARGET_CROSSED
         risk_distance = abs(executable - stop)
         reward_distance = abs(target - executable)
         minimum = Decimal(str(intent.min_space_r))
         if risk_distance <= 0 or reward_distance / risk_distance < minimum:
-            return "min_space_r"
+            return G.R_MIN_SPACE_R
     return None

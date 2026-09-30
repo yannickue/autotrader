@@ -36,11 +36,13 @@ import asyncio
 import concurrent.futures
 import contextlib
 import hashlib
+import json
 import os
 import threading
 import time
-from collections.abc import Callable, Sequence
-from dataclasses import dataclass, replace
+from collections import Counter
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -66,6 +68,7 @@ from adapters.activtrades_mt5.history import (
 )
 from adapters.config import MT5ConnectionConfig
 from demo.contracts import TradeIntent
+from demo.execution import gates as G
 from demo.execution import registry as reg
 from demo.execution.events import (
     Accepted,
@@ -86,7 +89,9 @@ from demo.execution.risk_policy import (
     GateAccount,
     MarketFacts,
     OpenRisk,
+    RiskOutcome,
 )
+from demo.execution.sizing import RiskCaps
 from demo.execution.stack_port import AccountSnapshot, StackFailClosed
 from demo.execution.strategy import (
     DemoTraderStrategy,
@@ -96,6 +101,7 @@ from demo.execution.strategy import (
     JobOutcome,
     client_order_id_for,
 )
+from demo.execution.tranches import UNKNOWN_FAMILY, AddonClass, classify_addon
 from demo.opportunity.bar_source import Quote, validate_frame
 from nautilus_mt5.data_client import Mt5DataClientConfig
 from nautilus_mt5.execution_client import Mt5ExecClientConfig
@@ -176,6 +182,7 @@ class StackConfig:
     account_currency: str = "EUR"
     reconcile_retry_s: float = 5.0
     lane_call_timeout_s: float = 60.0  # a read on the MT5 lane that takes longer => fail closed
+    risk_caps: RiskCaps = field(default_factory=RiskCaps)  # ALL hard risk caps live here
 
 
 # ---------------------------------------------------------------------------------------------
@@ -412,6 +419,8 @@ class _Prepared:
     account: GateAccount
     facts: MarketFacts
     positions_seen: int = 0
+    existing: Any = None  # raw broker position on the SAME symbol (netting), or None
+    existing_family: str = UNKNOWN_FAMILY
 
 
 @dataclass(slots=True)
@@ -486,7 +495,9 @@ class Mt5DemoStack:
         self._engines: list[Any] = []
         self._lane: Any = None
         self._markets: dict[str, _MarketInfo] = {}
-        self._gate = DemoRiskGate()
+        self._gate = DemoRiskGate(caps=self._cfg.risk_caps)
+        self._reject_counts: Counter[str] = Counter()
+        self._otherwise_valid: Counter[str] = Counter()
         self._results: dict[str, list[ExecutionEvent]] = {}
         self._submit_lock = threading.RLock()
         self._pending_events: list[ExecutionEvent] = []
@@ -565,7 +576,7 @@ class Mt5DemoStack:
             session = self._adapter.session if self._adapter else None
             if session is None or session.state is not SessionState.CONNECTED:
                 raise StackFailClosed(f"broker_disconnect:{exc.what}") from exc
-            raise _Reject("broker_call_failed") from exc
+            raise _Reject(G.R_BROKER_CALL_FAILED) from exc
 
     # ---------------------------------------------------------------------------------- start
 
@@ -819,12 +830,14 @@ class Mt5DemoStack:
         mapping = self._symbols.by_broker_symbol(broker_symbol)
         return None if mapping is None else mapping.canonical
 
-    def _lane_own_positions(self) -> list[tuple[Any, str, reg.IntentRow | None]]:
+    def _lane_own_positions(
+        self, positions: list[Any] | None = None
+    ) -> list[tuple[Any, str, reg.IntentRow | None]]:
         """(raw position, market, registry row or None) for positions carrying our magic."""
         assert self._registry is not None and self._adapter is not None
         store = self._adapter.store
         result = []
-        for position in self._lane_positions():
+        for position in positions if positions is not None else self._lane_positions():
             market = self._canonical_of(str(position.symbol))
             if market is None or int(position.magic) != self._cfg.magic:
                 continue
@@ -836,13 +849,23 @@ class Mt5DemoStack:
                 row = self._registry.by_client_order_id(parent)
             if row is None:
                 candidates = [
-                    r for r in self._registry.open_for_market(market)
+                    r
+                    for r in self._registry.open_for_market(market)
                     if r.position_ticket in (None, int(position.ticket))
                 ]
                 if len(candidates) == 1:
                     row = candidates[0]
             result.append((position, market, row))
         return result
+
+    @staticmethod
+    def _family_of(row: reg.IntentRow | None) -> str:
+        if row is None or not row.context:
+            return UNKNOWN_FAMILY
+        try:
+            return str(json.loads(row.context).get("family") or UNKNOWN_FAMILY)
+        except (ValueError, TypeError):
+            return UNKNOWN_FAMILY
 
     # ----------------------------------------------------------------------------- heartbeat
 
@@ -940,6 +963,8 @@ class Mt5DemoStack:
             server_time_utc=snap.server_time,
             extra={
                 "policy_id": POLICY_ID,
+                "risk_caps": self._cfg.risk_caps.as_dict(),
+                "reject_funnel": self.rejection_funnel(),
                 "shadow": self._dry_run,
                 "halt_reason": self._halt_reason,
                 "fatal": self._fatal,
@@ -1007,8 +1032,17 @@ class Mt5DemoStack:
 
     # ================================================================================== submit
 
-    def submit(self, intent: TradeIntent) -> list[ExecutionEvent]:
+    def submit(
+        self, intent: TradeIntent, context: Mapping[str, Any] | None = None
+    ) -> list[ExecutionEvent]:
         """Risk-size and send ONE intent exactly once (entry + mandatory broker stop [+ TP]).
+
+        ``context`` (optional, additive to the ``StackPort`` signature) carries what the runner
+        knows about the opportunity: ``family`` (portfolio concentration), ``atr`` (logged as
+        stop/ATR), ``risk_budget_multiplier`` (explicit hook, default 1), and QUALITY inputs
+        (``confidence``, ``confluence``, ``family_score``, ``expected_payoff_r``,
+        ``win_probability``, ``win_probability_uncertainty``, ...) that are LOGGED in
+        ``risk_detail`` and never influence sizing or acceptance.
 
         Event semantics: ``Fill.price/quantity/commission/swap`` are the broker's deals
         (commission and swap are SIGNED broker amounts, negative = cost); ``Fill.spread`` is
@@ -1016,25 +1050,78 @@ class Mt5DemoStack:
         executable quote we sent (long: fill - ask, short: bid - fill).
 
         Pre-sizing refusals return ``[Rejected]``; refusals after sizing return
-        ``[Accepted, Rejected]`` (the Accepted carries the risk numbers). A protection failure
-        returns ``[Accepted, Fill, PositionClosed?, Rejected("protection_unconfirmed")]``: the
-        position existed, was flattened, and new exposure is halted. Structural fail-closed
-        conditions (non-demo, unknown account, disconnect, unreconciled, clock anomaly, very stale
-        feed, unprotected exposure) raise ``StackFailClosed`` instead.
+        ``[Accepted, Rejected]`` (the Accepted carries the risk numbers). Every event carries
+        ``risk_detail``. A protection failure returns ``[Accepted, Fill, PositionClosed?,
+        Rejected("protection_unconfirmed")]``: the position existed, was flattened, and new exposure
+        is halted. Structural fail-closed conditions (non-demo, unknown account, disconnect,
+        unreconciled, clock anomaly, very stale feed, unprotected exposure) raise
+        ``StackFailClosed`` instead.
+
+        Exits: the broker protective stop is mandatory safety; a broker TP exists only when the
+        intent carries a target. Extension points for structural / reversal / time-stop /
+        volatility / trailing / partial exits: ``on_clock`` (time stop = forced flat, already
+        there), ``_repair_protection`` / ``_lane_protect`` (tighten-only SL changes through the
+        adapter) and the tranche ledger; none of them widens a stop.
         """
         with self._submit_lock:
             cached = self._results.get(intent.intent_id)
             if cached is not None:
                 return cached
             self._check_fatal()
-            events = self._submit_once(intent)
+            events = self._submit_once(intent, dict(context or {}))
             self._results[intent.intent_id] = events
             return events
 
+    # -- rejection funnel ----------------------------------------------------------------------------------
+
+    def rejection_funnel(self) -> dict[str, dict[str, object]]:
+        """Rejections by gate class; TEMPORARY limitations are their OWN category with the number
+        of otherwise-valid opportunities they blocked."""
+        return G.funnel(self._reject_counts.elements(), otherwise_valid=self._otherwise_valid.elements())
+
+    def _count_reject(self, reason: str, *, otherwise_valid: bool = False) -> None:
+        self._reject_counts[reason] += 1
+        if otherwise_valid:
+            self._otherwise_valid[reason] += 1
+
+    @staticmethod
+    def _signal_inputs(context: Mapping[str, Any]) -> dict[str, Any]:
+        """QUALITY inputs: logged (and rankable) only - they never reach the sizer or a gate."""
+        keys = (
+            "confidence", "confluence", "family_score", "quality", "quality_components",
+            "expected_payoff_r", "win_probability", "win_probability_uncertainty", "signal",
+        )
+        return {k: context[k] for k in keys if k in context}
+
     def _reject(
-        self, intent: TradeIntent, reason: str, *, accepted: Accepted | None = None
+        self,
+        intent: TradeIntent,
+        reason: str,
+        *,
+        accepted: Accepted | None = None,
+        detail: Mapping[str, Any] | None = None,
+        context: Mapping[str, Any] | None = None,
+        otherwise_valid: bool = False,
     ) -> list[ExecutionEvent]:
         assert self._registry is not None
+        gate = G.gate_for(reason)
+        merged: dict[str, Any] = {
+            "market": intent.market,
+            "structural_stop": Decimal(str(intent.stop)),
+            "target": None if intent.target is None else Decimal(str(intent.target)),
+            "entry_ref": Decimal(str(intent.entry_ref)),
+        }
+        merged.update(detail or {})
+        merged.update(
+            {
+                "decision": "SKIP",
+                "reject_code": reason,
+                "gate_reject_class": gate.gate_class.value if gate else None,
+                "gate_hard": gate.hard if gate else None,
+                "policy_id": POLICY_ID,
+                "signal_inputs": self._signal_inputs(context or {}),
+            }
+        )
         self._registry.insert(
             intent_id=intent.intent_id,
             client_order_id=client_order_id_for(intent.intent_id),
@@ -1047,55 +1134,122 @@ class Mt5DemoStack:
             created_utc=_iso(self._now()),
             detail=reason,
         )
-        rejected = Rejected(intent_id=intent.intent_id, reason=reason)
+        self._count_reject(reason, otherwise_valid=otherwise_valid)
+        rejected = Rejected(intent_id=intent.intent_id, reason=reason, risk_detail=merged)
         return [rejected] if accepted is None else [accepted, rejected]
 
     def _pre_reject(self, intent: TradeIntent, now: datetime) -> str | None:
         if self._halt_reason:
-            return "halted"
+            return G.R_HALTED
         info = self._markets.get(intent.market)
         if info is None:
-            return "unknown_market"
+            return G.R_UNKNOWN_MARKET
         if intent.broker_symbol != info.broker_symbol:
-            return "symbol_mismatch"
+            return G.R_SYMBOL_MISMATCH
         if intent.direction not in (1, -1):
-            return "invalid_direction"
+            return G.R_INVALID_DIRECTION
         if now > parse_utc(intent.valid_until_utc):
-            return "stale_signal"
+            return G.R_STALE_SIGNAL
         if intent.forced_flat_utc is not None and now >= parse_utc(intent.forced_flat_utc):
-            return "past_forced_flat"
+            return G.R_PAST_FORCED_FLAT
         return None
 
-    def _submit_once(self, intent: TradeIntent) -> list[ExecutionEvent]:
+    @staticmethod
+    def _decimal_or_none(value: Any) -> Decimal | None:
+        try:
+            return None if value is None else Decimal(str(value))
+        except ArithmeticError:
+            return None
+
+    def _submit_once(self, intent: TradeIntent, context: dict[str, Any]) -> list[ExecutionEvent]:
         assert self._registry is not None and self._strategy is not None
         now = self._now().astimezone(UTC)
         coid = client_order_id_for(intent.intent_id)
         if self._registry.get(intent.intent_id) is not None:
-            return [Rejected(intent_id=intent.intent_id, reason="duplicate_intent")]
+            return [Rejected(intent_id=intent.intent_id, reason=G.R_DUPLICATE_INTENT)]
         early = self._pre_reject(intent, now)
         if early:
-            return self._reject(intent, early)
+            return self._reject(intent, early, context=context)
         try:
             prepared: _Prepared = self._on_lane(self._lane_prepare, intent, now)
         except _Reject as exc:
-            return self._reject(intent, exc.reason)
+            return self._reject(intent, exc.reason, context=context)
         info = self._markets[intent.market]
+        family = str(context.get("family") or UNKNOWN_FAMILY)
+        atr = self._decimal_or_none(context.get("atr"))
+        multiplier = self._decimal_or_none(context.get("risk_budget_multiplier"))
         parity = parity_reject(
             intent, bid=prepared.bid, ask=prepared.ask, max_spread=info.spec.max_spread
         )
         if parity:
-            return self._reject(intent, parity)
-        approval = self._gate.size(
-            intent=intent,
-            market=prepared.facts,
-            account=prepared.account,
-            bid=prepared.bid,
-            ask=prepared.ask,
-            quote_time=min(prepared.quote_utc, now),
-            now=now,
+            pre = self._gate.size(
+                intent=intent, market=prepared.facts, account=prepared.account, bid=prepared.bid,
+                ask=prepared.ask, quote_time=min(prepared.quote_utc, now), now=now,
+                family=family, atr=atr, risk_budget_multiplier=multiplier,
+            )
+            keep = {k: v for k, v in pre.detail.items() if k not in ("decision", "reject_code")}
+            return self._reject(intent, parity, detail=keep, context=context)
+
+        # -- netting: BROKER = one net position per symbol; INTERNAL = tranches (see tranches.py) --
+        stop_for_sizing: Decimal | None = None
+        addon_code: str | None = None
+        addon_detail: dict[str, Any] = {}
+        if prepared.existing is not None:
+            existing = prepared.existing
+            assessment = classify_addon(
+                existing_direction=1 if int(existing.type) == 0 else -1,
+                existing_stop=_dec(existing.sl or 0) or None,
+                existing_target=_dec(existing.tp or 0) or None,
+                new_direction=intent.direction,
+                new_stop=Decimal(str(intent.stop)),
+                new_target=None if intent.target is None else Decimal(str(intent.target)),
+                executable_price=executable_price(intent.direction, prepared.bid, prepared.ask),
+                tick_size=info.spec.tick_size,
+                max_tightening_fraction=self._cfg.risk_caps.max_shared_stop_tightening_fraction,
+            )
+            addon_code = {
+                AddonClass.SHARED_STOP_POSSIBLE: G.R_ADDON_SHARED,
+                AddonClass.INDEPENDENT_STOPS_NEEDED: G.R_ADDON,
+                AddonClass.OPPOSITE_SIDE: G.R_OPPOSITE,
+            }[assessment.classification]
+            addon_detail = {
+                "netting": "BROKER_ONE_NET_POSITION_PER_SYMBOL",
+                "internal_model": "TRANCHE_LEDGER_KEYED_BY_INTENT_ID",
+                "addon_classification": assessment.classification.value,
+                "addon_why": assessment.why,
+                "addon_tightening_fraction": assessment.tightening_fraction,
+                "existing_net_stop": _dec(existing.sl or 0),
+                "existing_net_target": _dec(existing.tp or 0) or None,
+                "existing_net_quantity": _dec(existing.volume),
+                "temporary_limitation": True,
+            }
+            if assessment.classification is AddonClass.SHARED_STOP_POSSIBLE:
+                stop_for_sizing = _dec(existing.sl)  # combined exposure is protected by THIS stop
+        outcome: RiskOutcome = self._gate.size(
+            intent=intent, market=prepared.facts, account=prepared.account, bid=prepared.bid,
+            ask=prepared.ask, quote_time=min(prepared.quote_utc, now), now=now, family=family,
+            atr=atr, risk_budget_multiplier=multiplier, stop_price=stop_for_sizing,
         )
-        if isinstance(approval, str):
-            return self._reject(intent, approval)
+        detail = {**outcome.detail, **addon_detail}
+        if outcome.approval is None:
+            return self._reject(
+                intent, outcome.reason or G.R_RISK_ERROR, detail=detail, context=context
+            )
+        if addon_code is not None:
+            # An otherwise valid opportunity blocked ONLY by a v1 execution limitation.
+            detail["otherwise_valid"] = True
+            return self._reject(
+                intent, addon_code, detail=detail, context=context, otherwise_valid=True
+            )
+        approval = outcome.approval
+        ctx_summary = {
+            "family": family,
+            "atr": atr,
+            "signal_inputs": self._signal_inputs(context),
+            "quantity": approval.quantity,
+            "stop_risk_eur": approval.stop_risk_money,
+            "cluster": detail.get("cluster"),
+        }
         inserted = self._registry.insert(
             intent_id=intent.intent_id,
             client_order_id=coid,
@@ -1107,9 +1261,11 @@ class Mt5DemoStack:
             status=reg.ACCEPTED,
             created_utc=_iso(now),
             risk_money=str(approval.stop_risk_money),
+            context=json.dumps(ctx_summary, default=str),
         )
         if not inserted:
-            return [Rejected(intent_id=intent.intent_id, reason="duplicate_intent")]
+            return [Rejected(intent_id=intent.intent_id, reason=G.R_DUPLICATE_INTENT)]
+        detail["signal_inputs"] = self._signal_inputs(context)
         accepted = Accepted(
             intent_id=intent.intent_id,
             quantity=approval.quantity,
@@ -1117,23 +1273,29 @@ class Mt5DemoStack:
             risk_fraction=approval.risk_fraction,
             risk_budget=approval.risk_budget,
             leverage=approval.leverage,
+            risk_detail=detail,
         )
         job = EntryJob(
             intent=intent,
             instrument_id=info.instrument_id,
             quantity=approval.quantity,
-            stop=Decimal(str(intent.stop)),
+            stop=Decimal(str(intent.stop)),  # the STRUCTURAL stop, exactly as given
             target=None if intent.target is None else Decimal(str(intent.target)),
             client_order_id=coid,
         )
         self._registry.update(intent.intent_id, status=reg.SENT)
+        sent_at, sent_mono = now, time.perf_counter()
         self._strategy.enqueue(job)
         try:
-            outcome: JobOutcome = job.future.result(timeout=self._cfg.submit_wait_s)
+            job_outcome: JobOutcome = job.future.result(timeout=self._cfg.submit_wait_s)
         except concurrent.futures.TimeoutError:
-            outcome = JobOutcome("timeout", "no_outcome_within_bound")
+            job_outcome = JobOutcome("timeout", "no_outcome_within_bound")
+        latency_ms = (time.perf_counter() - sent_mono) * 1000.0
         try:
-            return self._finish_entry(intent, info, prepared, accepted, outcome)
+            return self._finish_entry(
+                intent, info, prepared, accepted, job_outcome, sent_at=sent_at,
+                latency_ms=latency_ms, context=context,
+            )
         finally:
             self._strategy.forget(coid)
 
@@ -1146,26 +1308,35 @@ class Mt5DemoStack:
         prepared: _Prepared,
         accepted: Accepted,
         outcome: JobOutcome,
+        *,
+        sent_at: datetime,
+        latency_ms: float,
+        context: Mapping[str, Any],
     ) -> list[ExecutionEvent]:
         assert self._registry is not None
         status = outcome.status
+        detail = dict(accepted.risk_detail or {})
         if status == "dry_run_ok":
             self._registry.update(intent.intent_id, status=reg.SHADOW, detail=outcome.reason[:200])
             return [accepted]
-        confirm = self._on_lane(self._lane_confirm_entry, info, intent, prepared)
+        confirm = self._on_lane(
+            self._lane_confirm_entry, info, intent, prepared, sent_at, latency_ms
+        )
         if confirm is None:
             if status in ("denied", "rejected"):
                 reason = _machine_refusal(outcome.reason)
-                if reason in ("not_reconciled", "runtime_not_ready", "unprotected_position"):
+                if reason in (G.R_NOT_RECONCILED, G.R_RUNTIME_NOT_READY, G.R_UNPROTECTED_POSITION):
                     self._set_fatal(reason)  # authority is gone: the runner must stop
                 self._registry.update(
                     intent.intent_id, status=reg.REJECTED, detail=outcome.reason[:200]
                 )
-                return [accepted, Rejected(intent_id=intent.intent_id, reason=reason)]
+                return self._reject_after_accept(intent, accepted, reason, detail, context)
             # timeout / failed / "filled" without a position: the send outcome is UNKNOWN
             self._registry.update(intent.intent_id, status=reg.IN_DOUBT, detail=outcome.reason[:200])
             self._halt("order_outcome_unknown")
-            return [accepted, Rejected(intent_id=intent.intent_id, reason="order_outcome_unknown")]
+            return self._reject_after_accept(
+                intent, accepted, G.R_OUTCOME_UNKNOWN, detail, context
+            )
 
         fill, ticket, protected, stop_seen, target_seen = confirm
         events: list[ExecutionEvent] = [accepted, fill]
@@ -1189,8 +1360,38 @@ class Mt5DemoStack:
             closed = self._on_lane(self._lane_build_closed, row)
             if closed is not None:
                 events.append(closed)
-        events.append(Rejected(intent_id=intent.intent_id, reason="protection_unconfirmed"))
+        events.extend(
+            self._reject_after_accept(
+                intent, None, G.R_PROTECTION_UNCONFIRMED, detail, context, register=False
+            )
+        )
         return events
+
+    def _reject_after_accept(
+        self,
+        intent: TradeIntent,
+        accepted: Accepted | None,
+        reason: str,
+        detail: Mapping[str, Any],
+        context: Mapping[str, Any],
+        *,
+        register: bool = True,
+    ) -> list[ExecutionEvent]:
+        """A refusal AFTER sizing: keeps the sized detail and the Accepted; counted in the funnel."""
+        gate = G.gate_for(reason)
+        merged = dict(detail)
+        merged.update(
+            {
+                "decision": "SKIP",
+                "reject_code": reason,
+                "gate_reject_class": gate.gate_class.value if gate else None,
+                "gate_hard": gate.hard if gate else None,
+                "signal_inputs": self._signal_inputs(context),
+            }
+        )
+        self._count_reject(reason)
+        rejected = Rejected(intent_id=intent.intent_id, reason=reason, risk_detail=merged)
+        return [rejected] if accepted is None else [accepted, rejected]
 
     # -- flatten (reduce-only, through Nautilus) --------------------------------------------------------
 
@@ -1260,7 +1461,7 @@ class Mt5DemoStack:
         if profit_currency == self._cfg.account_currency:
             return Decimal(1)
         if profit_currency != "USD":
-            raise _Reject("unsupported_profit_currency")
+            raise _Reject(G.R_UNSUPPORTED_PROFIT_CCY)
         assert self._adapter is not None
         session = self._adapter.session
         eurusd = self._markets["EURUSD"]
@@ -1270,12 +1471,12 @@ class Mt5DemoStack:
             )
             quoted = session.time_policy.server_epoch_to_utc(float(tick.time_msc) / 1000.0)
         except (Mt5CallError, AmbiguousServerTime):
-            raise _Reject("fx_rate_unavailable") from None
+            raise _Reject(G.R_FX_UNAVAILABLE) from None
         if (now - quoted).total_seconds() > self._cfg.max_quote_age_s:
-            raise _Reject("fx_rate_stale")
+            raise _Reject(G.R_FX_STALE)
         mid = (_dec(tick.bid) + _dec(tick.ask)) / 2
         if mid <= 0:
-            raise _Reject("fx_rate_unavailable")
+            raise _Reject(G.R_FX_UNAVAILABLE)
         return Decimal(1) / mid
 
     def _deal_utc(self, deal: Any, fallback: datetime) -> tuple[datetime, bool]:
@@ -1330,6 +1531,7 @@ class Mt5DemoStack:
         notionals: dict[str, Decimal] = {}
         signed: dict[str, Decimal] = {}
         risks: list[OpenRisk] = []
+        rows_by_ticket = {int(p.ticket): r for p, _, r in self._lane_own_positions(positions)}
         for p in positions:
             market = self._canonical_of(str(p.symbol))
             if market is None:
@@ -1350,6 +1552,8 @@ class Mt5DemoStack:
                         market=market,
                         cluster=CLUSTERS[market],
                         risk_money=units * abs(_dec(p.price_open) - sl) * fx,
+                        family=self._family_of(rows_by_ticket.get(int(p.ticket))),
+                        intent_id=(rows_by_ticket[int(p.ticket)].intent_id if int(p.ticket) in rows_by_ticket and rows_by_ticket[int(p.ticket)] is not None else None),
                     )
                 )
         return GateAccount(
@@ -1367,6 +1571,7 @@ class Mt5DemoStack:
             account_leverage=_dec(account.leverage),
             day_start=day_start,
             open_risks=tuple(risks),
+            free_margin=_dec(getattr(account, "margin_free", None)) if getattr(account, "margin_free", None) is not None else None,
             state_version=f"broker@{now.isoformat()}",
         )
 
@@ -1379,7 +1584,7 @@ class Mt5DemoStack:
         try:
             tick = session.call("symbol_info_tick", client.symbol_info_tick, info.broker_symbol)
         except Mt5CallError:
-            raise _Reject("stale_feed") from None
+            raise _Reject(G.R_STALE_FEED) from None
         try:
             quote_utc = session.time_policy.server_epoch_to_utc(
                 float(getattr(tick, "time_msc", 0) or tick.time * 1000) / 1000.0
@@ -1393,13 +1598,13 @@ class Mt5DemoStack:
         if age > self._cfg.feed_fatal_age_s:
             raise StackFailClosed("stale_feed")
         if age > self._cfg.max_quote_age_s:
-            raise _Reject("stale_feed")
+            raise _Reject(G.R_STALE_FEED)
         bid, ask = _dec(tick.bid), _dec(tick.ask)
         if bid <= 0 or ask < bid:
-            raise _Reject("invalid_quote")
+            raise _Reject(G.R_INVALID_QUOTE)
         positions = self._lane_positions()
         foreign: list[str] = []
-        same_symbol = False
+        existing: Any = None
         for p in positions:
             market = self._canonical_of(str(p.symbol))
             if market is None or int(p.magic) != self._cfg.magic:
@@ -1407,15 +1612,14 @@ class Mt5DemoStack:
             elif float(p.sl or 0.0) == 0.0:
                 self._set_fatal("unprotected_exposure")
                 raise StackFailClosed("unprotected_exposure")
-            if str(p.symbol) == info.broker_symbol:
-                same_symbol = True
-        if same_symbol:
-            raise _Reject("position_exists")
+            elif str(p.symbol) == info.broker_symbol:
+                existing = p  # BROKER netting: one net position; classified after sizing
         self._foreign = tuple(foreign)
         if foreign:
-            raise _Reject("foreign_position_at_broker")
+            raise _Reject(G.R_FOREIGN_POSITION)
         fx = self._fx(info.profit_currency, now)
         gate_account = self._lane_gate_account(account, positions, now)
+        margin_per_lot = self._lane_margin_per_lot(intent, info, ask if intent.direction == 1 else bid)
         facts = MarketFacts(
             market=intent.market,
             contract_size=info.spec.contract_size,
@@ -1425,16 +1629,47 @@ class Mt5DemoStack:
             max_leverage=info.spec.max_leverage,
             max_spread=info.spec.max_spread,
             fx=fx,
+            margin_per_lot=margin_per_lot,
         )
+        family = UNKNOWN_FAMILY
+        if existing is not None:
+            for _position, _m, row in self._lane_own_positions([existing]):
+                family = self._family_of(row)
         return _Prepared(
             bid=bid, ask=ask, quote_utc=quote_utc, account=gate_account, facts=facts,
-            positions_seen=len(positions),
+            positions_seen=len(positions), existing=existing, existing_family=family,
         )
 
+    def _lane_margin_per_lot(
+        self, intent: TradeIntent, info: _MarketInfo, price: Decimal
+    ) -> Decimal | None:
+        """Broker margin (account currency) for 1.0 lot at ``price`` via ``order_calc_margin``;
+        None when the terminal cannot tell (the margin cap is then logged as unavailable)."""
+        assert self._adapter is not None
+        session = self._adapter.session
+        try:
+            margin = session.call(
+                "order_calc_margin",
+                session.client.order_calc_margin,
+                0 if intent.direction == 1 else 1,
+                info.broker_symbol,
+                1.0,
+                float(price),
+                none_ok=True,
+            )
+        except Mt5CallError:
+            return None
+        return None if margin is None or float(margin) <= 0 else _dec(margin)
+
     def _lane_confirm_entry(
-        self, info: _MarketInfo, intent: TradeIntent, prepared: _Prepared
+        self,
+        info: _MarketInfo,
+        intent: TradeIntent,
+        prepared: _Prepared,
+        sent_at: datetime | None = None,
+        latency_ms: float | None = None,
     ) -> tuple[Fill, int, bool, Decimal, Decimal | None] | None:
-        """Broker truth after the entry: Fill from the entry deals + is the stop really attached?"""
+        """Broker truth after the entry: Fill (+TCA) from the entry deals + is the stop attached?"""
         now = self._now().astimezone(UTC)
         positions = self._lane_symbol_positions(info.broker_symbol)
         if not positions:
@@ -1444,30 +1679,69 @@ class Mt5DemoStack:
         entry_deals = [
             d
             for d in self._lane_deals(now, since=now - timedelta(days=2))
-            if int(d.position_id) == ticket and int(d.entry) == ENTRY_IN and int(d.type) in DEAL_TYPES_TRADE
+            if int(d.position_id) == ticket
+            and int(d.entry) == ENTRY_IN
+            and int(d.type) in DEAL_TYPES_TRADE
         ]
+        fill_utc: datetime | None = None
         if entry_deals:
             quantity = sum((_dec(d.volume) for d in entry_deals), ZERO)
             price = sum((_dec(d.volume) * _dec(d.price) for d in entry_deals), ZERO) / quantity
-            commission = sum((_dec(d.commission) + _dec(getattr(d, "fee", 0.0)) for d in entry_deals), ZERO)
+            commission = sum(
+                (_dec(d.commission) + _dec(getattr(d, "fee", 0.0)) for d in entry_deals), ZERO
+            )
             order_id = str(int(entry_deals[0].order))
+            fill_utc, exact = self._deal_utc(entry_deals[0], now)
+            fill_utc = fill_utc if exact else None
         else:  # deal history lags: the position itself is still broker truth
             quantity, price, commission = _dec(position.volume), _dec(position.price_open), ZERO
             order_id = "0"
         executable = executable_price(intent.direction, prepared.bid, prepared.ask)
         slippage = (price - executable) if intent.direction == 1 else (executable - price)
+        intended = Decimal(str(intent.entry_ref))
+        slip_intended = (price - intended) if intent.direction == 1 else (intended - price)
+        mid = (prepared.bid + prepared.ask) / 2
+        fill_vs_mid = (price - mid) if intent.direction == 1 else (mid - price)
+        spread = prepared.ask - prepared.bid
+        units = quantity * info.spec.contract_size
+        # commission is account currency; per-unit price-units = commission / (units x fx)
+        fees_price = (
+            abs(commission) / (units * prepared.facts.fx) if units > 0 and prepared.facts.fx > 0 else ZERO
+        )
+        cost = spread + max(slippage, ZERO) + fees_price
+        stop_decimal = Decimal(str(intent.stop))
+        planned_move = (
+            abs(Decimal(str(intent.target)) - executable)
+            if intent.target is not None
+            else abs(executable - stop_decimal)  # 1R
+        )
         fill = Fill(
             intent_id=intent.intent_id,
             price=price,
             quantity=quantity,
-            spread=prepared.ask - prepared.bid,
+            spread=spread,
             slippage=slippage,
             commission=commission,
             swap=_dec(position.swap),
             broker_order_id=order_id,
             broker_position_id=str(ticket),
+            intended_price=intended,
+            reference_price=executable,
+            bid_at_send=prepared.bid,
+            ask_at_send=prepared.ask,
+            slippage_vs_intended=slip_intended,
+            fill_vs_mid=fill_vs_mid,
+            fees_price_units=fees_price,
+            cost_price_units=cost,
+            movement_to_cost=(planned_move / cost) if cost > 0 else None,
+            latency_total_ms=latency_ms,
+            latency_send_to_fill_ms=(
+                None
+                if fill_utc is None or sent_at is None
+                else (fill_utc - sent_at).total_seconds() * 1000.0
+            ),
         )
-        stop = Decimal(str(intent.stop))
+        stop = stop_decimal
         stop_seen = _dec(position.sl or 0)
         tolerance = info.spec.tick_size * self._cfg.protection_tolerance_ticks
         protected = stop_seen > 0 and abs(stop_seen - stop) <= tolerance
@@ -1519,6 +1793,22 @@ class Mt5DemoStack:
             reason = row.exit_hint if row.exit_hint in ("SESSION_END", "MANUAL") else "MANUAL"
         else:
             reason = "EXTERNAL"
+        entries = [d for d in deals if int(d.entry) == ENTRY_IN]
+        entry_price = None
+        holding = None
+        if entries:
+            entry_qty = sum((_dec(d.volume) for d in entries), ZERO)
+            entry_price = sum((_dec(d.volume) * _dec(d.price) for d in entries), ZERO) / entry_qty
+            opened_at, exact = self._deal_utc(entries[0], now)
+            holding = (closed_at - opened_at).total_seconds() if exact else None
+        level = None
+        if reason == "STOP":
+            level = Decimal(row.stop)
+        elif reason == "TARGET" and row.target is not None:
+            level = Decimal(row.target)
+        exit_slip = None
+        if level is not None:
+            exit_slip = (level - price) * row.direction  # adverse-positive: worse than the level
         event = PositionClosed(
             intent_id=row.intent_id,
             broker_position_id=str(ticket),
@@ -1529,6 +1819,10 @@ class Mt5DemoStack:
             commission=commission,
             swap=swap,
             profit_eur=profit,
+            net_pnl_eur=profit + commission + swap,
+            entry_price=entry_price,
+            holding_seconds=holding,
+            exit_slippage_vs_level=exit_slip,
         )
         self._registry.update(row.intent_id, status=reg.CLOSED)
         self._closing_seen.pop(row.intent_id, None)
@@ -1730,34 +2024,35 @@ class Mt5DemoStack:
 
 
 def _machine_refusal(reason: str) -> str:
-    """Map an adapter/strategy refusal text to a stable machine reason code."""
+    """Map an adapter/strategy refusal text to a stable machine reason code (see ``gates``)."""
     text = reason or ""
     upper = text.upper()
     if upper.startswith("INVALID_STOPS"):
-        return "stop_inside_broker_stop_level"
+        return G.R_STOP_LEVEL
     if upper.startswith("INVALID_VOLUME"):
-        return "invalid_volume"
+        return G.R_INVALID_VOLUME
     for code in ("INVALID_PRICE", "UNSUPPORTED_FILLING", "INVALID_COMMENT"):
         if upper.startswith(code):
-            return "request_rejected:" + code.lower()
+            return f"{G.R_REQUEST_REJECTED}:{code.lower()}"
     if "POSITION_EXISTS" in upper:
-        return "position_exists"
+        # the adapter's / strategy's own netting guard: same TEMPORARY v1 limitation, never a risk rule
+        return G.R_ADDON
     if "DUPLICATE" in upper:
-        return "duplicate_intent"
+        return G.R_DUPLICATE_INTENT
     if upper.startswith(("ORDER_CHECK", "ORDER_SEND")) or "REJECT" in upper:
-        return "broker_reject"
+        return G.R_BROKER_REJECT
     if "NOT_VENUE_RECONCILED" in upper:
-        return "not_reconciled"
+        return G.R_NOT_RECONCILED
     if upper.startswith("RUNTIME_"):
-        return "runtime_not_ready"
+        return G.R_RUNTIME_NOT_READY
     if "UNPROTECTED" in upper:
-        return "unprotected_position"
+        return G.R_UNPROTECTED_POSITION
     if "ACCOUNT_IS_NOT_DEMO" in upper:
-        return "non_demo_account"
+        return G.R_NON_DEMO
     if "ACCOUNT_IDENTITY" in upper:
-        return "account_identity_changed"
+        return G.R_IDENTITY
     if "BROKER_UNREACHABLE" in upper or upper.startswith("SESSION_"):
-        return "broker_disconnect"
-    if text in ("halted", "stale_signal", "past_forced_flat", "no_stop", "quantity_precision"):
+        return G.R_BROKER_DISCONNECT
+    if text in (G.R_HALTED, G.R_STALE_SIGNAL, G.R_PAST_FORCED_FLAT, G.R_NO_STOP, G.R_QUANTITY_PRECISION):
         return text
-    return "execution_denied:" + text[:60]
+    return f"{G.R_EXECUTION_DENIED}:" + text[:60]

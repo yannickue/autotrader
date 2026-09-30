@@ -38,11 +38,12 @@ class IntentRow:
     risk_money: str | None
     created_utc: str
     detail: str | None
+    context: str | None = None  # JSON: family, quality inputs, sizing summary (tranche ledger data)
 
 
 _COLUMNS = (
     "intent_id, client_order_id, market, direction, stop, target, forced_flat_utc, status, "
-    "position_ticket, exit_hint, risk_money, created_utc, detail"
+    "position_ticket, exit_hint, risk_money, created_utc, detail, context"
 )
 
 
@@ -67,9 +68,13 @@ class StackRegistry:
                     exit_hint TEXT,
                     risk_money TEXT,
                     created_utc TEXT NOT NULL,
-                    detail TEXT
+                    detail TEXT,
+                    context TEXT
                 )"""
             )
+            columns = {r[1] for r in self._db.execute("PRAGMA table_info(intents)").fetchall()}
+            if "context" not in columns:  # registry created before the tranche-ledger context
+                self._db.execute("ALTER TABLE intents ADD COLUMN context TEXT")
             self._db.execute(
                 "CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT NOT NULL)"
             )
@@ -94,15 +99,17 @@ class StackRegistry:
         created_utc: str,
         risk_money: str | None = None,
         detail: str | None = None,
+        context: str | None = None,
     ) -> bool:
         """False if the intent id (or its client order id) is already registered."""
         with self._lock:
             try:
                 self._db.execute(
-                    f"INSERT INTO intents ({_COLUMNS}) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    f"INSERT INTO intents ({_COLUMNS}) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (
                         intent_id, client_order_id, market, direction, stop, target,
                         forced_flat_utc, status, None, None, risk_money, created_utc, detail,
+                        context,
                     ),
                 )
             except sqlite3.IntegrityError:
@@ -146,7 +153,7 @@ class StackRegistry:
             return [IntentRow(*r) for r in cur.fetchall()]
 
     def update(self, intent_id: str, **fields: object) -> None:
-        allowed = {"status", "position_ticket", "exit_hint", "risk_money", "detail"}
+        allowed = {"status", "position_ticket", "exit_hint", "risk_money", "detail", "context"}
         unknown = set(fields) - allowed
         if unknown:
             raise ValueError(f"unknown registry fields {unknown}")
