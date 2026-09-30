@@ -121,6 +121,39 @@ Replace GER40 constants by `load_market_spec(canonical)` (single source of truth
 Also note: bar counts per day vary by season (GER40 237/249), so any "bars since open" or day-length assumption must use
 local-time minutes, not bar indices; `Frame.contig_next` gap handling already covers the daily breaks.
 
+## Derived cost/sizing (per market, `src/alpha/common/market_costs.py`)
+
+`CostScenario.slippage_pts` and `SizingSpec.min_risk_pts/max_risk_pts/contract_size` are PRICE units of the market, so
+they cannot be shared between markets. `cost_scenarios_for(spec)` / `sizing_for(spec, account_eur=500)` derive them from the
+MarketSpec plus the observed M5 median spread in `research/reports/v2_markets/<X>_quality.json`; GER40 reproduces
+`COST_SCENARIOS` / `DEFAULT_SIZING` exactly (`sizing_for(GER40, account_eur=10_000) == DEFAULT_SIZING`).
+
+- Slippage = fixed fraction of the market's median spread (V1 GER40: 0.5 / 1.5 over 1.45 = 0.345 / 1.034), rounded to the tick.
+- Min risk distance = 3.448 median spreads (V1 5.0 / 1.45); max risk = 275.9 median spreads (V1 400 / 1.45), a sanity ceiling only.
+- Lot min/step and contract size from the spec; `contract_size` = EUR per price unit per lot (USD profit converted with the constant
+  reference EUR/USD implied by the 2026-09-30 NAS100 margin observation, 0.8818 EUR per USD).
+- Leverage cap = min(10, broker-observed); the 30x ceiling is never a target. Risk-based sizing skips (`size_below_min`) when the
+  minimum lot already risks more than `equity x risk_fraction` at the given stop, or when the leverage cap leaves less than one minimum lot.
+- Sim window: `simulate_fast(..., window=SimWindow.from_spec(spec))`, minutes in the local calendar timezone of `Frame.minute`
+  (DST handled by the frame's tz conversion); `window=None` = V1 GER40 constants.
+
+Table for account 500 EUR, risk fraction 0.5%:
+
+| Market | median spread | slip BASE/STRESS | min..max risk | lot min/step | EUR per price unit per lot | lev cap | min lot risk at min stop (EUR) | approved risk (EUR) | min lot leverage |
+|---|---|---|---|---|---|---|---|---|---|
+| GER40 | 1.45 | 0.5 / 1.5 | 5..400 | 0.25/0.25 | 1 | 10 | 1.25 | 2.5 | 12.7x |
+| NAS100 | 0.75 | 0.26 / 0.78 | 2.59..206.9 | 0.2/0.2 | 0.88182 | 10 | 0.4568 | 2.5 | 10.7x |
+| SPX500 | 0.49 | 0.17 / 0.51 | 1.69..135.17 | 0.5/0.5 | 0.88182 | 10 | 0.7451 | 2.5 | 6.77x |
+| XAUUSD | 0.3 | 0.1 / 0.31 | 1.03..82.76 | 0.01/0.01 | 88.182 | 10 | 0.9083 | 2.5 | 7.35x |
+| EURUSD | 5e-05 | 2e-05 / 5e-05 | 0.00017..0.01379 | 0.01/0.01 | 88182 | 10 | 0.1499 | 2.5 | 2x |
+
+Reading the table: at 500 EUR the approved risk is 2.5 EUR and the 10x cap allows 5000 EUR notional. The minimum lot notional
+(observed price, last column) exceeds that for GER40 (12.7x) and NAS100 (10.7x), so every index trade there is skipped as
+`size_below_min` unless the account or the research leverage cap is raised (the broker-observed 20x and the 30x ceiling would allow it).
+
+NOT modelled: commission (GER40 demo 0 observed, others unverified: 0 assumed), swap (no overnight), FX-rate variation (constant
+rate), slippage measured from fills (calibrated fraction of spread), margin/stop-out mechanics, holiday/half-day early closes, `tick_value`.
+
 ## Unresolved / blocked
 
 - Broker confirmation of the server-clock rule and of official session hours (cannot be read via MT5 `symbol_info`).

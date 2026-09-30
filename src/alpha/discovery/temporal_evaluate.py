@@ -63,7 +63,7 @@ from alpha.discovery.temporal_genome import (
 )
 from alpha.events import schema as ev_schema
 from alpha.fast.screen import RejectReason, reject_reason, screen_partition_trades
-from alpha.fast.sim import CandidateArrays, MarketArrays, TradeArrays, simulate_fast
+from alpha.fast.sim import CandidateArrays, MarketArrays, SimWindow, TradeArrays, simulate_fast
 from alpha.temporal.batch import PrefixCache
 from alpha.temporal.evaluate import evaluate_temporal_many
 from alpha.temporal.reference import MarketFrame
@@ -155,6 +155,12 @@ class TemporalEval:
     behavior_key: str = ""
     trades_per_day: float | None = None  # Train, COMBINED_ADVERSE
     n_train_candidates: int = 0
+    # Optional diagnostics of a FRESH computation only (None on cache hits / from_dict): never part of
+    # to_dict / hashes / fitness. skip_counts: simulate_fast skip labels of the ADVERSE-cost sim
+    # (Train + Validation bars, i.e. the whole simulated stream; None if no sim ran);
+    # train_candidates: the Train-side CandidateArrays.
+    skip_counts: dict[str, int] | None = field(default=None, compare=False, repr=False)
+    train_candidates: Any = field(default=None, compare=False, repr=False)
 
     @property
     def rejected(self) -> bool:
@@ -244,10 +250,14 @@ class TemporalEvaluator:
         min_train_trades: int = MIN_TRAIN_TRADES, ledger: TemporalTrialLedger | None = None,
         cache_dir: Path | str | None = None, data_fingerprint: str | None = None,
         max_cache_mb: float = 500.0, prefix_cache_mb: float = 256.0,
+        window: SimWindow | None = None,
     ) -> None:
         self.frame_provider = frame_provider
         self._frame: MarketFrame | None = None
         self.market, self.split, self.sizing, self.rules = market, split, sizing, rules
+        # None = V1 GER40 constants (bit-identical); else the market's local-minute entry/flat window.
+        self.window = window
+        self._fresh: tuple[dict[str, int] | None, Any] | None = None
         self.dates = np.asarray(dates).astype("datetime64[D]")
         if len(self.dates) != len(market.o):
             raise ValueError("dates must contain one date per market bar")
@@ -302,6 +312,7 @@ class TemporalEvaluator:
                 "split": self.split.to_dict(), "sizing": dataclasses.asdict(self.sizing),
                 "rules": dataclasses.asdict(self.rules), "min_trades": self.min_trades,
                 "n_chunks": N_CHUNKS, "sources": _source_hashes(), "libraries": _library_versions(),
+                **({} if self.window is None else {"window": dataclasses.asdict(self.window)}),
             })
         return self._fp_static
 
@@ -365,10 +376,14 @@ class TemporalEvaluator:
         raw = self._memory.get(key)
         if raw is not None:
             self.ledger.cache_hits += 1
+        fresh = None
         if raw is None or (need_base and not raw.get("full", True)):
             raw = self._compute_raw(canon, ghash, spec, bkey, need_base)
+            fresh, self._fresh = self._fresh, None
             self._cache_put(key, raw)
         out = dataclasses.replace(TemporalEval.from_dict(raw), lineage=genome.lineage)
+        if fresh is not None:
+            out = dataclasses.replace(out, skip_counts=fresh[0], train_candidates=fresh[1])
         self.ledger.note_twin(out.twin_hash, out.genome_hash)
         return out
 
@@ -385,6 +400,7 @@ class TemporalEvaluator:
         if raw is None or not raw.get("full", True):
             spec = temporal_compile.compile_temporal(canon, self.resolver, canonical=True)
             raw = self._compute_raw(canon, ghash, spec, temporal_compile.behavior_key(spec), True)
+            self._fresh = None  # diagnostics are only surfaced by evaluate()
             self._cache_put(key, raw)
         return dataclasses.replace(TemporalEval.from_dict(raw), lineage=e.lineage)
 
@@ -396,6 +412,7 @@ class TemporalEvaluator:
 
     def _compute_raw(self, canon, ghash, spec, bkey, need_full) -> dict:
         result = self._compute(canon, ghash, spec, bkey, need_full)
+        self._fresh = (result.skip_counts, result.train_candidates)
         raw = result.to_dict()
         raw["full"] = result.is_full
         return raw
@@ -432,7 +449,8 @@ class TemporalEvaluator:
         def rejected(reason: str, n: int) -> TemporalEval:
             side = _empty_side(n)
             return TemporalEval(ghash, canon.lineage, cx, n_cand, reason, TrainView(ghash, cx, side, side),
-                                ValidationView(empty, empty), twin, bkey, None, n_train_cand)
+                                ValidationView(empty, empty), twin, bkey, None, n_train_cand,
+                                train_candidates=train_cands)
 
         reason = reject_reason(spec, train_cands, min_trades=self.min_trades, market=self.market,
                                sizing=self.sizing, cost=self._costs[ADVERSE_COST])
@@ -440,24 +458,28 @@ class TemporalEvaluator:
             return rejected(reason.value, n_train_cand if reason is RejectReason.TOO_FEW_TRADES else 0)
 
         sides: dict[str, tuple[SideMetrics, SideMetrics | None]] = {}
+        skips: dict[str, int] | None = None
         for name in (ADVERSE_COST, BASE_COST) if need_full else (ADVERSE_COST,):
-            trades = simulate_fast(self.market, cands, self._costs[name], self.sizing, self.rules)
+            trades = simulate_fast(self.market, cands, self._costs[name], self.sizing, self.rules, self.window)
             self.sim_count += 1
+            if name == ADVERSE_COST:
+                skips = trades.skips
             sides[name] = self._reduce(trades, want_val=need_full)
             if name == ADVERSE_COST and sides[name][0].screen.n_trades < self.min_trades:
                 side = sides[name][0]
                 return TemporalEval(ghash, canon.lineage, cx, n_cand, RejectReason.TOO_FEW_TRADES.value,
                                     TrainView(ghash, cx, side, side), ValidationView(empty, empty), twin,
-                                    bkey, None, n_train_cand)
+                                    bkey, None, n_train_cand, skip_counts=skips, train_candidates=train_cands)
         tpd = sides[ADVERSE_COST][0].screen.trades_per_day
         if not need_full:
             return TemporalEval(ghash, canon.lineage, cx, n_cand, None,
                                 TrainView(ghash, cx, None, sides[ADVERSE_COST][0]), None, twin, bkey, tpd,
-                                n_train_cand)
+                                n_train_cand, skip_counts=skips, train_candidates=train_cands)
         return TemporalEval(
             ghash, canon.lineage, cx, n_cand, None,
             TrainView(ghash, cx, sides[BASE_COST][0], sides[ADVERSE_COST][0]),
             ValidationView(sides[BASE_COST][1], sides[ADVERSE_COST][1]), twin, bkey, tpd, n_train_cand,
+            skip_counts=skips, train_candidates=train_cands,
         )
 
 

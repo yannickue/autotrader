@@ -16,6 +16,7 @@ import numpy as np
 from alpha.discovery.search import make_lineage
 from alpha.discovery.temporal_genome import (
     EXPIRES_GRID,
+    MIN_WINDOW_MIN,
     EventGene,
     EventPool,
     GenomeError,
@@ -35,6 +36,43 @@ from alpha.temporal import spec as sp
 
 LONG_TARGET_LEVELS = tuple(sorted(k for k in ev.TARGET_LEVELS if k.endswith(("high", "pdh"))))
 WINDOWS = ((480, 1050), (540, 1200), (0, 720), (600, 1440), (420, 900), (720, 1320))
+
+
+def windows_for(
+    entry_start_min: int, entry_end_min: int, base: tuple[tuple[int, int], ...] = WINDOWS
+) -> tuple[tuple[int, int], ...]:
+    """Time windows inside a market's entry window [entry_start, entry_end) (local minutes).
+
+    A base window fully inside is kept unchanged; one partly outside is CLIPPED to the entry
+    window; a window with no (or < ``MIN_WINDOW_MIN``) overlap is dropped, so no search budget is
+    spent on ranges in which the simulator can never enter. Generic sub-windows (first/second
+    half, middle half, snapped to 30 min) are appended so short entry windows keep some variety.
+    Order-preserving and de-duplicated; deterministic. ``windows=None`` in ``random_genome`` keeps
+    the legacy ``WINDOWS`` (default behaviour unchanged).
+    """
+    lo, hi = int(entry_start_min), int(entry_end_min)
+    if not 0 <= lo < hi <= 1440:
+        raise ValueError(f"bad entry window {(lo, hi)}")
+    span = hi - lo
+
+    def snap(x: float) -> int:
+        return int(round(x / 30.0) * 30)
+
+    cand = [(max(a, lo), min(b, hi)) for a, b in base]
+    if span >= 2 * MIN_WINDOW_MIN:
+        mid = lo + span // 2
+        cand += [
+            (lo, max(lo + MIN_WINDOW_MIN, min(hi, snap(mid)))),
+            (min(hi - MIN_WINDOW_MIN, max(lo, snap(mid))), hi),
+            (max(lo, snap(lo + span / 4)), min(hi, snap(hi - span / 4))),
+        ]
+    out: list[tuple[int, int]] = []
+    for w in cand:
+        if w[1] - w[0] >= MIN_WINDOW_MIN and w not in out:
+            out.append(w)
+    return tuple(out)
+
+
 WITHIN_WEIGHTS = np.array([1, 3, 4, 4, 3, 2, 1], dtype=float)
 WITHIN_WEIGHTS /= WITHIN_WEIGHTS.sum()
 
@@ -301,9 +339,16 @@ def available_archetypes(pool: EventPool, seed: int = 0) -> tuple[str, ...]:
 
 def random_genome(
     rng: np.random.Generator, pool: EventPool | None = None, archetype: str | None = None,
-    direction: str | None = None,
+    direction: str | None = None, windows: tuple[tuple[int, int], ...] | None = None,
 ) -> TemporalGenome:
-    """A canonical, validate()-passing genome (deterministic per ``rng`` state)."""
+    """A canonical, validate()-passing genome (deterministic per ``rng`` state).
+
+    ``windows`` = allowed time windows (e.g. ``windows_for(entry_start, entry_end)``); ``None`` keeps
+    the legacy GER40 ``WINDOWS`` (identical output for the same seed).
+    """
+    win_choices = WINDOWS if windows is None else tuple(windows)
+    if not win_choices:
+        raise ValueError("windows must not be empty")
     pool = pool if pool is not None else EventPool.full()
     names = tuple(ARCHETYPES) if archetype is None else (archetype,)
     for _ in range(400):
@@ -320,7 +365,7 @@ def random_genome(
             direction=direction or ("LONG" if rng.random() < 0.5 else "SHORT"),
             anchor=tuple(anchor), steps=steps, context=random_context(rng, pool),
             expires_after=exp, stop=random_stop(rng, zone=zone), target=random_target(rng),
-            window=None if rng.random() < 0.6 else _pick(rng, WINDOWS),
+            window=None if rng.random() < 0.6 else _pick(rng, win_choices),
             lineage=make_lineage(name),
         )
         try:
@@ -333,4 +378,4 @@ def random_genome(
 
 
 __all__ = ("ARCHETYPES", "LONG_TARGET_LEVELS", "available_archetypes", "feature_preset",
-           "random_context", "random_genome", "random_stop", "random_target")
+           "random_context", "random_genome", "random_stop", "random_target", "windows_for")

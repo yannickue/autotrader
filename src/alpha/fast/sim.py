@@ -59,6 +59,52 @@ SKIP_LABELS = (
 )
 
 
+@dataclass(frozen=True)
+class SimWindow:
+    """Entry window and forced-flat minute used by :func:`simulate_fast`.
+
+    MINUTE BASIS: identical to ``MarketArrays.minute``, i.e. the minute-of-day of the bar OPEN in
+    the market's LOCAL calendar timezone (``MarketSpec.calendar.tz``) as produced by
+    ``Frame.from_dataframe(df, params_from_spec(spec))``. The tz conversion happens per bar there
+    (DST-correct: 09:30 New York is 09:30 in both EDT and EST), so the window is stated once in
+    local wall-clock minutes and needs no per-bar Berlin conversion. ``MarketArrays`` built any
+    other way (e.g. Berlin minutes for a New York market) must NOT be paired with a local window.
+
+    ``entry_start_min <= minute[entry bar] < entry_end_min`` admits an entry (else the
+    ``outside_window`` skip is counted); a position is closed at the first bar with
+    ``minute >= flat_min``. Defaults: the V1 GER40 Berlin constants (09:00-20:00, flat 21:30).
+    """
+
+    entry_start_min: int = ENTRY_START_MIN
+    entry_end_min: int = ENTRY_END_MIN
+    flat_min: int = FLAT_MIN
+
+    def __post_init__(self) -> None:
+        if not (0 <= self.entry_start_min < self.entry_end_min <= self.flat_min <= 1440):
+            raise ValueError(
+                "SimWindow needs 0 <= entry_start < entry_end <= flat <= 1440, got "
+                f"{(self.entry_start_min, self.entry_end_min, self.flat_min)}"
+            )
+
+    @classmethod
+    def from_params(cls, params) -> SimWindow:
+        """From ``alpha.common.frame.FrameParams`` (the frame that produced ``minute``)."""
+        return cls(params.entry_start_min, params.entry_end_min, params.flat_min)
+
+    @classmethod
+    def from_spec(cls, spec) -> SimWindow:
+        """From ``markets.spec.MarketSpec.calendar`` (local calendar-tz minutes)."""
+        cal = spec.calendar
+        return cls(cal.entry_start_min, cal.entry_end_min, cal.forced_flat_min)
+
+    @classmethod
+    def from_frame(cls, frame: Frame) -> SimWindow:
+        return cls.from_params(frame.params)
+
+
+GER40_WINDOW = SimWindow()
+
+
 def _contiguous(array: np.ndarray, dtype: np.dtype) -> np.ndarray:
     return np.ascontiguousarray(array, dtype=dtype)
 
@@ -483,8 +529,15 @@ def simulate_fast(
     cost: CostScenario,
     sizing: SizingSpec = DEFAULT_SIZING,
     rules: SimRules = DEFAULT_RULES,
+    window: SimWindow | None = None,
 ) -> TradeArrays:
-    """Simulate one sparse candidate stream with AR1-equivalent fills."""
+    """Simulate one sparse candidate stream with AR1-equivalent fills.
+
+    ``window=None`` keeps the V1 GER40 Berlin constants (bit-identical). For any other market pass
+    ``SimWindow.from_spec(spec)`` together with ``MarketArrays`` whose ``minute`` is local-calendar
+    minutes (see :class:`SimWindow`).
+    """
+    win = GER40_WINDOW if window is None else window
     if len(candidates.decision_idx) and (
         candidates.decision_idx[0] < 0 or candidates.decision_idx[-1] >= len(market.o)
     ):
@@ -518,9 +571,9 @@ def simulate_fast(
         sizing.contract_size,
         rules.max_trades_per_day,
         rules.max_entry_spread_pts,
-        ENTRY_START_MIN,  # explicit args: numba's on-disk cache cannot keep stale frozen globals
-        ENTRY_END_MIN,
-        FLAT_MIN,
+        win.entry_start_min,  # explicit args: numba disk cache cannot keep stale frozen globals
+        win.entry_end_min,
+        win.flat_min,
     )
     return TradeArrays(
         ints[0], ints[1], ints[2], ints[3].astype(np.int8), ints[4],
@@ -536,9 +589,13 @@ def simulate_many(
     cost: CostScenario,
     sizing: SizingSpec = DEFAULT_SIZING,
     rules: SimRules = DEFAULT_RULES,
+    window: SimWindow | None = None,
 ) -> list[TradeArrays]:
     """Simulate independent variants; the compiled inner kernel dominates runtime."""
-    return [simulate_fast(market, candidates, cost, sizing, rules) for candidates in candidate_sets]
+    return [
+        simulate_fast(market, candidates, cost, sizing, rules, window)
+        for candidates in candidate_sets
+    ]
 
 
 @njit(cache=True)
