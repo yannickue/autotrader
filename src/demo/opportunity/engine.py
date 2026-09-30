@@ -18,11 +18,12 @@ the engine assembles ``FamilyData`` through the same ``_assemble`` step without 
 
 from __future__ import annotations
 
+import dataclasses
 import math
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from typing import Protocol
+from typing import Any, Protocol
 
 import numpy as np
 import pandas as pd
@@ -37,7 +38,7 @@ from alpha.families.data import (
     round_steps,
 )
 from alpha.families.registry import describe_candidate, generate_candidates
-from alpha.families.spec import MarketCalendar
+from alpha.families.spec import MarketCalendar, tod_bounds
 from alpha.fast.sim import CandidateArrays
 from alpha.session import local_clock
 from demo.contracts import Decision, OpportunitySnapshot, Phase, TradeIntent, opportunity_id_for
@@ -49,7 +50,7 @@ from demo.opportunity.bar_source import (
     tick_activity_of,
     validate_frame,
 )
-from demo.opportunity.clock import forced_flat_utc, live_spec, to_utc
+from demo.opportunity.clock import forced_flat_utc, live_spec, local_minute_of, local_of, to_utc
 from demo.opportunity.operating_policy import OperatingPolicy
 from demo.opportunity.policy import (
     Candidate,
@@ -72,6 +73,7 @@ from demo.opportunity.snapshot import (
     git_commit,
     realized_vol,
 )
+from demo.sequence_metrics import regime_of
 from markets.spec import PHASE2_CANONICALS, MarketSpec, load_market_spec
 
 # Reason codes of a CATCH-UP decision: an opportunity found on a bar that is already older than one bar
@@ -97,6 +99,34 @@ class CatchupInfo:
 
     live_now: datetime
     live_quote: Quote | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ShadowScan:
+    """Lane U2: evaluate closed bars for MEASUREMENT only (never an intent, never the stack).
+
+    ``code``          the terminal REJECT code every emitted decision carries as its primary reason
+                      (``OUT_OF_WINDOW_SHADOW`` | ``SHADOW_UNIVERSE``); an otherwise ACCEPTED assessment is turned into
+                      exactly this rejection, so the existing counterfactual labeller labels it like any non-trade;
+    ``origin``        persisted as ``signal.origin`` (also the ``_last_bar`` idempotence namespace);
+    ``relax_window``  evaluate the generators on a LIVE-ONLY copy of the market calendar whose entry window is
+                      [00:00, 24:00); candidates whose entry bar lies INSIDE the real (tod-adjusted) window are
+                      dropped (the normal path owns those). Frozen specs / research windows are never mutated;
+    ``tags``          merged into ``signal`` (cluster, asset_class, ...);
+    ``admit``         optional dedupe / cap callback ``(candidate) -> bool`` (False = not recorded).
+    """
+
+    code: str
+    origin: str
+    relax_window: bool = False
+    tags: Mapping[str, Any] = field(default_factory=dict)
+    admit: Callable[[Candidate], bool] | None = None
+
+
+def relaxed_market_spec(ms: MarketSpec) -> MarketSpec:
+    """Live-only copy of ``ms`` with the entry window opened to the whole local day (clock exit = end of day)."""
+    cal = dataclasses.replace(ms.calendar, entry_start_min=0, entry_end_min=1440, forced_flat_min=1440)
+    return dataclasses.replace(ms, calendar=cal)
 
 
 DEFAULT_WINDOW_BARS = 6000  # ~3 weeks of M5: D1 ATR14 and the previous cash day are always inside
@@ -207,6 +237,15 @@ def opportunity_id_of(c: Candidate) -> str:
     )
 
 
+def entry_in_real_window(ms: MarketSpec, spec: Any, signal_ts: datetime, bar_open_ts: datetime) -> bool:
+    """True if the ENTRY bar (opens at ``signal_ts``) lies inside ``spec``'s REAL (tod-adjusted) entry window on the deciding
+    bar's local day - the exact test of ``StaticDemoPolicy.assess``. Such a bar belongs to the normal (tradable) path."""
+    w = spec.effective_window(MarketCalendar.from_market_spec(ms))
+    lo, hi = tod_bounds(w.entry_start_min, w.entry_end_min, getattr(spec, "tod", "all"))
+    sig = to_utc(signal_ts)
+    return local_of(ms, sig).date() == local_of(ms, bar_open_ts).date() and lo <= local_minute_of(ms, sig) < hi
+
+
 # ------------------------------------------------------------------------------- engine
 class OpportunityEngine:
     def __init__(
@@ -224,6 +263,7 @@ class OpportunityEngine:
         emit_duplicates: bool = False,
         commit: str | None = None,
         operating: OperatingPolicy | None = None,
+        sequence_tracker: Any | None = None,
     ) -> None:
         self._source = source
         # LIVE operating policy (Lane P). None (default, research / tests) = windows and forced-flat exactly as before.
@@ -249,6 +289,8 @@ class OpportunityEngine:
         self.suppressed_duplicates = 0
         self.config_hash = self._policy.config.config_hash()
         self._versions_cache: dict[str, dict[str, str]] = {}
+        self._seq = sequence_tracker  # Lane U2: measure-only same-zone / flip / whipsaw metrics (None = off)
+        self.shadow_skipped_in_window = 0
 
     @property
     def strategy_hash(self) -> str:
@@ -307,11 +349,15 @@ class OpportunityEngine:
 
     def on_m5_close(
         self, market: str, now_utc: datetime, *, catchup: CatchupInfo | None = None,
+        shadow: ShadowScan | None = None,
     ) -> list[tuple[OpportunitySnapshot, Decision]]:
         """Closed-bar evaluation. ``catchup`` set: ``now_utc`` is the CLOSE of a past bar (causal
         truncation), the quote is synthesised from that bar (close + recorded bar spread: there is no
         historical executable quote), snapshots carry ``signal.origin = CATCHUP`` and an opportunity the
-        policy would have accepted is recorded as a rejected ``CATCHUP_MISSED`` decision (never an intent)."""
+        policy would have accepted is recorded as a rejected ``CATCHUP_MISSED`` decision (never an intent).
+
+        ``shadow`` (Lane U2): measurement-only scan (out-of-window relaxed window / shadow universe): see ``ShadowScan``.
+        With ``shadow=None`` (the default) this method is exactly the pre-U2 code path."""
         now = to_utc(now_utc)
         self.last_intents = []
         self.last_candidates = []
@@ -323,7 +369,8 @@ class OpportunityEngine:
             return []
         validate_frame(frame, market)
         last_ts = pd.Timestamp(frame["ts"].iloc[-1])
-        if self._last_bar.get(market) == last_ts:
+        bar_key = market if shadow is None else f"{market}|{shadow.origin}"
+        if self._last_bar.get(bar_key) == last_ts:
             return []  # this closed bar was already processed (idempotent per bar)
         live_ms = ms
         if self._op is not None:
@@ -336,7 +383,10 @@ class OpportunityEngine:
             live_ms = overlay
         self.health[market] = "ok"
 
-        data = assemble_live(market, live_ms, frame, self._leaders(market, now))
+        data = assemble_live(
+            market, relaxed_market_spec(live_ms) if shadow is not None and shadow.relax_window else live_ms, frame,
+            self._leaders(market, now),
+        )
         i = len(data) - 2  # deciding bar; the last row is the placeholder
         if catchup is None:
             quote = self._source.latest_quote(market)
@@ -350,9 +400,15 @@ class OpportunityEngine:
             hit = np.flatnonzero(cands.decision_idx == i)
             if len(hit) == 0:
                 continue
-            found.append((fs, make_candidate(market, live_ms, fs, data, cands, int(hit[0]))))
+            cand0 = make_candidate(market, live_ms, fs, data, cands, int(hit[0]))
+            if shadow is not None and shadow.relax_window and self._in_real_window(live_ms, fs, cand0):
+                self.shadow_skipped_in_window += 1  # the normal (tradable) path owns bars inside the real LIVE window
+                continue
+            if shadow is not None and shadow.admit is not None and not shadow.admit(cand0):
+                continue  # deduped / capped by the caller (counted there)
+            found.append((fs, cand0))
         if not found:
-            self._last_bar[market] = last_ts
+            self._last_bar[bar_key] = last_ts
             return []
 
         ctx = build_context(frame, found[0][1].signal_ts, ms.calendar.tz)
@@ -382,12 +438,26 @@ class OpportunityEngine:
                 "structural_target": math.isfinite(cand.target),
                 "role": fs.role,
             }
+            if shadow is not None:
+                signal_meta["origin"] = shadow.origin
+                signal_meta.update(shadow.tags)
+                if shadow.relax_window:
+                    w0 = fs.spec.effective_window(MarketCalendar.from_market_spec(ms))
+                    signal_meta["window_relaxed"] = {
+                        "real_entry_start_min": w0.entry_start_min, "real_entry_end_min": w0.entry_end_min,
+                        "real_exit_min": w0.exit_min, "note": "live-only relaxed copy; frozen spec untouched",
+                    }
             if market in PHASE2_CANONICALS:  # persisted with every Phase-2 snapshot (and so with its outcome/label join)
                 signal_meta["phase"] = PHASE2_TAG
                 signal_meta["alpha_status"] = ALPHA_STATUS
             levels = describe_candidate(data, fs.spec, i, cand.direction)
             if levels:
                 signal_meta["structure_levels"] = levels
+            if self._seq is not None:
+                signal_meta["sequence"] = self._seq.observe(
+                    market=market, oid=oid, signal_ts=cand.signal_ts, direction=cand.direction, family=fs.family,
+                    stop=cand.stop, close=cand.close, atr=cand.atr, regime=regime_of(ctx),
+                )
             if catchup is not None:
                 signal_meta["origin"] = ORIGIN_CATCHUP
                 signal_meta["catchup"] = {
@@ -403,6 +473,14 @@ class OpportunityEngine:
                 structure=build_structure(data, i, ms, cand.direction), signal_meta=signal_meta,
                 tick_activity=tick, rvol=rvol, forced_flat_iso=ff,
             )
+            if shadow is not None:
+                base = self._policy.decision(snap.opportunity_id, self._phase, now, assessment)
+                rest = tuple(r for r in base.reasons if r != "ACCEPTED" and r != shadow.code)
+                pairs.append((snap, Decision(
+                    opportunity_id=base.opportunity_id, phase=base.phase, decided_utc=base.decided_utc, accepted=False,
+                    reasons=(shadow.code, *rest), policy_id=base.policy_id, shadow=base.shadow,
+                )))
+                continue  # measurement only: no intent, ever
             if catchup is None:
                 dec = self._policy.decision(snap.opportunity_id, self._phase, now, assessment)
             else:
@@ -421,8 +499,20 @@ class OpportunityEngine:
             pairs.append((snap, dec))
         # marked processed only after the WHOLE bar was built without an exception: a failure anywhere
         # above leaves the bar retryable (the runner retries once, then records a SCAN_ERROR)
-        self._last_bar[market] = last_ts
+        self._last_bar[bar_key] = last_ts
         return pairs
+
+    def _in_real_window(self, ms: MarketSpec, fs: FrozenSpec, cand: Candidate) -> bool:
+        return entry_in_real_window(ms, fs.spec, cand.signal_ts, cand.bar_open_ts)
+
+    # ---- Lane U2 read accessors (no behaviour) -------------------------------------------------
+    supports_shadow_scan = True
+
+    def market_spec(self, market: str) -> MarketSpec:
+        return self._mspec[market]
+
+    def specs_for(self, market: str) -> tuple[FrozenSpec, ...]:
+        return self._prod.specs_for(market)
 
     def release_seen(self) -> None:
         """Drop in-flight (not yet persisted) seen ids so a bar whose persistence failed can be rebuilt.

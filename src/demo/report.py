@@ -261,6 +261,8 @@ def build_report(store: DemoStore, phase: str | None = None) -> dict[str, Any]:
     accepted = [d for d in dec_all if d.accepted]
     rejected = [d for d in dec_all if not d.accepted]
     cfs = store.list_counterfactuals(phase)
+    rejected_ids = {d.opportunity_id for d in rejected}
+    cf_on_rejected = sum(1 for c in cfs if c.opportunity_id in rejected_ids)
     cf_r = [c.hypothetical_r for c in cfs]
     resolved = [c for c in cfs if c.target_before_stop is not None]
 
@@ -311,8 +313,10 @@ def build_report(store: DemoStore, phase: str | None = None) -> dict[str, Any]:
         },
         "rejected": {
             "decisions": len(rejected),
-            "labelled": len(cfs),
-            "unlabelled": len(rejected) - len(cfs),
+            "labelled": len(cfs),  # every label: engine rejects AND engine-accepted non-trades (stack reject / cancel / shadow dry-run)
+            "labelled_engine_rejected": cf_on_rejected,
+            "labelled_accepted_non_traded": len(cfs) - cf_on_rejected,
+            "unlabelled": len(rejected) - cf_on_rejected,  # never negative: rejected decisions still without a label
             "expected_hypothetical_r": _mean(cf_r),
             "target_before_stop_rate": (
                 sum(1 for c in resolved if c.target_before_stop) / len(resolved)

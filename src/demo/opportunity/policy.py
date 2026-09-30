@@ -112,6 +112,14 @@ GATE_CLASSIFICATION: dict[str, PolicyGate] = {
         _PG(SPACE_BELOW_MIN_R, "LEGACY_ARBITRARY", True, "candidate-carried minimum reward space (simulator: space_below_min_at_fill); policy default is 0.0 so it only fires for specs carrying their own min_space_r; review before FROZEN"),
     )
 }
+# Lane U2: terminal MEASUREMENT-ONLY reject codes (never an intent, never the stack). Deliberately NOT part of
+# ``GATE_CLASSIFICATION`` / ``REASONS`` (those describe the tradable policy); the funnel / labeller read ``SHADOW_SCAN_GATES``.
+OUT_OF_WINDOW_SHADOW = "OUT_OF_WINDOW_SHADOW"
+SHADOW_UNIVERSE = "SHADOW_UNIVERSE"
+SHADOW_SCAN_GATES: dict[str, PolicyGate] = {
+    OUT_OF_WINDOW_SHADOW: _PG(OUT_OF_WINDOW_SHADOW, "WINDOW", True, "active market, broker tradable, but the frozen family's entry window is closed: what the family WOULD have signalled (measurement only, no widening of any window)"),
+    SHADOW_UNIVERSE: _PG(SHADOW_UNIVERSE, "SHADOW_UNIVERSE", True, "market is shadow-only (not in the trading registry): observed, evaluated and labelled, never tradable"),
+}
 QUALITY_INPUTS: tuple[str, ...] = ("confidence", "confluence", "family_score", "quality", "independent_clusters")
 # Logged / ranked only; there is deliberately NO policy reject code for any of them.
 

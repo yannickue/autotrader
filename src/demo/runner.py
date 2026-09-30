@@ -119,6 +119,11 @@ SHADOW_DRY_RUN = "shadow_dry_run"  # CANCELLED detail reason of a shadow-approve
 EXPECTED_DEMO_SERVER = "ActivTradesEU-Server"
 _ORDER = (PLANNED, RISK_APPROVED, SENT, FILLED, PROTECTED, CLOSED)
 _M5 = timedelta(minutes=5)
+# Lane U2: the FACTORY (production entry point) records out-of-window shadow observations by default because it is
+# demonstrably cheap (measured on real dev bars: median ~18-40 ms per market-bar, only on bars whose window is closed, hard
+# per-cycle budget ``out_of_window_budget_s``) and cannot trade; ``--no-out-of-window-shadow`` turns it off. A bare
+# ``RunnerConfig()`` (library / tests) keeps it OFF. The shadow UNIVERSE is always opt-in (``--shadow-universe``).
+DEFAULT_OUT_OF_WINDOW_SHADOW = True
 
 
 TRANSIENT_STACK_PREFIXES = ("broker_disconnect", "not_reconciled", "runtime_not_ready", "stale_feed")
@@ -351,6 +356,14 @@ class RunnerConfig:
     operating_policy: Any = None
     daily: bool = False
 
+    # ---- Lane U2: opt-in measurement-only shadow collection (inside this process; OFF by default) ---
+    out_of_window_shadow_enabled: bool = False  # active markets: record what the frozen families WOULD signal with the window closed
+    out_of_window_cap_per_zone_day: int = 2  # dedupe/cap per (market, family, direction, zone, UTC day)
+    out_of_window_budget_s: float = 1.5  # wall budget of ALL out-of-window passes of one runner cycle
+    shadow_universe: tuple[str, ...] = ()  # canonicals of configs/markets_shadow to scan (empty = off)
+    shadow_universe_max_symbols_per_cycle: int = 12
+    shadow_universe_budget_s: float = 2.0
+
     def __post_init__(self) -> None:
         if self.mode not in MODES:
             raise ValueError(f"mode must be one of {MODES}")
@@ -452,6 +465,16 @@ class DemoRunner:
         self._scan_pending: set[str] = set()  # markets whose newest bar is not fully scanned yet (retry next cycle)
         self.account_info: dict[str, Any] = {"account_id_hash": None, "account_phase": None}
         self._catchup: dict[str, dict[str, Any]] = {}  # per market catch-up counters (heartbeat / tests)
+        self._day_counts.update({"intents": 0, "filled": 0})  # Lane U2 (D): intents planned / broker fills today
+        self._shadow_counts: dict[str, int] = {"out_of_window": 0, "shadow_universe": 0}
+        self._oow: Any | None = None  # OutOfWindowShadow (Lane U2), created when the flag is on
+        self.shadow_universe: Any | None = None  # ShadowUniverseScanner, attached by the factory / tests
+        if self.cfg.out_of_window_shadow_enabled:
+            from demo.shadow_universe import OutOfWindowShadow
+
+            self._oow = OutOfWindowShadow(
+                cap_per_zone_day=self.cfg.out_of_window_cap_per_zone_day, budget_s=self.cfg.out_of_window_budget_s,
+            )
         self.submit_count = 0
         self.shadow_submit_count = 0  # dry-run submits (shadow mode); never counted as trades
         self.milestones: list[int] = []
@@ -478,14 +501,20 @@ class DemoRunner:
             return
         self._day = day
         try:
-            decs = [d for d in self.store.list_decisions() if d.decided_utc.startswith(day)]
+            from demo.opportunity.policy import SHADOW_SCAN_GATES
+
+            decs = [
+                d for d in self.store.list_decisions()
+                if d.decided_utc.startswith(day) and not (d.reasons and d.reasons[0] in SHADOW_SCAN_GATES)  # Lane U2: measurement-only rows are not opportunities
+            ]
             trades = [i for i in self.store.list_intents() if i["created_utc"].startswith(day)]
             self._day_counts = {
                 "raw": len(decs), "accepted": sum(d.accepted for d in decs),
                 "rejected": sum(not d.accepted for d in decs), "trades": len(trades),
+                "intents": len(trades), "filled": sum(1 for i in trades if i.get("state") in (FILLED, PROTECTED, CLOSED)),
             }
         except Exception:
-            self._day_counts = {"raw": 0, "accepted": 0, "rejected": 0, "trades": 0}
+            self._day_counts = {"raw": 0, "accepted": 0, "rejected": 0, "trades": 0, "intents": 0, "filled": 0}
 
     def _refresh_cum_r(self) -> None:
         with contextlib.suppress(Exception):
@@ -902,11 +931,15 @@ class DemoRunner:
         # Record-everything: bars are scanned (snapshot + decision persisted) whenever the runner has not
         # failed closed - also during a halt / transient condition.  ``_execute`` then cancels an accepted
         # intent with reason 'halted' (recorded, counterfactually labelled); nothing is lost silently.
+        if self._oow is not None:
+            self._oow.begin_cycle()
         if self.fail_reason is None and not self._stopping:
             for m in new_bars:
                 if self.fail_reason is not None:
                     break
                 self._section(now, f"scan:{m}", lambda n, m=m: self._scan_market(m, n), event_critical=False)
+            if self.shadow_universe is not None and self.fail_reason is None:
+                self._section(now, "shadow_universe", self._shadow_universe_cycle, event_critical=False)
         self._section(now, "periodic", self._periodic, event_critical=False)
         self._heartbeat(now)
 
@@ -1031,12 +1064,70 @@ class DemoRunner:
             finally:
                 self._release_seen()
             self.store.set_bar_pointer(market, _iso(close))  # only after the bar is fully processed
+        self._oow_after_scan(market, newest, now)
         self._scan_pending.discard(market)
 
     def _release_seen(self) -> None:
         fn = getattr(self.engine, "release_seen", None)
         if fn is not None:
             fn()
+
+    # ------------------------------------------------------------ Lane U2: measurement-only shadow
+    def _broker_tradable(self, market: str, now: datetime) -> bool:
+        """BROKER_TRADABLE: the feed is fresh (not stale/closed-idle) AND a fresh broker quote proves the market trades."""
+        if self._market_state.get(market) not in ("FRESH", "OPEN_OUT_OF_SESSION") or market in self._stale:
+            return False
+        age = (self._feed.get(market) or {}).get("quote_age_s")
+        return age is not None and -self.cfg.clock_backward_tolerance_s <= age <= self.cfg.quote_fresh_s
+
+    def _oow_after_scan(self, market: str, newest: datetime, now: datetime) -> None:
+        """OUT_OF_WINDOW_SHADOW pass for the LIVE bar (never catch-up bars). Contained: measurement must never stop trading."""
+        oow = self._oow
+        if oow is None or (now - newest).total_seconds() > self.cfg.live_max_age_s:
+            return
+        pairs = oow.scan(self.engine, market, newest, now, tradable=self._broker_tradable(market, now))
+        try:
+            for snap, dec in pairs:
+                self._process_shadow_pair(snap, dec, now, "out_of_window")
+        finally:
+            self._release_seen()
+
+    def _shadow_universe_cycle(self, now: datetime) -> None:
+        su = self.shadow_universe
+        pairs = su.scan_cycle(now)
+        try:
+            for snap, dec in pairs:
+                self._process_shadow_pair(snap, dec, now, "shadow_universe")
+        finally:
+            su.release_seen()
+
+    def _process_shadow_pair(self, snap: OpportunitySnapshot, dec: Decision, now: datetime, kind: str) -> None:
+        """Persist a measurement-only (REJECTED) observation: snapshot + decision, nothing else. Hard guards: it can never be
+        accepted, never reaches ``_execute`` / the stack, and a shadow-universe market is never a registry market."""
+        if dec.accepted or (kind == "shadow_universe" and snap.market in self.cfg.markets):
+            self._fail_closed(f"shadow_observation_invariant: {kind} {snap.market} accepted={dec.accepted}", now)
+            return
+        if snap.phase != self.cfg.phase:
+            self._fail_closed(f"phase_mismatch: engine={snap.phase} runner={self.cfg.phase}", now)
+            return
+        try:
+            self.store.record_snapshot(snap)
+            self.store.record_decision(dec)
+        except DemoStoreError as exc:
+            self._note_error(now, f"shadow_duplicate_differs: {snap.opportunity_id}: {exc}")
+            return
+        self._shadow_counts[kind] = self._shadow_counts.get(kind, 0) + 1
+        self._last_persist = _iso(now)
+        self._funnel_dirty = True
+
+    def _shadow_status(self) -> dict[str, Any]:
+        su = self.shadow_universe
+        return {
+            "out_of_window_shadow": ({**self._oow.stats(), "recorded_total": self._shadow_counts["out_of_window"]}
+                                     if self._oow is not None else {"enabled": False}),
+            "shadow_universe": ({**su.stats(), "persisted_total": self._shadow_counts["shadow_universe"]}
+                                if su is not None else {"enabled": False}),
+        }
 
     def _engine_bar(self, market: str, close: datetime, call: Callable[[], Any], now: datetime) -> Any:
         """One engine evaluation with ONE retry.  A second failure is recorded in the store
@@ -1209,6 +1300,7 @@ class DemoRunner:
             return
         if self.store.get_state(intent.intent_id) != PLANNED:
             return  # already handled (restart / duplicate)
+        self._day_counts["intents"] += 1
         if geometry:
             with contextlib.suppress(Exception):  # shadow evidence only; never blocks a trade
                 self.store.record_tca(intent.intent_id, geometry, "GEOMETRY")
@@ -1339,6 +1431,7 @@ class DemoRunner:
             self.store.record_execution(iid, ex)
             self.store.record_tca(iid, self._tca_entry(ev, intent), "ENTRY")
             self._advance(iid, FILLED, now)
+            self._day_counts["filled"] += 1
             self._last_fill = {"ts": ts, "market": intent.market, "intent_id": iid, "price": float(ev.price), "quantity": float(ev.quantity)}
         elif isinstance(ev, ProtectionConfirmed):
             self._advance(iid, SENT, now)
@@ -1426,6 +1519,9 @@ class DemoRunner:
     def _frame_rows(self, market: str) -> list[tuple[datetime, float, float, float, float, float]]:
         """(bar open UTC, open, high, low, close, spread in PRICE units) from the stack's closed M5 frame
         (``m5_frame``: ts/open/high/low/close/tick_volume/spread_pts)."""
+        su = self.shadow_universe
+        if su is not None and su.owns(market):  # Lane U2: shadow symbols are not in the stack registry; last scanned bars
+            return su.frame_rows(market)
         fr = self.stack.bar_source.m5_frame(market)
         spec = self._spec(market)
         point = float(spec.point_size) if spec is not None else 0.0
@@ -1723,7 +1819,12 @@ class DemoRunner:
             "protection_state": protection,
             "opportunities_today": {k: self._day_counts[k] for k in ("raw", "accepted", "rejected")},
             "rejection_funnel": self.funnel_summary(now),
+            # ``trades_today`` = SUBMIT ATTEMPTS (legacy meaning, kept for compatibility; NOT fills). Lane U2 explicit keys:
             "trades_today": self._day_counts["trades"],
+            "trades_today_semantics": "submit_attempts_not_fills",
+            "intents_today": self._day_counts["intents"],
+            "broker_trades_today": self._day_counts["filled"],
+            **self._shadow_status(),
             "last_signal": self._last_signal,
             "last_fill": self._last_fill,
             "last_error": self._last_error,
@@ -1913,6 +2014,10 @@ def build_live_runner(
     exit_plan: Any | None = None,
     operating_policy: Any | None = None,
     daily: bool = False,
+    out_of_window_shadow: bool | None = None,
+    shadow_universe: str | Sequence[str] | None = None,
+    shadow_source_factory: Callable[[Any, Mapping[str, str]], Any] | None = None,
+    signal_sequence_metrics: bool = True,
 ) -> DemoRunner:
     """Wire the runner to the REAL ``Mt5DemoStack``.
 
@@ -2027,20 +2132,48 @@ def build_live_runner(
         art.mkdir(parents=True, exist_ok=True)
         stack = stack_factory(dry_run=dry_run, state_dir=state_dir, markets=names)
     store = DemoStore(db_path or art / "demo.sqlite")
+    seq = None
+    if signal_sequence_metrics:  # Lane U2 (C): measure-only same-zone / flip / whipsaw metrics inside snapshot.signal
+        from demo.sequence_metrics import SequenceTracker
+
+        seq = SequenceTracker()
     engine = OpportunityEngine(
         stack.bar_source,
         production=production,
         phase=phase,  # type: ignore[arg-type]
         seen_store=StoreSeenAdapter(store),
         operating=operating_policy,
+        sequence_tracker=seq,
     )
+    # Lane U2: opt-in shadow collection (both OFF unless asked; never trades; lives in THIS process = the MT5 lock holder)
+    su_specs: dict[str, Any] = {}
+    su_pending: set[str] = set()
+    if shadow_universe:
+        from demo.shadow_universe import select_shadow_markets
+
+        su_specs, su_pending = select_shadow_markets(shadow_universe)
     if learning is None:
         learning = mode == "shadow"
     predictor, trainer, err = load_learning(art / "models", learning)
     cfg = RunnerConfig(mode=mode, phase=phase, markets=names, artifacts_dir=art, learning=learning,
                        forced_flat_on_shutdown=forced_flat_on_shutdown, account_phase=account_phase,
-                       operating_policy=operating_policy, daily=daily)
-    return DemoRunner(
+                       operating_policy=operating_policy, daily=daily,
+                       out_of_window_shadow_enabled=DEFAULT_OUT_OF_WINDOW_SHADOW if out_of_window_shadow is None else bool(out_of_window_shadow),
+                       shadow_universe=tuple(sorted(su_specs)))
+    runner = DemoRunner(
         stack, engine, store, config=cfg, predictor=predictor, trainer=trainer,
         learning_error=err, production=production,
     )
+    if su_specs:
+        from demo.shadow_universe import ShadowUniverseScanner, make_shadow_live_source
+        from markets.shadow import PRODUCTION_BROKER_SYMBOLS
+
+        symbols = {m: sp.broker_symbol for m, sp in su_specs.items()}
+        src = (shadow_source_factory or make_shadow_live_source)(stack, symbols)
+        runner.shadow_universe = ShadowUniverseScanner(
+            specs=su_specs, source=src, phase=phase, seen_store=StoreSeenAdapter(store), pending=su_pending,
+            forbidden=(*names, *production.market_names(), *getattr(stack, "markets", ()), *PRODUCTION_BROKER_SYMBOLS),
+            max_symbols_per_cycle=cfg.shadow_universe_max_symbols_per_cycle, budget_s=cfg.shadow_universe_budget_s,
+            sequence_tracker=seq,
+        )
+    return runner

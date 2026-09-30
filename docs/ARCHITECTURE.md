@@ -162,3 +162,28 @@ part is empty in shadow; add-on execution (`ADDON_SHARED_STOP_POSSIBLE_NOT_YET_I
   `EXIT_ENGINE_*` reasons (uncensored strategy exits; an engine emergency exit stays `SAFETY_FLATTEN`), and STOP exit slippage
   is measured against the stop in force. OPEN: real-MT5 behaviour of partial closes / SLTP modify is unverified (fake broker only);
   one net position per symbol still means no engine management with several live tranches (E1 limitation).
+
+## Decision 2026-10-01: out-of-window forward shadow + shadow-universe collection + sequence instrumentation (Lane U2)
+
+- Everything is MEASUREMENT ONLY and lives inside the main runner process (the MT5 global lock holder; no second MT5 process).
+  Records are ordinary snapshot + decision rows, always REJECTED, with the terminal primary reason `OUT_OF_WINDOW_SHADOW`
+  (gate class `WINDOW`, funnel stage STRATEGY_WINDOW) or `SHADOW_UNIVERSE` (class `SHADOW_UNIVERSE`). `OpportunityEngine.on_m5_close(..., shadow=ShadowScan(...))`
+  never creates an intent; the existing counterfactual labeller labels them (`counterfactual_meta.source` = the code). The funnel shows separate
+  sections (`out_of_window_shadow`, `shadow_universe`, `signal_sequence`); shadow-universe rows are excluded from every trading metric.
+- OUT_OF_WINDOW_SHADOW: only for the LIVE closed bar of an ACTIVE market that is BROKER_TRADABLE (fresh bar AND fresh quote, `_broker_tradable`)
+  while at least one frozen spec's real (tod-adjusted) entry window is closed. The same generators run on a LIVE-ONLY relaxed copy of the calendar
+  (`relaxed_market_spec`: entry window [00:00,24:00)); candidates inside the real window are dropped (the tradable path owns them). Frozen specs,
+  research windows and active windows are never changed. Dedupe + cap per (market, family, direction, stop zone, UTC day) (`out_of_window_cap_per_zone_day`, default 2),
+  per-cycle wall budget (`out_of_window_budget_s`, default 1.5 s), exceptions contained and counted. Measured on real dev bars: median 18-40 ms per market-bar
+  (max ~130 ms), hence factory default ON (`--no-out-of-window-shadow` disables; a bare `RunnerConfig()` stays OFF).
+- SHADOW UNIVERSE (`--shadow-universe [LIST|all-ready]`, default OFF): markets of `configs/markets_shadow` via a read-only `LiveBarSource` over the runner's own MT5 lane
+  (`copy_rates_from_pos` + `symbol_info_tick` only; NO `symbol_select`, Market Watch untouched; read failures are per-symbol `ShadowReadError`, never a fail-closed). Families:
+  fit-free session-agnostic STRUCT only (`SHADOW_FAMILY_POLICY`): the cash-session families need fitted thresholds / a validated session, which a provisional shadow calendar cannot give.
+  Bounded: `shadow_universe_max_symbols_per_cycle` (12), `shadow_universe_budget_s` (2 s), round-robin, one evaluation per symbol per M5 boundary, per-symbol failure isolation;
+  specs flagged `quote_freshness_unverified_market_closed_at_scan` are re-validated with a fresh quote before their first scan. Hard guards: constructor refuses any overlap with the
+  trading registry / production broker symbols, and `_process_shadow_pair` fails closed on an accepted shadow record or a registry market.
+  OPEN: real-MT5 behaviour of `copy_rates_from_pos` for a symbol that is not in Market Watch is UNVERIFIED (fakes only); a refused symbol shows up as `shadow_universe.errors`.
+- `signal.sequence` (`demo/sequence_metrics.py`, schema `signal-sequence-1`): same-zone re-engagement, repeated level attempt, direction flip, time/price distance between signals, whipsaw sequence
+  (e.g. SHORT,SHORT,LONG,SHORT) - persisted in the snapshot signal JSON, sliced by later counterfactual/outcome rows. NO cooldown, NO direction lock, NO filter.
+- Observability: heartbeat `trades_today` keeps its legacy meaning (SUBMIT ATTEMPTS, not fills; `trades_today_semantics` says so); new explicit `intents_today` and `broker_trades_today` (filled).
+  Report `accepted_vs_rejected.rejected.unlabelled` can no longer go negative (labels on engine-accepted non-trades are counted separately).

@@ -24,7 +24,12 @@ from collections.abc import Mapping
 from typing import Any
 
 from demo.execution import gates as G
-from demo.opportunity.policy import GATE_CLASSIFICATION
+from demo.opportunity.policy import (
+    GATE_CLASSIFICATION,
+    OUT_OF_WINDOW_SHADOW,
+    SHADOW_SCAN_GATES,
+    SHADOW_UNIVERSE,
+)
 
 # ---- sequential stages: an opportunity is stopped at the FIRST stage one of its gate codes belongs to ----
 STAGES: tuple[str, ...] = (
@@ -38,7 +43,7 @@ _ENGINE_STAGE: dict[str, str] = {
     "CLOCK_ANOMALY": "TRADABLE", "MARKET_CLOSED": "TRADABLE", "STALE_SIGNAL": "TRADABLE",
     "ENTRY_OVERSHOT": "TRADABLE", "CATCHUP_MISSED": "TRADABLE", "EXPIRED_ENTRY": "TRADABLE",
     "ALREADY_MOVED": "TRADABLE",
-    "OUTSIDE_ENTRY_WINDOW": "STRATEGY_WINDOW",
+    "OUTSIDE_ENTRY_WINDOW": "STRATEGY_WINDOW", OUT_OF_WINDOW_SHADOW: "STRATEGY_WINDOW",
     "SPREAD_TOO_WIDE": "COST",
     "DUPLICATE_OPPORTUNITY": "DUPLICATE",
 }
@@ -78,7 +83,7 @@ UNCLASSIFIED = "UNCLASSIFIED"
 
 
 def engine_class(code: str) -> str:
-    g = GATE_CLASSIFICATION.get(code)
+    g = GATE_CLASSIFICATION.get(code) or SHADOW_SCAN_GATES.get(code)
     return g.gate_class if g is not None else UNCLASSIFIED
 
 
@@ -354,9 +359,54 @@ def analysis(rows: list[Mapping[str, Any]], cf_rows: list[Mapping[str, Any]]) ->
             "opportunities": n, "unique_structures": len(uniq),
             "near_duplicate_ratio": (1 - len(uniq) / n) if n else None, "by_market": dup_by_market,
         },
-        "note_outside_entry_window": "OUTSIDE_ENTRY_WINDOW is not observable: out-of-window signals are not generated (family entry_mask)",
+        "note_outside_entry_window": "OUTSIDE_ENTRY_WINDOW is not observable on the tradable path (family entry_mask); see the OUT_OF_WINDOW_SHADOW section (Lane U2, measurement only)",
         "origin": dict(Counter(r.get("origin") or "LIVE" for r, _c in cls)),
     }
+
+
+def _by(rows: list[Mapping[str, Any]], key: str) -> dict[str, int]:
+    return dict(sorted(Counter(str(r.get(key) or "?") for r in rows).items(), key=lambda kv: -kv[1]))
+
+
+def out_of_window_section(rows: list[Mapping[str, Any]], cf_rows: list[Mapping[str, Any]]) -> dict[str, Any]:
+    """Lane U2: what the frozen families WOULD have signalled while the broker was tradable but the entry window was
+    closed (``OUT_OF_WINDOW_SHADOW``, class WINDOW). Measurement only - never a trade, never a window change."""
+    mine = [r for r in rows if OUT_OF_WINDOW_SHADOW in (r.get("reasons") or [])]
+    cfs = [c for c in cf_rows if c.get("source") == OUT_OF_WINDOW_SHADOW]
+    by_m: dict[str, list[Mapping[str, Any]]] = defaultdict(list)
+    for c in cfs:
+        by_m[c["market"] or "?"].append(c)
+    return {
+        "gate_class": "WINDOW", "code": OUT_OF_WINDOW_SHADOW, "stage": "STRATEGY_WINDOW",
+        "recorded": len(mine), "by_market": _by(mine, "market"), "by_family": _by(mine, "family"),
+        "counterfactual": cf_stats(cfs),
+        "counterfactual_by_market": {m: cf_stats(v) for m, v in sorted(by_m.items())},
+        "counterfactual_fill_assumption": "intended entry, no slippage/fees/latency (OPTIMISTIC)",
+        "note": "no order is ever sent; active windows are NOT widened automatically",
+    }
+
+
+def shadow_universe_section(rows: list[Mapping[str, Any]], cf_rows: list[Mapping[str, Any]]) -> dict[str, Any]:
+    """Lane U2: shadow-only markets (code ``SHADOW_UNIVERSE``), by market / cluster / family with counterfactual stats."""
+    mine = [r for r in rows if r.get("origin") == SHADOW_UNIVERSE]
+    cfs = [c for c in cf_rows if c.get("source") == SHADOW_UNIVERSE]
+    by_c: dict[str, list[Mapping[str, Any]]] = defaultdict(list)
+    for c in cfs:
+        by_c[c.get("cluster") or "?"].append(c)
+    return {
+        "gate_class": "SHADOW_UNIVERSE", "code": SHADOW_UNIVERSE,
+        "recorded": len(mine), "markets": len({r["market"] for r in mine}),
+        "by_market": _by(mine, "market"), "by_cluster": _by(mine, "cluster"), "by_family": _by(mine, "family"),
+        "counterfactual": cf_stats(cfs),
+        "counterfactual_by_cluster": {k: cf_stats(v) for k, v in sorted(by_c.items())},
+        "note": "shadow-only markets are never tradable; excluded from every trading metric above",
+    }
+
+
+def sequence_section(rows: list[Mapping[str, Any]], cf_rows: list[Mapping[str, Any]]) -> dict[str, Any]:
+    from demo.sequence_metrics import summarize
+
+    return summarize([dict(r) for r in rows], {c["opportunity_id"]: c for c in cf_rows})
 
 
 def compact(full: Mapping[str, Any]) -> dict[str, Any]:
@@ -380,9 +430,12 @@ def funnel(store: Any, stack: Any | None = None, phase: str | None = None) -> di
     ``stack`` (optional) contributes ``stack_live``: the in-process counters of ``rejection_funnel()``
     (cumulative since the stack was constructed, includes rejections whose intent row is not
     persisted). The store part is the durable one."""
-    rows = [r for r in store.funnel_rows(phase) if r.get("trade_type", "STRATEGY") == "STRATEGY"]
+    all_rows = [r for r in store.funnel_rows(phase) if r.get("trade_type", "STRATEGY") == "STRATEGY"]
+    # Lane U2: shadow-universe markets are not part of the trading funnel (they would swamp every share); they get their own section.
+    rows = [r for r in all_rows if r.get("origin") != SHADOW_UNIVERSE]
     cf_fn = getattr(store, "counterfactual_rows", None)
-    cf_rows = cf_fn(phase) if cf_fn is not None else []
+    all_cf = cf_fn(phase) if cf_fn is not None else []
+    cf_rows = [c for c in all_cf if c.get("source") != SHADOW_UNIVERSE]
     total = _Bucket()
     by_market: dict[str, _Bucket] = {}
     by_family: dict[str, _Bucket] = {}
@@ -441,7 +494,14 @@ def funnel(store: Any, stack: Any | None = None, phase: str | None = None) -> di
         "by_family": {f: b.as_dict() for f, b in sorted(by_family.items())},
         "stack_live": live,
         "analysis": analysis(rows, cf_rows),
+        "out_of_window_shadow": out_of_window_section(rows, all_cf),
+        "shadow_universe": shadow_universe_section(all_rows, all_cf),
+        "signal_sequence": sequence_section(all_rows, all_cf),
     }
+
+
+def _f(v: float | None) -> str:
+    return "-" if v is None else f"{v:.2f}"
 
 
 def render(fun: Mapping[str, Any]) -> str:
@@ -490,4 +550,25 @@ def render(fun: Mapping[str, Any]) -> str:
         for m, t in a["opportunities_per_market_per_hour"].items():
             lines.append(f"  {m} per local hour: " + ", ".join(f"{h}h={v}" for h, v in t["opportunities_by_local_hour"].items()) + f" (active days {t['active_days']})")
         lines.append("  NOTE: " + a["note_outside_entry_window"])
+    oow = fun.get("out_of_window_shadow")
+    if oow:
+        cf = oow["counterfactual"]
+        lines.append(
+            f"  OUT_OF_WINDOW_SHADOW [WINDOW, measurement only]: recorded {oow['recorded']} | cf n={cf['n_labelled']} "
+            f"mfe={_f(cf['mean_mfe_r'])} mae={_f(cf['mean_mae_r'])} r={_f(cf['mean_r'])} tbs={_f(cf['target_before_stop_share'])}"
+        )
+    su = fun.get("shadow_universe")
+    if su:
+        cf = su["counterfactual"]
+        lines.append(
+            f"  SHADOW_UNIVERSE: recorded {su['recorded']} over {su['markets']} markets | cf n={cf['n_labelled']} "
+            f"mfe={_f(cf['mean_mfe_r'])} mae={_f(cf['mean_mae_r'])} r={_f(cf['mean_r'])} tbs={_f(cf['target_before_stop_share'])}"
+        )
+    sq = fun.get("signal_sequence")
+    if sq and sq["signals_with_sequence"]:
+        lines.append(
+            f"  SEQUENCE (measure only): n={sq['signals_with_sequence']} same-zone {sq['same_zone_reengagement']['n']}"
+            f" repeated-level {sq['repeated_level_attempt']['n']} flips {sq['direction_flip']['n']} whipsaw {sq['whipsaw']['n']}"
+            f" | whipsaw mean_r={_f(sq['whipsaw']['mean_r'])} mfe={_f(sq['whipsaw']['mean_mfe_r'])} mae={_f(sq['whipsaw']['mean_mae_r'])}"
+        )
     return "\n".join(lines)

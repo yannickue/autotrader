@@ -38,6 +38,8 @@ SRC_CANCELLED = "INTENT_CANCELLED"
 SRC_SEND_FAILED = "SEND_FAILED"
 SRC_SHADOW = "SHADOW_DRY_RUN"  # would-have-traded in shadow: labelled, but kept distinct from real non-trades
 SRC_NO_INTENT = "ACCEPTED_NO_INTENT"
+SRC_OOW = "OUT_OF_WINDOW_SHADOW"  # Lane U2: what the frozen families would have signalled outside their entry window
+SRC_SHADOW_UNIVERSE = "SHADOW_UNIVERSE"  # Lane U2: shadow-only market, never tradable
 ACCEPTED_NO_INTENT_MIN_AGE_S = 600.0  # an accepted decision without an intent this old will never get one
 
 
@@ -199,7 +201,7 @@ def blocking_gate(row: dict) -> BlockingGate | None:
     """Attribution of one ``DemoStore.non_traded_unlabelled`` row; None = not (yet) a non-trade."""
     from demo.execution import gates as G
     from demo.opportunity.engine import CATCHUP_CODES
-    from demo.opportunity.policy import GATE_CLASSIFICATION
+    from demo.opportunity.policy import GATE_CLASSIFICATION, SHADOW_SCAN_GATES
 
     dec = row["decision"]
     state = row["intent_state"]
@@ -209,6 +211,8 @@ def blocking_gate(row: dict) -> BlockingGate | None:
         primary = codes[0] if codes else None
         if "CATCHUP_MISSED" in codes:
             return BlockingGate(SRC_CATCHUP, "CATCHUP_MISSED", CATCHUP, tuple(c for c in codes if c in CATCHUP_CODES))
+        if primary in SHADOW_SCAN_GATES:
+            return BlockingGate(primary, primary, SHADOW_SCAN_GATES[primary].gate_class, codes)
         g = GATE_CLASSIFICATION.get(primary) if primary else None
         return BlockingGate(SRC_ENGINE, primary, g.gate_class if g else None, codes)
     if state == "RISK_REJECTED":
