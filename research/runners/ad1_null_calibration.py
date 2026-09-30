@@ -65,8 +65,148 @@ def _price_tick(x: np.ndarray) -> np.ndarray:
     return np.round(x, 2)  # tick = 0.01
 
 
-def make_null_frame(dev: pd.DataFrame, seed: int, block_len: int = BLOCK_LEN) -> pd.DataFrame:
-    """Block-shuffled synthetic null of ``dev`` (see module docstring)."""
+NULL_KINDS = ("shuffle_drift", "shuffle_zerodrift", "sign_flip_day")
+ZERODRIFT_SEEDS = tuple(range(20280001, 20280013))  # K = 12
+SIGNFLIP_SEEDS = tuple(range(20290001, 20290005))  # 4
+ZERODRIFT_ROOT = REPO_ROOT / "research/reports/alpha_discovery_v1/null_calibration_zerodrift"
+
+
+def _rebuild(dev: pd.DataFrame, c0: float, new_ret: np.ndarray, new_offs: np.ndarray
+             ) -> pd.DataFrame:
+    new_c = _price_tick(c0 * np.exp(np.cumsum(new_ret)))
+    out = dev.copy()
+    out["close"] = new_c
+    out["open"] = _price_tick(new_c + new_offs[:, 0])
+    out["high"] = _price_tick(new_c + new_offs[:, 1])
+    out["low"] = _price_tick(new_c + new_offs[:, 2])
+    return out
+
+
+def _bar_structure(dev: pd.DataFrame):
+    ts = pd.DatetimeIndex(dev["ts"])
+    n = len(dev)
+    ts_ns = ts.asi8.astype(np.int64)
+    unit_ns = 1000 if ts.dtype == "datetime64[us, UTC]" else 1
+    gap_ok = np.zeros(n, dtype=bool)
+    gap_ok[1:] = (np.diff(ts_ns) * unit_ns) == BAR_NS
+    local = ts.tz_convert("Europe/Berlin")
+    berlin_day = local.normalize().tz_localize(None).asi8
+    same_day = np.zeros(n, dtype=bool)
+    same_day[1:] = berlin_day[1:] == berlin_day[:-1]
+    o, h, lo, c = (dev[k].to_numpy(dtype=float) for k in ("open", "high", "low", "close"))
+    ret = np.zeros(n)
+    ret[1:] = np.log(c[1:] / c[:-1])
+    offs = np.stack([o - c, h - c, lo - c], axis=1)
+    return (gap_ok & same_day), berlin_day, np.asarray(local.hour), ret, offs, c
+
+
+def _full_blocks(intraday: np.ndarray, block_len: int) -> list[np.ndarray]:
+    n = len(intraday)
+    blocks: list[np.ndarray] = []
+    i = 0
+    while i < n:
+        if not intraday[i]:
+            i += 1
+            continue
+        j = i
+        while j < n and intraday[j]:
+            j += 1
+        for s in range(i, j, block_len):
+            if min(s + block_len, j) - s == block_len:
+                blocks.append(np.arange(s, min(s + block_len, j)))
+        i = j
+    return blocks
+
+
+def _hour_constrained_perm(rng: np.random.Generator, seg: np.ndarray, hour: np.ndarray,
+                           tol: int = 1) -> np.ndarray:
+    """Permutation ``src[k]``: destination k receives item src[k] of the same segment whose
+    Berlin hour is within +-tol of k's hour.  Greedy in random destination order; a destination
+    without an admissible source takes the unused same-segment item with the closest hour."""
+    m = len(seg)
+    src = np.full(m, -1, dtype=np.int64)
+    used = np.zeros(m, dtype=bool)
+    for k in rng.permutation(m):
+        ok = np.flatnonzero(~used & (seg == seg[k]) & (np.abs(hour - hour[k]) <= tol))
+        if len(ok) == 0:
+            ok = np.flatnonzero(~used & (seg == seg[k]))
+            if len(ok) == 0:
+                ok = np.flatnonzero(~used)
+            gap = np.abs(hour[ok] - hour[k])
+            ok = ok[gap == gap.min()]
+        pick = ok[rng.integers(len(ok))]
+        src[k] = pick
+        used[pick] = True
+    return src
+
+
+def _zerodrift(dev: pd.DataFrame, seed: int, plan, block_len: int = BLOCK_LEN) -> pd.DataFrame:
+    """Zero-drift, within-partition, within-time-of-day block shuffle.
+
+    Every bar (except the first) belongs to a SEGMENT: Train (Berlin date < validation.start)
+    or Validation-side (date >= validation.start, embargo days included).  The mean log return
+    of each segment is subtracted first (exactly zero drift per segment).  Full 12-bar intraday
+    blocks are then permuted only WITHIN their segment and only between blocks whose start
+    Berlin hour differs by <= 1 h.  Anchor bars (day opens / gaps / holes) are permuted the
+    same way among anchors of the same segment (+-1 h) with their OHLC shape offsets.
+    """
+    if plan is None:
+        raise ValueError("shuffle_zerodrift requires the SplitPlan")
+    intraday, _, hour, ret, offs, c = _bar_structure(dev)
+    n = len(dev)
+    day = (pd.DatetimeIndex(dev["ts"]).tz_convert("Europe/Berlin").normalize()
+           .tz_localize(None).to_numpy().astype("datetime64[D]"))
+    segment = (day >= np.datetime64(plan.validation.start)).astype(np.int64)
+    ret = ret.copy()
+    for sg in (0, 1):
+        sel = (segment == sg) & (np.arange(n) > 0)
+        if sel.any():
+            ret[sel] -= ret[sel].mean()
+    rng = np.random.default_rng(seed)
+    new_ret, new_offs = ret.copy(), offs.copy()
+    blocks = _full_blocks(intraday, block_len)
+    if blocks:
+        b_seg = np.array([segment[b[0]] for b in blocks])
+        b_hour = np.array([hour[b[0]] for b in blocks])
+        src = _hour_constrained_perm(rng, b_seg, b_hour)
+        for dst, k in zip(blocks, src, strict=True):
+            new_ret[dst] = ret[blocks[k]]
+            new_offs[dst] = offs[blocks[k]]
+    anchors = np.flatnonzero(~intraday & (np.arange(n) > 0))
+    if len(anchors):
+        src = _hour_constrained_perm(rng, segment[anchors], hour[anchors])
+        new_ret[anchors] = ret[anchors[src]]
+        new_offs[anchors] = offs[anchors[src]]
+    return _rebuild(dev, c[0], new_ret, new_offs)
+
+
+def _sign_flip_day(dev: pd.DataFrame, seed: int) -> pd.DataFrame:
+    """Per Berlin day multiply all log returns (incl. that day's opening-gap return) by a random
+    +-1 sign; destroys drift / directional persistence across days, keeps intraday volatility
+    structure.  Mirrored days swap the high/low offsets so OHLC stays consistent."""
+    _, berlin_day, _, ret, offs, c = _bar_structure(dev)
+    rng = np.random.default_rng(seed)
+    _, inv = np.unique(berlin_day, return_inverse=True)
+    sign = rng.choice(np.array([-1.0, 1.0]), size=int(inv.max()) + 1)[inv]
+    new_ret = ret * sign
+    new_offs = offs.copy()
+    flip = sign < 0
+    new_offs[flip, 0] = -offs[flip, 0]
+    new_offs[flip, 1] = -offs[flip, 2]
+    new_offs[flip, 2] = -offs[flip, 1]
+    return _rebuild(dev, c[0], new_ret, new_offs)
+
+
+def make_null_frame(dev: pd.DataFrame, seed: int, block_len: int = BLOCK_LEN,
+                    kind: str = "shuffle_drift", plan=None) -> pd.DataFrame:
+    """Synthetic null of ``dev``: shuffle_drift (module docstring, legacy default),
+    shuffle_zerodrift or sign_flip_day."""
+    if kind == "shuffle_zerodrift":
+        return _zerodrift(dev, seed, plan, block_len)
+    if kind == "sign_flip_day":
+        return _sign_flip_day(dev, seed)
+    if kind != "shuffle_drift":
+        raise ValueError(f"unknown null kind {kind}")
     n = len(dev)
     ts = pd.DatetimeIndex(dev["ts"])
     ts_ns = ts.asi8.astype(np.int64)
@@ -117,7 +257,7 @@ def make_null_frame(dev: pd.DataFrame, seed: int, block_len: int = BLOCK_LEN) ->
 
 
 # --------------------------------------------------------------------------- one null run
-def run_one(seed: int, out_root: Path, config: Path) -> dict:
+def run_one(seed: int, out_root: Path, config: Path, kind: str = "shuffle_drift") -> dict:
     from alpha.common.dataset import load_research_dataset
     from research.runners import ad1_discovery, ad1_survivors, ar2_fast
 
@@ -125,7 +265,7 @@ def run_one(seed: int, out_root: Path, config: Path) -> dict:
     plan = ar2_fast._plan(cfg)
     ds = load_research_dataset(REPO_ROOT / cfg["dataset_root"])
     real_dev = ar2_fast.dev_frame(ds.frame, plan)
-    null_dev = make_null_frame(real_dev, seed)
+    null_dev = make_null_frame(real_dev, seed, kind=kind, plan=plan)
     out_dir = out_root / f"seed_{seed}"
     cache_dir = REPO_ROOT / f"data/feature_store/ad1_null_{seed}"
     args = ad1_discovery.build_parser().parse_args([
@@ -140,7 +280,11 @@ def run_one(seed: int, out_root: Path, config: Path) -> dict:
     surv = ad1_survivors.run(out_dir / "candidate_pool.json", config, out_dir, cache_dir,
                              dev_override=null_dev)
     raw = json.loads((out_dir / "survivors.json").read_text(encoding="utf-8"))
-    return _digest(seed, disc, surv, raw, time.perf_counter() - t0)
+    rec = _digest(seed, disc, surv, raw, time.perf_counter() - t0)
+    rec["null_kind"] = kind
+    rec["finalists_dir"] = {f["canonical_hash"][:12]: f["genome"]["direction"]
+                            for f in raw["finalists"]}
+    return rec
 
 
 def _digest(seed: int, disc: dict, surv: dict, raw: dict, wall: float) -> dict:
@@ -188,21 +332,87 @@ def aggregate(out_root: Path) -> dict:
     return agg
 
 
+REAL_POWERED = {
+    "main2 (current gates)": dict(C=15, E=1, max_val_t=1.13, max_pooled_t=1.84),
+    "main1-rerun (current gates)": dict(C=25, E=2, max_val_t=1.18, max_pooled_t=2.0),
+}
+
+
+def _q(x: list[float]) -> dict:
+    a = np.asarray(x, dtype=float)
+    if not len(a):
+        return {}
+    return {"mean": float(a.mean()), "sd": float(a.std(ddof=1)) if len(a) > 1 else 0.0,
+            "min": float(a.min()), "q25": float(np.quantile(a, .25)),
+            "median": float(np.median(a)), "q75": float(np.quantile(a, .75)),
+            "q95": float(np.quantile(a, .95)), "max": float(a.max())}
+
+
+def aggregate_powered(out_root: Path) -> dict:
+    """Aggregate every seed digest under out_root, separately per null kind."""
+    result: dict = {"real": REAL_POWERED}
+    for kind in ("shuffle_zerodrift", "sign_flip_day"):
+        recs = []
+        for p in sorted(out_root.glob("seed_*/digest.json")):
+            r = json.loads(p.read_text(encoding="utf-8"))
+            if r.get("null_kind") == kind:
+                recs.append(r)
+        if not recs:
+            continue
+        per_seed, cs, es, mv, mp = [], [], [], [], []
+        for r in recs:
+            fin = r["finalists_passed_all"]
+            vts = [f["val_t"] for f in fin if f["val_t"] is not None]
+            pts = [f["pooled_t"] for f in fin if f["pooled_t"] is not None]
+            dirs = r.get("finalists_dir", {})
+            per_seed.append({
+                "seed": r["seed"], "counts": r["counts"], "E_finalists": len(fin),
+                "best_train_fitness": r["best_train_fitness"]["pool_max"],
+                "finalist_val_t": vts, "finalist_pooled_t": pts,
+                "long_short": {d: sum(1 for f in fin if dirs.get(f["hash"]) == d)
+                               for d in ("LONG", "SHORT")}})
+            cs.append(r["counts"]["C"])
+            es.append(r["counts"]["E"])
+            mv.append(max(vts) if vts else 0.0)  # 0.0 = no finalist (counted as no exceedance)
+            mp.append(max(pts) if pts else 0.0)
+        q95v, q95p = float(np.quantile(mv, .95)), float(np.quantile(mp, .95))
+        result[kind] = {
+            "n_seeds": len(recs), "per_seed": per_seed,
+            "aggregate": {"C_survivors": _q(cs), "E_finalists": _q(es),
+                          "max_finalist_val_t": _q(mv), "max_finalist_pooled_t": _q(mp),
+                          "empirical_p95_max_val_t": q95v, "empirical_p95_max_pooled_t": q95p},
+            "real_vs_null_p95": {
+                k: {"max_val_t": v["max_val_t"], "exceeds_null_p95_val_t": v["max_val_t"] > q95v,
+                    "max_pooled_t": v["max_pooled_t"],
+                    "exceeds_null_p95_pooled_t": v["max_pooled_t"] > q95p}
+                for k, v in REAL_POWERED.items()}}
+    (out_root / "aggregate.json").write_text(json.dumps(result, indent=1, sort_keys=True),
+                                             encoding="utf-8")
+    return result
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--seed", type=int, default=None)
     p.add_argument("--aggregate", action="store_true")
-    p.add_argument("--out-root", default=str(OUT_ROOT))
+    p.add_argument("--null-kind", choices=NULL_KINDS, default="shuffle_drift")
+    p.add_argument("--seeds", type=int, nargs="*", default=None,
+                   help="explicit seed list (default: legacy 3 / zerodrift 12 / signflip 4)")
+    p.add_argument("--out-root", default=None)
     p.add_argument("--config", default=str(REPO_ROOT / "research/configs/ad1_discovery.json"))
     a = p.parse_args(argv)
-    out_root = Path(a.out_root)
+    out_root = Path(a.out_root) if a.out_root else (
+        OUT_ROOT if a.null_kind == "shuffle_drift" else ZERODRIFT_ROOT)
     out_root.mkdir(parents=True, exist_ok=True)
     if a.aggregate:
-        print(json.dumps(aggregate(out_root), indent=1, sort_keys=True))
+        agg = aggregate(out_root) if a.null_kind == "shuffle_drift" else aggregate_powered(out_root)
+        print(json.dumps(agg, indent=1, sort_keys=True))
         return 0
-    seeds = [a.seed] if a.seed is not None else list(NULL_SEEDS)
+    default = {"shuffle_drift": NULL_SEEDS, "shuffle_zerodrift": ZERODRIFT_SEEDS,
+               "sign_flip_day": SIGNFLIP_SEEDS}[a.null_kind]
+    seeds = a.seeds if a.seeds else ([a.seed] if a.seed is not None else list(default))
     for s in seeds:
-        rec = run_one(s, out_root, Path(a.config))
+        rec = run_one(s, out_root, Path(a.config), a.null_kind)
         (out_root / f"seed_{s}" / "digest.json").write_text(
             json.dumps(rec, indent=1, sort_keys=True, default=str), encoding="utf-8")
         print(f"[null {s}] {json.dumps(rec['counts'])} clusters={rec['clusters']} "

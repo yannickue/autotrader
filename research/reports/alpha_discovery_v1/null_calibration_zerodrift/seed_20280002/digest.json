@@ -1,0 +1,60 @@
+{
+ "best_train_fitness": {
+  "deap": 0.281873,
+  "optuna": 0.380305,
+  "pool_max": 0.3803,
+  "random": -0.001199
+ },
+ "clusters": 4,
+ "counts": {
+  "C": 13,
+  "D": 13,
+  "E": 6,
+  "pool": 800,
+  "stage_a": 800,
+  "train_and_validation_positive": 140,
+  "train_positive": 800,
+  "validation_positive": 140
+ },
+ "finalists_dir": {
+  "32dd26a20671": "SHORT",
+  "5894bc9d898e": "LONG",
+  "73a3b64e67da": "SHORT",
+  "7b42751f2dba": "SHORT"
+ },
+ "finalists_passed_all": [
+  {
+   "exceeds_null": false,
+   "hash": "32dd26a20671",
+   "null_bound": 4.542892469397266,
+   "pooled_t": 2.81862037717628,
+   "val_t": 1.741784356577032
+  },
+  {
+   "exceeds_null": false,
+   "hash": "7b42751f2dba",
+   "null_bound": 4.542892469397266,
+   "pooled_t": 2.1838937230323174,
+   "val_t": 1.1544635256711697
+  },
+  {
+   "exceeds_null": false,
+   "hash": "73a3b64e67da",
+   "null_bound": 4.542892469397266,
+   "pooled_t": 1.8750075183187973,
+   "val_t": 1.5837932375042427
+  },
+  {
+   "exceeds_null": false,
+   "hash": "5894bc9d898e",
+   "null_bound": 4.542892469397266,
+   "pooled_t": 1.617458804753294,
+   "val_t": 1.0555814594130997
+  }
+ ],
+ "near_misses": [],
+ "null_kind": "shuffle_zerodrift",
+ "seed": 20280002,
+ "verdict": "INCONCLUSIVE",
+ "wall_s": 380.6
+}

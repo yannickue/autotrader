@@ -1,0 +1,108 @@
+{
+ "best_train_fitness": {
+  "deap": 0.327151,
+  "optuna": 0.245828,
+  "pool_max": 0.3272,
+  "random": 0.094181
+ },
+ "clusters": 11,
+ "counts": {
+  "C": 49,
+  "D": 49,
+  "E": 26,
+  "pool": 800,
+  "stage_a": 800,
+  "train_and_validation_positive": 360,
+  "train_positive": 799,
+  "validation_positive": 360
+ },
+ "finalists_dir": {
+  "0e8048cbd012": "SHORT",
+  "16b434953896": "SHORT",
+  "52b0ddeb1a7d": "LONG",
+  "5e937b75cb35": "SHORT",
+  "88b5c7451879": "LONG",
+  "9d987a3e4038": "SHORT",
+  "b5d0b5aa066c": "LONG",
+  "bf2a5fb11eb8": "SHORT",
+  "e264d44e35ba": "SHORT",
+  "e4d71435cb41": "LONG"
+ },
+ "finalists_passed_all": [
+  {
+   "exceeds_null": false,
+   "hash": "52b0ddeb1a7d",
+   "null_bound": 4.542899733852769,
+   "pooled_t": 2.724092298145742,
+   "val_t": 1.5727622753021617
+  },
+  {
+   "exceeds_null": false,
+   "hash": "b5d0b5aa066c",
+   "null_bound": 4.542899733852769,
+   "pooled_t": 2.3330194877008936,
+   "val_t": 1.0982187430663628
+  },
+  {
+   "exceeds_null": false,
+   "hash": "e264d44e35ba",
+   "null_bound": 4.542899733852769,
+   "pooled_t": 2.9986761890837235,
+   "val_t": 1.2103197613731451
+  },
+  {
+   "exceeds_null": false,
+   "hash": "88b5c7451879",
+   "null_bound": 4.542899733852769,
+   "pooled_t": 2.4950659701907836,
+   "val_t": 1.7649220602135713
+  },
+  {
+   "exceeds_null": false,
+   "hash": "16b434953896",
+   "null_bound": 4.542899733852769,
+   "pooled_t": 2.5441779316594304,
+   "val_t": 1.3262317742642284
+  },
+  {
+   "exceeds_null": false,
+   "hash": "bf2a5fb11eb8",
+   "null_bound": 4.542899733852769,
+   "pooled_t": 2.4202615898130535,
+   "val_t": 1.1207906917460233
+  },
+  {
+   "exceeds_null": false,
+   "hash": "e4d71435cb41",
+   "null_bound": 4.542899733852769,
+   "pooled_t": 1.718243820653389,
+   "val_t": 1.0592340256094321
+  },
+  {
+   "exceeds_null": false,
+   "hash": "0e8048cbd012",
+   "null_bound": 4.542899733852769,
+   "pooled_t": 1.5218878794587691,
+   "val_t": 1.0178828935289537
+  },
+  {
+   "exceeds_null": false,
+   "hash": "9d987a3e4038",
+   "null_bound": 4.542899733852769,
+   "pooled_t": 1.7673546097193253,
+   "val_t": 1.052953989516597
+  },
+  {
+   "exceeds_null": false,
+   "hash": "5e937b75cb35",
+   "null_bound": 4.542899733852769,
+   "pooled_t": 1.6514892385637883,
+   "val_t": 1.5722186068882777
+  }
+ ],
+ "near_misses": [],
+ "null_kind": "shuffle_zerodrift",
+ "seed": 20280007,
+ "verdict": "INCONCLUSIVE",
+ "wall_s": 318.6
+}

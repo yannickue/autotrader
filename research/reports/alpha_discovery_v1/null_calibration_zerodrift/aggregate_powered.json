@@ -1,0 +1,670 @@
+{
+ "real": {
+  "main1-rerun (current gates)": {
+   "C": 25,
+   "E": 2,
+   "max_pooled_t": 2.0,
+   "max_val_t": 1.18
+  },
+  "main2 (current gates)": {
+   "C": 15,
+   "E": 1,
+   "max_pooled_t": 1.84,
+   "max_val_t": 1.13
+  }
+ },
+ "shuffle_zerodrift": {
+  "aggregate": {
+   "C_survivors": {
+    "max": 54.0,
+    "mean": 25.5,
+    "median": 22.5,
+    "min": 8.0,
+    "q25": 12.5,
+    "q75": 34.5,
+    "q95": 51.25,
+    "sd": 15.773971656440295
+   },
+   "E_finalists": {
+    "max": 26.0,
+    "mean": 10.333333333333334,
+    "median": 7.5,
+    "min": 1.0,
+    "q25": 4.75,
+    "q75": 17.25,
+    "q95": 23.249999999999996,
+    "sd": 8.183501510337551
+   },
+   "empirical_p95_max_pooled_t": 3.45514524204545,
+   "empirical_p95_max_val_t": 2.4170218071032554,
+   "max_finalist_pooled_t": {
+    "max": 3.5345753980554697,
+    "mean": 3.003451251729823,
+    "median": 3.0280040978455376,
+    "min": 2.1344228037533455,
+    "q25": 2.8018608382173253,
+    "q75": 3.2596043861700426,
+    "q95": 3.45514524204545,
+    "sd": 0.373621946016326
+   },
+   "max_finalist_val_t": {
+    "max": 2.749997649786799,
+    "mean": 1.7069138644981814,
+    "median": 1.7299246688895038,
+    "min": 1.2585342586408486,
+    "q25": 1.4024130517861977,
+    "q75": 1.8040603751873248,
+    "q95": 2.4170218071032554,
+    "sd": 0.42626565626806046
+   }
+  },
+  "n_seeds": 12,
+  "per_seed": [
+   {
+    "E_finalists": 10,
+    "best_train_fitness": 0.4734,
+    "counts": {
+     "C": 30,
+     "D": 30,
+     "E": 17,
+     "pool": 800,
+     "stage_a": 800,
+     "train_and_validation_positive": 309,
+     "train_positive": 799,
+     "validation_positive": 309
+    },
+    "finalist_pooled_t": [
+     3.151486230059545,
+     2.8593086221557855,
+     2.750184474515439,
+     2.49713852729253,
+     2.7726705074848823,
+     2.529816379293184,
+     2.368519081349358,
+     2.4903547156064847,
+     2.100148585827508,
+     1.8694966662056902
+    ],
+    "finalist_val_t": [
+     1.3911798259498283,
+     1.0375506952723816,
+     1.106067751424176,
+     1.1288542926576282,
+     1.4819242094559368,
+     1.558603692314445,
+     1.6133570504947732,
+     1.7855004024080936,
+     1.0511772305291494,
+     1.3456292086941104
+    ],
+    "long_short": {
+     "LONG": 0,
+     "SHORT": 10
+    },
+    "seed": 20280001
+   },
+   {
+    "E_finalists": 4,
+    "best_train_fitness": 0.3803,
+    "counts": {
+     "C": 13,
+     "D": 13,
+     "E": 6,
+     "pool": 800,
+     "stage_a": 800,
+     "train_and_validation_positive": 140,
+     "train_positive": 800,
+     "validation_positive": 140
+    },
+    "finalist_pooled_t": [
+     2.81862037717628,
+     2.1838937230323174,
+     1.8750075183187973,
+     1.617458804753294
+    ],
+    "finalist_val_t": [
+     1.741784356577032,
+     1.1544635256711697,
+     1.5837932375042427,
+     1.0555814594130997
+    ],
+    "long_short": {
+     "LONG": 1,
+     "SHORT": 3
+    },
+    "seed": 20280002
+   },
+   {
+    "E_finalists": 4,
+    "best_train_fitness": 0.3258,
+    "counts": {
+     "C": 33,
+     "D": 33,
+     "E": 5,
+     "pool": 800,
+     "stage_a": 800,
+     "train_and_validation_positive": 355,
+     "train_positive": 799,
+     "validation_positive": 355
+    },
+    "finalist_pooled_t": [
+     2.75158222134046,
+     2.134026316105102,
+     1.9790452692173588,
+     1.7018965701156334
+    ],
+    "finalist_val_t": [
+     1.0025150775154466,
+     1.155750598319937,
+     1.261012194830303,
+     1.138012337371357
+    ],
+    "long_short": {
+     "LONG": 4,
+     "SHORT": 0
+    },
+    "seed": 20280003
+   },
+   {
+    "E_finalists": 1,
+    "best_train_fitness": 0.3533,
+    "counts": {
+     "C": 9,
+     "D": 9,
+     "E": 1,
+     "pool": 800,
+     "stage_a": 800,
+     "train_and_validation_positive": 194,
+     "train_positive": 800,
+     "validation_positive": 194
+    },
+    "finalist_pooled_t": [
+     2.1344228037533455
+    ],
+    "finalist_val_t": [
+     1.4146255870741848
+    ],
+    "long_short": {
+     "LONG": 0,
+     "SHORT": 1
+    },
+    "seed": 20280004
+   },
+   {
+    "E_finalists": 2,
+    "best_train_fitness": 0.3478,
+    "counts": {
+     "C": 18,
+     "D": 18,
+     "E": 2,
+     "pool": 800,
+     "stage_a": 800,
+     "train_and_validation_positive": 232,
+     "train_positive": 800,
+     "validation_positive": 232
+    },
+    "finalist_pooled_t": [
+     3.2790771037440174,
+     2.2242421733988977
+    ],
+    "finalist_val_t": [
+     1.2585342586408486,
+     1.2582970165315095
+    ],
+    "long_short": {
+     "LONG": 1,
+     "SHORT": 1
+    },
+    "seed": 20280005
+   },
+   {
+    "E_finalists": 6,
+    "best_train_fitness": 0.5249,
+    "counts": {
+     "C": 15,
+     "D": 15,
+     "E": 9,
+     "pool": 800,
+     "stage_a": 800,
+     "train_and_validation_positive": 211,
+     "train_positive": 787,
+     "validation_positive": 211
+    },
+    "finalist_pooled_t": [
+     2.8714678807428378,
+     2.4227151854316396,
+     2.1516844295364286,
+     3.390156932582707,
+     1.5949008833102423,
+     1.4784979836914665
+    ],
+    "finalist_val_t": [
+     1.003365678250256,
+     1.4195968480157746,
+     1.1320369721648742,
+     2.749997649786799,
+     1.1963534699964447,
+     1.295587279260882
+    ],
+    "long_short": {
+     "LONG": 0,
+     "SHORT": 6
+    },
+    "seed": 20280006
+   },
+   {
+    "E_finalists": 10,
+    "best_train_fitness": 0.3272,
+    "counts": {
+     "C": 49,
+     "D": 49,
+     "E": 26,
+     "pool": 800,
+     "stage_a": 800,
+     "train_and_validation_positive": 360,
+     "train_positive": 799,
+     "validation_positive": 360
+    },
+    "finalist_pooled_t": [
+     2.724092298145742,
+     2.3330194877008936,
+     2.9986761890837235,
+     2.4950659701907836,
+     2.5441779316594304,
+     2.4202615898130535,
+     1.718243820653389,
+     1.5218878794587691,
+     1.7673546097193253,
+     1.6514892385637883
+    ],
+    "finalist_val_t": [
+     1.5727622753021617,
+     1.0982187430663628,
+     1.2103197613731451,
+     1.7649220602135713,
+     1.3262317742642284,
+     1.1207906917460233,
+     1.0592340256094321,
+     1.0178828935289537,
+     1.052953989516597,
+     1.5722186068882777
+    ],
+    "long_short": {
+     "LONG": 4,
+     "SHORT": 6
+    },
+    "seed": 20280007
+   },
+   {
+    "E_finalists": 2,
+    "best_train_fitness": 0.3653,
+    "counts": {
+     "C": 8,
+     "D": 8,
+     "E": 5,
+     "pool": 800,
+     "stage_a": 800,
+     "train_and_validation_positive": 124,
+     "train_positive": 800,
+     "validation_positive": 124
+    },
+    "finalist_pooled_t": [
+     2.709723632295288,
+     2.0656756677736157
+    ],
+    "finalist_val_t": [
+     1.4184221170723033,
+     1.0733699949502273
+    ],
+    "long_short": {
+     "LONG": 1,
+     "SHORT": 1
+    },
+    "seed": 20280008
+   },
+   {
+    "E_finalists": 6,
+    "best_train_fitness": 0.2917,
+    "counts": {
+     "C": 39,
+     "D": 39,
+     "E": 21,
+     "pool": 800,
+     "stage_a": 800,
+     "train_and_validation_positive": 283,
+     "train_positive": 755,
+     "validation_positive": 284
+    },
+    "finalist_pooled_t": [
+     3.253113480312051,
+     2.873454679470608,
+     2.372451962860627,
+     2.164548151204434,
+     2.47722278169342,
+     1.622532212878704
+    ],
+    "finalist_val_t": [
+     1.2120381961100284,
+     1.7037249762907904,
+     1.9433505118056447,
+     1.1909461256281795,
+     2.144587026725812,
+     1.2047485885611129
+    ],
+    "long_short": {
+     "LONG": 3,
+     "SHORT": 3
+    },
+    "seed": 20280009
+   },
+   {
+    "E_finalists": 10,
+    "best_train_fitness": 0.6698,
+    "counts": {
+     "C": 27,
+     "D": 27,
+     "E": 18,
+     "pool": 800,
+     "stage_a": 800,
+     "train_and_validation_positive": 430,
+     "train_positive": 800,
+     "validation_positive": 430
+    },
+    "finalist_pooled_t": [
+     3.5345753980554697,
+     3.4611516270199414,
+     2.584294934657996,
+     2.409918312801305,
+     2.397141618435822,
+     2.3604693214283365,
+     2.2457963342096385,
+     2.2218897417147443,
+     2.3226914451520377,
+     2.617546370035353
+    ],
+    "finalist_val_t": [
+     1.3129186923315255,
+     1.859740293525018,
+     1.1195117292776608,
+     1.0398960314134922,
+     1.2820257323853443,
+     1.1915711573810732,
+     1.020822393958928,
+     1.3217193802752734,
+     1.123357296119539,
+     1.214439436544382
+    ],
+    "long_short": {
+     "LONG": 0,
+     "SHORT": 10
+    },
+    "seed": 20280010
+   },
+   {
+    "E_finalists": 4,
+    "best_train_fitness": 0.5971,
+    "counts": {
+     "C": 11,
+     "D": 11,
+     "E": 4,
+     "pool": 800,
+     "stage_a": 800,
+     "train_and_validation_positive": 116,
+     "train_positive": 800,
+     "validation_positive": 116
+    },
+    "finalist_pooled_t": [
+     3.0573320066073517,
+     1.9143851300835473,
+     1.6717608531913917,
+     1.6699869886109708
+    ],
+    "finalist_val_t": [
+     1.3657754459222358,
+     1.2094042093343518,
+     1.0413969448955473,
+     1.074984531372784
+    ],
+    "long_short": {
+     "LONG": 2,
+     "SHORT": 2
+    },
+    "seed": 20280011
+   },
+   {
+    "E_finalists": 9,
+    "best_train_fitness": 0.4484,
+    "counts": {
+     "C": 54,
+     "D": 54,
+     "E": 10,
+     "pool": 800,
+     "stage_a": 800,
+     "train_and_validation_positive": 278,
+     "train_positive": 782,
+     "validation_positive": 278
+    },
+    "finalist_pooled_t": [
+     2.9626486457476315,
+     2.889925852184032,
+     2.3756486823160885,
+     2.216168470606446,
+     1.80126082096926,
+     1.7076873315656027,
+     2.1503070817613117,
+     1.4553207937721224,
+     1.1362336236646717
+    ],
+    "finalist_val_t": [
+     1.3300086677697904,
+     1.2638059994179422,
+     1.3457203003698004,
+     1.354859246359348,
+     1.2408284318685987,
+     1.435806489096515,
+     1.7180649812019755,
+     1.5360672570865272,
+     1.3010296889511073
+    ],
+    "long_short": {
+     "LONG": 0,
+     "SHORT": 9
+    },
+    "seed": 20280012
+   }
+  ],
+  "real_vs_null_p95": {
+   "main1-rerun (current gates)": {
+    "exceeds_null_p95_pooled_t": false,
+    "exceeds_null_p95_val_t": false,
+    "max_pooled_t": 2.0,
+    "max_val_t": 1.18
+   },
+   "main2 (current gates)": {
+    "exceeds_null_p95_pooled_t": false,
+    "exceeds_null_p95_val_t": false,
+    "max_pooled_t": 1.84,
+    "max_val_t": 1.13
+   }
+  }
+ },
+ "sign_flip_day": {
+  "aggregate": {
+   "C_survivors": {
+    "max": 47.0,
+    "mean": 27.5,
+    "median": 24.5,
+    "min": 14.0,
+    "q25": 17.75,
+    "q75": 34.25,
+    "q95": 44.449999999999996,
+    "sd": 14.617341299520465
+   },
+   "E_finalists": {
+    "max": 27.0,
+    "mean": 8.5,
+    "median": 3.0,
+    "min": 1.0,
+    "q25": 2.5,
+    "q75": 9.0,
+    "q95": 23.39999999999999,
+    "sd": 12.36931687685298
+   },
+   "empirical_p95_max_pooled_t": 3.217399620161158,
+   "empirical_p95_max_val_t": 1.629236689878889,
+   "max_finalist_pooled_t": {
+    "max": 3.326148236694033,
+    "mean": 2.6831039407025172,
+    "median": 2.512994953014833,
+    "min": 2.3802776200863693,
+    "q25": 2.413693739687692,
+    "q75": 2.782405154029659,
+    "q95": 3.217399620161158,
+    "sd": 0.4391769338423777
+   },
+   "max_finalist_val_t": {
+    "max": 1.6337898609514807,
+    "mean": 1.47259566350614,
+    "median": 1.5061426092350358,
+    "min": 1.2443075746030072,
+    "q25": 1.3677142671526537,
+    "q75": 1.611024005588522,
+    "q95": 1.629236689878889,
+    "sd": 0.18191718374326296
+   }
+  },
+  "n_seeds": 4,
+  "per_seed": [
+   {
+    "E_finalists": 1,
+    "best_train_fitness": 0.341,
+    "counts": {
+     "C": 19,
+     "D": 19,
+     "E": 1,
+     "pool": 800,
+     "stage_a": 800,
+     "train_and_validation_positive": 377,
+     "train_positive": 800,
+     "validation_positive": 377
+    },
+    "finalist_pooled_t": [
+     2.3802776200863693
+    ],
+    "finalist_val_t": [
+     1.408849831335869
+    ],
+    "long_short": {
+     "LONG": 1,
+     "SHORT": 0
+    },
+    "seed": 20290001
+   },
+   {
+    "E_finalists": 3,
+    "best_train_fitness": 0.3515,
+    "counts": {
+     "C": 30,
+     "D": 30,
+     "E": 3,
+     "pool": 800,
+     "stage_a": 800,
+     "train_and_validation_positive": 395,
+     "train_positive": 798,
+     "validation_positive": 395
+    },
+    "finalist_pooled_t": [
+     2.424832446221466,
+     2.0982222997929187,
+     2.300840861365089
+    ],
+    "finalist_val_t": [
+     1.0411012453199142,
+     1.18549322658021,
+     1.6034353871342026
+    ],
+    "long_short": {
+     "LONG": 0,
+     "SHORT": 3
+    },
+    "seed": 20290002
+   },
+   {
+    "E_finalists": 5,
+    "best_train_fitness": 0.3514,
+    "counts": {
+     "C": 47,
+     "D": 47,
+     "E": 27,
+     "pool": 800,
+     "stage_a": 800,
+     "train_and_validation_positive": 325,
+     "train_positive": 800,
+     "validation_positive": 325
+    },
+    "finalist_pooled_t": [
+     3.326148236694033,
+     2.8491299541056105,
+     2.7536557031144167,
+     2.580769427802034,
+     2.9798352922822744
+    ],
+    "finalist_val_t": [
+     1.2385211726466685,
+     1.186289142844307,
+     1.6337898609514807,
+     1.4011637389551126,
+     1.3141655922372313
+    ],
+    "long_short": {
+     "LONG": 0,
+     "SHORT": 5
+    },
+    "seed": 20290003
+   },
+   {
+    "E_finalists": 3,
+    "best_train_fitness": 0.3976,
+    "counts": {
+     "C": 14,
+     "D": 14,
+     "E": 3,
+     "pool": 800,
+     "stage_a": 800,
+     "train_and_validation_positive": 158,
+     "train_positive": 800,
+     "validation_positive": 158
+    },
+    "finalist_pooled_t": [
+     2.601157459808201,
+     2.3529824976668343,
+     2.2008740195838676
+    ],
+    "finalist_val_t": [
+     1.2443075746030072,
+     1.128241690019309,
+     1.0578947722251066
+    ],
+    "long_short": {
+     "LONG": 3,
+     "SHORT": 0
+    },
+    "seed": 20290004
+   }
+  ],
+  "real_vs_null_p95": {
+   "main1-rerun (current gates)": {
+    "exceeds_null_p95_pooled_t": false,
+    "exceeds_null_p95_val_t": false,
+    "max_pooled_t": 2.0,
+    "max_val_t": 1.18
+   },
+   "main2 (current gates)": {
+    "exceeds_null_p95_pooled_t": false,
+    "exceeds_null_p95_val_t": false,
+    "max_pooled_t": 1.84,
+    "max_val_t": 1.13
+   }
+  }
+ }
+}

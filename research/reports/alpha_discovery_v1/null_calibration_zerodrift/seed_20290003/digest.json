@@ -1,0 +1,68 @@
+{
+ "best_train_fitness": {
+  "deap": 0.351405,
+  "optuna": 0.255674,
+  "pool_max": 0.3514,
+  "random": -0.001928
+ },
+ "clusters": 5,
+ "counts": {
+  "C": 47,
+  "D": 47,
+  "E": 27,
+  "pool": 800,
+  "stage_a": 800,
+  "train_and_validation_positive": 325,
+  "train_positive": 800,
+  "validation_positive": 325
+ },
+ "finalists_dir": {
+  "1ea5532a4964": "SHORT",
+  "2d0bc9e30aa3": "SHORT",
+  "47128ab755a2": "SHORT",
+  "81d91e8d60c9": "SHORT",
+  "d05aa6086e59": "SHORT"
+ },
+ "finalists_passed_all": [
+  {
+   "exceeds_null": false,
+   "hash": "d05aa6086e59",
+   "null_bound": 4.543088521522813,
+   "pooled_t": 3.326148236694033,
+   "val_t": 1.2385211726466685
+  },
+  {
+   "exceeds_null": false,
+   "hash": "81d91e8d60c9",
+   "null_bound": 4.543088521522813,
+   "pooled_t": 2.8491299541056105,
+   "val_t": 1.186289142844307
+  },
+  {
+   "exceeds_null": false,
+   "hash": "1ea5532a4964",
+   "null_bound": 4.543088521522813,
+   "pooled_t": 2.7536557031144167,
+   "val_t": 1.6337898609514807
+  },
+  {
+   "exceeds_null": false,
+   "hash": "2d0bc9e30aa3",
+   "null_bound": 4.543088521522813,
+   "pooled_t": 2.580769427802034,
+   "val_t": 1.4011637389551126
+  },
+  {
+   "exceeds_null": false,
+   "hash": "47128ab755a2",
+   "null_bound": 4.543088521522813,
+   "pooled_t": 2.9798352922822744,
+   "val_t": 1.3141655922372313
+  }
+ ],
+ "near_misses": [],
+ "null_kind": "sign_flip_day",
+ "seed": 20290003,
+ "verdict": "INCONCLUSIVE",
+ "wall_s": 468.5
+}
