@@ -128,7 +128,7 @@ def test_extra_args_forwarded_to_child(tmp_path: Path) -> None:
     assert "--stage=2" in result.stdout
 
 
-def test_shutdown_always_attempted_even_on_probe_failure() -> None:
+def test_shutdown_always_attempted_even_on_probe_failure(tmp_path: Path) -> None:
     """`run_isolated_probe` (the actual MT5 probe logic, not the bounded
     subprocess wrapper) must always call `client.shutdown()` in a `finally`
     block once `initialize()` has succeeded, regardless of what fails
@@ -141,7 +141,8 @@ def test_shutdown_always_attempted_even_on_probe_failure() -> None:
     client.set_initialize_result(True)
     client.set_account_info(None)  # forces a failure AFTER a successful initialize()
 
-    report = run_isolated_probe(_CONFIG, client)
+    # own lock file: the real single-owner lock may be held by a live DEMO runner on this machine
+    report = run_isolated_probe(_CONFIG, client, lock_path=tmp_path / "mt5.lock")
 
     assert report.success is False
     assert client.shutdown_calls == 1
