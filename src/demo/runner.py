@@ -87,8 +87,6 @@ from demo.labeling import Fill as LabelFill
 from demo.store import (
     CANCELLED,
     CLOSED,
-    UNCENSORED_EXITS,
-    AccountMismatch,
     FILLED,
     IN_DOUBT,
     PLANNED,
@@ -97,6 +95,8 @@ from demo.store import (
     RISK_REJECTED,
     SEND_FAILED,
     SENT,
+    UNCENSORED_EXITS,
+    AccountMismatch,
     DemoStore,
     DemoStoreError,
     parse_utc,
@@ -317,6 +317,11 @@ class RunnerConfig:
     # None = take it from the artifacts dir meta (account_meta.json) or the store, else the default.
     # Any string is allowed ("custom"); an explicit value that differs from the store's is refused.
     account_phase: str | None = None
+    # ---- closed markets / weekend idling (Lane R2) ----------------------------------------------
+    quote_fresh_s: float = 120.0  # a broker quote this young proves the market is trading whatever the calendar says
+    idle_poll_interval_s: float = 30.0  # poll cadence while EVERY enabled market is closed (heartbeat stays < 90 s)
+    idle_account_check_s: float = 60.0  # account snapshot / reconcile cadence while idle
+    idle_transient_grace_s: float = 12 * 3600.0  # a broker disconnect with all markets closed and no exposure is tolerated this long
 
     def __post_init__(self) -> None:
         if self.mode not in MODES:
@@ -406,6 +411,9 @@ class DemoRunner:
         self._funnel: dict[str, Any] | None = None
         self._funnel_at: datetime | None = None
         self._funnel_dirty = True
+        self._market_state: dict[str, str] = {}  # FRESH | OPEN_OUT_OF_SESSION | CLOSED_IDLE | STALE_FAULT | DISABLED
+        self._idle_all = False  # every enabled market is closed per calendar AND quote-stale (idle, not a fault)
+        self._last_account_at: datetime | None = None
         self._scan_pending: set[str] = set()  # markets whose newest bar is not fully scanned yet (retry next cycle)
         self.account_info: dict[str, Any] = {"account_id_hash": None, "account_phase": None}
         self._catchup: dict[str, dict[str, Any]] = {}  # per market catch-up counters (heartbeat / tests)
@@ -495,7 +503,10 @@ class DemoRunner:
         """Register a transient condition (first-seen time kept); exceeding the grace fails closed."""
         since, _old = self._transient.get(key, (now, reason))
         self._transient[key] = (since, reason)
-        if (now - since).total_seconds() >= self.cfg.transient_grace_s:
+        grace = self.cfg.transient_grace_s
+        if self._idle_all and not self._has_open_exposure():
+            grace = max(grace, self.cfg.idle_transient_grace_s)  # weekend: nothing to protect, nothing to trade
+        if (now - since).total_seconds() >= grace:
             self._fail_closed(f"{reason} (persisted {(now - since).total_seconds():.0f}s)", now)
 
     def _clear_transient(self, keys: Sequence[str]) -> None:
@@ -671,8 +682,15 @@ class DemoRunner:
         free = self._disk_free()
         if free < self.cfg.min_disk_free_bytes:
             self._fail_closed(f"disk_low: {free} bytes free", now)
+        if (
+            self._idle_all and self._last_account is not None and self._last_account_at is not None
+            and (now - self._last_account_at).total_seconds() < self.cfg.idle_account_check_s
+            and not self._has_open_exposure()
+        ):
+            return  # idle cadence: account / reconcile checks are lowered (not stopped) while every market is closed
         snap = self.stack.account_snapshot()
         self._last_account = snap
+        self._last_account_at = now
         self._clear_transient(["stack:guards"])
         self._check_account(snap, now)
 
@@ -696,9 +714,11 @@ class DemoRunner:
     def _refresh_feeds(self, now: datetime) -> list[str]:
         """Update freshness; return markets whose latest CLOSED M5 bar is new since last cycle.
 
-        Uses the stack's ``LiveBarSource`` surface: ``last_closed_bar_close_utc`` (refreshes its own
-        cache when a new bar should exist) and ``latest_quote``.  A stale feed of a market that is
-        CLOSED per its calendar is idle, not an alarm."""
+        CLOSED is not BROKEN.  A stale feed is IDLE only if the MarketSpec calendar (local weekday + cash
+        session) says the market is closed AND the broker shows no fresh quote (``quote_fresh_s``); a market
+        that should be open and is stale is the fault (``STALE_FAULT``: counts towards the all-stale
+        halt / exit).  A fresh quote proves the market trades whatever the calendar says.  Per-market state
+        (FRESH | OPEN_OUT_OF_SESSION | CLOSED_IDLE | STALE_FAULT) goes to the heartbeat."""
         new: list[str] = []
         self._stale = set()
         idle: set[str] = set()
@@ -706,6 +726,7 @@ class DemoRunner:
         enabled = [m for m in self.cfg.markets if m not in self.disabled]
         for m in enabled:
             info: dict[str, Any] = {"bar_age_s": None, "quote_age_s": None, "stale": True}
+            should_open = self._market_should_be_open(m, now)
             try:
                 close = src.last_closed_bar_close_utc(m)
             except StackFailClosed:
@@ -713,34 +734,56 @@ class DemoRunner:
             except Exception as exc:
                 self._feed[m] = {**info, "error": f"{type(exc).__name__}: {exc}"}
                 self._stale.add(m)
+                if not should_open:
+                    idle.add(m)
+                    self._feed[m]["idle_market_closed"] = True
+                    self._market_state[m] = "CLOSED_IDLE"
+                else:
+                    self._market_state[m] = "STALE_FAULT"
                 continue
-            if close is None:
-                self._feed[m] = info
-                self._stale.add(m)
-                continue
-            close = close.astimezone(UTC)
-            age = (now - close).total_seconds()
-            info["bar_age_s"] = age
+            q = None
             try:
                 q = src.latest_quote(m)
             except StackFailClosed:
                 raise
             except Exception:
                 q = None
+            quote_fresh = False
             if q is not None:
                 info["quote_age_s"] = (now - q.ts_utc.astimezone(UTC)).total_seconds()
+                quote_fresh = -self.cfg.clock_backward_tolerance_s <= info["quote_age_s"] <= self.cfg.quote_fresh_s
+            if close is None:
+                self._feed[m] = info
+                self._stale.add(m)
+                if not should_open and not quote_fresh:
+                    idle.add(m)
+                    info["idle_market_closed"] = True
+                    self._market_state[m] = "CLOSED_IDLE"
+                else:
+                    self._market_state[m] = "STALE_FAULT"
+                continue
+            close = close.astimezone(UTC)
+            age = (now - close).total_seconds()
+            info["bar_age_s"] = age
             stale = age > self.cfg.stale_feed_s or age < -self.cfg.clock_backward_tolerance_s
             info["stale"] = stale
             self._feed[m] = info
             if stale:
                 self._stale.add(m)
-                if not self._market_should_be_open(m, now):
+                if not should_open and not quote_fresh:
                     idle.add(m)
                     info["idle_market_closed"] = True
+                    self._market_state[m] = "CLOSED_IDLE"
+                else:
+                    self._market_state[m] = "STALE_FAULT"
+                    if not should_open and quote_fresh:
+                        info["calendar_closed_but_quotes_live"] = True
                 continue
+            self._market_state[m] = "FRESH" if should_open else "OPEN_OUT_OF_SESSION"
             if self._last_close.get(m) != close or m in self._scan_pending:
                 self._last_close[m] = close
                 new.append(m)
+        self._idle_all = bool(enabled) and len(idle) == len(enabled)
         expected = [m for m in enabled if m not in idle]
         if expected and all(m in self._stale for m in expected):
             self._all_stale_since = self._all_stale_since or now
@@ -1477,6 +1520,9 @@ class DemoRunner:
             "challengers": self._pred_status or {"status": self.learning_error or ("not_loaded" if self.predictor is None else "no_predictions_yet")},
             "mt5_connected": bool(acct.connected) if acct is not None else False,
             "feed": self._feed,
+            "market_state": dict(self._market_state),
+            "idle_all_markets_closed": self._idle_all,
+            "catchup": {m: dict(v) for m, v in self._catchup.items()},
             "stale_markets": sorted(self._stale),
             "disabled_markets": dict(self.disabled),
             "last_persistence_write": self._last_persist,
@@ -1544,6 +1590,9 @@ class DemoRunner:
     def _sleep_s(self) -> float:
         """Poll interval; exponential backoff (bounded) while a transient condition is being re-checked."""
         base = min(self.cfg.poll_interval_s, 30.0)
+        if self._idle_all and not self._transient and self._stale_halt_since is None:
+            self._transient_cycles = 0
+            return max(base, min(self.cfg.idle_poll_interval_s, 60.0))  # heartbeat must stay fresher than 90 s
         if self._transient or self._stale_halt_since is not None:
             self._transient_cycles += 1
             return min(base * (2 ** min(self._transient_cycles, 8)), max(base, self.cfg.transient_backoff_max_s))

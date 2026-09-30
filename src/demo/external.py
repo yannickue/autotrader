@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, fields
+from pathlib import Path
 from typing import Any
 
 from demo.contracts import (
@@ -184,7 +185,7 @@ def import_external_trade(store: DemoStore, trade: ExternalTrade) -> str:
 
 def import_file(store: DemoStore, path: str) -> list[str]:
     """``--record-canary FILE``: a JSON object or list of objects with the ``ExternalTrade`` fields."""
-    data = json.loads(open(path, encoding="utf-8").read())
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
     items = data if isinstance(data, list) else [data]
     return [import_external_trade(store, ExternalTrade.from_dict(x)) for x in items]
 
