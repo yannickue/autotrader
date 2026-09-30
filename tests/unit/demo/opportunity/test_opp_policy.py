@@ -20,11 +20,12 @@ from demo.opportunity.policy import (
     CLOCK_ANOMALY,
     DUPLICATE_OPPORTUNITY,
     ENTRY_OVERSHOT,
+    GATE_CLASSIFICATION,
     MARKET_CLOSED,
     NO_STRUCTURAL_STOP,
-    ONE_POSITION_PER_INSTRUMENT,
     OUTSIDE_ENTRY_WINDOW,
     POLICY_ID,
+    QUALITY_INPUTS,
     REASONS,
     SPACE_BELOW_MIN_R,
     SPREAD_TOO_WIDE,
@@ -126,11 +127,15 @@ def test_space_below_min_r_is_evaluated_at_the_ask_for_longs(ger):
     assert at_ask.implied_r == pytest.approx(0.5 / 1.4)
 
 
-def test_default_min_space_applies_only_to_finite_targets(ger):
+def test_default_min_space_is_zero_exact_simulator_behaviour(ger):
+    assert PolicyConfig().min_space_r == 0.0
     r_target = _assess(ger, synth_candidate(ger, stop=99.0, target_r=0.1))
     assert r_target.reasons == (ACCEPTED,)  # R targets carry no space check (sim: NaN target path)
-    structural = _assess(ger, synth_candidate(ger, stop=99.0, target=100.2))  # 0.1/1.1 < 0.25
-    assert structural.reasons == (SPACE_BELOW_MIN_R,)
+    # thin but strictly-beyond structural target (0.1 / 1.1 R): no arbitrary default threshold rejects it
+    assert _assess(ger, synth_candidate(ger, stop=99.0, target=100.2)).reasons == (ACCEPTED,)
+    # ... only a candidate-carried min_space_r (frozen spec) still applies
+    carried = _assess(ger, synth_candidate(ger, stop=99.0, target=100.2, min_space_r=0.25))
+    assert carried.reasons == (SPACE_BELOW_MIN_R,)
 
 
 def test_no_structural_stop(ger):
@@ -150,7 +155,8 @@ def test_duplicate_market_closed_clock_anomaly_position(ger):
     assert MARKET_CLOSED in weekend.reasons
     future = _assess(ger, synth_candidate(ger), now=SIG - timedelta(seconds=60))
     assert future.reasons == (CLOCK_ANOMALY,)
-    assert _assess(ger, synth_candidate(ger), position_open=True).reasons == (ONE_POSITION_PER_INSTRUMENT,)
+    # an open position on the instrument is NEVER a policy reject (stack handles same-symbol netting)
+    assert _assess(ger, synth_candidate(ger), position_open=True).reasons == (ACCEPTED,)
 
 
 def test_multiple_reasons_are_ordered_and_complete(ger):
@@ -158,7 +164,7 @@ def test_multiple_reasons_are_ordered_and_complete(ger):
         ger, synth_candidate(ger, stop=99.0), quote=None, now=SIG + timedelta(seconds=500),
         is_duplicate=True, position_open=True,
     )
-    assert a.reasons == (MARKET_CLOSED, STALE_SIGNAL, DUPLICATE_OPPORTUNITY, ONE_POSITION_PER_INSTRUMENT)
+    assert a.reasons == (MARKET_CLOSED, STALE_SIGNAL, DUPLICATE_OPPORTUNITY)
     order = [REASONS.index(r) for r in a.reasons]
     assert order == sorted(order)
 
@@ -167,8 +173,9 @@ def test_reason_code_set_is_exact():
     assert set(ALL_CODES) == {
         "STALE_SIGNAL", "OUTSIDE_ENTRY_WINDOW", "SPREAD_TOO_WIDE", "ENTRY_OVERSHOT",
         "TARGET_ALREADY_CROSSED", "SPACE_BELOW_MIN_R", "NO_STRUCTURAL_STOP", "DUPLICATE_OPPORTUNITY",
-        "MARKET_CLOSED", "CLOCK_ANOMALY", "ONE_POSITION_PER_INSTRUMENT", "ACCEPTED",
+        "MARKET_CLOSED", "CLOCK_ANOMALY", "ACCEPTED",
     }
+    assert "ONE_POSITION_PER_INSTRUMENT" not in ALL_CODES
     assert POLICY_ID == "static-demo-policy-v1"
 
 
@@ -261,3 +268,15 @@ def test_parity_clean_trade_is_accepted_and_booked(ger):
     cand = synth_candidate(ger, stop=99.0, target=102.0, min_space_r=0.5, bar_spread=0.2)
     a = StaticDemoPolicy().assess(cand, Quote(ts_utc=SIG, bid=100.0, ask=100.2), SIG, ger)
     assert a.reasons == (ACCEPTED,)
+
+
+def test_every_reject_code_is_classified_and_quality_never_rejects():
+    assert set(GATE_CLASSIFICATION) == set(REASONS)
+    classes = {"SAFETY", "STRUCTURAL", "QUALITY", "LEGACY_ARBITRARY", "TEMPORARY"}
+    for code, g in GATE_CLASSIFICATION.items():
+        assert g.code == code and g.gate_class in classes and g.why and g.hard is True
+    assert GATE_CLASSIFICATION[ENTRY_OVERSHOT].gate_class == "STRUCTURAL"
+    assert GATE_CLASSIFICATION[SPACE_BELOW_MIN_R].gate_class == "LEGACY_ARBITRARY"
+    # QUALITY signals have no reject code at all
+    assert not set(QUALITY_INPUTS) & {c.lower() for c in ALL_CODES}
+    assert all(g.gate_class != "QUALITY" for g in GATE_CLASSIFICATION.values())

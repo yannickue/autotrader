@@ -285,17 +285,15 @@ class OpportunityEngine:
         tick = tick_activity_of(self._source, market)
         n_dir = {d: sum(1 for _, c in found if c.direction == d) for d in (1, -1)}
         pairs: list[tuple[OpportunitySnapshot, Decision]] = []
-        pending_accept = False
         for fs, cand in found:
             oid = opportunity_id_of(cand)
             fresh = self._seen.add_if_new(oid)
             if not fresh and not self._emit_dup:
                 self.suppressed_duplicates += 1
                 continue
-            assessment = self._policy.assess(
-                cand, quote, now, ms, is_duplicate=not fresh,
-                position_open=pending_accept or bool(self._position_open(market)),
-            )
+            # No one-position rule: every technically valid opportunity is emitted. ``position_open``
+            # stays on the constructor for API compatibility only and is never consulted.
+            assessment = self._policy.assess(cand, quote, now, ms, is_duplicate=not fresh)
             same = [f for f, c in found if c.direction == cand.direction]
             signal_meta = {
                 "family": fs.family, "strategy_id": fs.strategy_id, "spec_hash": fs.spec_hash,
@@ -317,7 +315,6 @@ class OpportunityEngine:
             )
             dec = self._policy.decision(snap.opportunity_id, self._phase, now, assessment)
             if dec.accepted:
-                pending_accept = True
                 intent = self._policy.intent_for(snap, dec, ms, cand.window)
                 if intent is not None:
                     self._intents[snap.opportunity_id] = intent

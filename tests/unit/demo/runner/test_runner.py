@@ -265,7 +265,7 @@ def test_unknown_submit_error_never_resent(env):
 def test_account_guards_fail_closed(env, change, expect):
     snap, dec, intent = make_pair()
     env.engine.push("GER40", (snap, dec, intent))
-    r = env.build(unprotected_grace_s=0.0)
+    r = env.build(unprotected_grace_s=0.0, transient_grace_s=0.0)  # grace 0: transient => fail closed at once
     r.start()
     env.stack.set_account(**change)
     if "open_positions" in change:
@@ -316,7 +316,7 @@ def test_single_stale_market_is_skipped_all_stale_halts(env):
     env.engine.push("NAS100", b)
     env.stack.bar_source.frozen["NAS100"] = env.clock()
     env.clock.advance(minutes=30)  # NAS100 frozen 30 min ago -> stale; GER40 live
-    r = env.build(markets=("GER40", "NAS100"), all_stale_grace_s=900.0)
+    r = env.build(markets=("GER40", "NAS100"), all_stale_grace_s=900.0, all_stale_exit_s=900.0)
     _cycle(r)
     assert {m for m, _ in env.engine.calls} == {"GER40"}
     assert r.fail_reason is None
@@ -345,7 +345,7 @@ def test_stack_failclosed_from_poll(env):
 def test_exit_managed_after_fail_closed_then_stop(env):
     snap, dec, intent = make_pair()
     env.engine.push("GER40", (snap, dec, intent))
-    r = env.build()
+    r = env.build(transient_grace_s=0.0)
     _cycle(r)
     assert env.store.get_state(intent.intent_id) == PROTECTED
     env.stack.set_account(reconciliation="MISMATCH")
@@ -501,8 +501,11 @@ def test_trainer_is_throttled_and_contained(env):
     assert calls == []
     env.clock.advance(minutes=11)
     r.run_cycle()
+    r.join_training(5)
     r.run_cycle()
+    r.join_training(5)
     assert len(calls) == 1 and r.fail_reason is None
+    assert "train boom" in r._last_error["text"]
 
 
 def test_phase_tagging_and_separation(env):
@@ -601,15 +604,17 @@ def test_all_markets_failing_clock_chain_fails_closed(env):
 
 
 # ------------------------------------------------------------------------ bar adapter
-def test_stack_bar_adapter_matches_engine_frame_schema(env):
-    from demo.opportunity.bar_source import validate_frame
+def test_stack_bar_source_is_the_engine_bar_source_without_adapter(env):
+    from demo.opportunity.bar_source import BarSource, validate_frame
 
-    ad = rn.StackBarAdapter(env.stack.bar_source)
-    fr = ad.m5_frame("GER40", 30)
+    src = env.stack.bar_source  # the LiveBarSource surface itself: no adapter, no frame() assumption
+    assert isinstance(src, BarSource) and not hasattr(rn, "StackBarAdapter")
+    fr = src.m5_frame("GER40", 30)
     validate_frame(fr, "GER40")
     assert len(fr) == 30
-    q = ad.latest_quote("GER40")
+    q = src.latest_quote("GER40")
     assert q is not None and q.valid
+    assert src.last_closed_bar_close_utc("GER40") == fr["ts"].iloc[-1].to_pydatetime() + M5
 
 
 def test_planned_intent_is_persisted_before_submit(env):
@@ -618,9 +623,9 @@ def test_planned_intent_is_persisted_before_submit(env):
     seen_states = []
     orig = env.stack.submit
 
-    def spy(i):
+    def spy(i, context=None):
         seen_states.append(env.store.get_state(i.intent_id))
-        return orig(i)
+        return orig(i, context)
 
     env.stack.submit = spy
     _cycle(env.build())
@@ -635,17 +640,28 @@ def test_expired_intent_is_cancelled_not_sent(env):
     assert env.store.get_state(intent.intent_id) == CANCELLED
 
 
-def test_one_position_per_market(env):
+def test_no_global_one_position_rule_second_same_market_intent_reaches_the_stack(env):
+    """Same-symbol handling is the STACK's job (broker netting / ADDON_* codes), not the runner's."""
+    from decimal import Decimal
+
+    from demo.execution.events import Accepted, Rejected
+
     a = make_pair(tag="a")
     env.engine.push("GER40", a)
     r = env.build()
     _cycle(r)
     env.clock.advance(minutes=5)
     b = make_pair(tag="b", signal_ts=floor5(env.clock()))
+    env.stack.script[b[2].intent_id] = [
+        Accepted(b[2].intent_id, Decimal("1")),
+        Rejected(b[2].intent_id, "ADDON_EXPOSURE_NOT_SUPPORTED_V1", {"otherwise_valid": True}),
+    ]
     env.engine.push("GER40", b)
     r.run_cycle()
-    assert len(env.stack.submits) == 1
+    assert len(env.stack.submits) == 2  # the runner did NOT swallow the second same-market intent
     assert env.store.get_state(b[2].intent_id) == CANCELLED
+    rd = env.store.get_risk_detail(b[2].intent_id, "REJECTED")
+    assert rd["reject_code"] == "ADDON_EXPOSURE_NOT_SUPPORTED_V1" and rd["gate_reject_class"] == "TEMPORARY"
 
 
 def test_fill_states_walk(env):

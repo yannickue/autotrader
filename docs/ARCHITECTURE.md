@@ -132,3 +132,12 @@ Not in V1: dashboards, deep learning, reinforcement learning, options, or multip
 (discovery, formula, rawscan, metalabel, growth, Optuna/DEAP) is forbidden there, and no execution / risk / adapter / persistence /
 `demo.execution` module may import `alpha` (enforced by `tests/unit/alpha/test_protocol_metrics.py`). The hot path stays deterministic
 and needs no AI agent; specs are frozen (`production_spec_v1.json`, strategy hash recorded on every snapshot).
+
+## Decision 2026-09-30: no one-position rule; funnel and lifecycle (Lane I)
+The opportunity policy and the runner no longer reject because a position exists (`ONE_POSITION_PER_INSTRUMENT` removed; `position_open` is
+accepted and ignored for API compatibility). Broker netting is a broker representation only; the stack classifies same-symbol add-on /
+opposite-side as TEMPORARY limitations, which the rejection funnel counts separately with `otherwise_valid_blocked`. `PolicyConfig.min_space_r`
+defaults to `0.0` (exact simulator behaviour); candidate-carried `min_space_r` stays and is classified LEGACY_ARBITRARY; `ENTRY_OVERSHOT`
+(entry already crossed) is STRUCTURAL. Quality inputs are logged only and have no reject code. `DemoStore` gained `risk_detail`, `tca_records`
+and the non-terminal `IN_DOUBT` intent state (all backward compatible). Open: shadow mode does not run the stack risk gate, so the funnel's stack
+part is empty in shadow; add-on execution (`ADDON_SHARED_STOP_POSSIBLE_NOT_YET_IMPLEMENTED`) is the largest known trade-count limiter.

@@ -20,6 +20,12 @@ proxy, mirroring the simulator:
               (sim skips ``outside_window`` / ``gap_before_entry``)
 * flat_min    the clock exit is the spec's effective ``exit_min`` (goes to ``TradeIntent.forced_flat_utc``)
 
+No one-position rule: the policy never rejects because a position exists on the instrument. Broker
+netting (one net position per symbol) is only the broker's representation; same-symbol add-on /
+opposite-side handling belongs to the execution stack (temporary ``ADDON_*`` codes). QUALITY inputs
+(confluence, family score, quality) are logged in the snapshot and NEVER reject. Every reject code is
+classified in ``GATE_CLASSIFICATION`` (used by the rejection funnel).
+
 Not in this policy (Risk / execution lanes, they need equity and lot rules): sim ``risk_out_of_range``
 and ``size_below_min``.
 
@@ -67,16 +73,42 @@ NO_STRUCTURAL_STOP = "NO_STRUCTURAL_STOP"
 DUPLICATE_OPPORTUNITY = "DUPLICATE_OPPORTUNITY"
 MARKET_CLOSED = "MARKET_CLOSED"
 CLOCK_ANOMALY = "CLOCK_ANOMALY"
-ONE_POSITION_PER_INSTRUMENT = "ONE_POSITION_PER_INSTRUMENT"
 ACCEPTED = "ACCEPTED"
 
 # fixed emission order of reject reasons
 REASONS: tuple[str, ...] = (
     CLOCK_ANOMALY, MARKET_CLOSED, STALE_SIGNAL, DUPLICATE_OPPORTUNITY, OUTSIDE_ENTRY_WINDOW,
     NO_STRUCTURAL_STOP, SPREAD_TOO_WIDE, ENTRY_OVERSHOT, TARGET_ALREADY_CROSSED, SPACE_BELOW_MIN_R,
-    ONE_POSITION_PER_INSTRUMENT,
 )
 ALL_CODES: tuple[str, ...] = (*REASONS, ACCEPTED)
+
+
+@dataclass(frozen=True, slots=True)
+class PolicyGate:
+    code: str
+    gate_class: str  # SAFETY | STRUCTURAL | QUALITY | LEGACY_ARBITRARY | TEMPORARY
+    hard: bool
+    why: str
+
+
+_PG = PolicyGate
+GATE_CLASSIFICATION: dict[str, PolicyGate] = {
+    g.code: g
+    for g in (
+        _PG(CLOCK_ANOMALY, "SAFETY", True, "signal close off the M5 grid / in the future / bar span wrong: clock or data cannot be trusted"),
+        _PG(MARKET_CLOSED, "SAFETY", True, "no valid executable quote or weekend: nothing to execute against"),
+        _PG(STALE_SIGNAL, "SAFETY", True, "stale signal or stale quote: the opportunity is no longer executable as decided"),
+        _PG(DUPLICATE_OPPORTUNITY, "SAFETY", True, "duplicate safety: the same causal opportunity is decided exactly once"),
+        _PG(OUTSIDE_ENTRY_WINDOW, "STRUCTURAL", True, "the entry bar lies outside the frozen spec's entry window (simulator: outside_window / gap_before_entry)"),
+        _PG(NO_STRUCTURAL_STOP, "STRUCTURAL", True, "no finite structural stop on the correct side of the close (or trailing exit): a mandatory broker stop cannot be placed"),
+        _PG(SPREAD_TOO_WIDE, "SAFETY", True, "execution-cost protection: bar/quote spread above the per-market bound from the market spec"),
+        _PG(ENTRY_OVERSHOT, "STRUCTURAL", True, "entry already crossed: executable price drifted beyond entry_tolerance_atr adverse to the decision close, or the structural stop is already crossed at the fill (simulator: entry_gap)"),
+        _PG(TARGET_ALREADY_CROSSED, "STRUCTURAL", True, "the finite structural target is already crossed at the executable price (simulator: target_crossed_at_fill)"),
+        _PG(SPACE_BELOW_MIN_R, "LEGACY_ARBITRARY", True, "candidate-carried minimum reward space (simulator: space_below_min_at_fill); policy default is 0.0 so it only fires for specs carrying their own min_space_r; review before FROZEN"),
+    )
+}
+QUALITY_INPUTS: tuple[str, ...] = ("confidence", "confluence", "family_score", "quality", "independent_clusters")
+# Logged / ranked only; there is deliberately NO policy reject code for any of them.
 
 M5_SECONDS = 300
 PositionHook = Callable[[str], bool]
@@ -87,8 +119,11 @@ class PolicyConfig:
     stale_after_s: float = 120.0  # now - signal close beyond this => STALE_SIGNAL
     quote_max_age_s: float = 60.0  # quote older than this (vs now) => STALE_SIGNAL
     clock_skew_s: float = 5.0  # signal close in the future by more than this => CLOCK_ANOMALY
-    entry_tolerance_atr: float = 0.5  # adverse drift of the executable price vs decision close
-    min_space_r: float = 0.25  # required R space to a FINITE target at the fill (0 = sim default)
+    entry_tolerance_atr: float = 0.5  # adverse drift of the executable price vs decision close (STRUCTURAL ENTRY_OVERSHOT)
+    # Default 0.0 = exact simulator behaviour: only a target that is already crossed (implied R <= 0)
+    # rejects. A ``min_space_r`` carried by the candidate (frozen spec) still applies (SPACE_BELOW_MIN_R,
+    # LEGACY_ARBITRARY). Do NOT raise this default to tune opportunity counts.
+    min_space_r: float = 0.0
     risk_fraction: float = 0.01
     valid_for_s: int = M5_SECONDS  # TradeIntent expiry = signal_ts + one M5 bar
 
@@ -152,8 +187,9 @@ class StaticDemoPolicy:
         mspec: MarketSpec,
         *,
         is_duplicate: bool = False,
-        position_open: bool = False,
+        position_open: bool = False,  # API compatibility ONLY: ignored; same-symbol handling is the stack's job
     ) -> Assessment:
+        del position_open
         cfg = self.config
         now = to_utc(now)
         sig = to_utc(cand.signal_ts)
@@ -233,9 +269,6 @@ class StaticDemoPolicy:
             implied_r = float(cand.target_r)
         else:
             target_out = None
-
-        if position_open:
-            reasons.add(ONE_POSITION_PER_INSTRUMENT)
 
         ordered = tuple(r for r in REASONS if r in reasons) or (ACCEPTED,)
 

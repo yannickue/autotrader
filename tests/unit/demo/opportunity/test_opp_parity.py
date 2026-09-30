@@ -51,3 +51,14 @@ def test_batch_statistics_shape(frames, mspecs, prod):
     assert s["accepted"] <= s["opportunities"]
     assert sum(v for k, v in s["reason_histogram"].items()) >= s["opportunities"]
     assert s["opportunities_per_day"] == round(s["opportunities"] / 5, 2)
+
+
+def test_no_position_gating_in_replay_or_engine(frames, mspecs, prod):
+    for mode in ("batch", "stream"):
+        res = replay_opportunities("GER40", "2026-06-10T06:55", "2026-06-10T10:00", production=prod,
+                                   frames=frames, market_specs=mspecs, mode=mode)
+        s = res.summary()
+        assert "ONE_POSITION_PER_INSTRUMENT" not in s["reason_histogram"]
+        assert "valid_before_position_gate" not in s
+        # every non-duplicate opportunity is either accepted or has a technical reject reason
+        assert all(r.accepted or r.reasons for r in res.rows)
