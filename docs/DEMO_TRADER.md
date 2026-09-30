@@ -63,3 +63,15 @@ Fail closed on: non-demo, unknown account, stale feed, reconciliation mismatch, 
   expected-open feeds stale) halt new exposure without latching the stack, keep managing, back off, resume by themselves and exit 7 only after
   `transient_grace_s` (stale feeds: `all_stale_exit_s`). Closed markets (MarketSpec calendar) are idle, not stale.
   `--forced-flat-on-shutdown` (default off) only acts if the stack offers `flatten_all`; `StackPort` has none, so positions stay broker-protected.
+
+## Shadow dry-run pipeline (Lane S)
+- `--shadow` now drives every engine-accepted opportunity through the STACK's risk/sizing/gate pipeline (`Mt5DemoStack(dry_run=True)`,
+  `order_send` hard-guarded by `ShadowGuardClient`, `order_check` only). The runner records the intent (PLANNED) and calls `stack.submit`
+  exactly like demo-auto. `Accepted` -> `RISK_APPROVED` -> `CANCELLED{"reason":"shadow_dry_run"}` (never SENT/FILLED); `Rejected` ->
+  `RISK_REJECTED` with the same reject code, gate class and `risk_detail` persistence as demo-auto. `risk_detail` (ACCEPTED) is persisted too.
+- Funnel/heartbeat: shadow-approved intents are counted as `shadow_would_trade` (also per market and in "trades that would have existed"),
+  NEVER as `traded`; no execution/outcome rows exist for them, so reports and learning records (closed trades) exclude them. Counterfactual
+  labelling stays for engine-REJECTED opportunities only.
+- Guards: a shadow runner refuses (fail closed) a stack that is not `shadow`; any Fill/ProtectionConfirmed/PositionClosed event in shadow fails closed.
+- Limitation: the dry-run stack never holds a position, so shadow decisions are stack-independent across same-symbol repeats. `ADDON_*`
+  (add-on / opposite-side) rejects can NOT be observed in shadow; only demo-auto exercises them.

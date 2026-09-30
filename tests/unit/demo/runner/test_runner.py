@@ -87,18 +87,100 @@ def test_broker_rejection_recorded(env):
 
 
 # ------------------------------------------------------------------------------- shadow
-def test_shadow_mode_zero_submits(env):
+def test_shadow_mode_zero_real_submits_but_dry_run_pipeline(env):
     env.stack.shadow = True
     a = make_pair()
     b = make_pair(signal_ts=T0, tag="b", direction=-1)
     env.engine.push("GER40", a, b)
     r = env.build(mode="shadow")
     _cycle(r)
-    assert env.stack.submits == []
-    assert env.store.list_intents() == []
+    assert env.stack.submits == [] and env.stack.positions == {}  # never a real send / position
+    assert len(env.stack.shadow_submits) == 2 and r.shadow_submit_count == 2
     assert len(env.store.list_decisions()) == 2
-    assert env.store.get_decision(a[0].opportunity_id).accepted  # recorded, never submitted
-    assert r.submit_count == 0
+    assert env.store.get_decision(a[0].opportunity_id).accepted
+    assert r.submit_count == 0  # not a trade
+    for _s, _d, intent in (a, b):
+        assert _events(env.store, intent.intent_id) == ["PLANNED", "RISK_APPROVED", "CANCELLED"]
+        assert env.store.get_state(intent.intent_id) == CANCELLED
+        ev = env.store.intent_events(intent.intent_id)[-1]
+        assert ev["detail"] == {"reason": "shadow_dry_run"}
+        assert env.store.get_risk(intent.intent_id).approved
+        assert env.store.get_risk_detail(intent.intent_id, "ACCEPTED")["decision"] == "TRADE"
+        assert env.store.get_outcome(intent.intent_id) is None
+    assert r.fail_reason is None
+
+
+def test_shadow_reject_recorded_like_demo_auto_and_counterfactual_untouched(env):
+    env.stack.shadow = True
+    env.stack.mode = "reject"
+    snap, dec, intent = make_pair()
+    env.engine.push("GER40", (snap, dec, intent))
+    r = env.build(mode="shadow")
+    _cycle(r)
+    assert env.store.get_state(intent.intent_id) == "RISK_REJECTED"
+    assert env.store.get_risk(intent.intent_id).approved is False
+    assert env.stack.submits == []
+
+
+def test_shadow_refuses_real_send_and_non_dry_run_stack(env):
+    snap, dec, intent = make_pair()
+    # FakeStack in shadow refuses a scripted real fill
+    env.stack.shadow = True
+    from decimal import Decimal
+
+    from demo.execution.events import Fill
+    env.stack.script[intent.intent_id] = [Fill(intent.intent_id, Decimal("1"), Decimal("1"), Decimal("0"), Decimal("0"), Decimal("0"), Decimal("0"), "o", "p")]
+    with pytest.raises(AssertionError):
+        env.stack.submit(intent)
+    # a stack that is NOT dry-run must never be driven by a shadow runner
+    env.stack.shadow = False
+    env.stack.script.clear()
+    env.stack.shadow_submits.clear()
+    env.stack.known.clear()
+    env.engine.push("GER40", (snap, dec, intent))
+    r = env.build(mode="shadow")
+    _cycle(r)
+    assert env.stack.submits == [] and env.stack.shadow_submits == []
+    assert r.fail_reason and "shadow_stack_not_dry_run" in r.fail_reason
+    assert env.store.get_state(intent.intent_id) == CANCELLED
+
+
+def test_shadow_execution_event_from_stack_fails_closed(env):
+    from decimal import Decimal
+
+    from demo.execution.events import Accepted, Fill
+    env.stack.shadow = True
+    snap, dec, intent = make_pair()
+    iid = intent.intent_id
+    # bypass FakeStack's own guard to prove the runner defends itself
+    env.stack.submit = lambda i, context=None: [
+        Accepted(iid, Decimal("1"), Decimal("1"), Decimal("0.01"), Decimal("1"), Decimal("1")),
+        Fill(iid, Decimal("1"), Decimal("1"), Decimal("0"), Decimal("0"), Decimal("0"), Decimal("0"), "o", "p")]
+    env.engine.push("GER40", (snap, dec, intent))
+    r = env.build(mode="shadow")
+    _cycle(r)
+    assert r.fail_reason and r.fail_reason.startswith("event_error") is False and "shadow_execution_event" in r.fail_reason
+    assert env.store.get_state(iid) == CANCELLED
+
+
+def test_shadow_funnel_counts_would_trade_separately_from_trades(env):
+    from demo.funnel import funnel
+    env.stack.shadow = True
+    a = make_pair()
+    b = make_pair(signal_ts=T0, tag="b", direction=-1)
+    from demo.execution.events import Rejected
+    env.stack.script[b[2].intent_id] = [Rejected(b[2].intent_id, "risk: scripted rejection")]
+    env.engine.push("GER40", a, b)
+    r = env.build(mode="shadow")
+    _cycle(r)
+    f = funnel(env.store, env.stack, "DISCOVERY")
+    s = f["summary"]
+    assert s["traded"] == 0 and s["shadow_would_trade"] + s["stack_rejected"] == s["engine_accepted"]
+    assert s["shadow_would_trade"] == 1 and s["stack_rejected"] == 1
+    assert f["stack"]["intent_states"].get("CANCELLED", 0) == s["shadow_would_trade"]
+    assert f["trades_that_would_have_existed"]["actual"] == 0
+    assert f["trades_that_would_have_existed"]["without_temporary_limitations"] >= s["shadow_would_trade"]
+    assert "shadow would-trade" in __import__("demo.funnel", fromlist=["render"]).render(f)
 
 
 # ----------------------------------------------------------------------- counterfactuals

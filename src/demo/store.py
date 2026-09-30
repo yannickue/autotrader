@@ -931,6 +931,8 @@ class DemoStore:
             "json_extract(rd.json,'$.otherwise_valid') AS otherwise_valid, "
             "json_extract(rk.json,'$.reject_reason') AS rk_reason, "
             "json_extract(rk.json,'$.approved') AS approved, "
+            "EXISTS(SELECT 1 FROM intent_events e WHERE e.intent_id=i.intent_id AND e.to_state='CANCELLED' "
+            "AND json_extract(e.detail,'$.reason')='shadow_dry_run') AS shadow_dry_run, "
             "(SELECT COUNT(*) FROM outcomes o WHERE o.intent_id=i.intent_id) AS has_outcome "
             "FROM snapshots s "
             "LEFT JOIN decisions d ON d.opportunity_id=s.opportunity_id "
@@ -953,6 +955,7 @@ class DemoStore:
                 "stack_gate_class": r["rd_class"],
                 "otherwise_valid": None if r["otherwise_valid"] is None else bool(r["otherwise_valid"]),
                 "approved": None if r["approved"] is None else bool(r["approved"]),
+                "shadow_dry_run": bool(r["shadow_dry_run"]),
                 "has_outcome": bool(r["has_outcome"]),
             })
         return out

@@ -8,7 +8,10 @@
 Hard rules implemented here (no LLM / Optuna / DEAP anywhere in this module):
   * Persist BEFORE acting.  The PLANNED intent is durable before ``stack.submit``; a persistence
     failure halts new exposure and the runner exits 7 (fail closed).
-  * Shadow mode never submits: no intent is even created and the stack is told to be in shadow mode.
+  * Shadow mode never sends an order: accepted opportunities are recorded as PLANNED intents and run
+    through the DRY-RUN stack (``stack.submit`` -> risk/sizing/gates only; ``order_send`` is hard-guarded).
+    Accepted -> RISK_APPROVED -> CANCELLED{reason: shadow_dry_run} (never SENT/FILLED); Rejected ->
+    RISK_REJECTED exactly as in demo-auto. Any Fill/Protection event in shadow fails closed.
   * No one-position rule here: every accepted opportunity is submitted. Same-symbol add-on / opposite-side
     handling (broker netting = one net position per symbol) is the STACK's job and shows up as a classified
     reject (temporary ``ADDON_*`` codes) in the rejection funnel.
@@ -106,6 +109,7 @@ EXIT_UNAVAILABLE = 8
 
 CHAMPION = "static-demo-policy-v1"
 MODES = ("shadow", "demo-auto")
+SHADOW_DRY_RUN = "shadow_dry_run"  # CANCELLED detail reason of a shadow-approved (would-have-traded) intent
 EXPECTED_DEMO_SERVER = "ActivTradesEU-Server"
 _ORDER = (PLANNED, RISK_APPROVED, SENT, FILLED, PROTECTED, CLOSED)
 _M5 = timedelta(minutes=5)
@@ -379,6 +383,7 @@ class DemoRunner:
         self._funnel_at: datetime | None = None
         self._funnel_dirty = True
         self.submit_count = 0
+        self.shadow_submit_count = 0  # dry-run submits (shadow mode); never counted as trades
         self.milestones: list[int] = []
         self.exit_code: int | None = None
 
@@ -782,8 +787,8 @@ class DemoRunner:
                 "ts": _iso(now), "market": snap.market, "direction": snap.direction,
                 "accepted": dec.accepted, "reasons": list(dec.reasons), "opportunity_id": snap.opportunity_id,
             }
-        if not dec.accepted or self.cfg.mode != "demo-auto":
-            return  # rejected -> counterfactual later; shadow -> recorded, never submitted
+        if not dec.accepted or self.cfg.mode not in ("demo-auto", "shadow"):
+            return  # rejected -> counterfactual later (shadow-approved ones go through the DRY-RUN stack)
         if intent is None:
             self._note_error(now, f"accepted_without_intent: {snap.opportunity_id}")
             return
@@ -840,8 +845,14 @@ class DemoRunner:
         if self.store.get_state(intent.intent_id) != PLANNED:
             return  # already handled (restart / duplicate)
         iid, ts = intent.intent_id, _iso(now)
-        if self.cfg.mode != "demo-auto":  # defence in depth
-            self.store.transition(iid, CANCELLED, detail={"reason": "shadow_mode"}, ts=ts)
+        shadow = self.cfg.mode == "shadow"
+        if self.cfg.mode not in ("demo-auto", "shadow"):  # defence in depth
+            self.store.transition(iid, CANCELLED, detail={"reason": "unknown_mode"}, ts=ts)
+            return
+        if shadow and getattr(self.stack, "shadow", None) is not True:
+            # shadow may only exercise a stack that is hard-guarded against order_send (dry_run)
+            self.store.transition(iid, CANCELLED, detail={"reason": "shadow_stack_not_dry_run"}, ts=ts)
+            self._fail_closed("shadow_stack_not_dry_run", now)
             return
         cancel: str | None = None
         if not self.can_trade():
@@ -851,8 +862,11 @@ class DemoRunner:
         if cancel:
             self.store.transition(iid, CANCELLED, detail={"reason": cancel}, ts=ts)
             return
-        self._day_counts["trades"] += 1
-        self.submit_count += 1
+        if shadow:
+            self.shadow_submit_count += 1  # dry-run risk/sizing/gate pipeline only; never a trade
+        else:
+            self._day_counts["trades"] += 1
+            self.submit_count += 1
         try:
             events = self.stack.submit(intent, context=context)
         except StackFailClosed as exc:
@@ -892,9 +906,22 @@ class DemoRunner:
         ts = _iso(now)
         state = row["state"]
         iid = ev.intent_id
+        if self.cfg.mode == "shadow" and isinstance(ev, (Fill, ProtectionConfirmed, PositionClosed)):
+            # a dry-run stack can never fill: an execution event in shadow is an invariant breach
+            self._fail_closed(f"shadow_execution_event:{type(ev).__name__}:{iid}", now)
+            return
         if isinstance(ev, Accepted):
             self._persist_risk_detail(iid, "ACCEPTED", ev.risk_detail, now)
-            if state == PLANNED:
+            if state == PLANNED and self.cfg.mode == "shadow":
+                self.store.record_risk(iid, RiskRecord(
+                    equity=_f(ev.equity), risk_fraction=_f(ev.risk_fraction, intent.risk_fraction),
+                    risk_budget=_f(ev.risk_budget), quantity=float(ev.quantity),
+                    leverage=_f(ev.leverage), approved=True,
+                ))
+                self.store.transition(iid, RISK_APPROVED, ts=ts)
+                # would-have-traded marker: NEVER SENT/FILLED; excluded from trade metrics by the funnel
+                self.store.transition(iid, CANCELLED, detail={"reason": SHADOW_DRY_RUN}, ts=ts)
+            elif state == PLANNED:
                 risk = RiskRecord(
                     equity=_f(ev.equity), risk_fraction=_f(ev.risk_fraction, intent.risk_fraction),
                     risk_budget=_f(ev.risk_budget), quantity=float(ev.quantity),
@@ -1214,7 +1241,7 @@ class DemoRunner:
             from demo.funnel import funnel
 
             full = funnel(self.store, self.stack, self.cfg.phase)
-            self._funnel = {**full["summary"], "by_market": {m: {k: b[k] for k in ("opportunities", "engine_accepted", "stack_rejected", "traded", "temporary_otherwise_valid_blocked")} for m, b in full["by_market"].items()},
+            self._funnel = {**full["summary"], "by_market": {m: {k: b[k] for k in ("opportunities", "engine_accepted", "stack_rejected", "traded", "shadow_would_trade", "temporary_otherwise_valid_blocked")} for m, b in full["by_market"].items()},
                             "stack_by_class": full["stack"]["by_class"], "engine_by_class": full["engine"]["by_class"]}
             self._funnel_at = now
         except Exception as exc:  # a diagnostics read never stops trading

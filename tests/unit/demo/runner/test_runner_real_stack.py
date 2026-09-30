@@ -150,8 +150,16 @@ def test_build_live_runner_shadow_mode_real_stack_never_sends(factory_env):
     eng.push("GER40", a)
     real_engine, r.engine = r.engine, eng
     r.run_cycle()
-    assert r.fail_reason is None and r.store.list_intents() == []  # shadow: no intent, no order
-    assert broker.order_send_calls == 0
+    assert r.fail_reason is None, (r.fail_reason, r._last_error)
+    assert broker.order_send_calls == 0  # HARD: the real stack ran risk/sizing but never sent
+    iid = a[2].intent_id
+    assert [e["to_state"] for e in r.store.intent_events(iid)] == ["PLANNED", "RISK_APPROVED", "CANCELLED"]
+    assert r.store.intent_events(iid)[-1]["detail"] == {"reason": "shadow_dry_run"}
+    acc = r.store.get_risk_detail(iid, "ACCEPTED")
+    assert acc["decision"] == "TRADE" and r.store.get_risk(iid).quantity > 0
+    assert r.store.get_execution(iid) is None and r.store.get_outcome(iid) is None
+    fun = funnel(r.store, r.stack, "DISCOVERY")
+    assert fun["summary"]["shadow_would_trade"] == 1 and fun["summary"]["traded"] == 0
     assert r.store.get_decision(a[0].opportunity_id).accepted
     # the REAL engine also ran on the REAL LiveBarSource (700 synthetic bars) without contract errors
     r.engine = real_engine
