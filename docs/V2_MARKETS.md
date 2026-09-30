@@ -162,3 +162,40 @@ rate), slippage measured from fills (calibrated fraction of spread), margin/stop
 - Provisional calendars/spread caps for the four new markets, and per-market commission/swap assumptions (swap
   long/short observed in the snapshot but not modelled; overnight holding is disallowed by the forced-flat rule).
 - Free disk on C: was about 5-7 GB during this work (other processes also write there); output stayed at 19 MB.
+
+## Phase 2 (Lane M): BRENT (ENERGY) and BTCUSD (CRYPTO), ActivTrades DEMO
+
+Status: integrated and tested, **disabled**. Live probe BLOCKED (the running DEMO runner permanently holds the global MT5 lock,
+`MT5_CONNECTION_BUSY`, 4 bounded attempts x 2 runs, nothing forced); preflight is **RED (UNVERIFIED)** for both markets.
+
+Observed symbols (symbols_get, 523 symbols, snapshot 2026-09-30; `docs/evidence/phase2_symbol_probe.json`): `Brent`
+("BRENT CRUDE OIL SPOT", `Spot Energy\Brent`; NOT `BrentDec26/BrentNov26` dated futures CFDs, NOT `LCrude` = WTI) and `BTCUSD`
+("Bitcoin vs US Dollar", `Cryptocurrency\BTCUSD`; `BCHUSD` = Bitcoin Cash). Neither was in Market Watch (`visible=false`): no quote,
+margin, rates or session data exist yet. Observed static facts: Brent point/tick 0.01, contract 1000 bbl, tick value 10 USD/lot,
+lots 0.01/0.01/10, stops_level 5 pts, freeze 0, calc mode 4 (CFD leverage), swap mode 1 (points) long +9.536 / short -15.252;
+BTCUSD point/tick 0.01, contract 1 BTC, lots 0.01/0.01/3, stops/freeze 0, calc mode 2 (CFD), swap mode 5 long -21 / short +3;
+both USD profit/margin, trade_mode 4 (full).
+
+Design
+- `configs/markets_phase2/{BRENT,BTCUSD}.toml` (`MarketSpec` + `[cost]` + `[preflight]`), loaded by `markets.phase2`. They are NOT in
+  `markets.spec.CANONICALS` (all research/opportunity code iterates it and needs history + strategy lists); the five existing
+  markets and `configs/markets/` are untouched (bit-identical, golden-hash test).
+- Clusters: `demo.execution.risk_policy.PHASE2_CLUSTERS` (BRENT->ENERGY, BTCUSD->CRYPTO); `cluster_of` resolves via `ALL_CLUSTERS`.
+  `CLUSTERS` is unchanged on purpose: `Mt5DemoStack` start-up iterates it and fails closed for unregistered markets. ENERGY/CRYPTO use the
+  same `RiskCaps.max_cluster_stop_risk_fraction` / aggregate / leverage (<=30x) caps as every other cluster; no one-position rule.
+- Registry: `nautilus_mt5.symbols.BRENT/BTCUSD`, `phase2_registry()`, `demo_registry(extra_markets=())` (default = the five markets).
+  DEMO facts: `markets.phase2.demo_market_specs(names)`.
+- Calendars are PROVISIONAL. BTCUSD has no 24/7 assumption (provisional liquid-hours entry window; weekend UNVERIFIED until observed).
+  Spread caps, reference median spreads and `max_leverage` (Brent 10x, BTC 2x: conservative assumptions, not observed) are placeholders
+  the probe must replace; preflight fails if `max_leverage` exceeds the broker-implied leverage.
+- Enablement: `configs/markets_phase2/enablement.toml` (`enabled=false`); `phase2.enabled_market_names(verdicts)` requires flag AND GREEN.
+
+Preflight (`markets.preflight.run_preflight`, pure): account DEMO, exact symbol mapped, tradable, fresh quote, contract/tick/volume facts,
+margin calc (implied leverage vs spec and the 30x cap), structural SL vs stops_level (no stop is tightened), protection path (SL order mode,
+filling modes), persistence/registry/cluster wiring, observed session coverage, cost model from the observed spread (+ min-lot feasibility),
+no market-name literals in generic code. GREEN only if all PASS; UNVERIFIED counts as RED.
+
+Run (when the MT5 lock is free; attach-only, read-only, calc-only margin/profit):
+1. `uv run python scripts/phase2_symbol_probe.py probe Brent,BTCUSD` (writes `docs/evidence/phase2_symbol_probe.json`; needs the symbols in
+   Market Watch: the stack's `symbol_select` does this, the probe never calls it)
+2. `uv run python scripts/phase2_symbol_probe.py verdict` (writes `docs/evidence/phase2_preflight_verdict.json`).

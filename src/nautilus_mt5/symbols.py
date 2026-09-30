@@ -83,6 +83,25 @@ EURUSD = SymbolMapping(
 RESEARCH_ONLY_MAPPINGS = (NAS100, SPX500, XAUUSD, EURUSD)
 
 
+# Phase-2 markets (Lane M): names OBSERVED via symbols_get on the ActivTrades DEMO terminal
+# (research/reports/v2_markets/symbol_snapshot.json, 2026-09-30;
+# docs/evidence/phase2_symbol_probe.json). "Brent" = "BRENT CRUDE OIL SPOT" (Spot Energy);
+# dated ICE futures CFDs (BrentDec26, ...) are never used.
+BRENT = SymbolMapping(
+    canonical="BRENT",
+    broker_symbol="Brent",
+    expected_path_prefix="Spot Energy",
+    research_only=True,
+)
+BTCUSD = SymbolMapping(
+    canonical="BTCUSD",
+    broker_symbol="BTCUSD",  # "Bitcoin vs US Dollar" (BCHUSD is Bitcoin Cash and is NOT this)
+    expected_path_prefix="Cryptocurrency",
+    research_only=True,
+)
+PHASE2_MAPPINGS = (BRENT, BTCUSD)
+
+
 def default_registry() -> SymbolRegistry:
     return SymbolRegistry([GER40])
 
@@ -92,13 +111,26 @@ def research_registry() -> SymbolRegistry:
     return SymbolRegistry([GER40, *RESEARCH_ONLY_MAPPINGS])
 
 
-def demo_registry() -> SymbolRegistry:
+def phase2_registry() -> SymbolRegistry:
+    """The Phase-2 research-only mappings (never handed to execution/data clients)."""
+    return SymbolRegistry(list(PHASE2_MAPPINGS))
+
+
+def demo_registry(extra_markets: tuple[str, ...] = ()) -> SymbolRegistry:
     """Explicit DEMO-only executable universe.
 
     This does not alter ``default_registry``: the existing live/paper path
     remains GER40-only and inert.  The copied mappings deliberately clear the
     research-only bit only in this explicitly selected DEMO registry.
+
+    ``extra_markets`` (default empty = the five live markets, unchanged) opts named Phase-2
+    markets in; callers must pass only markets whose preflight is GREEN and whose enablement
+    switch is on (``markets.phase2.enabled_market_names``). Unknown names raise.
     """
+    by_name = {m.canonical: m for m in PHASE2_MAPPINGS}
+    unknown = [n for n in extra_markets if n not in by_name]
+    if unknown:
+        raise KeyError(f"unknown Phase-2 market(s): {unknown}")
     return SymbolRegistry(
         [
             SymbolMapping(
@@ -107,6 +139,6 @@ def demo_registry() -> SymbolRegistry:
                 expected_path_prefix=m.expected_path_prefix,
                 research_only=False,
             )
-            for m in (GER40, *RESEARCH_ONLY_MAPPINGS)
+            for m in (GER40, *RESEARCH_ONLY_MAPPINGS, *(by_name[n] for n in extra_markets))
         ]
     )

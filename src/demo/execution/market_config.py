@@ -28,10 +28,14 @@ class DemoMarketSpec:
     max_leverage: Decimal
 
 
-def load_demo_market_specs(config_root: Path | None = None) -> dict[str, DemoMarketSpec]:
+def load_demo_market_specs(
+    config_root: Path | None = None, markets: tuple[str, ...] = MARKETS
+) -> dict[str, DemoMarketSpec]:
+    """``markets`` defaults to the five live DEMO markets; the Phase-2 loader passes its own
+    config root + market names (see ``markets.phase2``) so the default behaviour never changes."""
     root = config_root or _CONFIG_ROOT
     result: dict[str, DemoMarketSpec] = {}
-    for expected in MARKETS:
+    for expected in markets:
         path = root / f"{expected}.toml"
         with path.open("rb") as stream:
             raw = tomllib.load(stream)

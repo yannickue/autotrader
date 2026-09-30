@@ -1,0 +1,91 @@
+{
+ "retrieved_at": "2026-09-30T01:34:43.753136+00:00",
+ "mode": "static_snapshot",
+ "source": "research/reports/v2_markets/symbol_snapshot.json (read-only attach, symbols_get/symbol_info)",
+ "account": {
+  "is_demo": true,
+  "currency": "EUR",
+  "currency_source": "docs/V2_MARKETS.md"
+ },
+ "n_symbols_total": 523,
+ "symbols": {
+  "BTCUSD": {
+   "symbol": "BTCUSD",
+   "symbol_info": {
+    "name": "BTCUSD",
+    "description": "Bitcoin vs US Dollar",
+    "path": "Cryptocurrency\\BTCUSD",
+    "digits": 2,
+    "point": 0.01,
+    "trade_tick_size": 0.01,
+    "trade_tick_value": 0.01,
+    "trade_tick_value_profit": 0.01,
+    "trade_tick_value_loss": 0.01,
+    "trade_contract_size": 1.0,
+    "volume_min": 0.01,
+    "volume_step": 0.01,
+    "volume_max": 3.0,
+    "currency_base": "USD",
+    "currency_profit": "USD",
+    "currency_margin": "USD",
+    "trade_mode": 4,
+    "trade_calc_mode": 2,
+    "trade_stops_level": 0,
+    "trade_freeze_level": 0,
+    "swap_mode": 5,
+    "swap_long": -21.0,
+    "swap_short": 3.0,
+    "margin_initial": 0.0,
+    "margin_maintenance": 0.0,
+    "spread": 0,
+    "spread_float": true,
+    "session_deals": 0,
+    "visible": false,
+    "select": false
+   },
+   "tick_now": null,
+   "note": "static snapshot: symbol was not in Market Watch (visible=false), so no quote, margin, rates or session data"
+  },
+  "Brent": {
+   "symbol": "Brent",
+   "symbol_info": {
+    "name": "Brent",
+    "description": "BRENT CRUDE OIL SPOT",
+    "path": "Spot Energy\\Brent",
+    "digits": 2,
+    "point": 0.01,
+    "trade_tick_size": 0.01,
+    "trade_tick_value": 10.0,
+    "trade_tick_value_profit": 10.0,
+    "trade_tick_value_loss": 10.0,
+    "trade_contract_size": 1000.0,
+    "volume_min": 0.01,
+    "volume_step": 0.01,
+    "volume_max": 10.0,
+    "currency_base": "USD",
+    "currency_profit": "USD",
+    "currency_margin": "USD",
+    "trade_mode": 4,
+    "trade_calc_mode": 4,
+    "trade_stops_level": 5,
+    "trade_freeze_level": 0,
+    "swap_mode": 1,
+    "swap_long": 9.536,
+    "swap_short": -15.252,
+    "margin_initial": 0.0,
+    "margin_maintenance": 0.0,
+    "spread": 0,
+    "spread_float": true,
+    "session_deals": 0,
+    "visible": false,
+    "select": false
+   },
+   "tick_now": null,
+   "note": "static snapshot: symbol was not in Market Watch (visible=false), so no quote, margin, rates or session data"
+  }
+ },
+ "live_probe": {
+  "status": "BLOCKED",
+  "reason": "MT5_CONNECTION_BUSY: the live DEMO runner (pid in autotrader_mt5_connection.lock, heartbeat-refreshed) permanently holds the global MT5 lock; 4 bounded attempts with 10/20/30 s backoff all refused. Nothing was forced. Re-run `probe Brent,BTCUSD` when the lock is free."
+ }
+}

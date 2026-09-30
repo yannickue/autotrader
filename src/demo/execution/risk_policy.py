@@ -72,6 +72,15 @@ CLUSTERS: Mapping[str, str] = {
     "XAUUSD": "METAL",
     "EURUSD": "FX",
 }
+# Phase-2 markets (Lane M). Kept OUT of ``CLUSTERS`` on purpose: the live stack start-up iterates
+# ``CLUSTERS`` and fails closed for a market it has not registered. ``cluster_of`` (the sizer / gate) knows
+# both, so an enabled Phase-2 market is cluster-limited (ENERGY / CRYPTO use the same
+# ``max_cluster_stop_risk_fraction`` hard cap as every other cluster) without changing the five-market path.
+PHASE2_CLUSTERS: Mapping[str, str] = {
+    "BRENT": "ENERGY",
+    "BTCUSD": "CRYPTO",
+}
+ALL_CLUSTERS: Mapping[str, str] = {**CLUSTERS, **PHASE2_CLUSTERS}
 MAX_QUOTE_AGE = timedelta(seconds=30)
 
 REASON_SIZE_BELOW_MIN = G.R_SIZE_BELOW_MIN
@@ -83,7 +92,7 @@ _EVALUATOR_MARGIN_REASONS = frozenset({G.R_MARGIN_LIQUIDATION, G.R_MARGIN_BEYOND
 
 
 def cluster_of(market: str) -> str | None:
-    return CLUSTERS.get(market)
+    return ALL_CLUSTERS.get(market)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
