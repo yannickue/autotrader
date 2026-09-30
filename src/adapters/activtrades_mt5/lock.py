@@ -42,6 +42,24 @@ class MT5Lock:
         self._path = path
         self._fd: int | None = fd
 
+    @property
+    def path(self) -> Path:
+        return self._path
+
+    def touch(self) -> bool:
+        """Heartbeat for a LONG-RUNNING owner: refresh the lock mtime so it never looks stale
+        (`_STALE_AFTER_SECONDS`). Returns False if the lock file is gone or now belongs to another
+        process (ownership lost -> the caller must fail closed)."""
+        if self._fd is None:
+            return False
+        try:
+            if self._path.read_text(encoding="ascii").strip() != str(os.getpid()):
+                return False
+            os.utime(self._path)
+        except (OSError, ValueError):
+            return False
+        return True
+
     def release(self) -> None:
         if self._fd is not None:
             with contextlib.suppress(OSError):

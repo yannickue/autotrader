@@ -238,6 +238,10 @@ class MT5Connection:
         with contextlib.suppress(Exception):
             self._client.shutdown()
 
+    def refresh_lock(self) -> bool:
+        """Heartbeat the single-owner lock (long-running owners). False = lock lost/not held."""
+        return self._lock is not None and self._lock.touch()
+
     def _release_lock(self) -> None:
         if self._lock is not None:
             self._lock.release()

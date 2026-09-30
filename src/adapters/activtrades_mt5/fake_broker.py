@@ -53,6 +53,8 @@ class FakeBrokerConfig:
     commission_per_lot: float = 0.0
     symbol: str = "Ger40"
     magic_filter: int | None = None
+    trade_mode: int = 0  # ACCOUNT_TRADE_MODE_DEMO; tests may inject REAL/CONTEST
+    server: str = "FakeBroker-Demo"
 
 
 class FakeMT5Broker:
@@ -87,6 +89,12 @@ class FakeMT5Broker:
         self.initialize_calls: list[dict[str, Any]] = []
         self.order_send_calls = 0
         self.rates: dict[int, Any] = {}  # mt5 timeframe -> structured numpy array
+        # -- additional symbols (multi-market DEMO tests); the primary symbol keeps bid/ask/rates
+        self.extra_info: dict[str, Any] = {}
+        self.extra_quotes: dict[str, list[float]] = {}  # name -> [bid, ask]
+        self.extra_rates: dict[str, dict[int, Any]] = {}
+        self.profit_fx: dict[str, float] = {}  # symbol -> account ccy per profit-ccy unit
+        self.strip_stops_on_entry = False  # broker "forgets" the attached SL/TP (protection tests)
         # -- concurrency instrumentation (the real MT5 API must never see overlapping calls)
         self.call_latency_s = 0.0  # widen race windows in concurrency tests
         self.send_delay_s = 0.0  # order_send blocks this long BEFORE executing
@@ -165,6 +173,36 @@ class FakeMT5Broker:
     def point(self) -> float:
         return float(self.symbol_info_obj.point)
 
+    # -- multi-symbol helpers (the primary symbol behaves exactly as before) ---------------
+
+    def add_symbol(self, info: Any, bid: float, ask: float, *, profit_fx: float = 1.0) -> None:
+        self.extra_info[info.name] = info
+        self.extra_quotes[info.name] = [bid, ask]
+        self.profit_fx[info.name] = profit_fx
+
+    def set_symbol_quote(self, symbol: str, bid: float, ask: float) -> None:
+        if symbol == self.symbol_info_obj.name:
+            return self.set_quote(bid, ask)
+        self.extra_quotes[symbol] = [bid, ask]
+        self._evaluate_stops()
+
+    def _info(self, symbol: str) -> Any:
+        if symbol == self.symbol_info_obj.name:
+            return self.symbol_info_obj
+        return self.extra_info.get(symbol)
+
+    def _bidask(self, symbol: str) -> tuple[float, float]:
+        if symbol == self.symbol_info_obj.name:
+            return self.bid, self.ask
+        bid, ask = self.extra_quotes[symbol]
+        return bid, ask
+
+    def _mult(self, symbol: str) -> float:
+        """contract size x profit->account FX (1.0 for the single-symbol legacy setup)."""
+        info = self._info(symbol)
+        size = float(getattr(info, "trade_contract_size", 1.0)) if info is not None else 1.0
+        return size * self.profit_fx.get(symbol, 1.0)
+
     def _guard(self, name: str) -> bool:
         self.calls.append(name)
         if not self.connected and self.fail_calls_when_disconnected:
@@ -215,7 +253,8 @@ class FakeMT5Broker:
             return None
         profit = self._floating_profit()
         margin = sum(
-            p.volume * p.price_current * self.cfg.margin_rate for p in self.positions.values()
+            p.volume * p.price_current * self.cfg.margin_rate * self._mult(p.symbol)
+            for p in self.positions.values()
         )
         equity = self.balance + profit
         return SimpleNamespace(
@@ -229,30 +268,34 @@ class FakeMT5Broker:
             leverage=self.cfg.leverage,
             currency=self.cfg.currency,
             margin_mode=int(self.cfg.margin_mode),
-            trade_mode=0,
+            trade_mode=self.cfg.trade_mode,
             trade_allowed=True,
+            server=self.cfg.server,
         )
 
     # -- protocol: symbols / quotes ---------------------------------------------
 
     def symbols_get(self, group=None):
-        return (self.symbol_info_obj,) if self._guard("symbols_get") else None
+        if not self._guard("symbols_get"):
+            return None
+        return (self.symbol_info_obj, *self.extra_info.values())
 
     def symbol_select(self, symbol: str, enable: bool = True) -> bool:
-        return self._guard("symbol_select") and symbol == self.symbol_info_obj.name
+        return self._guard("symbol_select") and self._info(symbol) is not None
 
     def symbol_info(self, symbol: str) -> Any:
         if not self._guard("symbol_info"):
             return None
-        return self.symbol_info_obj if symbol == self.symbol_info_obj.name else None
+        return self._info(symbol)
 
     def symbol_info_tick(self, symbol: str) -> Any:
-        if not self._guard("symbol_info_tick") or symbol != self.symbol_info_obj.name:
+        if not self._guard("symbol_info_tick") or self._info(symbol) is None:
             return None
+        bid, ask = self._bidask(symbol)
         return SimpleNamespace(
             time=self.server_time,
-            bid=self.bid,
-            ask=self.ask,
+            bid=bid,
+            ask=ask,
             last=0.0,
             volume=0,
             time_msc=self.server_time * 1000,
@@ -265,9 +308,12 @@ class FakeMT5Broker:
 
     def copy_rates_from_pos(self, symbol, timeframe, start_pos, count):
         """Newest `count` rows ending `start_pos` bars back (last row = forming bar)."""
-        if not self._guard("copy_rates_from_pos") or symbol != self.symbol_info_obj.name:
+        if not self._guard("copy_rates_from_pos") or self._info(symbol) is None:
             return None
-        rows = self.rates.get(int(timeframe))
+        if symbol == self.symbol_info_obj.name:
+            rows = self.rates.get(int(timeframe))
+        else:
+            rows = self.extra_rates.get(symbol, {}).get(int(timeframe))
         if rows is None:
             return None
         end = len(rows) - int(start_pos)
@@ -283,7 +329,7 @@ class FakeMT5Broker:
         return self._guard("copy_ticks_range") and None
 
     def order_calc_margin(self, action, symbol, volume, price):
-        return volume * price * self.cfg.margin_rate
+        return volume * price * self.cfg.margin_rate * self._mult(symbol)
 
     def order_calc_profit(self, action, symbol, volume, price_open, price_close):
         sign = 1 if action == 0 else -1
@@ -408,16 +454,17 @@ class FakeMT5Broker:
     # -- order_check / order_send ------------------------------------------------------------
 
     def _validate(self, request: dict[str, Any]) -> tuple[int, str]:
-        info = self.symbol_info_obj
+        info = self._info(request.get("symbol"))
         action = request.get("action")
-        if request.get("symbol") != info.name:
+        if info is None:
             return Retcode.INVALID, "Invalid symbol"
+        symbol = info.name
         if action == TradeAction.SLTP:
             position = self.positions.get(int(request.get("position", 0)))
             if position is None:
                 return Retcode.POSITION_CLOSED, "Position not found"
             return self._validate_stops(
-                position.type, request.get("sl", 0.0), request.get("tp", 0.0)
+                position.type, request.get("sl", 0.0), request.get("tp", 0.0), symbol=symbol
             )
         if action == TradeAction.DEAL:
             volume = float(request.get("volume", 0))
@@ -440,20 +487,37 @@ class FakeMT5Broker:
                 return Retcode.INVALID, "Invalid order type"
             if not position_ticket:
                 bad = self._validate_stops(
-                    request["type"], request.get("sl", 0.0), request.get("tp", 0.0), entry=True
+                    request["type"],
+                    request.get("sl", 0.0),
+                    request.get("tp", 0.0),
+                    entry=True,
+                    symbol=symbol,
                 )
                 if bad[0] != ORDER_CHECK_OK:
                     return bad
-                margin_needed = volume * self.ask * self.cfg.margin_rate
+                margin_needed = (
+                    volume * self._bidask(symbol)[1] * self.cfg.margin_rate * self._mult(symbol)
+                )
                 if margin_needed > (self.balance + self._floating_profit()):
                     return Retcode.NO_MONEY, "No money"
             return ORDER_CHECK_OK, "Done"
         return Retcode.INVALID, "Unsupported action in fake broker"
 
-    def _validate_stops(self, order_type: int, sl: float, tp: float, *, entry: bool = False):
+    def _validate_stops(
+        self,
+        order_type: int,
+        sl: float,
+        tp: float,
+        *,
+        entry: bool = False,
+        symbol: str | None = None,
+    ):
         is_buy = order_type == 0
-        ref = self.bid if is_buy else self.ask  # stops measured from the CLOSE price
-        min_dist = float(self.symbol_info_obj.trade_stops_level) * self.point
+        symbol = symbol or self.symbol_info_obj.name
+        info = self._info(symbol)
+        bid, ask = self._bidask(symbol)
+        ref = bid if is_buy else ask  # stops measured from the CLOSE price
+        min_dist = float(info.trade_stops_level) * float(info.point)
         sl_bad = sl and (
             (is_buy and sl >= ref - min_dist + 1e-9) or (not is_buy and sl <= ref + min_dist - 1e-9)
         )
@@ -549,11 +613,8 @@ class FakeMT5Broker:
     def _execute_deal(self, request: dict[str, Any]) -> Any:
         is_buy = request["type"] == 0
         volume = float(request["volume"])
-        plan = (
-            self.fill_plan.pop(0)
-            if self.fill_plan
-            else [(volume, self.ask if is_buy else self.bid)]
-        )
+        bid, ask = self._bidask(request["symbol"])
+        plan = self.fill_plan.pop(0) if self.fill_plan else [(volume, ask if is_buy else bid)]
         filled = round(sum(q for q, _ in plan), 8)
         order_ticket = self._ticket()
         order = SimpleNamespace(
@@ -619,7 +680,7 @@ class FakeMT5Broker:
         if existing is not None and (existing.type == 0) != is_buy:  # reduces/closes
             close_qty = min(qty, existing.volume)
             sign = 1 if existing.type == 0 else -1
-            profit = sign * (price - existing.price_open) * close_qty
+            profit = sign * (price - existing.price_open) * close_qty * self._mult(symbol)
             existing.volume = round(existing.volume - close_qty, 8)
             entry = ENTRY_OUT
             pos_id = existing.identifier
@@ -645,8 +706,8 @@ class FakeMT5Broker:
                 volume=round(qty, 8),
                 price_open=price,
                 price_current=price,
-                sl=float(request.get("sl", 0.0)),
-                tp=float(request.get("tp", 0.0)),
+                sl=0.0 if self.strip_stops_on_entry else float(request.get("sl", 0.0)),
+                tp=0.0 if self.strip_stops_on_entry else float(request.get("tp", 0.0)),
                 swap=0.0,
                 profit=0.0,
                 time=self.server_time,
@@ -693,17 +754,25 @@ class FakeMT5Broker:
     def _floating_profit(self) -> float:
         total = 0.0
         for p in self.positions.values():
-            mark = self.bid if p.type == 0 else self.ask
+            bid, ask = self._bidask(p.symbol)
+            mark = bid if p.type == 0 else ask
             p.price_current = mark
-            total += (1 if p.type == 0 else -1) * (mark - p.price_open) * p.volume
-            p.profit = total
+            own = (
+                (1 if p.type == 0 else -1)
+                * (mark - p.price_open)
+                * p.volume
+                * self._mult(p.symbol)
+            )
+            total += own
+            p.profit = own
         return total
 
     def _evaluate_stops(self) -> None:
         """Broker-side SL/TP execution: closes the position at the stop level (with a deal)."""
         for ticket, p in list(self.positions.items()):
             long = p.type == 0
-            mark = self.bid if long else self.ask
+            bid, ask = self._bidask(p.symbol)
+            mark = bid if long else ask
             hit_sl = p.sl and ((long and mark <= p.sl) or (not long and mark >= p.sl))
             hit_tp = p.tp and ((long and mark >= p.tp) or (not long and mark <= p.tp))
             if not (hit_sl or hit_tp):

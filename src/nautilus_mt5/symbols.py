@@ -90,3 +90,23 @@ def default_registry() -> SymbolRegistry:
 def research_registry() -> SymbolRegistry:
     """GER40 + the V2 research-only markets (never handed to execution/data clients)."""
     return SymbolRegistry([GER40, *RESEARCH_ONLY_MAPPINGS])
+
+
+def demo_registry() -> SymbolRegistry:
+    """Explicit DEMO-only executable universe.
+
+    This does not alter ``default_registry``: the existing live/paper path
+    remains GER40-only and inert.  The copied mappings deliberately clear the
+    research-only bit only in this explicitly selected DEMO registry.
+    """
+    return SymbolRegistry(
+        [
+            SymbolMapping(
+                canonical=m.canonical,
+                broker_symbol=m.broker_symbol,
+                expected_path_prefix=m.expected_path_prefix,
+                research_only=False,
+            )
+            for m in (GER40, *RESEARCH_ONLY_MAPPINGS)
+        ]
+    )

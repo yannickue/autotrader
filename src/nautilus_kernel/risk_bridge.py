@@ -50,7 +50,7 @@ ZERO = Decimal(0)
 # RiskPolicy gross/net/leverage limits.
 ASSUMED_AVAILABLE_LIQUIDITY_NOTIONAL = Decimal("1000000")
 
-CANONICAL = "GER40"
+CANONICAL = "GER40"  # default instrument of the technical (backtest/paper) limits only
 
 
 def technical_risk_policy() -> RiskPolicy:
@@ -114,8 +114,17 @@ class NautilusRiskBridge:
         account_leverage_cap: Decimal = MAX_SYSTEM_LEVERAGE,
     ) -> None:
         self._instrument_id = instrument_id
+        # The canonical name is derived from the instrument (was hard-wired to GER40); the limits
+        # must describe THE SAME instrument, otherwise the evaluator would size one market with
+        # another market's step/notional caps. Fail closed at construction.
+        self._canonical = instrument_id.symbol.value
         self._policy = policy or technical_risk_policy()
         self._limits = limits or technical_instrument_limits()
+        if self._limits.instrument != self._canonical:
+            raise ValueError(
+                f"instrument limits are for {self._limits.instrument!r}, "
+                f"bridge instrument is {self._canonical!r}"
+            )
         self._trading_day = trading_day or TradingDayPolicy()
         self._evaluator = evaluator or RiskPolicyEvaluator(self._policy)
         self._account_leverage_cap = account_leverage_cap  # from broker account info when known
@@ -168,8 +177,8 @@ class NautilusRiskBridge:
             signed = sum((_dec(p.signed_qty) for p in open_positions), ZERO)
             exposure = portfolio.net_exposure(self._instrument_id)
             notional = abs(_dec(exposure.as_decimal())) if exposure is not None else ZERO
-            positions[CANONICAL] = signed
-            notionals[CANONICAL] = notional
+            positions[self._canonical] = signed
+            notionals[self._canonical] = notional
             gross = notional
             net = notional if signed > 0 else -notional
 
@@ -206,7 +215,7 @@ class NautilusRiskBridge:
         account = self.account_state(portfolio=portfolio, cache=cache, now=market.now)
         mid = (market.bid + market.ask) / 2
         snapshot = MarketSnapshot(
-            instrument=CANONICAL,
+            instrument=self._canonical,
             timestamp=market.now,
             bid=market.bid,
             ask=market.ask,
@@ -222,7 +231,7 @@ class NautilusRiskBridge:
         entry_price = market.ask if side == RiskSide.BUY else market.bid
         request = PositionSizingRequest(
             signal_id=signal_id,
-            instrument=CANONICAL,
+            instrument=self._canonical,
             timestamp=market.now,
             side=side,
             entry_price=entry_price,

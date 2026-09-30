@@ -53,22 +53,41 @@ def _decimals(value: Decimal) -> int:
     return max(0, -int(value.normalize().as_tuple().exponent))
 
 
+_ASSET_CLASS_BY_PATH = {"Metals": AssetClass.COMMODITY, "Forex": AssetClass.FX}
+
+
 def build_cfd(
-    spec: InstrumentSpec, mapping: SymbolMapping, assumptions: InstrumentAssumptions
+    spec: InstrumentSpec,
+    mapping: SymbolMapping,
+    assumptions: InstrumentAssumptions,
+    *,
+    allow_multiplier_and_cross_currency: bool = False,
 ) -> Cfd:
-    if spec.trade_contract_size != 1:
-        raise Mt5InstrumentError(f"contract size {spec.trade_contract_size} unsupported (need 1)")
+    """Nautilus `Cfd` from broker facts.
+
+    Default (live/paper): contract size 1 and margin == profit currency, otherwise fail closed.
+    DEMO multi-market path (`allow_multiplier_and_cross_currency=True`): XAUUSD (contract 100) and
+    EURUSD (contract 100000, USD profit) are representable as lot-quantity instruments, but the
+    Nautilus notional / PnL of such an instrument is NOT money-correct (no multiplier, no FX
+    conversion). Broker deal profit and the DEMO risk gate own the money math; the flag is tagged
+    into `Cfd.info` so nothing can mistake Nautilus' figures for account currency truth.
+    """
+    if not allow_multiplier_and_cross_currency:
+        if spec.trade_contract_size != 1:
+            raise Mt5InstrumentError(
+                f"contract size {spec.trade_contract_size} unsupported (need 1)"
+            )
+        if spec.currency_margin != spec.currency_profit:
+            raise Mt5InstrumentError("margin and profit currencies differ; not modelled")
     if not spec.is_tradable:
         raise Mt5InstrumentError(f"{spec.broker_symbol} is not tradable per broker trade_mode")
-    if spec.currency_margin != spec.currency_profit:
-        raise Mt5InstrumentError("margin and profit currencies differ; not modelled")
     price_precision = spec.digits
     size_precision = _decimals(spec.volume_step)
     ts = int(spec.retrieved_at.timestamp() * 1_000_000_000)
     return Cfd(
         instrument_id=mapping.instrument_id,
         raw_symbol=Symbol(spec.broker_symbol),
-        asset_class=AssetClass.INDEX,
+        asset_class=_ASSET_CLASS_BY_PATH.get(mapping.expected_path_prefix, AssetClass.INDEX),
         quote_currency=Currency.from_str(spec.currency_profit),
         price_precision=price_precision,
         size_precision=size_precision,
@@ -88,6 +107,12 @@ def build_cfd(
             "source": spec.source,
             "snapshot_retrieved_at": spec.retrieved_at.isoformat(),
             "point": str(spec.point),
+            "contract_size": str(spec.trade_contract_size),
+            "currency_profit": spec.currency_profit,
+            "currency_margin": spec.currency_margin,
+            "nautilus_money_math_authoritative": str(
+                spec.trade_contract_size == 1 and spec.currency_margin == spec.currency_profit
+            ).lower(),
             "stop_level_price": str(spec.stop_level) if spec.stop_level is not None else None,
             "freeze_level_price": str(spec.freeze_level) if spec.freeze_level is not None else None,
             "filling_modes": [str(m) for m in spec.filling_modes],
@@ -112,8 +137,10 @@ class Mt5InstrumentProvider(InstrumentProvider):
         registry: SymbolRegistry | None = None,
         config: InstrumentProviderConfig | None = None,
         now: Any = None,
+        allow_multiplier_and_cross_currency: bool = False,
     ) -> None:
         super().__init__(config=config)
+        self._allow_multi = allow_multiplier_and_cross_currency
         self._client = client
         self._assumptions = assumptions
         self._registry = registry or default_registry()
@@ -146,7 +173,12 @@ class Mt5InstrumentProvider(InstrumentProvider):
             canonical_symbol=mapping.canonical,
             retrieved_at=self._now().astimezone(UTC),
         )
-        instrument = build_cfd(spec, mapping, self._assumptions)
+        instrument = build_cfd(
+            spec,
+            mapping,
+            self._assumptions,
+            allow_multiplier_and_cross_currency=self._allow_multi,
+        )
         self.specs[instrument.id] = spec
         self.add(instrument)
 
