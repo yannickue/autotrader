@@ -1,0 +1,174 @@
+{
+ "by_clusters": {
+  "1": {
+   "hit_rate": 0.35373,
+   "mean": -0.1586,
+   "n": 6259,
+   "n_days": 160,
+   "se": 0.01743,
+   "t": -9.09766
+  },
+  "2": {
+   "hit_rate": 0.35075,
+   "mean": -0.17082,
+   "n": 2851,
+   "n_days": 160,
+   "se": 0.03005,
+   "t": -5.68505
+  },
+  "3+": {
+   "hit_rate": 0.34791,
+   "mean": -0.17841,
+   "n": 5030,
+   "n_days": 160,
+   "se": 0.02882,
+   "t": -6.19095
+  },
+  "3plus_vs_1": {
+   "diff": -0.01982,
+   "mean_a": -0.17841,
+   "mean_b": -0.1586,
+   "n_a": 5030,
+   "n_b": 6259,
+   "se": 0.02694,
+   "t": -0.73565
+  },
+  "ge2_vs_1": {
+   "diff": -0.01707,
+   "mean_a": -0.17567,
+   "mean_b": -0.1586,
+   "n_a": 7881,
+   "n_b": 6259,
+   "se": 0.02467,
+   "t": -0.69201
+  }
+ },
+ "by_families": {
+  "1": {
+   "hit_rate": 0.35193,
+   "mean": -0.16511,
+   "n": 9340,
+   "n_days": 160,
+   "se": 0.01617,
+   "t": -10.20995
+  },
+  "2": {
+   "hit_rate": 0.34933,
+   "mean": -0.17614,
+   "n": 3856,
+   "n_days": 160,
+   "se": 0.03214,
+   "t": -5.48007
+  },
+  "3+": {
+   "hit_rate": 0.34958,
+   "mean": -0.16499,
+   "n": 944,
+   "n_days": 156,
+   "se": 0.05112,
+   "t": -3.22783
+  },
+  "3plus_vs_1": {
+   "diff": 0.00012,
+   "mean_a": -0.16499,
+   "mean_b": -0.16511,
+   "n_a": 944,
+   "n_b": 9340,
+   "se": 0.05083,
+   "t": 0.00232
+  },
+  "ge2_vs_1": {
+   "diff": -0.00883,
+   "mean_a": -0.17394,
+   "mean_b": -0.16511,
+   "n_a": 4800,
+   "n_b": 9340,
+   "se": 0.02824,
+   "t": -0.31274
+  }
+ },
+ "by_raw_specs": {
+  "1": {
+   "hit_rate": 0.35894,
+   "mean": -0.14446,
+   "n": 4243,
+   "n_days": 160,
+   "se": 0.01814,
+   "t": -7.96263
+  },
+  "2": {
+   "hit_rate": 0.35311,
+   "mean": -0.16025,
+   "n": 1770,
+   "n_days": 160,
+   "se": 0.03426,
+   "t": -4.6777
+  },
+  "3+": {
+   "hit_rate": 0.3465,
+   "mean": -0.18217,
+   "n": 8127,
+   "n_days": 160,
+   "se": 0.02589,
+   "t": -7.03755
+  },
+  "3plus_vs_1": {
+   "diff": -0.0377,
+   "mean_a": -0.18217,
+   "mean_b": -0.14446,
+   "n_a": 8127,
+   "n_b": 4243,
+   "se": 0.02763,
+   "t": -1.36459
+  },
+  "ge2_vs_1": {
+   "diff": -0.03378,
+   "mean_a": -0.17825,
+   "mean_b": -0.14446,
+   "n_a": 9897,
+   "n_b": 4243,
+   "se": 0.02501,
+   "t": -1.35063
+  }
+ },
+ "clusters": {
+  "corr_only_links": 23,
+  "jaccard_gt_thr_pairs": 544,
+  "largest_cluster": 19,
+  "n_clusters": 295,
+  "n_specs": 500,
+  "pairs": 124750
+ },
+ "market": "GER40",
+ "n_groups": 22391,
+ "n_groups_with_reference": 14140,
+ "n_groups_without_reference": 8251,
+ "null_day_shift": {
+  "diff_mean": -0.0119,
+  "diff_q95": 0.01326,
+  "diff_sd": 0.01563,
+  "n_draws": 200,
+  "obs_diff": -0.01707,
+  "p_lower": 0.36816,
+  "p_upper": 0.63682
+ },
+ "reference_all_eligible_bars_mean_r": -0.20766,
+ "reference_definition": {
+  "cost": "COMBINED_ADVERSE",
+  "entry": "next open",
+  "note": "independent of every strategy's own exits; overlapping bars simulated in passes",
+  "stop_atr": 1.0,
+  "target_r": 1.5
+ },
+ "scope": "TRAIN side of search fold 0 only; purged rolling-origin CV inside it; no fold-test / validation / holdout data",
+ "share_groups_by_cluster_bucket": {
+  "1": 0.44264,
+  "2": 0.20163,
+  "3": 0.35573
+ },
+ "summary_version": "v2-metalabel-summary-v1",
+ "verdict": {
+  "reason": "diff=-0.0171, t=-0.69, p_upper=0.637, p_lower=0.368",
+  "verdict": "INCONCLUSIVE"
+ }
+}

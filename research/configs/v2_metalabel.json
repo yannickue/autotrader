@@ -1,0 +1,37 @@
+{
+ "version": "V2-metalabel-config-1",
+ "markets": ["GER40"],
+ "probe_config": "research/configs/v2_probe.json",
+ "probe_dir": "research/reports/v2_probe_r1",
+ "out_root": "research/reports/v2_metalabel",
+ "cache_dir": "data/feature_store/v2ml",
+ "seed": 20260930,
+ "pool": {
+  "top_from_probe": 100,
+  "extra_specs": 400,
+  "extra_seed_offset": 5150,
+  "extra_max_attempts": 14000,
+  "note": "top-N rows of the probe candidate_pool.json (selected on Train fitness) PLUS extra passers (>= min_train_trades, NOT selected on profitability) regenerated with the probe's random_genome/archetype machinery and a different seed"
+ },
+ "cv": {
+  "n_folds": 5,
+  "embargo_days": 3,
+  "min_train_days": 50,
+  "note": "purged rolling-origin (expanding) folds by trading-day blocks INSIDE the fold-0 Train side; embargo >= 3 trading days; training rows must end before test_start - embargo; no shuffling"
+ },
+ "models": [
+  {"name": "logit_y1", "kind": "logit", "label": "y1", "params": {"l2": 10.0}, "verdict": true},
+  {"name": "ridge_y2", "kind": "ridge", "label": "y2", "params": {"alpha": 100.0}, "verdict": true},
+  {"name": "gbdt_y1", "kind": "gbdt", "label": "y1", "params": {"loss": "logistic", "n_trees": 200, "lr": 0.05, "depth": 3, "subsample": 0.5, "colsample": 0.7, "min_leaf": 100, "lam": 10.0, "patience": 20}, "verdict": true},
+  {"name": "logit_y3", "kind": "logit", "label": "y3", "params": {"l2": 10.0}, "verdict": false}
+ ],
+ "null": {
+  "draws": 200,
+  "draws_gbdt": 200,
+  "block_days_perm": 5,
+  "block_days_shift": 10
+ },
+ "boot": 500,
+ "confluence": {"n_null": 200, "jaccard": 0.5, "corr": 0.8, "stop_atr": 1.0, "target_r": 1.5},
+ "prior": {"trials": 30310, "unique_specs": 29798, "label": "v1 cumulative"}
+}
