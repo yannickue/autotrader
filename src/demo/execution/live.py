@@ -182,6 +182,8 @@ class StackConfig:
     feed_fatal_age_s: float = 180.0  # older => StackFailClosed("stale_feed")
     clock_skew_s: float = 5.0  # quote this far in the FUTURE => warning + reject that market (M4)
     clock_fatal_skew_s: float = 60.0  # SUSTAINED skew above this => fatal clock_anomaly
+    read_retry_attempts: int = 3  # bounded retries of a failed lane READ (never of a write)
+    read_retry_backoff_s: float = 0.2  # sleep before retry n is n x this
     clock_skew_sustain_obs: int = 3  # consecutive entry-time observations that make it "sustained"
     submit_wait_s: float = 35.0  # caller-side bound for one entry (adapter bound is 30 s)
     exposure_timeout_s: float = 30.0  # adapter lane timeout for exposure-changing operations
@@ -585,22 +587,47 @@ class Mt5DemoStack:
     def halt_new_exposure(self, reason: str) -> None:
         self._halt(reason)
 
-    def _on_lane(self, fn: Callable[..., Any], *args: Any, timeout: float | None = None) -> Any:
-        """Run ``fn`` on the MT5 lane thread and wait. Broker-call failures become fail-closed."""
+    def _on_lane(
+        self,
+        fn: Callable[..., Any],
+        *args: Any,
+        timeout: float | None = None,
+        retry_reads: bool = True,
+        strict: bool = False,
+    ) -> Any:
+        """Run ``fn`` on the MT5 lane thread and wait. Broker-call failures become fail-closed.
+
+        A failed MT5 READ while the terminal is still attached is retried a bounded number of times
+        with a short backoff (M6): reads are safe to repeat and a single transient IPC hiccup must
+        not kill the runner. ``retry_reads=False`` is mandatory for anything that can change the
+        broker (exposure-changing requests are NEVER retried). Persistent failure raises
+        ``_Reject(broker_call_failed)``, or ``StackFailClosed`` when ``strict`` (callers that cannot
+        turn a soft refusal into an event: has_position / on_clock / flatten / poll)."""
         if self._lane is None:
             raise StackFailClosed("stack_not_started")
         limit = self._cfg.lane_call_timeout_s if timeout is None else timeout
-        try:
-            return self._lane.run_sync(fn, *args, timeout=limit)
-        except LaneTimeout as exc:
-            # A blocked C call cannot be cancelled: the terminal state is unknown => fail closed.
-            self._set_fatal("mt5_lane_timeout")
-            raise StackFailClosed("mt5_lane_timeout") from exc
-        except Mt5CallError as exc:
-            session = self._adapter.session if self._adapter else None
-            if session is None or session.state is not SessionState.CONNECTED:
-                raise StackFailClosed(f"broker_disconnect:{exc.what}") from exc
-            raise _Reject(G.R_BROKER_CALL_FAILED) from exc
+        attempts = max(1, self._cfg.read_retry_attempts) if retry_reads else 1
+        for attempt in range(1, attempts + 1):
+            try:
+                return self._lane.run_sync(fn, *args, timeout=limit)
+            except LaneTimeout as exc:
+                # A blocked C call cannot be cancelled: the terminal state is unknown => fail closed.
+                self._set_fatal("mt5_lane_timeout")
+                raise StackFailClosed("mt5_lane_timeout") from exc
+            except Mt5CallError as exc:
+                session = self._adapter.session if self._adapter else None
+                if session is None or session.state is not SessionState.CONNECTED:
+                    raise StackFailClosed(f"broker_disconnect:{exc.what}") from exc
+                if attempt < attempts:
+                    _LOG.warning(
+                        "MT5 read %s failed (%s), retry %d/%d", exc.what, fn.__name__, attempt, attempts
+                    )
+                    time.sleep(self._cfg.read_retry_backoff_s * attempt)
+                    continue
+                if strict:
+                    raise StackFailClosed(f"broker_call_failed_persistent:{exc.what}") from exc
+                raise _Reject(G.R_BROKER_CALL_FAILED) from exc
+        raise AssertionError("unreachable")  # pragma: no cover
 
     # ---------------------------------------------------------------------------------- start
 
@@ -1040,7 +1067,7 @@ class Mt5DemoStack:
             for r in self._registry.open_for_market(market)
         ):
             return True
-        return bool(self._on_lane(self._lane_symbol_positions, info.broker_symbol))
+        return bool(self._on_lane(self._lane_symbol_positions, info.broker_symbol, strict=True))
 
     def _lane_symbol_positions(self, broker_symbol: str) -> list[Any]:
         assert self._adapter is not None
@@ -1430,7 +1457,7 @@ class Mt5DemoStack:
         self._flatten(info, tag=f"protection-fail:{intent.intent_id}", hint="MANUAL")
         row = self._registry.get(intent.intent_id)
         if row is not None:
-            closed = self._on_lane(self._lane_build_closed, row)
+            closed = self._on_lane(self._lane_build_closed, row, strict=True)
             if closed is not None:
                 events.append(closed)
         events.extend(
@@ -1480,7 +1507,7 @@ class Mt5DemoStack:
             outcome: JobOutcome = job.future.result(timeout=self._cfg.flatten_wait_s)
         except concurrent.futures.TimeoutError:
             outcome = JobOutcome("failed", "flatten_timeout")
-        still_open = self._on_lane(self._lane_symbol_positions, info.broker_symbol)
+        still_open = self._on_lane(self._lane_symbol_positions, info.broker_symbol, strict=True)
         if outcome.status == "flat" and not still_open:
             self._flatten_failures.pop(info.canonical, None)
             return True
@@ -2083,7 +2110,7 @@ class Mt5DemoStack:
         self._halt("unprotected_position")
         if row is not None:
             try:
-                denial = self._on_lane(self._lane_protect, ticket, Decimal(row.stop))
+                denial = self._on_lane(self._lane_protect, ticket, Decimal(row.stop), retry_reads=False)
             except (StackFailClosed, _Reject):
                 denial = "protect_unavailable"
             if denial is None:
@@ -2098,7 +2125,7 @@ class Mt5DemoStack:
         if row is None:
             return []
         fresh = self._registry.get(row.intent_id) if self._registry else None
-        closed = self._on_lane(self._lane_build_closed, fresh or row)
+        closed = self._on_lane(self._lane_build_closed, fresh or row, strict=True)
         return [closed] if closed is not None else []
 
     def _lane_protect(self, ticket: int, stop: Decimal) -> str | None:
@@ -2114,7 +2141,7 @@ class Mt5DemoStack:
         return None
 
     def _repair_unprotected_at_start(self) -> None:
-        repairs = self._on_lane(self._lane_unprotected_positions)
+        repairs = self._on_lane(self._lane_unprotected_positions, strict=True)
         for row, position in repairs:
             self._add_pending(*self._repair_protection(row, position))
 
@@ -2138,13 +2165,13 @@ class Mt5DemoStack:
                 if row.forced_flat_utc is None or current < parse_utc(row.forced_flat_utc):
                     continue
                 info = self._markets[row.market]
-                still_open = self._on_lane(self._lane_symbol_positions, info.broker_symbol)
+                still_open = self._on_lane(self._lane_symbol_positions, info.broker_symbol, strict=True)
                 if still_open and not self._flatten(
                     info, tag=f"forced-flat:{row.intent_id}", hint="SESSION_END"
                 ):
                     continue
                 fresh = self._registry.get(row.intent_id) or row
-                closed = self._on_lane(self._lane_build_closed, fresh)
+                closed = self._on_lane(self._lane_build_closed, fresh, strict=True)
                 if closed is not None:
                     events.append(closed)
             return events

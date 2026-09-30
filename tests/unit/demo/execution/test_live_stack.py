@@ -836,3 +836,70 @@ def test_flatten_of_our_unprotected_position_survives_a_reconciliation_mismatch(
         stack._adapter.exec_client.reconcile = real_reconcile
     assert broker.positions_get() == (), events
     assert any(isinstance(e, PositionClosed) for e in events)
+
+
+# -- M6: bounded retry of lane READS (never of writes) -------------------------------------------
+
+
+def _flaky_positions(broker, failures: int):
+    """positions_get returns None (=> Mt5CallError) for the next ``failures`` calls."""
+    real = broker.positions_get
+    state = {"left": failures, "calls": 0}
+
+    def flaky(*args, **kwargs):
+        state["calls"] += 1
+        if state["left"] > 0:
+            state["left"] -= 1
+            return None
+        return real(*args, **kwargs)
+
+    broker.positions_get = flaky
+    return state
+
+
+def test_a_transient_read_failure_is_retried_and_does_not_fail_the_runner(quiet_env):
+    broker, stack = quiet_env
+    stack.start()
+    state = _flaky_positions(broker, 2)
+    assert stack.has_position("GER40") is False  # no _Reject / StackFailClosed
+    assert state["calls"] == 3
+
+
+def test_a_persistent_read_failure_fails_closed_after_the_bound(quiet_env):
+    broker, stack = quiet_env
+    stack.start()
+    state = _flaky_positions(broker, 99)
+    with pytest.raises(StackFailClosed, match="broker_call_failed_persistent"):
+        stack.has_position("GER40")
+    assert state["calls"] == QUIET.read_retry_attempts
+
+
+def test_forced_flat_clock_survives_a_transient_read_failure(quiet_env):
+    broker, stack = quiet_env
+    stack.start()
+    stack.submit(make_intent(flat_in_s=3600))
+    state = _flaky_positions(broker, 1)
+    events = stack.on_clock(datetime.now(UTC) + timedelta(hours=2))
+    assert state["calls"] >= 2
+    assert any(isinstance(e, PositionClosed) for e in events)
+    assert broker.positions_get() == ()
+
+
+def test_writes_are_never_retried_by_the_lane_helper(quiet_env):
+    from nautilus_mt5.session import Mt5CallError
+
+    _, stack = quiet_env
+    stack.start()
+    calls = {"n": 0}
+
+    def failing():
+        calls["n"] += 1
+        raise Mt5CallError("positions_get", None)
+
+    with pytest.raises(_Reject):
+        stack._on_lane(failing)
+    assert calls["n"] == QUIET.read_retry_attempts
+    calls["n"] = 0
+    with pytest.raises(_Reject):
+        stack._on_lane(failing, retry_reads=False)
+    assert calls["n"] == 1
