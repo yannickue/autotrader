@@ -30,13 +30,13 @@ def test_demo_market_specs_are_derived_from_checked_in_market_configs():
     assert ger40.max_leverage == Decimal("20.0")
 
 
-def test_each_demo_market_has_risk_limits_from_its_own_config():
+def test_each_demo_market_spec_comes_from_its_own_config_and_has_no_unit_confused_risk_limits():
     specs = load_demo_market_specs()
     assert set(specs) == {"GER40", "NAS100", "SPX500", "XAUUSD", "EURUSD"}
     for market, spec in specs.items():
-        limits = spec.risk_limits()
-        assert limits.instrument == market
-        assert limits.min_quantity == spec.volume_min
-        assert limits.quantity_step == spec.volume_step
-        assert limits.max_leverage == spec.max_leverage
-        assert limits.max_spread_bps > 0
+        assert spec.canonical == market
+        assert spec.volume_min > 0 and spec.volume_step > 0 and spec.max_spread > 0
+        assert 0 < spec.max_leverage <= 30
+        # the old risk_limits() used max_spread (PRICE units) as bps; risk limits are built only in
+        # demo.execution.risk_policy with the proper bps conversion
+        assert not hasattr(spec, "risk_limits")

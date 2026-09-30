@@ -172,3 +172,91 @@ def test_target_risk_fraction_is_only_an_input(target):
     assert out.approval is not None
     assert out.approval.risk_fraction <= D(str(target))
     assert out.detail["target_risk_fraction"] == D(str(target))
+
+
+# ---- fitted => approved: the sizer must fit the EVALUATOR's liquidation geometry (reference price) ----------
+
+MARGIN_REJECTS = {"margin_stop_too_close_to_liquidation", "margin_stop_beyond_liquidation", "sizer_evaluator_mismatch"}
+
+
+def spx500(**kw) -> MarketFacts:
+    base = dict(
+        market="SPX500", contract_size=D(1), volume_min=D("0.5"), volume_step=D("0.5"),
+        volume_max=D(1000), max_leverage=D(20), max_spread=D(50), fx=D(1),
+    )
+    base.update(kw)
+    return MarketFacts(**base)
+
+
+def spx_intent(direction, stop, rf="0.05"):
+    return intent("SPX500", stop=float(stop), entry=7693.64, rf=float(rf), direction=direction, broker_symbol="SPX500")
+
+
+def test_spx500_short_liquidation_capped_size_is_fitted_to_the_evaluator_reference_price():
+    # live regression: stop 7702.745 vs bid 7693.64, mm = 1/20. The evaluator measures the distance from
+    # R = bid x (1 - 5 bps); a sizer that measured it from the bid chose 110.5 lots and was then rejected.
+    out = size(account("55946"), spx500(), spx_intent(-1, "7702.745"), bid="7693.64", ask="7694.14")
+    assert out.reason is None and out.approval is not None
+    assert out.approval.quantity == D("109.0")
+    assert out.detail["binding_cap"] == "liquidation_safe_leverage"
+    assert out.detail["liquidation_reference_price"] == D("7693.64") * (1 - D("0.0005"))
+
+
+def test_spx500_long_symmetric_case_is_fitted_and_approved():
+    out = size(account("55946"), spx500(), spx_intent(1, "7684.535"), bid="7693.14", ask="7693.64")
+    assert out.reason is None and out.approval is not None
+    assert out.detail["binding_cap"] == "liquidation_safe_leverage"
+    assert out.detail["liquidation_reference_price"] == D("7693.64") * (1 + D("0.0005"))
+
+
+@pytest.mark.parametrize("direction", [1, -1])
+@pytest.mark.parametrize("price", ["7693.64", "25000", "4170.5", "1.1725"])
+@pytest.mark.parametrize("stop_bps", [12, 25, 60, 100, 150, 400])
+@pytest.mark.parametrize("leverage", [10, 20, 30])
+@pytest.mark.parametrize("equity", ["9000", "100000", "333333"])
+@pytest.mark.parametrize("gross_x", ["0", "3"])
+def test_property_fitted_quantity_is_never_rejected_by_the_evaluator_margin_check(
+    direction, price, stop_bps, leverage, equity, gross_x
+):
+    p = D(price)
+    bid, ask = (p, p + p / 20000) if direction == -1 else (p - p / 20000, p)
+    executable = bid if direction == -1 else ask
+    stop = executable - direction * executable * D(stop_bps) / D(10000)
+    mkt = spx500(max_leverage=D(leverage), volume_min=D("0.01"), volume_step=D("0.01"), max_spread=p)
+    gross = D(equity) * D(gross_x)
+    acct = account(equity, gross_notional=gross, net_notional=gross)
+    itn = intent("SPX500", stop=float(stop), entry=float(executable), rf=0.05, direction=direction, broker_symbol="SPX500")
+    out = size(acct, mkt, itn, bid=str(bid), ask=str(ask))
+    assert out.reason not in MARGIN_REJECTS, (out.reason, out.detail.get("liquidation_safe_leverage"))
+
+
+def test_a_residual_evaluator_margin_rejection_after_sizing_is_the_distinct_mismatch_code(monkeypatch):
+    # simulate the OLD bug (sizer measuring from the executable price): the evaluator then rejects a
+    # fitted quantity - that must surface as sizer_evaluator_mismatch, not as a plain margin reject.
+    import demo.execution.risk_policy as rp
+
+    real = rp.DemoPositionSizer.size
+
+    def old_geometry(self, inp):
+        return real(self, replace(inp, liquidation_reference_price=None))
+
+    monkeypatch.setattr(rp.DemoPositionSizer, "size", old_geometry)
+    out = size(account("55946"), spx500(), spx_intent(-1, "7702.745"), bid="7693.64", ask="7694.14")
+    assert out.reason == "sizer_evaluator_mismatch" and out.approval is None
+    assert out.detail["evaluator_reject_reason"] == "margin_stop_too_close_to_liquidation"
+    assert out.detail["gate_reject_class"] == "SAFETY"
+
+
+def test_stopout_fraction_is_passed_to_fit_and_evaluator_alike():
+    base = size(account("55946"), spx500(), spx_intent(-1, "7702.745"), bid="7693.64", ask="7694.14")
+    half = size(account("55946"), spx500(), spx_intent(-1, "7702.745"), bid="7693.64", ask="7694.14",
+                gate=DemoRiskGate(stopout_fraction_of_initial_margin=D("0.5")))
+    assert half.approval is not None and base.approval is not None
+    assert half.detail["liquidation_safe_leverage"] > base.detail["liquidation_safe_leverage"]
+    assert half.approval.quantity > base.approval.quantity  # fitted leverage raised accordingly, still approved
+
+
+def test_binding_constraint_is_target_risk_when_no_cap_bound():
+    out = size()
+    assert out.approval is not None and out.detail["binding_cap"] is None
+    assert out.approval.binding_constraint == "target_risk" and out.detail["tightest_cap"]

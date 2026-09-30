@@ -205,6 +205,20 @@ class StackConfig:
     reconcile_retry_s: float = 5.0
     lane_call_timeout_s: float = 60.0  # a read on the MT5 lane that takes longer => fail closed
     risk_caps: RiskCaps = field(default_factory=RiskCaps)  # ALL hard risk caps live here
+    # CANARY ISOLATION. Operator test trades (canary scripts) use ``canary_magic`` / ``canary_comment``.
+    # Positions and deals with that magic are known test trades: they are NOT "foreign" (no halt), do
+    # NOT feed the consecutive-loss streak nor the tranche / gross / cluster risk books, but their P/L is
+    # real and stays in daily-loss / equity. An open canary position on a symbol blocks NEW own
+    # exposure there (``canary_position_open``, STRUCTURAL/TEMPORARY, never an add-on). Operational rule:
+    # run canary scripts only while the runner is stopped and flat, or accept that distinct reject code.
+    canary_magic: int = 740_099
+    canary_comment: str = "CANARY"
+    # Maintenance (stop-out) rate as a fraction of the instrument's initial margin (1/leverage) used by
+    # the liquidation-safety FIT and the evaluator alike. 1.0 (default) = stop-out at full initial margin:
+    # conservative, caps an index book at ~15x and gold at ~8.6x gross. The real ActivTrades stop-out is
+    # account_info.margin_so_so = 50 % (observed read-only on the DEMO account), which would justify 0.5.
+    # The default is deliberately NOT changed: lowering it is a risk decision for the operator.
+    stopout_fraction_of_initial_margin: Decimal = Decimal(1)
 
 
 # ---------------------------------------------------------------------------------------------
@@ -517,7 +531,10 @@ class Mt5DemoStack:
         self._engines: list[Any] = []
         self._lane: Any = None
         self._markets: dict[str, _MarketInfo] = {}
-        self._gate = DemoRiskGate(caps=self._cfg.risk_caps)
+        self._gate = DemoRiskGate(
+            caps=self._cfg.risk_caps,
+            stopout_fraction_of_initial_margin=self._cfg.stopout_fraction_of_initial_margin,
+        )
         self._ledger = TrancheLedger()  # last broker-truth tranche ledger (risk math + logging)
         self._reject_counts: Counter[str] = Counter()
         self._otherwise_valid: Counter[str] = Counter()
@@ -931,6 +948,10 @@ class Mt5DemoStack:
                 return canonical
         mapping = self._symbols.by_broker_symbol(broker_symbol)
         return None if mapping is None else mapping.canonical
+
+    def _is_canary(self, position: Any) -> bool:
+        """A known operator test position (``StackConfig.canary_magic``), never a foreign one."""
+        return int(position.magic) == self._cfg.canary_magic
 
     def _lane_own_positions(
         self, positions: list[Any] | None = None
@@ -1506,7 +1527,7 @@ class Mt5DemoStack:
         # The broker position exists WITHOUT the stop we asked for: never leave it open.
         self._registry.update(intent.intent_id, status=reg.OPEN, position_ticket=ticket)
         self._halt("protection_unconfirmed")
-        self._flatten(info, tag=f"protection-fail:{intent.intent_id}", hint="MANUAL")
+        self._flatten(info, tag=f"protection-fail:{intent.intent_id}", hint="SAFETY_FLATTEN")
         row = self._registry.get(intent.intent_id)
         if row is not None:
             closed = self._on_lane(self._lane_build_closed, row, strict=True)
@@ -1704,8 +1725,8 @@ class Mt5DemoStack:
         rows_by_ticket = {int(p.ticket): r for p, _, r in self._lane_own_positions(positions)}
         for p in positions:
             market = self._canonical_of(str(p.symbol))
-            if market is None:
-                continue
+            if market is None or self._is_canary(p):
+                continue  # canary test trades stay out of gross / tranche / cluster books (P/L is in equity)
             info = self._markets[market]
             fx = self._fx(info.profit_currency, now)
             units = _dec(p.volume) * info.spec.contract_size
@@ -1791,9 +1812,12 @@ class Mt5DemoStack:
         positions = self._lane_positions()
         foreign: list[str] = []
         existing: Any = None
+        canary_here = False
         for p in positions:
             market = self._canonical_of(str(p.symbol))
-            if market is None or int(p.magic) != self._cfg.magic:
+            if self._is_canary(p):
+                canary_here = canary_here or str(p.symbol) == info.broker_symbol
+            elif market is None or int(p.magic) != self._cfg.magic:
                 foreign.append(str(p.symbol))
             elif float(p.sl or 0.0) == 0.0:
                 self._set_fatal("unprotected_exposure")
@@ -1803,6 +1827,8 @@ class Mt5DemoStack:
         self._foreign = tuple(foreign)
         if foreign:
             raise _Reject(G.R_FOREIGN_POSITION)
+        if canary_here:
+            raise _Reject(G.R_CANARY_POSITION_OPEN)
         fx = self._fx(info.profit_currency, now)
         gate_account = self._lane_gate_account(account, positions, now)
         margin_per_lot = self._lane_margin_per_lot(intent, info, ask if intent.direction == 1 else bid)
@@ -1999,7 +2025,7 @@ class Mt5DemoStack:
         elif reason_code == _REASON_TP:
             reason = "TARGET"
         elif reason_code == _REASON_EXPERT:
-            reason = row.exit_hint if row.exit_hint in ("SESSION_END", "MANUAL") else "MANUAL"
+            reason = row.exit_hint if row.exit_hint in ("SESSION_END", "MANUAL", "SAFETY_FLATTEN") else "MANUAL"
         else:
             reason = "EXTERNAL"
         entries = [d for d in deals if int(d.entry) == ENTRY_IN]
@@ -2097,6 +2123,8 @@ class Mt5DemoStack:
         seen_tickets = set()
         foreign = []
         for position in self._lane_positions():
+            if self._is_canary(position):
+                continue
             if self._canonical_of(str(position.symbol)) is None or int(position.magic) != self._cfg.magic:
                 foreign.append(str(position.symbol))
         self._foreign = tuple(foreign)
@@ -2176,7 +2204,7 @@ class Mt5DemoStack:
                         target=None if row.target is None else Decimal(row.target),
                     )
                 ]
-        self._flatten(info, tag=f"unprotected:{ticket}", hint="MANUAL")
+        self._flatten(info, tag=f"unprotected:{ticket}", hint="SAFETY_FLATTEN")
         if row is None:
             return []
         fresh = self._registry.get(row.intent_id) if self._registry else None
