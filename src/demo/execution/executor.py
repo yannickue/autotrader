@@ -20,6 +20,7 @@ from demo.execution.events import (
     Rejected,
 )
 from demo.execution.market_config import DemoMarketSpec, load_demo_market_specs
+from demo.execution.parity import parity_reject
 from demo.execution.ports import Recorder
 from nautilus_mt5.constants import ORDER_CHECK_OK, SendOutcome, classify_send_retcode
 from nautilus_mt5.translate import close_request, market_entry_request
@@ -140,33 +141,11 @@ class DemoExecutor:
             return result
         spec = self._specs[intent.market]
         spread = ask - bid
-        executable = ask if intent.direction == 1 else bid
         stop, target = Decimal(str(intent.stop)), (
             Decimal(str(intent.target)) if intent.target is not None else None
         )
         entry_ref = Decimal(str(intent.entry_ref))
-        parity_reason = None
-        if spread > spec.max_spread:
-            parity_reason = "spread_cap"
-        elif (intent.direction == 1 and executable > entry_ref) or (
-            intent.direction == -1 and executable < entry_ref
-        ):
-            parity_reason = "entry_overshoot"
-        elif (intent.direction == 1 and executable <= stop) or (
-            intent.direction == -1 and executable >= stop
-        ):
-            parity_reason = "structural_invalidation_crossed"
-        elif target is not None and (
-            (intent.direction == 1 and executable >= target)
-            or (intent.direction == -1 and executable <= target)
-        ):
-            parity_reason = "target_crossed_at_fill"
-        elif target is not None:
-            risk_distance = abs(executable - stop)
-            reward_distance = abs(target - executable)
-            minimum = Decimal(str(intent.min_space_r))
-            if risk_distance <= 0 or reward_distance / risk_distance < minimum:
-                parity_reason = "min_space_r"
+        parity_reason = parity_reject(intent, bid=bid, ask=ask, max_spread=spec.max_spread)
         if parity_reason:
             result = self._reject(intent, parity_reason)
             self._results[intent.intent_id] = result

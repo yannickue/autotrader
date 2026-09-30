@@ -170,3 +170,33 @@ def test_kernel_package_has_no_competing_state_owner_and_no_venue_access(path):
 def test_strategy_never_calls_venue_or_legacy_execution():
     source = (Path(nautilus_kernel.__file__).parent / "proof_strategy.py").read_text()
     assert "PaperExecutionEngine" not in source and "order_send" not in source
+
+
+def test_bridge_is_generalised_per_instrument_and_refuses_mismatched_limits():
+    from risk.models import InstrumentRiskLimits
+
+    nas = InstrumentId.from_str("NAS100.ACTIVTRADES")
+    limits = InstrumentRiskLimits(
+        instrument="NAS100",
+        max_leverage=Decimal("20"),
+        quantity_step=Decimal("0.2"),
+        min_quantity=Decimal("0.2"),
+        min_notional=Decimal(0),
+        max_notional=Decimal("4000000"),
+        max_spread_bps=Decimal("10"),
+        maintenance_margin_rate=Decimal("0.05"),
+    )
+    bridge = NautilusRiskBridge(instrument_id=nas, limits=limits)
+    portfolio, cache = fakes()
+    out = bridge.evaluate_entry(
+        portfolio=portfolio,
+        cache=cache,
+        market=market("21000.00", "21001.00"),
+        side=RiskSide.BUY,
+        stop_price=Decimal("20950"),
+        signal_id="nas",
+    )
+    assert isinstance(out, ProposedOrderIntent) and out.instrument == "NAS100"
+    assert out.quantity % Decimal("0.2") == 0
+    with pytest.raises(ValueError, match="instrument limits are for"):
+        NautilusRiskBridge(instrument_id=nas)  # default limits describe GER40

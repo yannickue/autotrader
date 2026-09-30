@@ -177,6 +177,10 @@ class Mt5Session:
         self._connection.disconnect()
         return self.connect()
 
+    def refresh_lock(self) -> bool:
+        """Keep the terminal lock from going stale during a long run (no MT5 IPC involved)."""
+        return self._connection.refresh_lock()
+
     def mark_degraded(self, reason: str) -> None:
         self.last_failure = reason
         if self.state is SessionState.CONNECTED:
