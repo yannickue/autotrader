@@ -10,6 +10,7 @@ plus `ExitEngine.notify_terminal` on every terminal execution outcome, per
 
 from exits.engine import ExitEngine, RiskReleaseGate, apply_evaluation
 from exits.models import (
+    SECOND_TARGET_NOT_STRUCTURALLY_JUSTIFIED,
     ExitDecision,
     ExitEvaluation,
     ExitMarketState,
@@ -19,9 +20,13 @@ from exits.models import (
     ExitReason,
     PositionSide,
     StopStage,
+    TakeProfitStage,
+    stage_target_price,
+    stop_is_unchanged_or_tighter,
 )
 
 __all__ = [
+    "SECOND_TARGET_NOT_STRUCTURALLY_JUSTIFIED",
     "ExitDecision",
     "ExitEngine",
     "ExitEvaluation",
@@ -33,5 +38,8 @@ __all__ = [
     "PositionSide",
     "RiskReleaseGate",
     "StopStage",
+    "TakeProfitStage",
     "apply_evaluation",
+    "stage_target_price",
+    "stop_is_unchanged_or_tighter",
 ]

@@ -279,6 +279,7 @@ class Mt5LiveExecutionClient(LiveExecutionClient):
         self._now_fn = now  # injectable time source (deterministic tests); default: clock
         self.recon = ReconciliationTracker()
         self.ingest_stats = IngestStats()
+        self._protective_resize_pending = False  # Lane E: retry a failed SL/TP resize
         self._failed_deals: set[int] = set()  # deals that failed and have not booked since
         self.last_sync_error: str | None = None
         self._sync_task: asyncio.Task | None = None
@@ -461,6 +462,8 @@ class Mt5LiveExecutionClient(LiveExecutionClient):
             deals, key=lambda d: (d.time_msc or d.executed_at.timestamp(), d.ticket)
         ):
             self._ingest_deal(deal)
+        if self._protective_resize_pending:
+            self._retry_protective_resize()
         return self.ingest_stats
 
     def _ingest_deal(self, deal: DealRecord) -> bool:
@@ -497,6 +500,7 @@ class Mt5LiveExecutionClient(LiveExecutionClient):
             self._after_booking(deal, mapping.instrument_id)
         except Exception as exc:
             self.audit.append(f"deal {deal.ticket} follow-up failed: {exc!r}")
+            self._protective_resize_pending = True  # the SL/TP resize is re-run on the next sync
         return True
 
     def _row_for_deal(self, deal: DealRecord) -> OrderRow | None:
@@ -679,6 +683,7 @@ class Mt5LiveExecutionClient(LiveExecutionClient):
         position_closed = len(remaining) == 0
         self._push_account_state()
         if not position_closed:
+            self._resize_protection_after_partial(deal, instrument_id, remaining)
             return
         for row in self._store.all_orders():
             if (
@@ -696,6 +701,65 @@ class Mt5LiveExecutionClient(LiveExecutionClient):
                         self._now_ns(),
                     )
                 self._store.update_order(row.client_order_id, status="DONE")
+
+    def _resize_protection_after_partial(
+        self, deal: DealRecord, instrument_id: InstrumentId, remaining: Any
+    ) -> None:
+        """Lane E: a partial KIND_EXIT fill left a position open. MT5 keeps ONE position-wide SL/TP
+        the broker (untouched by the partial close), but the local Nautilus SL/TP child orders still
+        carry the ORIGINAL quantity. Shrink them to the broker's remaining volume so that
+        broker_open_quantity == local_remaining_quantity == stop-protected quantity. Broker truth
+        (the position just read) is the size; a child is never enlarged here."""
+        row = self._row_for_deal(deal)
+        if row is None or row.kind != KIND_EXIT:
+            return
+        volume = Decimal(str(remaining[0].volume))
+        self._resync_protective_quantity(int(deal.position_id), instrument_id, volume)
+
+    def _resync_protective_quantity(
+        self, position_ticket: int, instrument_id: InstrumentId, volume: Decimal
+    ) -> None:
+        instrument = self._provider.find(instrument_id)
+        target = instrument.make_qty(float(volume))
+        for row in self._store.all_orders():
+            if (
+                row.kind not in (KIND_SL, KIND_TP)
+                or row.position_ticket != position_ticket
+                or row.status != "ACCEPTED"
+            ):
+                continue
+            order = self._nt_cache.order(ClientOrderId(row.client_order_id))
+            if order is None or not order.is_open or target >= order.quantity:
+                continue  # cold cache / already closed / never enlarge a protective order
+            is_sl = row.kind == KIND_SL
+            self.generate_order_updated(
+                order.strategy_id,
+                instrument_id,
+                order.client_order_id,
+                order.venue_order_id or VenueOrderId(row.venue_order_id or "0"),
+                target,
+                None if is_sl else order.price,
+                order.trigger_price if is_sl else None,
+                self._now_ns(),
+            )
+            self.audit.append(
+                f"PROTECTIVE_RESIZED {row.client_order_id}: {order.quantity} -> {target}"
+            )
+
+    def _retry_protective_resize(self) -> None:
+        """Re-run a failed resize from broker truth (never guesses; clears only on success)."""
+        try:
+            positions = self._broker_positions()
+            for position in positions:
+                mapping = self._provider.registry.by_broker_symbol(position.symbol)
+                if mapping is None:
+                    continue
+                self._resync_protective_quantity(
+                    int(position.ticket), mapping.instrument_id, position.volume
+                )
+            self._protective_resize_pending = False
+        except Exception as exc:  # stays pending; the next sync retries
+            self.audit.append(f"protective resize retry failed: {exc!r}")
 
     # ------------------------------------------------------------- reconciliation --
 

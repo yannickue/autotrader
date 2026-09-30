@@ -46,6 +46,8 @@ from exits.models import (
     ExitReason,
     PositionSide,
     StopStage,
+    TakeProfitStage,
+    stage_target_price,
 )
 from risk.models import RiskSide
 
@@ -388,7 +390,7 @@ class ExitEngine:
         # target_r_multiple/fixed_target_price/partial_take_profit_fraction
         # fields are only consulted when no ladder is configured, preserving
         # the pre-multi-stage behavior exactly (existing tests/callers).
-        if self._policy.take_profit_stages:
+        if position.target_stages or self._policy.take_profit_stages:
             return self._staged_target_decision(position=position, market=market, now=now)
         return self._single_stage_target_decision(position=position, market=market, now=now)
 
@@ -434,7 +436,10 @@ class ExitEngine:
     def _staged_target_decision(
         self, *, position: ExitPosition, market: ExitMarketState, now: datetime
     ) -> ExitDecision | None:
-        stages = self._policy.take_profit_stages
+        # A per-position ladder (Lane E: R- and/or structural price stages) replaces the policy one.
+        stages: tuple[TakeProfitStage, ...] = (
+            position.target_stages or self._policy.take_profit_stages
+        )
         # Only the NEXT unfired stage is ever checked, and at most one stage
         # decision is emitted per evaluate() call -- even if price has
         # gapped past multiple stage triggers in a single tick, the
@@ -453,8 +458,9 @@ class ExitEngine:
             return None
 
         is_long = position.side == PositionSide.LONG
-        offset = initial_risk * stage.r_multiple
-        target_price = position.entry_price + offset if is_long else position.entry_price - offset
+        target_price = stage_target_price(
+            stage, side=position.side, entry_price=position.entry_price, initial_risk=initial_risk
+        )
         target_hit = market.price >= target_price if is_long else market.price <= target_price
         if not target_hit:
             return None
@@ -478,10 +484,17 @@ class ExitEngine:
         # earlier stage rounding to (near) zero is a policy misconfiguration,
         # not a reason to prematurely close the whole runner while later
         # stages are still meant to fire.
-        dust_or_undersized = (
-            stage_quantity <= 0 or remaining_after_stage < policy.min_remaining_quantity
+        #
+        # Lane E refinement: a last stage that rounds to ZERO lots only closes everything when the
+        # ladder is COMPLETE (fractions sum to 1, i.e. this stage is the intended final close).
+        # For TP1+runner ladders (sum < 1) an undersized stage is skipped: rounding never closes
+        # the runner. A last stage that leaves only a dust remainder still closes it fully.
+        ladder_complete = sum((s.close_fraction for s in stages), ZERO) >= Decimal("1")
+        dust_remainder = (
+            stage_quantity > 0 and remaining_after_stage < policy.min_remaining_quantity
         )
-        if dust_or_undersized and is_last_configured_stage:
+        undersized_final = stage_quantity <= 0 and ladder_complete
+        if is_last_configured_stage and (dust_remainder or undersized_final):
             quantity = position.quantity
             is_partial = False
         elif stage_quantity <= 0:
@@ -497,15 +510,18 @@ class ExitEngine:
             reason=ExitReason.TAKE_PROFIT,
             reason_detail=(
                 f"price {market.price} reached stage {position.stages_completed} "
-                f"target {target_price} ({stage.r_multiple}R)"
+                f"target {target_price} ({stage.stage_id or stage.source})"
             ),
             now=now,
             metadata={
                 "target_source": "staged",
                 "target_price": str(target_price),
                 "stage_index": position.stages_completed,
-                "stage_r_multiple": str(stage.r_multiple),
+                "stage_r_multiple": None if stage.r_multiple is None else str(stage.r_multiple),
                 "stage_close_fraction": str(stage.close_fraction),
+                "stage_id": stage.stage_id or f"stage{position.stages_completed}",
+                "stage_source": stage.source,
+                "stage_is_last": is_last_configured_stage,
             },
         )
 
