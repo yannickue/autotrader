@@ -1,0 +1,175 @@
+{
+ "asset_class": "index_cfd",
+ "calendar": {
+  "cash": [
+   540,
+   1050
+  ],
+  "entry": [
+   540,
+   1200
+  ],
+  "flat": 1290,
+  "tz": "Europe/Berlin"
+ },
+ "calendar_status": "verified_current_constants",
+ "costs": {
+  "BASE": {
+   "penetration": 0.0,
+   "slippage": 0.5,
+   "spread_mult": 1.0
+  },
+  "COMBINED_ADVERSE": {
+   "penetration": 1.0,
+   "slippage": 1.5,
+   "spread_mult": 2.0
+  }
+ },
+ "dev_bars_loaded": 96219,
+ "drift_baselines_train": {
+  "always_long": {
+   "expectancy_r": -0.21209,
+   "n_trades": 960,
+   "trades_per_day": 6.0
+  },
+  "always_short": {
+   "expectancy_r": -0.1265,
+   "n_trades": 960,
+   "trades_per_day": 6.0
+  },
+  "cost": "COMBINED_ADVERSE",
+  "eligible_train_bars": 21120,
+  "random_long_short": {
+   "draws": 20,
+   "expectancy_r_mean": -0.14542,
+   "expectancy_r_sd": 0.03439,
+   "trades_mean": 960.0
+  },
+  "same_session_random": {
+   "decisions_per_day": 3,
+   "draws": 20,
+   "expectancy_r_mean": -0.20612,
+   "expectancy_r_sd": 0.05755,
+   "trades_mean": 441.1
+  },
+  "stop_atr": 1.0,
+  "target_r": 1.5,
+  "train_days": 160
+ },
+ "folds": {
+  "checks": {
+   "embargo_respected": true,
+   "no_train_test_overlap": true,
+   "nothing_after_dev_end": true,
+   "tests_chronological_disjoint": true
+  },
+  "dev_end": "2026-08-31",
+  "digest": "c6159c3a46de31d8000bc6d90ec48e23ee116650055b5de56e8aade727791b28",
+  "first_date": "2025-02-04",
+  "folds": [
+   {
+    "embargo_trading_days": 5,
+    "fold": 0,
+    "purged_bars": 12,
+    "test": [
+     "2025-09-26",
+     "2025-12-16"
+    ],
+    "test_bars": 14129,
+    "test_days": 58,
+    "train": [
+     "2025-02-04",
+     "2025-09-18"
+    ],
+    "train_bars": 38367,
+    "train_days": 160,
+    "train_test_bar_overlap": 0
+   },
+   {
+    "embargo_trading_days": 5,
+    "fold": 1,
+    "purged_bars": 12,
+    "test": [
+     "2025-12-17",
+     "2026-03-13"
+    ],
+    "test_bars": 14441,
+    "test_days": 58,
+    "train": [
+     "2025-02-04",
+     "2025-12-09"
+    ],
+    "train_bars": 52436,
+    "train_days": 218,
+    "train_test_bar_overlap": 0
+   },
+   {
+    "embargo_trading_days": 5,
+    "fold": 2,
+    "purged_bars": 12,
+    "test": [
+     "2026-03-16",
+     "2026-06-08"
+    ],
+    "test_bars": 13865,
+    "test_days": 58,
+    "train": [
+     "2025-02-04",
+     "2026-03-06"
+    ],
+    "train_bars": 66877,
+    "train_days": 276,
+    "train_test_bar_overlap": 0
+   },
+   {
+    "embargo_trading_days": 5,
+    "fold": 3,
+    "purged_bars": 12,
+    "test": [
+     "2026-06-09",
+     "2026-08-31"
+    ],
+    "test_bars": 14220,
+    "test_days": 60,
+    "train": [
+     "2025-02-04",
+     "2026-06-01"
+    ],
+    "train_bars": 80802,
+    "train_days": 334,
+    "train_test_bar_overlap": 0
+   }
+  ],
+  "last_date": "2026-08-31",
+  "min_embargo_days": 5,
+  "n_folds": 4,
+  "n_trading_days": 399
+ },
+ "leaders": [
+  "NAS100",
+  "SPX500"
+ ],
+ "market": "GER40",
+ "max_entry_spread": 8.0,
+ "round_steps_minor_major": [
+  50.0,
+  100.0
+ ],
+ "scope": "TRAIN side of fold 0 only; no Validation/fold-test number anywhere",
+ "sizing": {
+  "equity": 10000.0,
+  "leverage": 10.0,
+  "lot": [
+   0.25,
+   0.25
+  ],
+  "max_risk": 400.0,
+  "min_risk": 5.0,
+  "risk_fraction": 0.005
+ },
+ "source": "ar1",
+ "train_bars": 38367,
+ "train_days": 160,
+ "train_first_utc": "2025-02-04 00:15:00+00:00",
+ "train_last_utc": "2025-09-18 18:55:00+00:00"
+}

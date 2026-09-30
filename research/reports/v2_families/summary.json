@@ -1,0 +1,1074 @@
+{
+ "config_hash": "0b993792d2bad7a59a5fd87606a2cd2cbde158851b5e91fb82bf5e5a160ea155",
+ "cumulative": {
+  "carried_in_trials": 0,
+  "cumulative_trials": 31360,
+  "cumulative_unique_specs": 30848,
+  "duplicate_rejects": 0,
+  "family_ledger_trials": 1050,
+  "family_ledger_unique": 1050,
+  "invalid_rejects": 0,
+  "null_evaluations": 12600,
+  "prior_label": "v1 cumulative",
+  "prior_trials": 30310,
+  "prior_unique_specs": 29798,
+  "this_run_trials": 1050
+ },
+ "markets": {
+  "GER40": {
+   "EOD": {
+    "best_by_expectancy_adverse": {
+     "cost_burden_r": 0.06892,
+     "exp_r_adverse": 0.12339,
+     "exp_r_base": 0.16015,
+     "fitness": -0.0801,
+     "hash": "75e5bb34f5f00944",
+     "n_candidates": 80,
+     "n_trades": 78,
+     "p_one_sided": 0.145486,
+     "payoff_adverse": 1.2568,
+     "profit_factor_adverse": 1.3229,
+     "q_bh": 0.998411,
+     "se_r": 0.11685,
+     "skips": {
+      "size_below_min": 2
+     },
+     "spec": {
+      "exit_clock": "flat",
+      "family": "EOD",
+      "mode": "continue",
+      "q": 0.5,
+      "side": "both",
+      "stop_atr": 2.5,
+      "target_r": 2.0,
+      "trend_ref": "last2h",
+      "window_min": 60
+     },
+     "spread_cost_r": 0.02954,
+     "t_day_clustered": 1.056,
+     "trades_per_day": 0.4875,
+     "win_rate_adverse": 0.5128
+    },
+    "best_by_fitness": {
+     "cost_burden_r": 0.06892,
+     "exp_r_adverse": 0.12339,
+     "exp_r_base": 0.16015,
+     "fitness": -0.0801,
+     "hash": "75e5bb34f5f00944",
+     "n_candidates": 80,
+     "n_trades": 78,
+     "p_one_sided": 0.145486,
+     "payoff_adverse": 1.2568,
+     "profit_factor_adverse": 1.3229,
+     "q_bh": 0.998411,
+     "se_r": 0.11685,
+     "skips": {
+      "size_below_min": 2
+     },
+     "spec": {
+      "exit_clock": "flat",
+      "family": "EOD",
+      "mode": "continue",
+      "q": 0.5,
+      "side": "both",
+      "stop_atr": 2.5,
+      "target_r": 2.0,
+      "trend_ref": "last2h",
+      "window_min": 60
+     },
+     "spread_cost_r": 0.02954,
+     "t_day_clustered": 1.056,
+     "trades_per_day": 0.4875,
+     "win_rate_adverse": 0.5128
+    },
+    "cand_per_day_all_specs": {
+     "max": 0.5,
+     "n": 150,
+     "p25": 0.1,
+     "p50": 0.25,
+     "p75": 0.5
+    },
+    "cost_burden_r_active_specs": {
+     "max": 0.12503,
+     "n": 77,
+     "p25": 0.07559,
+     "p50": 0.10602,
+     "p75": 0.11255
+    },
+    "exp_r_adverse_active_specs": {
+     "max": 0.12339,
+     "n": 77,
+     "p25": -0.20924,
+     "p50": -0.12577,
+     "p75": -0.05622
+    },
+    "exp_r_base_active_specs": {
+     "max": 0.17594,
+     "n": 77,
+     "p25": -0.14875,
+     "p50": -0.07447,
+     "p75": 0.00488
+    },
+    "family": "EOD",
+    "ledger_status_this_grid": {
+     "duplicate": 0,
+     "invalid": 0,
+     "new": 150
+    },
+    "market": "GER40",
+    "min_q_bh": 0.99841,
+    "min_trades": 40,
+    "n_bh_q_lt_0.10": 0,
+    "n_specs": 150,
+    "n_with_min_trades": 77,
+    "n_zero_candidates": 0,
+    "null": {
+     "expectancy_r_adverse": {
+      "null_best_mean": 0.22158,
+      "null_best_p95": 0.339794,
+      "p_best": 0.9231,
+      "pct": 0.0833,
+      "real_best": 0.123388
+     },
+     "fitness": {
+      "null_best_mean": -0.046171,
+      "null_best_p95": 0.052906,
+      "p_best": 0.6923,
+      "pct": 0.3333,
+      "real_best": -0.0801
+     },
+     "method": "day-shifted labels: same clock bar of the day s days later (circular), stop/target distances kept",
+     "min_trades": 40,
+     "n_shifts": 12,
+     "n_specs": 150,
+     "null_evaluations": 1800,
+     "seconds": 1.8
+    },
+    "seconds": {
+     "eval": 0.3,
+     "total": 2.1
+    },
+    "share_exp_r_adverse_gt0_active": 0.1039,
+    "spread_cost_r_active_specs": {
+     "max": 0.05099,
+     "n": 77,
+     "p25": 0.03031,
+     "p50": 0.04464,
+     "p75": 0.04653
+    },
+    "trades_per_day_active_specs": {
+     "max": 0.5,
+     "n": 77,
+     "p25": 0.25,
+     "p50": 0.4875,
+     "p75": 0.5
+    },
+    "train_days": 160
+   },
+   "GAP": {
+    "best_by_expectancy_adverse": {
+     "cost_burden_r": 0.14634,
+     "exp_r_adverse": 0.18849,
+     "exp_r_base": 0.25506,
+     "fitness": -0.476403,
+     "hash": "2d2619e0eb0584fe",
+     "n_candidates": 40,
+     "n_trades": 40,
+     "p_one_sided": 0.330129,
+     "payoff_adverse": 4.2414,
+     "profit_factor_adverse": 1.2314,
+     "q_bh": 0.999025,
+     "se_r": 0.42882,
+     "skips": {},
+     "spec": {
+      "bucket_hi_q": 1.0,
+      "bucket_lo_q": 0.75,
+      "confirm": false,
+      "confirm_bars": 6,
+      "family": "GAP",
+      "mode": "fade",
+      "side": "both",
+      "stop_atr": 1.0,
+      "target": 1.0,
+      "target_kind": "fill"
+     },
+     "spread_cost_r": 0.05749,
+     "t_day_clustered": 0.44,
+     "trades_per_day": 0.25,
+     "win_rate_adverse": 0.225
+    },
+    "best_by_fitness": {
+     "cost_burden_r": 0.15024,
+     "exp_r_adverse": 0.09051,
+     "exp_r_base": 0.2259,
+     "fitness": -0.13658,
+     "hash": "6229b958a3ae8f9d",
+     "n_candidates": 80,
+     "n_trades": 80,
+     "p_one_sided": 0.293277,
+     "payoff_adverse": 1.8954,
+     "profit_factor_adverse": 1.1372,
+     "q_bh": 0.999025,
+     "se_r": 0.16642,
+     "skips": {},
+     "spec": {
+      "bucket_hi_q": 1.0,
+      "bucket_lo_q": 0.5,
+      "confirm": false,
+      "confirm_bars": 6,
+      "family": "GAP",
+      "mode": "fade",
+      "side": "both",
+      "stop_atr": 1.0,
+      "target": 2.0,
+      "target_kind": "r"
+     },
+     "spread_cost_r": 0.06439,
+     "t_day_clustered": 0.544,
+     "trades_per_day": 0.5,
+     "win_rate_adverse": 0.375
+    },
+    "cand_per_day_all_specs": {
+     "max": 0.5,
+     "n": 150,
+     "p25": 0.1,
+     "p50": 0.15,
+     "p75": 0.25
+    },
+    "cost_burden_r_active_specs": {
+     "max": 0.19215,
+     "n": 38,
+     "p25": 0.11923,
+     "p50": 0.14751,
+     "p75": 0.17271
+    },
+    "exp_r_adverse_active_specs": {
+     "max": 0.18849,
+     "n": 38,
+     "p25": -0.21887,
+     "p50": -0.10143,
+     "p75": -0.02122
+    },
+    "exp_r_base_active_specs": {
+     "max": 0.34155,
+     "n": 38,
+     "p25": -0.1259,
+     "p50": -0.04637,
+     "p75": 0.06789
+    },
+    "family": "GAP",
+    "ledger_status_this_grid": {
+     "duplicate": 0,
+     "invalid": 0,
+     "new": 150
+    },
+    "market": "GER40",
+    "min_q_bh": 0.99902,
+    "min_trades": 40,
+    "n_bh_q_lt_0.10": 0,
+    "n_specs": 150,
+    "n_with_min_trades": 38,
+    "n_zero_candidates": 0,
+    "null": {
+     "expectancy_r_adverse": {
+      "null_best_mean": 0.250814,
+      "null_best_p95": 0.445819,
+      "p_best": 0.6923,
+      "pct": 0.3333,
+      "real_best": 0.188491
+     },
+     "fitness": {
+      "null_best_mean": -0.070705,
+      "null_best_p95": 0.104699,
+      "p_best": 0.6923,
+      "pct": 0.3333,
+      "real_best": -0.13658
+     },
+     "method": "day-shifted labels: same clock bar of the day s days later (circular), stop/target distances kept",
+     "min_trades": 40,
+     "n_shifts": 12,
+     "n_specs": 150,
+     "null_evaluations": 1800,
+     "seconds": 1.3
+    },
+    "seconds": {
+     "eval": 0.3,
+     "total": 1.6
+    },
+    "share_exp_r_adverse_gt0_active": 0.2105,
+    "spread_cost_r_active_specs": {
+     "max": 0.08686,
+     "n": 38,
+     "p25": 0.05241,
+     "p50": 0.06563,
+     "p75": 0.07789
+    },
+    "trades_per_day_active_specs": {
+     "max": 0.5,
+     "n": 38,
+     "p25": 0.25,
+     "p50": 0.25625,
+     "p75": 0.5
+    },
+    "train_days": 160
+   },
+   "LEADLAG": {
+    "best_by_expectancy_adverse": {
+     "cost_burden_r": 0.12146,
+     "exp_r_adverse": 0.25178,
+     "exp_r_base": 0.28128,
+     "fitness": -0.007879,
+     "hash": "379a9300427d7aa6",
+     "n_candidates": 57,
+     "n_trades": 56,
+     "p_one_sided": 0.08489,
+     "payoff_adverse": 1.726,
+     "profit_factor_adverse": 1.4959,
+     "q_bh": 1.0,
+     "se_r": 0.18339,
+     "skips": {},
+     "spec": {
+      "catchup": false,
+      "exit_clock": "close",
+      "family": "LEADLAG",
+      "leader": "NAS100",
+      "n_bars": 3,
+      "q": 0.95,
+      "side": "both",
+      "sign": 1,
+      "stop_atr": 1.5,
+      "target_r": 2.0,
+      "tod": "all"
+     },
+     "spread_cost_r": 0.04856,
+     "t_day_clustered": 1.373,
+     "trades_per_day": 0.35,
+     "win_rate_adverse": 0.4643
+    },
+    "best_by_fitness": {
+     "cost_burden_r": 0.12146,
+     "exp_r_adverse": 0.25178,
+     "exp_r_base": 0.28128,
+     "fitness": -0.007879,
+     "hash": "379a9300427d7aa6",
+     "n_candidates": 57,
+     "n_trades": 56,
+     "p_one_sided": 0.08489,
+     "payoff_adverse": 1.726,
+     "profit_factor_adverse": 1.4959,
+     "q_bh": 1.0,
+     "se_r": 0.18339,
+     "skips": {},
+     "spec": {
+      "catchup": false,
+      "exit_clock": "close",
+      "family": "LEADLAG",
+      "leader": "NAS100",
+      "n_bars": 3,
+      "q": 0.95,
+      "side": "both",
+      "sign": 1,
+      "stop_atr": 1.5,
+      "target_r": 2.0,
+      "tod": "all"
+     },
+     "spread_cost_r": 0.04856,
+     "t_day_clustered": 1.373,
+     "trades_per_day": 0.35,
+     "win_rate_adverse": 0.4643
+    },
+    "cand_per_day_all_specs": {
+     "max": 1.99375,
+     "n": 150,
+     "p25": 0.1875,
+     "p50": 0.35625,
+     "p75": 0.60625
+    },
+    "cost_burden_r_active_specs": {
+     "max": 0.22829,
+     "n": 98,
+     "p25": 0.13402,
+     "p50": 0.15962,
+     "p75": 0.18991
+    },
+    "exp_r_adverse_active_specs": {
+     "max": 0.25178,
+     "n": 98,
+     "p25": -0.23507,
+     "p50": -0.16892,
+     "p75": -0.07351
+    },
+    "exp_r_base_active_specs": {
+     "max": 0.30549,
+     "n": 98,
+     "p25": -0.12099,
+     "p50": -0.06444,
+     "p75": 0.00792
+    },
+    "family": "LEADLAG",
+    "ledger_status_this_grid": {
+     "duplicate": 0,
+     "invalid": 0,
+     "new": 150
+    },
+    "market": "GER40",
+    "min_q_bh": 1.0,
+    "min_trades": 40,
+    "n_bh_q_lt_0.10": 0,
+    "n_specs": 150,
+    "n_with_min_trades": 98,
+    "n_zero_candidates": 0,
+    "null": {
+     "expectancy_r_adverse": {
+      "null_best_mean": 0.15498,
+      "null_best_p95": 0.415758,
+      "p_best": 0.3077,
+      "pct": 0.75,
+      "real_best": 0.251777
+     },
+     "fitness": {
+      "null_best_mean": -0.123691,
+      "null_best_p95": 0.12455,
+      "p_best": 0.3077,
+      "pct": 0.75,
+      "real_best": -0.007879
+     },
+     "method": "day-shifted labels: same clock bar of the day s days later (circular), stop/target distances kept",
+     "min_trades": 40,
+     "n_shifts": 12,
+     "n_specs": 150,
+     "null_evaluations": 1800,
+     "seconds": 1.6
+    },
+    "seconds": {
+     "eval": 0.3,
+     "total": 1.9
+    },
+    "share_exp_r_adverse_gt0_active": 0.1224,
+    "spread_cost_r_active_specs": {
+     "max": 0.09625,
+     "n": 98,
+     "p25": 0.05673,
+     "p50": 0.0658,
+     "p75": 0.07911
+    },
+    "trades_per_day_active_specs": {
+     "max": 1.75,
+     "n": 98,
+     "p25": 0.35156,
+     "p50": 0.49062,
+     "p75": 0.78125
+    },
+    "train_days": 160
+   },
+   "ORB": {
+    "best_by_expectancy_adverse": {
+     "cost_burden_r": 0.1093,
+     "exp_r_adverse": 0.23493,
+     "exp_r_base": 0.31537,
+     "fitness": 0.060608,
+     "hash": "491730aea9847af8",
+     "n_candidates": 159,
+     "n_trades": 158,
+     "p_one_sided": 0.023801,
+     "payoff_adverse": 1.8951,
+     "profit_factor_adverse": 1.3953,
+     "q_bh": 0.999942,
+     "se_r": 0.1186,
+     "skips": {
+      "size_below_min": 1
+     },
+     "spec": {
+      "buffer_atr": 0.0,
+      "family": "ORB",
+      "mode": "breakout",
+      "range_min": 5,
+      "side": "both",
+      "stop_frac": 0.5,
+      "target": 2.0,
+      "target_kind": "r",
+      "window_min": 240
+     },
+     "spread_cost_r": 0.05141,
+     "t_day_clustered": 1.981,
+     "trades_per_day": 0.9875,
+     "win_rate_adverse": 0.4241
+    },
+    "best_by_fitness": {
+     "cost_burden_r": 0.1093,
+     "exp_r_adverse": 0.23493,
+     "exp_r_base": 0.31537,
+     "fitness": 0.060608,
+     "hash": "491730aea9847af8",
+     "n_candidates": 159,
+     "n_trades": 158,
+     "p_one_sided": 0.023801,
+     "payoff_adverse": 1.8951,
+     "profit_factor_adverse": 1.3953,
+     "q_bh": 0.999942,
+     "se_r": 0.1186,
+     "skips": {
+      "size_below_min": 1
+     },
+     "spec": {
+      "buffer_atr": 0.0,
+      "family": "ORB",
+      "mode": "breakout",
+      "range_min": 5,
+      "side": "both",
+      "stop_frac": 0.5,
+      "target": 2.0,
+      "target_kind": "r",
+      "window_min": 240
+     },
+     "spread_cost_r": 0.05141,
+     "t_day_clustered": 1.981,
+     "trades_per_day": 0.9875,
+     "win_rate_adverse": 0.4241
+    },
+    "cand_per_day_all_specs": {
+     "max": 0.99375,
+     "n": 150,
+     "p25": 0.7375,
+     "p50": 0.83125,
+     "p75": 0.93125
+    },
+    "cost_burden_r_active_specs": {
+     "max": 0.16618,
+     "n": 150,
+     "p25": 0.05053,
+     "p50": 0.07223,
+     "p75": 0.121
+    },
+    "exp_r_adverse_active_specs": {
+     "max": 0.23493,
+     "n": 150,
+     "p25": -0.11305,
+     "p50": -0.00287,
+     "p75": 0.0498
+    },
+    "exp_r_base_active_specs": {
+     "max": 0.31537,
+     "n": 150,
+     "p25": -0.04575,
+     "p50": 0.0281,
+     "p75": 0.09621
+    },
+    "family": "ORB",
+    "ledger_status_this_grid": {
+     "duplicate": 0,
+     "invalid": 0,
+     "new": 150
+    },
+    "market": "GER40",
+    "min_q_bh": 0.99994,
+    "min_trades": 40,
+    "n_bh_q_lt_0.10": 0,
+    "n_specs": 150,
+    "n_with_min_trades": 150,
+    "n_zero_candidates": 0,
+    "null": {
+     "expectancy_r_adverse": {
+      "null_best_mean": 0.185769,
+      "null_best_p95": 0.264528,
+      "p_best": 0.3077,
+      "pct": 0.75,
+      "real_best": 0.234934
+     },
+     "fitness": {
+      "null_best_mean": -0.014256,
+      "null_best_p95": 0.056466,
+      "p_best": 0.0769,
+      "pct": 1.0,
+      "real_best": 0.060608
+     },
+     "method": "day-shifted labels: same clock bar of the day s days later (circular), stop/target distances kept",
+     "min_trades": 40,
+     "n_shifts": 12,
+     "n_specs": 150,
+     "null_evaluations": 1800,
+     "seconds": 1.5
+    },
+    "seconds": {
+     "eval": 0.3,
+     "total": 1.8
+    },
+    "share_exp_r_adverse_gt0_active": 0.46,
+    "spread_cost_r_active_specs": {
+     "max": 0.07264,
+     "n": 150,
+     "p25": 0.02354,
+     "p50": 0.03328,
+     "p75": 0.05408
+    },
+    "trades_per_day_active_specs": {
+     "max": 0.9875,
+     "n": 150,
+     "p25": 0.675,
+     "p50": 0.80625,
+     "p75": 0.90469
+    },
+    "train_days": 160
+   },
+   "OVERNIGHT": {
+    "best_by_expectancy_adverse": {
+     "cost_burden_r": 0.06462,
+     "exp_r_adverse": 0.19173,
+     "exp_r_base": 0.20098,
+     "fitness": -0.143731,
+     "hash": "489e83288da437d3",
+     "n_candidates": 60,
+     "n_trades": 58,
+     "p_one_sided": 0.16242,
+     "payoff_adverse": 2.0069,
+     "profit_factor_adverse": 1.3188,
+     "q_bh": 0.998832,
+     "se_r": 0.19474,
+     "skips": {
+      "size_below_min": 2
+     },
+     "spec": {
+      "drift_q": 0.5,
+      "entry_min": 60,
+      "family": "OVERNIGHT",
+      "mode": "reverse",
+      "pos_filter": "extreme",
+      "side": "both",
+      "stop_atr": 2.0,
+      "target_r": 2.0
+     },
+     "spread_cost_r": 0.02833,
+     "t_day_clustered": 0.985,
+     "trades_per_day": 0.3625,
+     "win_rate_adverse": 0.3966
+    },
+    "best_by_fitness": {
+     "cost_burden_r": 0.08163,
+     "exp_r_adverse": 0.12046,
+     "exp_r_base": 0.14849,
+     "fitness": -0.101131,
+     "hash": "7bb676bb757de9b2",
+     "n_candidates": 60,
+     "n_trades": 59,
+     "p_one_sided": 0.178648,
+     "payoff_adverse": 1.0041,
+     "profit_factor_adverse": 1.2745,
+     "q_bh": 0.998832,
+     "se_r": 0.13086,
+     "skips": {
+      "size_below_min": 1
+     },
+     "spec": {
+      "drift_q": 0.5,
+      "entry_min": 60,
+      "family": "OVERNIGHT",
+      "mode": "reverse",
+      "pos_filter": "extreme",
+      "side": "both",
+      "stop_atr": 1.5,
+      "target_r": 1.0
+     },
+     "spread_cost_r": 0.03896,
+     "t_day_clustered": 0.921,
+     "trades_per_day": 0.3688,
+     "win_rate_adverse": 0.5593
+    },
+    "cand_per_day_all_specs": {
+     "max": 0.5,
+     "n": 150,
+     "p25": 0.1,
+     "p50": 0.25,
+     "p75": 0.375
+    },
+    "cost_burden_r_active_specs": {
+     "max": 0.18709,
+     "n": 70,
+     "p25": 0.08521,
+     "p50": 0.11179,
+     "p75": 0.14676
+    },
+    "exp_r_adverse_active_specs": {
+     "max": 0.19173,
+     "n": 70,
+     "p25": -0.16991,
+     "p50": -0.0923,
+     "p75": 0.00143
+    },
+    "exp_r_base_active_specs": {
+     "max": 0.26417,
+     "n": 70,
+     "p25": -0.11052,
+     "p50": -0.0145,
+     "p75": 0.06068
+    },
+    "family": "OVERNIGHT",
+    "ledger_status_this_grid": {
+     "duplicate": 0,
+     "invalid": 0,
+     "new": 150
+    },
+    "market": "GER40",
+    "min_q_bh": 0.99883,
+    "min_trades": 40,
+    "n_bh_q_lt_0.10": 0,
+    "n_specs": 150,
+    "n_with_min_trades": 70,
+    "n_zero_candidates": 0,
+    "null": {
+     "expectancy_r_adverse": {
+      "null_best_mean": 0.263657,
+      "null_best_p95": 0.525142,
+      "p_best": 0.6154,
+      "pct": 0.4167,
+      "real_best": 0.191731
+     },
+     "fitness": {
+      "null_best_mean": -0.001469,
+      "null_best_p95": 0.259577,
+      "p_best": 0.6923,
+      "pct": 0.3333,
+      "real_best": -0.101131
+     },
+     "method": "day-shifted labels: same clock bar of the day s days later (circular), stop/target distances kept",
+     "min_trades": 40,
+     "n_shifts": 12,
+     "n_specs": 150,
+     "null_evaluations": 1800,
+     "seconds": 1.4
+    },
+    "seconds": {
+     "eval": 0.2,
+     "total": 1.6
+    },
+    "share_exp_r_adverse_gt0_active": 0.2571,
+    "spread_cost_r_active_specs": {
+     "max": 0.08748,
+     "n": 70,
+     "p25": 0.03875,
+     "p50": 0.0503,
+     "p75": 0.06465
+    },
+    "trades_per_day_active_specs": {
+     "max": 0.5,
+     "n": 70,
+     "p25": 0.36875,
+     "p50": 0.375,
+     "p75": 0.49375
+    },
+    "train_days": 160
+   },
+   "ROUND": {
+    "best_by_expectancy_adverse": {
+     "cost_burden_r": 0.12118,
+     "exp_r_adverse": -0.0051,
+     "exp_r_base": 0.05036,
+     "fitness": -0.186717,
+     "hash": "976dff75feae9e1d",
+     "n_candidates": 478,
+     "n_trades": 358,
+     "p_one_sided": 0.528357,
+     "payoff_adverse": 1.6782,
+     "profit_factor_adverse": 0.992,
+     "q_bh": 1.0,
+     "se_r": 0.07166,
+     "skips": {
+      "day_cap": 2,
+      "size_below_min": 2
+     },
+     "spec": {
+      "family": "ROUND",
+      "hold": 0,
+      "level": "major",
+      "mode": "reject",
+      "prox_atr": 0.1,
+      "rej_atr": 0.6,
+      "side": "both",
+      "stop_atr": 1.5,
+      "target_r": 2.0,
+      "tod": "pm"
+     },
+     "spread_cost_r": 0.05366,
+     "t_day_clustered": -0.071,
+     "trades_per_day": 2.2375,
+     "win_rate_adverse": 0.3715
+    },
+    "best_by_fitness": {
+     "cost_burden_r": 0.12118,
+     "exp_r_adverse": -0.0051,
+     "exp_r_base": 0.05036,
+     "fitness": -0.186717,
+     "hash": "976dff75feae9e1d",
+     "n_candidates": 478,
+     "n_trades": 358,
+     "p_one_sided": 0.528357,
+     "payoff_adverse": 1.6782,
+     "profit_factor_adverse": 0.992,
+     "q_bh": 1.0,
+     "se_r": 0.07166,
+     "skips": {
+      "day_cap": 2,
+      "size_below_min": 2
+     },
+     "spec": {
+      "family": "ROUND",
+      "hold": 0,
+      "level": "major",
+      "mode": "reject",
+      "prox_atr": 0.1,
+      "rej_atr": 0.6,
+      "side": "both",
+      "stop_atr": 1.5,
+      "target_r": 2.0,
+      "tod": "pm"
+     },
+     "spread_cost_r": 0.05366,
+     "t_day_clustered": -0.071,
+     "trades_per_day": 2.2375,
+     "win_rate_adverse": 0.3715
+    },
+    "cand_per_day_all_specs": {
+     "max": 16.125,
+     "n": 150,
+     "p25": 3.80938,
+     "p50": 5.49062,
+     "p75": 7.8625
+    },
+    "cost_burden_r_active_specs": {
+     "max": 0.19023,
+     "n": 150,
+     "p25": 0.11776,
+     "p50": 0.15281,
+     "p75": 0.17234
+    },
+    "exp_r_adverse_active_specs": {
+     "max": -0.0051,
+     "n": 150,
+     "p25": -0.17573,
+     "p50": -0.13324,
+     "p75": -0.09272
+    },
+    "exp_r_base_active_specs": {
+     "max": 0.06224,
+     "n": 150,
+     "p25": -0.07311,
+     "p50": -0.04069,
+     "p75": -0.01639
+    },
+    "family": "ROUND",
+    "ledger_status_this_grid": {
+     "duplicate": 0,
+     "invalid": 0,
+     "new": 150
+    },
+    "market": "GER40",
+    "min_q_bh": 1.0,
+    "min_trades": 40,
+    "n_bh_q_lt_0.10": 0,
+    "n_specs": 150,
+    "n_with_min_trades": 150,
+    "n_zero_candidates": 0,
+    "null": {
+     "expectancy_r_adverse": {
+      "null_best_mean": -0.0102,
+      "null_best_p95": 0.052087,
+      "p_best": 0.5385,
+      "pct": 0.5,
+      "real_best": -0.005098
+     },
+     "fitness": {
+      "null_best_mean": -0.183039,
+      "null_best_p95": -0.137936,
+      "p_best": 0.4615,
+      "pct": 0.5833,
+      "real_best": -0.186717
+     },
+     "method": "day-shifted labels: same clock bar of the day s days later (circular), stop/target distances kept",
+     "min_trades": 40,
+     "n_shifts": 12,
+     "n_specs": 150,
+     "null_evaluations": 1800,
+     "seconds": 2.3
+    },
+    "seconds": {
+     "eval": 0.6,
+     "total": 2.9
+    },
+    "share_exp_r_adverse_gt0_active": 0.0,
+    "spread_cost_r_active_specs": {
+     "max": 0.08415,
+     "n": 150,
+     "p25": 0.05303,
+     "p50": 0.06992,
+     "p75": 0.0767
+    },
+    "trades_per_day_active_specs": {
+     "max": 6.0,
+     "n": 150,
+     "p25": 3.1625,
+     "p50": 4.25312,
+     "p75": 5.26719
+    },
+    "train_days": 160
+   },
+   "VOLREV": {
+    "best_by_expectancy_adverse": {
+     "cost_burden_r": 0.11992,
+     "exp_r_adverse": 0.09997,
+     "exp_r_base": 0.17011,
+     "fitness": -0.300413,
+     "hash": "0002ff93dd7d4d28",
+     "n_candidates": 86,
+     "n_trades": 83,
+     "p_one_sided": 0.309283,
+     "payoff_adverse": 2.5005,
+     "profit_factor_adverse": 1.1406,
+     "q_bh": 0.999999,
+     "se_r": 0.20079,
+     "skips": {},
+     "spec": {
+      "anchor": "vwap",
+      "exit_clock": "flat",
+      "family": "VOLREV",
+      "k": 2.5,
+      "mode": "fade",
+      "n_range": 0,
+      "pct": 0.75,
+      "side": "both",
+      "stop_atr": 1.0,
+      "target": 1.0,
+      "target_kind": "anchor",
+      "tod": "am"
+     },
+     "spread_cost_r": 0.05798,
+     "t_day_clustered": 0.498,
+     "trades_per_day": 0.5188,
+     "win_rate_adverse": 0.3133
+    },
+    "best_by_fitness": {
+     "cost_burden_r": 0.06448,
+     "exp_r_adverse": 0.02685,
+     "exp_r_base": 0.04926,
+     "fitness": -0.179722,
+     "hash": "021c73eced82e167",
+     "n_candidates": 106,
+     "n_trades": 100,
+     "p_one_sided": 0.374424,
+     "payoff_adverse": 1.1075,
+     "profit_factor_adverse": 1.064,
+     "q_bh": 0.999999,
+     "se_r": 0.08387,
+     "skips": {
+      "size_below_min": 3
+     },
+     "spec": {
+      "anchor": "open",
+      "exit_clock": "close",
+      "family": "VOLREV",
+      "k": 1.5,
+      "mode": "fade",
+      "n_range": 0,
+      "pct": 0.75,
+      "side": "both",
+      "stop_atr": 2.0,
+      "target": 1.0,
+      "target_kind": "r",
+      "tod": "pm"
+     },
+     "spread_cost_r": 0.03108,
+     "t_day_clustered": 0.32,
+     "trades_per_day": 0.625,
+     "win_rate_adverse": 0.49
+    },
+    "cand_per_day_all_specs": {
+     "max": 2.95,
+     "n": 150,
+     "p25": 0.40469,
+     "p50": 0.78125,
+     "p75": 1.26875
+    },
+    "cost_burden_r_active_specs": {
+     "max": 0.34336,
+     "n": 136,
+     "p25": 0.06741,
+     "p50": 0.11167,
+     "p75": 0.16869
+    },
+    "exp_r_adverse_active_specs": {
+     "max": 0.09997,
+     "n": 136,
+     "p25": -0.2448,
+     "p50": -0.15411,
+     "p75": -0.06871
+    },
+    "exp_r_base_active_specs": {
+     "max": 0.26604,
+     "n": 136,
+     "p25": -0.16005,
+     "p50": -0.05869,
+     "p75": 0.0069
+    },
+    "family": "VOLREV",
+    "ledger_status_this_grid": {
+     "duplicate": 0,
+     "invalid": 0,
+     "new": 150
+    },
+    "market": "GER40",
+    "min_q_bh": 1.0,
+    "min_trades": 40,
+    "n_bh_q_lt_0.10": 0,
+    "n_specs": 150,
+    "n_with_min_trades": 136,
+    "n_zero_candidates": 0,
+    "null": {
+     "expectancy_r_adverse": {
+      "null_best_mean": 0.17445,
+      "null_best_p95": 0.40611,
+      "p_best": 0.5385,
+      "pct": 0.5,
+      "real_best": 0.099972
+     },
+     "fitness": {
+      "null_best_mean": -0.095569,
+      "null_best_p95": 0.073807,
+      "p_best": 0.7692,
+      "pct": 0.25,
+      "real_best": -0.179722
+     },
+     "method": "day-shifted labels: same clock bar of the day s days later (circular), stop/target distances kept",
+     "min_trades": 40,
+     "n_shifts": 12,
+     "n_specs": 150,
+     "null_evaluations": 1800,
+     "seconds": 1.5
+    },
+    "seconds": {
+     "eval": 0.5,
+     "total": 2.0
+    },
+    "share_exp_r_adverse_gt0_active": 0.0515,
+    "spread_cost_r_active_specs": {
+     "max": 0.15338,
+     "n": 136,
+     "p25": 0.03066,
+     "p50": 0.05701,
+     "p75": 0.07027
+    },
+    "trades_per_day_active_specs": {
+     "max": 2.8,
+     "n": 136,
+     "p25": 0.475,
+     "p50": 0.78438,
+     "p75": 1.22031
+    },
+    "train_days": 160
+   }
+  }
+ },
+ "max_specs": 150,
+ "n_shifts": 12,
+ "runtime_s": 19.9,
+ "scope": "TRAIN side of fold 0 only; the sealed later-fold module is not imported or called",
+ "seed": 20260930,
+ "summary_version": "v2-families-summary-v1"
+}

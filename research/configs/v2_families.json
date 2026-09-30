@@ -1,0 +1,31 @@
+{
+ "version": "V2-families-config-1",
+ "markets": ["GER40", "NAS100", "SPX500", "XAUUSD", "EURUSD"],
+ "ger40_source": "ar1",
+ "families": ["ORB", "GAP", "OVERNIGHT", "VOLREV", "ROUND", "LEADLAG", "EOD"],
+ "max_specs_per_family_market": 400,
+ "seed": 20260930,
+ "min_train_trades": 40,
+ "top_k": 10,
+ "folds": {
+  "n_folds": 4,
+  "embargo_days": 5,
+  "purge_bars": 12,
+  "initial_train_frac": 0.4,
+  "min_test_days": 40,
+  "note": "the probe uses ONLY the TRAIN side of fold 0 (initial block); the frame is cut to it before any feature is built, so no later-fold bar is ever held. Later folds are reachable only through alpha.families.gate.survival_gate (not called here)."
+ },
+ "sizing": {
+  "research_equity_eur": 10000.0,
+  "risk_fraction": 0.005,
+  "note": "normalised research account (V1 DEFAULT_SIZING for GER40); costs/sizing per market from alpha.common.market_costs; window = the family spec's effective window on the market's LOCAL calendar"
+ },
+ "rules": {"max_trades_per_day": 6},
+ "null": {
+  "n_shifts": 24,
+  "note": "day-shifted-label null: candidates re-mapped to the same clock bar s days later (circular over Train days), stop/target distances kept; best-of-grid statistic per shift"
+ },
+ "baselines": {"draws": 20, "stop_atr_mult": 1.0, "target_r": 1.5, "decisions_per_day": 3},
+ "prior": {"trials": 30310, "unique_specs": 29798, "label": "v1 cumulative"},
+ "out_root": "research/reports/v2_families"
+}
