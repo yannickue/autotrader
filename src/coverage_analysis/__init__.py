@@ -7,4 +7,6 @@ look like (false-positive control)?  Nothing here is imported by the live engine
 influences a gate.
 """
 
+DETECTOR_VERSION = "move-detector-1"
+CONTROL_METHOD_VERSION = "control-method-1"
 HINDSIGHT_LABEL = "HINDSIGHT DIAGNOSTICS: moves are found with future bars; never a gate, filter or model input"

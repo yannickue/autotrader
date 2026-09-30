@@ -20,10 +20,13 @@ REJECTED = "REJECTED"  # an R2 opportunity exists but was rejected (engine gate 
 NEAR_MISS = "NEAR_MISS"  # no signal; one family condition was within tolerance (actual / required / normalized gap reported)
 OUT_OF_WINDOW = "OUT_OF_WINDOW"  # bars exist (broker tradable) but no frozen spec's entry window is open: shadow classification only
 NO_SETUP = "NO_SETUP"  # none of the above (closest failing family condition reported)
-# Data-availability bucket, NOT a sixth outcome: the offline re-run of the frozen generators emits a same-direction
-# signal but R2 holds no record for that period (the analysed bars pre-date the live runner).
+CLASSES = (EXECUTED, REJECTED, NEAR_MISS, OUT_OF_WINDOW, NO_SETUP)  # exactly five; they sum to the number of moves
+# Data-availability metadata (``r2_data_status`` of a move), NOT a class. Rule: a move whose offline-replayed frozen
+# generators WOULD have signalled while R2 holds no record (bars pre-date the live runner) is classed REJECTED
+# ("a signal existed, no trade resulted"; never EXECUTED without live evidence) with r2_data_status = SIGNAL_NOT_IN_R2.
+R2_AVAILABLE = "R2_AVAILABLE"  # an R2 record exists around the move start
 SIGNAL_NOT_IN_R2 = "SIGNAL_NOT_IN_R2"
-CLASSES = (EXECUTED, REJECTED, NEAR_MISS, OUT_OF_WINDOW, NO_SETUP, SIGNAL_NOT_IN_R2)
+R2_NOT_APPLICABLE = "NOT_APPLICABLE"
 NO_STRUCTURE = "NO_TRIGGER_STRUCTURE (no relaxable condition reaches a trigger within 0.75 of its scale)"
 
 
@@ -75,12 +78,12 @@ def classify_moves(
         base = {
             "market": market, "direction": mv.direction, "start_utc": bar_close(data, mv.start).isoformat(),
             "reach_utc": bar_close(data, mv.reach).isoformat(), "atr": mv.atr, "excursion_atr": mv.excursion_atr,
-            "start_idx": mv.start,
+            "start_idx": mv.start, "r2_data_status": R2_NOT_APPLICABLE,
         }
         t0, t1 = bar_close(data, a), bar_close(data, b)
         r2_hit = [r for r in r2m if r.direction == mv.direction and t0 <= r.signal_ts <= t1]
         if r2_hit:
-            base.update(klass=EXECUTED if any(r.executed for r in r2_hit) else REJECTED, detail=[{
+            base.update(klass=EXECUTED if any(r.executed for r in r2_hit) else REJECTED, r2_data_status=R2_AVAILABLE, detail=[{
                 "opportunity_id": r.opportunity_id, "family": r.family, "accepted": r.accepted,
                 "reasons": list(r.reasons), "intent_state": r.intent_state, "stack_reject_code": r.stack_reject_code,
                 "outcome_net_r": r.outcome_net_r, "counterfactual_r": r.cf_r, "counterfactual_source": r.cf_source,
@@ -89,7 +92,7 @@ def classify_moves(
             continue
         s = sig.window(mv.direction, a, b)
         if s:
-            base.update(klass=SIGNAL_NOT_IN_R2, detail=[{"family": t.family, "mode": t.mode, "strategy_id": t.strategy_id, "bar_offset": t.idx - mv.start} for t in s[:5]])
+            base.update(klass=REJECTED, r2_data_status=SIGNAL_NOT_IN_R2, detail=[{"family": t.family, "mode": t.mode, "strategy_id": t.strategy_id, "bar_offset": t.idx - mv.start} for t in s[:5]])
             out.append(base)
             continue
         nm = near.window(mv.direction, a, b)

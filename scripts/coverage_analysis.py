@@ -26,7 +26,7 @@ from alpha.families.data import build_leader_features  # noqa: E402
 from alpha.families.spec import MarketCalendar  # noqa: E402
 from coverage_analysis.moves import MoveParams  # noqa: E402
 from coverage_analysis.r2 import funnel_summary, load_r2  # noqa: E402
-from coverage_analysis.replay import DEFAULT_TOLERANCE  # noqa: E402
+from coverage_analysis.replay import DEFAULT_LEVELS, DEFAULT_TOLERANCE  # noqa: E402
 from coverage_analysis.report import (  # noqa: E402
     analyse_market,
     meta_params,
@@ -81,10 +81,10 @@ def main(argv: list[str] | None = None) -> int:
         span.append(f"{m} {eval_from.date()}..{last.date()}")
     overlap = sum(1 for r in r2 if any(r.market == res["market"] for res in results))
     meta = {
-        "params": meta_params(p), "tolerance": a.tolerance,
+        "params": meta_params(p), "tolerance": a.tolerance, "seed": a.seed, "grid": list(DEFAULT_LEVELS),
         "data": "existing dev bars (load_dev_market_frame, holdout guard active: nothing after 2026-08-31); spans " + "; ".join(span),
         "r2": (f"{len(r2)} opportunities read via DemoStore.funnel_rows/counterfactual_rows/get_outcome from a copy; funnel summary {funnel_summary(a.db)}" if a.db else "not provided"),
-        "sample": f"{sum(r['moves'] for r in results)} moves, {sum(r['signals'] for r in results)} replayed signals, {sum(r['near_misses'] for r in results)} near-misses; seed {a.seed}; R2 opportunities in the analysed markets: {overlap}",
+        "sample": f"{sum(r['moves'] for r in results)} moves, {sum(r['replay_signals'] for r in results)} replayed-signal instances, {sum(r['near_miss_moves'] for r in results)} near_miss_moves (unit: moves), {sum(r['near_miss_control_instances'] for r in results)} near_miss_control_instances (unit: relaxed-condition instances); seed {a.seed}; R2 opportunities in the analysed markets: {overlap}",
     }
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)

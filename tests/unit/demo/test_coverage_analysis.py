@@ -14,6 +14,7 @@ from alpha.families.data import atr14, build_family_data
 from alpha.families.roundnum import ROUNDSpec
 from alpha.families.spec import MarketCalendar
 from coverage_analysis.classify import (
+    CLASSES,
     EXECUTED,
     NEAR_MISS,
     NO_SETUP,
@@ -197,7 +198,8 @@ def test_classification_covered_near_out_unseen(ms):
     assert r["klass"] == NO_SETUP and r["reason"] == NO_STRUCTURE
 
     rep = ReplayResult(MARKET, signals=[_trig(52, 1, "SIGNAL")])
-    assert _classify(ms, rep, mv)[0]["klass"] == SIGNAL_NOT_IN_R2
+    r0 = _classify(ms, rep, mv)[0]
+    assert r0["klass"] == REJECTED and r0["r2_data_status"] == SIGNAL_NOT_IN_R2 and len(CLASSES) == 5
     opp = ReplayResult(MARKET, signals=[_trig(52, -1, "SIGNAL")])  # opposite direction is NOT coverage
     assert _classify(ms, opp, mv)[0]["klass"] == NO_SETUP
     late = ReplayResult(MARKET, signals=[_trig(58, 1, "SIGNAL")])  # after the move was already completed: not coverage
@@ -337,11 +339,12 @@ def test_analyse_data_and_render(ms):
     data = _data(fr, ms)
     p = MoveParams(n_atr=2.5, m_bars=18)
     res = analyse_data(MARKET, data, NOISY_SPECS, lo=600, params=p)
-    assert res["moves"] == sum(res["counts"].values()) and res["moves"] > 0
-    assert res["signals"] > 0 and "ALL/SIGNAL" in res["control"] and "ROUND/SIGNAL" in res["control"]
+    assert res["moves"] == sum(res["counts"].values()) and res["moves"] > 0 and set(res["counts"]) == set(CLASSES)
+    assert res["near_miss_moves"] == res["counts"]["NEAR_MISS"] and res["near_miss_control_instances"] >= 0
+    assert res["replay_signals"] > 0 and "ALL/SIGNAL" in res["control"] and "ROUND/SIGNAL" in res["control"]
     meta = {"params": meta_params(p), "tolerance": 0.15, "data": "synthetic", "r2": "none", "sample": "unit test"}
     md = render_markdown([res], meta)
-    assert "HINDSIGHT DIAGNOSTICS" in md and "MANDATORY CONTROL" in md and "Coverage per market" in md
+    assert "HINDSIGHT DIAGNOSTICS" in md and "MANDATORY CONTROL" in md and "Methodology" in md and "move-detector-1" in md and "NOT a statement about trade expectancy" in md and "Coverage per market" in md
     assert '"label"' in to_json([res], meta)
     again = analyse_data(MARKET, data, NOISY_SPECS, lo=600, params=p)
     assert again["counts"] == res["counts"] and again["control"]["ALL/SIGNAL"]["uniform_sample"] == res["control"]["ALL/SIGNAL"]["uniform_sample"]
