@@ -82,7 +82,7 @@ from demo.execution.events import (
     Rejected,
 )
 from demo.execution.stack_port import AccountSnapshot, StackFailClosed, StackPort
-from demo.labeling import Bar, PathPoint, label_counterfactuals, outcome_from_fills
+from demo.labeling import Bar, PathPoint, label_counterfactuals, outcome_from_fills, path_analytics
 from demo.labeling import Fill as LabelFill
 from demo.store import (
     CANCELLED,
@@ -1175,7 +1175,7 @@ class DemoRunner:
             self._advance(iid, SENT, now)
             ex = self._execution_from_fill(intent, ev)
             self.store.record_execution(iid, ex)
-            self.store.record_tca(iid, self._tca_entry(ev), "ENTRY")
+            self.store.record_tca(iid, self._tca_entry(ev, intent), "ENTRY")
             self._advance(iid, FILLED, now)
             self._last_fill = {"ts": ts, "market": intent.market, "intent_id": iid, "price": float(ev.price), "quantity": float(ev.quantity)}
         elif isinstance(ev, ProtectionConfirmed):
@@ -1196,8 +1196,35 @@ class DemoRunner:
             self._note_error(now, f"risk_detail_{kind.lower()}:{iid}: {exc}")
 
     @staticmethod
-    def _tca_entry(ev: Fill) -> dict[str, Any]:
-        """Entry-side transaction-cost analysis of one fill (floats; price units unless noted)."""
+    def _tca_entry(ev: Fill, intent: TradeIntent | None = None) -> dict[str, Any]:
+        """Entry-side transaction-cost analysis of one fill (floats; price units unless noted).
+
+        Decision-to-fill chain (``intent`` given): ``decision_price`` (engine ``entry_ref`` at decision) ->
+        ``order_arrival_price`` (the executable quote the stack used at submit: ``Fill.reference_price``,
+        else the ask/bid at send) -> ``requested_price`` (market order: NOT provided by the stack events -> None) ->
+        ``actual_fill_price``.  Drift / shortfall are adverse-positive (long: higher is worse).  A field the
+        stack events do not carry is None and listed in ``tca_missing_fields``."""
+        d = intent.direction if intent is not None else None
+        decision = None if intent is None else _num(intent.entry_ref)
+        arrival = _num(ev.reference_price)
+        if arrival is None and d is not None:
+            arrival = _num(ev.ask_at_send if d > 0 else ev.bid_at_send)
+        fill = _num(ev.price)
+        risk = None if intent is None else abs(intent.entry_ref - intent.stop)
+        drift = None if (d is None or decision is None or arrival is None) else d * (arrival - decision)
+        shortfall = None if (d is None or decision is None or fill is None) else d * (fill - decision)
+        chain = {
+            "decision_price": decision, "order_arrival_price": arrival, "requested_price": None,
+            "actual_fill_price": fill, "decision_to_arrival_drift": drift, "implementation_shortfall": shortfall,
+            "implementation_shortfall_r": None if (shortfall is None or not risk) else shortfall / risk,
+            "decision_to_arrival_drift_r": None if (drift is None or not risk) else drift / risk,
+        }
+        chain["tca_missing_fields"] = sorted(k for k, v in chain.items() if v is None and k in (
+            "decision_price", "order_arrival_price", "requested_price", "actual_fill_price"))
+        return {**chain, **DemoRunner._tca_entry_raw(ev)}
+
+    @staticmethod
+    def _tca_entry_raw(ev: Fill) -> dict[str, Any]:
         return {
             "fill_price": _num(ev.price), "quantity": _num(ev.quantity),
             "intended_price": _num(ev.intended_price), "reference_price": _num(ev.reference_price),
@@ -1309,6 +1336,7 @@ class DemoRunner:
         swap = entry_swap + _f(ev.swap)
         verified = ev.commission is not None and ev.swap is not None  # the broker's closing deals told us
         value = self._value_per_unit(intent.market, intent.direction, ex.fill_price, exit_px, qty, ev.profit_eur)
+        path = self._path(intent.market, intent.direction, entry_at, closed_at)
         try:
             outcome = outcome_from_fills(
                 direction=intent.direction,
@@ -1319,7 +1347,7 @@ class DemoRunner:
                 value_per_unit_eur=value,
                 fees_eur=commission,
                 swap_eur=swap,
-                path=self._path(intent.market, intent.direction, entry_at, closed_at),
+                path=path,
             )
         except ValueError as exc:
             self._warnings.append(f"needs_outcome:{iid}:{exc}")
@@ -1351,9 +1379,31 @@ class DemoRunner:
             "exit_reason": ev.exit_reason,
         }, "EXIT")
         self.store.record_outcome(iid, outcome)  # only AFTER the intent is CLOSED
+        self._record_outcome_extra(intent, ex.fill_price, exit_px, entry_at, closed_at, path, now)
         self._last_persist = ts
         self._refresh_cum_r()
         self._check_milestones()
+
+    def _record_outcome_extra(
+        self, intent: TradeIntent, fill_price: float, exit_px: float, entry_at: datetime, closed_at: datetime,
+        path: list[PathPoint], now: datetime,
+    ) -> None:
+        """Timing analytics (signal age at fill, time to 0.25R / 0.5R / 1R, time without progress, MFE
+        giveback).  Diagnostics only: a failure here never affects the outcome or trading."""
+        try:
+            extra = path_analytics(
+                direction=intent.direction, entry_price=fill_price, initial_stop=intent.stop, entry_ts=_iso(entry_at),
+                exit_price=exit_px, exit_ts=_iso(closed_at), path=path,
+            )
+            snap = self.store.get_snapshot(intent.opportunity_id)
+            if snap is not None:
+                extra["signal_age_at_fill_s"] = (entry_at - parse_utc(snap.signal_ts_utc)).total_seconds()
+                extra["signal_age_note"] = "runner-observed fill time minus signal (bar close) time"
+            self.store.record_outcome_extra(intent.intent_id, extra)
+        except (sqlite3.Error, OSError):
+            raise
+        except Exception as exc:
+            self._note_error(now, f"outcome_extra:{intent.intent_id}: {type(exc).__name__}: {exc}")
 
     # ------------------------------------------------------------------------------- periodic
     def _check_milestones(self) -> None:

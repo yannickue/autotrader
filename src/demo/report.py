@@ -164,6 +164,48 @@ def _group(
     return {k: _stats(v) for k, v in sorted(buckets.items())}
 
 
+def _execution_analytics(store: DemoStore, phase: str | None, rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """TCA chain (decision -> arrival -> fill) and timing analytics of the STRATEGY trades."""
+    ids = {r["intent_id"] for r in rows}
+    tca = [t for t in store.list_tca(phase) if t["stage"] == "ENTRY" and t["intent_id"] in ids]
+    extras = [e for e in (store.get_outcome_extra(i) for i in sorted(ids)) if e]
+
+    def avg(seq: list[dict[str, Any]], k: str) -> float | None:
+        return _mean([float(x[k]) for x in seq if x.get(k) is not None])
+
+    def share(k: str) -> float | None:
+        return (sum(1 for e in extras if e.get(k) is not None) / len(extras)) if extras else None
+
+    missing: dict[str, int] = {}
+    for t in tca:
+        for k in t.get("tca_missing_fields", []) or []:
+            missing[k] = missing.get(k, 0) + 1
+    return {
+        "tca": {
+            "n": len(tca),
+            "mean_decision_to_arrival_drift": avg(tca, "decision_to_arrival_drift"),
+            "mean_decision_to_arrival_drift_r": avg(tca, "decision_to_arrival_drift_r"),
+            "mean_implementation_shortfall": avg(tca, "implementation_shortfall"),
+            "mean_implementation_shortfall_r": avg(tca, "implementation_shortfall_r"),
+            "mean_movement_to_cost": avg(tca, "movement_to_cost"),
+            "fields_missing_in_stack_events": missing,
+        },
+        "timing": {
+            "n": len(extras),
+            "mean_signal_age_at_fill_s": avg(extras, "signal_age_at_fill_s"),
+            "share_reaching_0.25R": share("time_to_0.25R_s"),
+            "share_reaching_0.5R": share("time_to_0.5R_s"),
+            "share_reaching_1R": share("time_to_1R_s"),
+            "mean_time_to_0.25R_s": avg(extras, "time_to_0.25R_s"),
+            "mean_time_to_0.5R_s": avg(extras, "time_to_0.5R_s"),
+            "mean_time_to_1R_s": avg(extras, "time_to_1R_s"),
+            "mean_time_without_progress_s": avg(extras, "time_without_progress_s"),
+            "mean_mfe_giveback_r": avg(extras, "mfe_giveback_r"),
+            "resolution": "bar (5 min)",
+        },
+    }
+
+
 def _side_group(store: DemoStore, phase: str | None, kind: str) -> dict[str, Any]:
     """Censored (manual / external / emergency flatten) or canary trades: shown SEPARATELY, never mixed
     into the strategy metrics."""
@@ -305,6 +347,7 @@ def build_report(store: DemoStore, phase: str | None = None) -> dict[str, Any]:
         "disclaimer": "DEMO_ALPHA_RESULT != LIVE_EXECUTION_PROOF",
         "account": account,
         "generated_utc": datetime.now().astimezone().isoformat(),
+        "execution_analytics": _execution_analytics(store, phase, rows),
         "censored_exits": censored,
         "canary_trades": canary,
         "account_pnl_reconciliation": {
@@ -405,6 +448,9 @@ def render_markdown(report: dict[str, Any]) -> str:
         g = report.get(key)
         if g is not None:
             L += ["", f"## {title}", "", f"- n {g['n']} | sum net R {_fmt(g['sum_net_r'])} | EUR {_fmt(g['pnl_eur'])} | avg MFE R {_fmt(g['avg_mfe_r'])} | avg MAE R {_fmt(g['avg_mae_r'])} | avg duration s {_fmt(g['avg_holding_s'])}", f"- {g['note']}"]
+    ea = report.get("execution_analytics")
+    if ea:
+        L += ["", "## Execution analytics (strategy trades)", "", f"- tca: {json.dumps(ea['tca'], default=str)}", f"- timing: {json.dumps(ea['timing'], default=str)}"]
     rec = report.get("account_pnl_reconciliation")
     if rec:
         L += ["", "## Account P/L reconciliation (closed trades)", "", f"- strategy {_fmt(rec['strategy_eur'])} | censored {_fmt(rec['censored_eur'])} | canary {_fmt(rec['canary_eur'])} | total {_fmt(rec['total_closed_eur'])} EUR"]

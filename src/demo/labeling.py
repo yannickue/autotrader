@@ -298,6 +298,55 @@ class Fill:
     ts_utc: str
 
 
+PROGRESS_LEVELS_R: tuple[float, ...] = (0.25, 0.5, 1.0)
+
+
+def path_analytics(
+    *,
+    direction: int,
+    entry_price: float,
+    initial_stop: float,
+    entry_ts: str,
+    exit_price: float,
+    exit_ts: str,
+    path: Iterable[PathPoint],
+) -> dict[str, float | str | None]:
+    """Timing analytics of one realised trade from its bar path (resolution = the bar, 5 min: a bar is
+    dated by its OPEN, clipped to the entry time).  All R are against the initial risk |fill - stop|.
+
+    * ``time_to_<x>R_s``        seconds from entry to the first point whose favourable extreme reached x R;
+    * ``time_without_progress_s`` longest stretch (entry -> first progress -> ... -> exit) without a NEW
+                                   favourable high;
+    * ``mfe_giveback_r``        peak-to-exit: MFE minus the final gross R (>= 0; a trade that never went green and lost 1R has giveback 1)."""
+    risk = abs(entry_price - initial_stop)
+    if not risk > 0:
+        raise ValueError("initial risk distance must be > 0")
+    t0, t1 = parse_utc(entry_ts), parse_utc(exit_ts)
+    pts = [(max(t0, parse_utc(p.ts_utc)), p.high, p.low) for p in path if t0 <= parse_utc(p.ts_utc) <= t1]
+    pts.append((t1, exit_price, exit_price))
+    pts.sort(key=lambda x: x[0])
+    best = 0.0
+    last_progress = t0
+    longest = 0.0
+    reached: dict[float, float | None] = {x: None for x in PROGRESS_LEVELS_R}
+    for t, hi, lo in pts:
+        fav = ((hi - entry_price) if direction > 0 else (entry_price - lo)) / risk
+        if fav > best:
+            for x in PROGRESS_LEVELS_R:
+                if reached[x] is None and fav >= x:
+                    reached[x] = (t - t0).total_seconds()
+            longest = max(longest, (t - last_progress).total_seconds())
+            best, last_progress = fav, t
+    longest = max(longest, (t1 - last_progress).total_seconds())
+    final_r = ((exit_price - entry_price) * direction) / risk
+    out: dict[str, float | str | None] = {f"time_to_{x:g}R_s": reached[x] for x in PROGRESS_LEVELS_R}
+    out.update(
+        time_without_progress_s=longest, mfe_giveback_r=max(0.0, best - final_r), path_mfe_r=best,
+        final_gross_r=final_r, resolution="bar_5m",
+    )
+    return out
+
+
 @dataclass(frozen=True, slots=True)
 class PathPoint:
     """A bar (high/low) or a tick (high == low == price) between entry and exit, in the price basis the
