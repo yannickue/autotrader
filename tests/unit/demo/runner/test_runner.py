@@ -265,7 +265,7 @@ def test_unknown_submit_error_never_resent(env):
 def test_account_guards_fail_closed(env, change, expect):
     snap, dec, intent = make_pair()
     env.engine.push("GER40", (snap, dec, intent))
-    r = env.build(unprotected_grace_s=0.0)
+    r = env.build(unprotected_grace_s=0.0, transient_grace_s=0.0)  # grace 0: transient => fail closed at once
     r.start()
     env.stack.set_account(**change)
     if "open_positions" in change:
@@ -316,7 +316,7 @@ def test_single_stale_market_is_skipped_all_stale_halts(env):
     env.engine.push("NAS100", b)
     env.stack.bar_source.frozen["NAS100"] = env.clock()
     env.clock.advance(minutes=30)  # NAS100 frozen 30 min ago -> stale; GER40 live
-    r = env.build(markets=("GER40", "NAS100"), all_stale_grace_s=900.0)
+    r = env.build(markets=("GER40", "NAS100"), all_stale_grace_s=900.0, all_stale_exit_s=900.0)
     _cycle(r)
     assert {m for m, _ in env.engine.calls} == {"GER40"}
     assert r.fail_reason is None
@@ -345,7 +345,7 @@ def test_stack_failclosed_from_poll(env):
 def test_exit_managed_after_fail_closed_then_stop(env):
     snap, dec, intent = make_pair()
     env.engine.push("GER40", (snap, dec, intent))
-    r = env.build()
+    r = env.build(transient_grace_s=0.0)
     _cycle(r)
     assert env.store.get_state(intent.intent_id) == PROTECTED
     env.stack.set_account(reconciliation="MISMATCH")
@@ -501,8 +501,11 @@ def test_trainer_is_throttled_and_contained(env):
     assert calls == []
     env.clock.advance(minutes=11)
     r.run_cycle()
+    r.join_training(5)
     r.run_cycle()
+    r.join_training(5)
     assert len(calls) == 1 and r.fail_reason is None
+    assert "train boom" in r._last_error["text"]
 
 
 def test_phase_tagging_and_separation(env):

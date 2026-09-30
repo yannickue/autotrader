@@ -103,3 +103,74 @@ def test_runner_drives_the_real_stack_end_to_end(rig):
     hb = json.loads(runner.cfg.heartbeat_path.read_text())
     assert hb["rejection_funnel"]["traded"] == 1
     broker.set_quote(*QUOTES["Ger40"])
+
+
+# ---------------------------------------------------------------------------------------------
+# build_live_runner in BOTH modes over the real Mt5DemoStack + FakeMT5Broker (no FakeStack)
+# ---------------------------------------------------------------------------------------------
+@pytest.fixture
+def factory_env(tmp_path, monkeypatch):
+    import adapters.activtrades_mt5.real_client as rc
+    import adapters.config as cfgmod
+    from tests.unit.demo.execution.stack_harness import FAST, connection
+
+    monkeypatch.delenv("MT5_ALLOW_ACCOUNT_LOGIN", raising=False)
+    built = []
+
+    def build(mode: str):
+        broker = build_broker()
+        rows = m5_rows(broker, n=700)  # >= min history: the REAL engine runs on the REAL bar source
+        broker.rates[5] = rows
+        for sym in ("UsaTec", "Usa500", "GOLD", "EURUSD"):  # leader markets of the LEADLAG family
+            broker.extra_rates.setdefault(sym, {})[5] = rows
+        monkeypatch.setattr(rc, "get_real_client", lambda: broker)  # the fake broker, never MetaTrader5
+        monkeypatch.setattr(cfgmod, "load_attach_only_config", lambda *a, **k: connection(broker))
+        from demo import runner as rn
+
+        r = rn.build_live_runner(
+            mode, artifacts_dir=tmp_path / mode, markets=("GER40",), learning=False,
+            stack_kwargs={"lock_path": tmp_path / f"{mode}.lock", "config": FAST},
+        )
+        built.append(r)
+        return broker, r
+
+    yield build
+    for r in built:
+        r.stack.stop()
+        r.store.close()
+
+
+def test_build_live_runner_shadow_mode_real_stack_never_sends(factory_env):
+    broker, r = factory_env("shadow")
+    assert r.stack.shadow is True and r.engine._source is r.stack.bar_source
+    r.start()
+    assert r.fail_reason is None, r.fail_reason
+    eng = ScriptedEngine()
+    a = _pair("a")
+    eng.push("GER40", a)
+    real_engine, r.engine = r.engine, eng
+    r.run_cycle()
+    assert r.fail_reason is None and r.store.list_intents() == []  # shadow: no intent, no order
+    assert broker.order_send_calls == 0
+    assert r.store.get_decision(a[0].opportunity_id).accepted
+    # the REAL engine also ran on the REAL LiveBarSource (700 synthetic bars) without contract errors
+    r.engine = real_engine
+    real_engine.on_m5_close("GER40", datetime.now(UTC))
+    assert real_engine.health["GER40"] in ("ok", "insufficient_history")
+
+
+def test_build_live_runner_demo_auto_real_stack_trades_and_closes(factory_env):
+    broker, r = factory_env("demo-auto")
+    assert r.stack.shadow is False
+    r.start()
+    assert r.fail_reason is None, r.fail_reason
+    eng = ScriptedEngine()
+    a = _pair("a")
+    eng.push("GER40", a)
+    r.engine = eng
+    r.run_cycle()
+    assert r.store.get_state(a[2].intent_id) == PROTECTED and broker.order_send_calls == 1
+    broker.set_quote(24940.0, 24941.5)
+    r.run_cycle()
+    assert r.store.get_state(a[2].intent_id) == CLOSED and r.store.get_outcome(a[2].intent_id) is not None
+    assert r.fail_reason is None

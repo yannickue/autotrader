@@ -52,8 +52,16 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--db", type=Path, default=None)
     parser.add_argument("--phase", choices=("DISCOVERY", "FROZEN"), default=None)
     parser.add_argument("--markets", default=None, help="comma separated subset of markets")
+    parser.add_argument(
+        "--forced-flat-on-shutdown", action="store_true",
+        help="flatten open positions on shutdown IF the stack offers a flatten call (default off; the "
+             "current StackPort has none: positions stay protected by their broker-side stops)",
+    )
     learn = parser.add_mutually_exclusive_group()
-    learn.add_argument("--learning", dest="learning", action="store_true", default=None)
+    learn.add_argument(
+        "--learning", dest="learning", action="store_true", default=None,
+        help="opt in to shadow learning (default: ON for --shadow, OFF for --demo-auto)",
+    )
     learn.add_argument("--no-learning", dest="learning", action="store_false")
     return parser
 
@@ -100,6 +108,7 @@ def _run(args: argparse.Namespace, mode: str) -> int:
         r = rn.build_live_runner(
             mode, phase=args.phase or "DISCOVERY", db_path=args.db, artifacts_dir=args.artifacts,
             markets=markets, learning=args.learning,
+            forced_flat_on_shutdown=args.forced_flat_on_shutdown,
         )
     except rn.LiveStackRefused as exc:
         print(f"REFUSED: {exc}", file=sys.stderr)

@@ -289,7 +289,7 @@ def test_factory_real_path_wires_client_config_state_dir_dry_run(tmp_path, monke
     r.store.close()
     kw = seen[-1]
     assert kw["client"] is client and kw["connection"] is conn and kw["dry_run"] is True
-    assert Path(kw["state_dir"]) == tmp_path / "s" / "stack" and set(kw["market_specs"]) == {"GER40", "NAS100"}
+    assert Path(kw["state_dir"]) == tmp_path / "s" / "stack" and len(kw["market_specs"]) == 5
     r = rn.build_live_runner("demo-auto", artifacts_dir=tmp_path / "d", markets=("GER40",))
     r.store.close()
     assert seen[-1]["dry_run"] is False

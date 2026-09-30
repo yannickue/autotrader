@@ -16,9 +16,18 @@ Hard rules implemented here (no LLM / Optuna / DEAP anywhere in this module):
     intent per opportunity; only a PLANNED intent is ever submitted; on restart unfinished intents
     are reconciled with ``stack.open_intents()`` and are NEVER re-sent (see ``_reconcile_restart``).
   * Fail closed (stop new exposure, keep managing exits, write the error to the heartbeat, exit 7
-    after an orderly stop) on: non-demo/unknown account, stale feeds (all markets), reconciliation
-    != RECONCILED, persistence failure, unprotected exposure, disconnect, clock anomaly,
-    ``StackFailClosed``, low disk.
+    after an orderly stop) on: non-demo/unknown account, persistence failure, unprotected exposure,
+    clock anomaly, ``StackFailClosed``, low disk - immediately.
+  * TRANSIENT conditions (reconciliation != RECONCILED, a brief disconnect, a stack halt/kill switch, all
+    expected-open feeds stale) first put the runner into HALT-NEW-EXPOSURE: no new orders, but polling /
+    exit management continue and the condition is re-checked every cycle with exponential backoff; the
+    runner resumes on its own when the condition clears and exits 7 only if it persists beyond
+    ``transient_grace_s`` (stale feeds: ``all_stale_exit_s``).  The runner-level halt does NOT latch the
+    stack (``StackPort`` has no un-halt), so recovery is possible.
+  * Closed markets are idle, not stale: a feed only counts as stale while the market's MarketSpec calendar
+    (local weekday + cash session) says it should be open.
+  * An in-doubt entry (``order_outcome_unknown``) becomes the non-terminal ``IN_DOUBT`` state (never
+    CANCELLED): a late Fill / PositionClosed from broker truth still advances it and writes the outcome.
   * Learning libraries are imported lazily and only if enabled; an import failure never stops trading.
 
 Restart rules for intents found unfinished in the store (documented contract):
@@ -45,7 +54,7 @@ import sqlite3
 import sys
 import threading
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -76,6 +85,7 @@ from demo.store import (
     CANCELLED,
     CLOSED,
     FILLED,
+    IN_DOUBT,
     PLANNED,
     PROTECTED,
     RISK_APPROVED,
@@ -98,6 +108,9 @@ CHAMPION = "static-demo-policy-v1"
 MODES = ("shadow", "demo-auto")
 _ORDER = (PLANNED, RISK_APPROVED, SENT, FILLED, PROTECTED, CLOSED)
 _M5 = timedelta(minutes=5)
+
+
+TRANSIENT_STACK_PREFIXES = ("broker_disconnect", "not_reconciled", "runtime_not_ready", "stale_feed")
 
 
 class LiveStackUnavailable(RuntimeError):
@@ -268,6 +281,11 @@ class RunnerConfig:
     trainer_every_trades: int = 10
     min_disk_free_bytes: int = monitor.MIN_DISK_FREE_BYTES
     unprotected_grace_s: float = 30.0
+    transient_grace_s: float = 300.0  # reconciliation / disconnect / stack halt: halt-new-exposure, then exit 7
+    transient_backoff_max_s: float = 30.0
+    all_stale_exit_s: float = 7200.0  # expected-open feeds all stale this long => exit 7 (halt starts at all_stale_grace_s)
+    train_timeout_s: float = 600.0
+    forced_flat_on_shutdown: bool = False  # only honoured if the stack offers ``flatten_all`` (StackPort has none)
     max_clock_skew_s: float = 300.0
     clock_backward_tolerance_s: float = 5.0
     manage_after_halt_s: float = 4 * 3600.0
@@ -355,6 +373,12 @@ class DemoRunner:
         self._trained_at = 0
         self._last_train_report: dict[str, Any] | None = None
         self._last_label_n = 0
+        self._transient: dict[str, tuple[datetime, str]] = {}  # key -> (since, reason)
+        self._transient_cycles = 0
+        self._stale_halt_since: datetime | None = None
+        self._train_thread: threading.Thread | None = None
+        self._train_started: datetime | None = None
+        self._train_result: dict[str, Any] | None = None
         self._funnel: dict[str, Any] | None = None
         self._funnel_at: datetime | None = None
         self._funnel_dirty = True
@@ -397,14 +421,15 @@ class DemoRunner:
             self._cum_r = float(sum(o.net_r for _, _, o in self.store.list_outcomes(self.cfg.phase)))
 
     # ---------------------------------------------------------------------- fail-closed plumbing
-    def halt(self, reason: str, now: datetime | None = None) -> None:
+    def halt(self, reason: str, now: datetime | None = None, *, latch_stack: bool = True) -> None:
         """Stop NEW exposure (idempotent). Exits keep being managed."""
         if self.halt_reason is not None:
             return
         self.halt_reason = reason
         self._halted_since = now or self._clock()
-        with contextlib.suppress(Exception):
-            self.stack.halt_new_exposure(reason)
+        if latch_stack:
+            with contextlib.suppress(Exception):
+                self.stack.halt_new_exposure(reason)
 
     def _fail_closed(self, reason: str, now: datetime | None = None) -> None:
         if self.fail_reason is None:
@@ -433,7 +458,30 @@ class DemoRunner:
                     signal.signal(sig, _handler)
 
     def can_trade(self) -> bool:
-        return self.halt_reason is None and not self._stopping and self.fail_reason is None
+        return (
+            self.halt_reason is None and not self._stopping and self.fail_reason is None
+            and not self._transient and self._stale_halt_since is None
+        )
+
+    def _note_transient(self, key: str, reason: str, now: datetime) -> None:
+        """Register a transient condition (first-seen time kept); exceeding the grace fails closed."""
+        since, _old = self._transient.get(key, (now, reason))
+        self._transient[key] = (since, reason)
+        if (now - since).total_seconds() >= self.cfg.transient_grace_s:
+            self._fail_closed(f"{reason} (persisted {(now - since).total_seconds():.0f}s)", now)
+
+    def _clear_transient(self, keys: Sequence[str]) -> None:
+        for k in keys:
+            self._transient.pop(k, None)
+
+    def _stack_failure(self, exc: StackFailClosed, now: datetime, where: str) -> None:
+        """A ``StackFailClosed``: transient classes (disconnect / not reconciled) -> halt-new-exposure and
+        retry; everything else fails closed at once."""
+        text = str(exc)
+        if text.startswith(TRANSIENT_STACK_PREFIXES) and self.fail_reason is None:
+            self._note_transient(f"stack:{where}", f"stack: {text}", now)
+        else:
+            self._fail_closed(f"stack: {text}", now)
 
     # -------------------------------------------------------------------------------- start-up
     def start(self) -> None:
@@ -445,7 +493,7 @@ class DemoRunner:
         try:
             snap = self.stack.start()
             self._last_account = snap
-            self._check_account(snap, now)
+            self._check_account(snap, now, strict=True)
         except StackFailClosed as exc:
             self._fail_closed(f"stack_start: {exc}", now)
             return
@@ -473,6 +521,10 @@ class DemoRunner:
 
     def _advance(self, intent_id: str, target: str, now: datetime, detail: dict[str, Any] | None = None) -> None:
         cur = self.store.get_state(intent_id)
+        if cur == IN_DOUBT and target in _ORDER and _ORDER.index(target) >= _ORDER.index(SENT):
+            # broker truth arrived for an in-doubt entry: resume the normal lifecycle at SENT
+            self.store.transition(intent_id, SENT, detail={"in_doubt": "resolved_by_broker_truth", **(detail or {})}, ts=_iso(now))
+            cur = SENT
         if cur not in _ORDER or target not in _ORDER:
             return
         for st in _ORDER[_ORDER.index(cur) + 1 : _ORDER.index(target) + 1]:
@@ -489,8 +541,14 @@ class DemoRunner:
         for it in unfinished:
             iid, state = it["intent_id"], it["state"]
             if iid in broker:
+                if state == IN_DOUBT:
+                    continue  # the stack still resolves it (late fill / close events); stay IN_DOUBT
                 # adopt: broker truth proves at least SENT; further states arrive as events
                 self._advance(iid, SENT, now, {"restart": "adopted"})
+                continue
+            if state == IN_DOUBT:
+                self.store.transition(iid, CANCELLED, detail={"restart": "in_doubt_unknown_to_broker", "needs_manual_review": True}, ts=_iso(now))
+                self._warnings.append(f"needs_manual_review:{iid}:in_doubt_unknown_to_broker")
                 continue
             if state in (PLANNED, RISK_APPROVED):
                 self.store.transition(iid, CANCELLED, detail={"restart": "unsent_unknown_to_broker"}, ts=_iso(now))
@@ -502,15 +560,26 @@ class DemoRunner:
                 self._warnings.append(f"needs_outcome:{iid}:closed_while_down")
 
     # ----------------------------------------------------------------------------------- guards
-    def _check_account(self, snap: AccountSnapshot, now: datetime) -> None:
+    def _check_account(self, snap: AccountSnapshot, now: datetime, *, strict: bool = False) -> None:
+        """Permanent problems fail closed at once.  Transient ones (reconciliation != RECONCILED, a
+        disconnect, a stack halt / kill switch) halt new exposure and are re-checked every cycle; they
+        fail closed only after ``transient_grace_s`` (``strict``: at start-up, immediately)."""
         if not snap.is_demo:
             self._fail_closed("account_not_demo", now)
+        active: dict[str, str] = {}
         if snap.reconciliation != "RECONCILED":
-            self._fail_closed(f"reconciliation={snap.reconciliation}", now)
+            active["reconciliation"] = f"reconciliation={snap.reconciliation}"
         if not snap.connected:
-            self._fail_closed("broker_disconnected", now)
+            active["disconnected"] = "broker_disconnected"
         if snap.kill_switch:
-            self._fail_closed("kill_switch_active", now)
+            active["stack_halt"] = "kill_switch_active"
+        if strict:
+            for reason in active.values():
+                self._fail_closed(reason, now)
+        else:
+            self._clear_transient([k for k in ("reconciliation", "disconnected", "stack_halt") if k not in active])
+            for key, reason in active.items():
+                self._note_transient(key, reason, now)
         if snap.open_positions > 0 and not snap.all_positions_protected:
             self._unprotected_since = self._unprotected_since or now
             if (now - self._unprotected_since).total_seconds() >= self.cfg.unprotected_grace_s:
@@ -534,16 +603,35 @@ class DemoRunner:
             self._fail_closed(f"disk_low: {free} bytes free", now)
         snap = self.stack.account_snapshot()
         self._last_account = snap
+        self._clear_transient(["stack:guards"])
         self._check_account(snap, now)
 
     # ------------------------------------------------------------------------------------ feeds
+    def _market_should_be_open(self, market: str, now: datetime) -> bool:
+        """MarketSpec calendar: local weekday Mon-Fri and inside the cash session.  Unknown spec => True
+        (conservative: a stale feed then counts).  Closed markets are IDLE, never 'stale'."""
+        spec = self._spec(market)
+        if spec is None:
+            return True
+        try:
+            from demo.opportunity.clock import local_minute_of, local_of
+
+            if local_of(spec, now).weekday() >= 5:
+                return False
+            cal = spec.calendar
+            return cal.cash_open_min <= local_minute_of(spec, now) < cal.cash_close_min
+        except Exception:
+            return True
+
     def _refresh_feeds(self, now: datetime) -> list[str]:
         """Update freshness; return markets whose latest CLOSED M5 bar is new since last cycle.
 
         Uses the stack's ``LiveBarSource`` surface: ``last_closed_bar_close_utc`` (refreshes its own
-        cache when a new bar should exist) and ``latest_quote``."""
+        cache when a new bar should exist) and ``latest_quote``.  A stale feed of a market that is
+        CLOSED per its calendar is idle, not an alarm."""
         new: list[str] = []
         self._stale = set()
+        idle: set[str] = set()
         src = self.stack.bar_source
         enabled = [m for m in self.cfg.markets if m not in self.disabled]
         for m in enabled:
@@ -576,16 +664,24 @@ class DemoRunner:
             self._feed[m] = info
             if stale:
                 self._stale.add(m)
+                if not self._market_should_be_open(m, now):
+                    idle.add(m)
+                    info["idle_market_closed"] = True
                 continue
             if self._last_close.get(m) != close:
                 self._last_close[m] = close
                 new.append(m)
-        if enabled and len(self._stale) == len(enabled):
+        expected = [m for m in enabled if m not in idle]
+        if expected and all(m in self._stale for m in expected):
             self._all_stale_since = self._all_stale_since or now
-            if (now - self._all_stale_since).total_seconds() >= self.cfg.all_stale_grace_s:
+            waited = (now - self._all_stale_since).total_seconds()
+            if waited >= self.cfg.all_stale_grace_s:
+                self._stale_halt_since = self._stale_halt_since or now  # HALT new exposure, keep managing
+            if waited >= self.cfg.all_stale_exit_s or (self.cfg.all_stale_exit_s <= self.cfg.all_stale_grace_s and waited >= self.cfg.all_stale_grace_s):
                 self._fail_closed("all_feeds_stale", now)
         else:
             self._all_stale_since = None
+            self._stale_halt_since = None
         return new
 
     # ------------------------------------------------------------------------------- one cycle
@@ -598,14 +694,14 @@ class DemoRunner:
         try:
             self._guards(now)
         except StackFailClosed as exc:
-            self._fail_closed(f"stack: {exc}", now)
+            self._stack_failure(exc, now, "guards")
         except Exception as exc:  # cannot verify the account -> fail closed
             self._fail_closed(f"guard_error: {type(exc).__name__}: {exc}", now)
         self._section(now, "manage", self._manage)
         try:
             new_bars = self._refresh_feeds(now)
         except StackFailClosed as exc:
-            self._fail_closed(f"stack: {exc}", now)
+            self._stack_failure(exc, now, "feeds")
         except Exception as exc:
             self._note_error(now, f"feed_error: {type(exc).__name__}: {exc}")
         if self.can_trade():
@@ -619,8 +715,9 @@ class DemoRunner:
     def _section(self, now: datetime, name: str, fn: Callable[[datetime], None], *, event_critical: bool = True) -> None:
         try:
             fn(now)
+            self._clear_transient([f"stack:{name}"])
         except StackFailClosed as exc:
-            self._fail_closed(f"stack: {exc}", now)
+            self._stack_failure(exc, now, name)
         except (sqlite3.Error, OSError) as exc:
             self._persistence_failure(exc, now)
         except Exception as exc:
@@ -763,7 +860,10 @@ class DemoRunner:
         try:
             events = self.stack.submit(intent, context=context)
         except StackFailClosed as exc:
-            self._fail_closed(f"submit: {exc}", now)
+            if str(exc).startswith(TRANSIENT_STACK_PREFIXES) and self.fail_reason is None:
+                self._note_transient("stack:submit", f"submit: {exc}", now)  # halt-new-exposure, retry next signal
+            else:
+                self._fail_closed(f"submit: {exc}", now)
             with contextlib.suppress(Exception):
                 if iid not in set(self.stack.open_intents()):
                     self.store.transition(iid, CANCELLED, detail={"reason": "stack_fail_closed_before_send"}, ts=ts)
@@ -827,6 +927,12 @@ class DemoRunner:
                     quantity=0.0, leverage=_num(det.get("leverage")) or 0.0, approved=False,
                     reject_reason=code))
                 self.store.transition(iid, RISK_REJECTED, detail=info, ts=ts)
+            elif code == G.R_OUTCOME_UNKNOWN and state in (RISK_APPROVED, SENT):
+                # the order may exist at the broker: NEVER cancel; keep it non-terminal so a late
+                # Fill / PositionClosed advances it and the outcome/learning record is written
+                self.store.transition(iid, IN_DOUBT, detail={**info, "needs_manual_review": True}, ts=ts)
+                self._warnings.append(f"in_doubt:{iid}:order_outcome_unknown")
+                self.halt(f"order_outcome_unknown:{iid}", now)
             elif state in (RISK_APPROVED, SENT):
                 self.store.transition(iid, SEND_FAILED if state == RISK_APPROVED else CANCELLED, detail=info, ts=ts)
         elif isinstance(ev, Fill):
@@ -1040,18 +1146,50 @@ class DemoRunner:
         return len(written)
 
     def train_now(self, now: datetime) -> None:
+        """Start the shadow-learning update in a SEPARATE thread on its own read connection (never on the
+        runner / position-management thread).  At most one at a time, only while flat, exception-contained,
+        timeout-flagged (a Python thread cannot be killed: a hung trainer is abandoned and reported)."""
         self._last_train = now
         if self.trainer is None:
             return
-        try:
-            self._last_train_report = self.trainer.update(self.store)
-            self._trained_at = self.store.count_trades(self.cfg.phase)
-        except (sqlite3.Error, OSError):
-            raise
-        except Exception as exc:  # shadow learning must never stop trading
-            self._note_error(now, f"trainer: {type(exc).__name__}: {exc}")
+        if self._train_thread is not None and self._train_thread.is_alive():
+            if self._train_started and (now - self._train_started).total_seconds() > self.cfg.train_timeout_s:
+                self._note_error(now, f"trainer_timeout: running > {self.cfg.train_timeout_s:.0f}s (abandoned, not restarted)")
+            return
+        if self._has_open_exposure():
+            return  # only when flat: position management never competes with the trainer
+        self._train_started = now
+        n_now = self.store.count_trades(self.cfg.phase)
+        trainer, path = self.trainer, self.store.path
+
+        def work() -> None:
+            try:
+                with DemoStore(path) as own:
+                    report = trainer.update(own)
+                self._train_result = {"ok": True, "report": report, "n_trades": n_now}
+            except Exception as exc:  # shadow learning must never stop trading
+                self._train_result = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+
+        self._train_thread = threading.Thread(target=work, name="demo-trainer", daemon=True)
+        self._train_thread.start()
+        self._trained_at = n_now
+
+    def join_training(self, timeout: float | None = None) -> None:
+        t = self._train_thread
+        if t is not None:
+            t.join(timeout)
+
+    def _collect_training(self, now: datetime) -> None:
+        res, self._train_result = self._train_result, None
+        if res is None:
+            return
+        if res.get("ok"):
+            self._last_train_report = res.get("report")
+        else:
+            self._note_error(now, f"trainer: {res.get('error')}")
 
     def _periodic(self, now: datetime) -> None:
+        self._collect_training(now)
         if (now - self._last_label).total_seconds() >= self.cfg.label_every_s:
             self.label_now(now)
         if self.trainer is not None:
@@ -1062,6 +1200,12 @@ class DemoRunner:
                 self.train_now(now)
 
     # ----------------------------------------------------------------------------- heartbeat
+    def _in_doubt_ids(self) -> list[str]:
+        try:
+            return [i["intent_id"] for i in self.store.list_intents(self.cfg.phase) if i["state"] == IN_DOUBT]
+        except Exception:
+            return []
+
     def funnel_summary(self, now: datetime, *, max_age_s: float = 60.0) -> dict[str, Any] | None:
         """Top-level rejection-funnel summary for the heartbeat (recomputed at most every ``max_age_s``)."""
         if (
@@ -1134,6 +1278,11 @@ class DemoRunner:
             "disk_free_bytes": free,
             "git_commit": self.commit,
             "halted": self.halt_reason,
+            "transient_conditions": {k: {"since": _iso(v[0]), "reason": v[1]} for k, v in self._transient.items()},
+            "halt_new_exposure": not self.can_trade(),
+            "in_doubt_intents": self._in_doubt_ids(),
+            "stale_halt_since": None if self._stale_halt_since is None else _iso(self._stale_halt_since),
+            "trainer_running": bool(self._train_thread is not None and self._train_thread.is_alive()),
             "fail_closed": self.fail_reason,
             "stop_reason": self.stop_reason,
             "warnings": self._warnings[-20:],
@@ -1176,8 +1325,17 @@ class DemoRunner:
             cycles += 1
             if self._should_exit(self._clock()):
                 break
-            self._sleep(min(self.cfg.poll_interval_s, 30.0))
+            self._sleep(self._sleep_s())
         return self.shutdown()
+
+    def _sleep_s(self) -> float:
+        """Poll interval; exponential backoff (bounded) while a transient condition is being re-checked."""
+        base = min(self.cfg.poll_interval_s, 30.0)
+        if self._transient or self._stale_halt_since is not None:
+            self._transient_cycles += 1
+            return min(base * (2 ** min(self._transient_cycles, 8)), max(base, self.cfg.transient_backoff_max_s))
+        self._transient_cycles = 0
+        return base
 
     def shutdown(self) -> int:
         """Orderly stop: no new exposure, open positions stay protected at the broker (NOT flattened;
@@ -1186,6 +1344,19 @@ class DemoRunner:
         self._stopping = True
         self.halt(self.fail_reason or self.stop_reason or "shutdown", now)
         self._section(now, "final_manage", self._manage)
+        if self.cfg.forced_flat_on_shutdown:
+            flatten = getattr(self.stack, "flatten_all", None)
+            if flatten is None:
+                self._warnings.append(
+                    "forced_flat_on_shutdown_unsupported: StackPort has no flatten call; "
+                    "open positions stay protected by their broker-side stops"
+                )
+            else:
+                try:
+                    self._handle_events(list(flatten("shutdown")), now)
+                except Exception as exc:
+                    self._note_error(now, f"forced_flat_on_shutdown: {type(exc).__name__}: {exc}")
+        self.join_training(2.0)
         for name, fn in (
             ("final_label", lambda: self.label_now(now)),
             ("final_report", self._final_report),
@@ -1220,8 +1391,14 @@ def build_live_runner(
     markets: Sequence[str] | None = None,
     learning: bool | None = None,
     stack_factory: Callable[..., StackPort] | None = None,
+    forced_flat_on_shutdown: bool = False,
+    stack_kwargs: Mapping[str, Any] | None = None,
 ) -> DemoRunner:
     """Wire the runner to the REAL ``Mt5DemoStack``.
+
+    ``learning``: ``None`` (default) means ON in ``shadow`` but OFF in ``demo-auto``; pass ``True`` (CLI
+    ``--learning``) to opt in.  ``forced_flat_on_shutdown`` (default off) only takes effect if the stack
+    offers ``flatten_all`` (``StackPort`` has none: positions then stay broker-protected; documented).
 
     * ``shadow``     -> ``Mt5DemoStack(dry_run=True)``  (``order_send`` is hard-guarded, never reachable);
     * ``demo-auto``  -> ``Mt5DemoStack(dry_run=False)`` (ActivTrades DEMO only; the stack itself verifies
@@ -1230,6 +1407,7 @@ def build_live_runner(
     The real MT5 client and the attach-only connection config are obtained ONLY here, lazily (never at
     module import), and only when no ``stack_factory`` is injected.  ``MT5_ALLOW_ACCOUNT_LOGIN=1`` is
     refused (``LiveStackRefused``).  State (adapter DB + intent registry) lives in ``<artifacts>/stack``.
+    ``stack_kwargs`` (tests only: ``lock_path`` / ``config`` / ``now``) is forwarded to ``Mt5DemoStack``.
     ``stack_factory(dry_run=..., state_dir=..., markets=...)`` is the test seam (FakeStack etc.); with it
     the real client is never touched.  Raises ``LiveStackUnavailable`` if the real stack / MT5 package /
     connection config is not usable in this checkout."""
@@ -1271,7 +1449,8 @@ def build_live_runner(
         art.mkdir(parents=True, exist_ok=True)
         stack: StackPort = Mt5DemoStack(  # type: ignore[assignment]
             client=client, connection=connection, state_dir=state_dir,
-            market_specs={m: all_specs[m] for m in names}, dry_run=dry_run,
+            market_specs=all_specs,  # the stack needs the FULL universe (symbol registry cross-check); ``names`` only limits what the runner scans
+            dry_run=dry_run, **dict(stack_kwargs or {}),
         )
     else:
         art.mkdir(parents=True, exist_ok=True)
@@ -1283,8 +1462,11 @@ def build_live_runner(
         phase=phase,  # type: ignore[arg-type]
         seen_store=StoreSeenAdapter(store),
     )
+    if learning is None:
+        learning = mode == "shadow"
     predictor, trainer, err = load_learning(art / "models", learning)
-    cfg = RunnerConfig(mode=mode, phase=phase, markets=names, artifacts_dir=art, learning=learning)
+    cfg = RunnerConfig(mode=mode, phase=phase, markets=names, artifacts_dir=art, learning=learning,
+                       forced_flat_on_shutdown=forced_flat_on_shutdown)
     return DemoRunner(
         stack, engine, store, config=cfg, predictor=predictor, trainer=trainer,
         learning_error=err, production=production,

@@ -65,6 +65,10 @@ PROTECTED = "PROTECTED"
 CLOSED = "CLOSED"
 SEND_FAILED = "SEND_FAILED"
 CANCELLED = "CANCELLED"
+# Non-terminal: the order was sent but its outcome is UNKNOWN (stack reported ``order_outcome_unknown``).
+# The broker may hold a fill: a late Fill / PositionClosed / broker truth resolves it to
+# SENT->FILLED->PROTECTED->CLOSED (or CANCELLED when the broker has no record). Added backward compatibly.
+IN_DOUBT = "IN_DOUBT"
 
 INTENT_STATES: tuple[str, ...] = (
     PLANNED,
@@ -76,16 +80,18 @@ INTENT_STATES: tuple[str, ...] = (
     CLOSED,
     SEND_FAILED,
     CANCELLED,
+    IN_DOUBT,
 )
 TERMINAL_STATES = frozenset({RISK_REJECTED, CLOSED, SEND_FAILED, CANCELLED})
 # States for which the broker may hold an order/position we must reconcile after a restart.
-OPEN_STATES: tuple[str, ...] = (SENT, FILLED, PROTECTED)
+OPEN_STATES: tuple[str, ...] = (SENT, IN_DOUBT, FILLED, PROTECTED)
 
 _ALLOWED: dict[str, frozenset[str]] = {
     PLANNED: frozenset({RISK_APPROVED, RISK_REJECTED, CANCELLED}),
-    RISK_APPROVED: frozenset({SENT, SEND_FAILED, CANCELLED}),
+    RISK_APPROVED: frozenset({SENT, SEND_FAILED, CANCELLED, IN_DOUBT}),
     RISK_REJECTED: frozenset(),
-    SENT: frozenset({FILLED, CANCELLED}),
+    SENT: frozenset({FILLED, CANCELLED, IN_DOUBT}),
+    IN_DOUBT: frozenset({SENT, FILLED, PROTECTED, CLOSED, CANCELLED}),
     # FILLED -> CLOSED: broker/stop/manual close before protection was ever confirmed.
     FILLED: frozenset({PROTECTED, CLOSED}),
     PROTECTED: frozenset({CLOSED}),
