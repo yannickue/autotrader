@@ -317,6 +317,12 @@ def evaluate_many(
     t0 = time.perf_counter()
     parts = _partition(specs, workers * CHUNKS_PER_WORKER)  # dynamic dispatch balances heavy specs
     own_frame = shared is None
+    if shared is None and hasattr(frame.arrays, "loaded"):
+        # lazy build_market_frame frame: SharedFrame dumps only LOADED arrays, so materialise exactly what
+        # the batch reads (arrays + thresholds) before spawning workers
+        from alpha.temporal.frame import frame_for_specs
+
+        frame = frame_for_specs(frame, specs)
     sh = shared if shared is not None else SharedFrame(frame)
     own_exec = executor is None
     if own_exec:

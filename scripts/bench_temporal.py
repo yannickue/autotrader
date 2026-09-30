@@ -133,6 +133,11 @@ class _Base:
             main = self.arrays["ev_" + stem]
             up = not any(t in stem for t in ("_dn", "high", "top"))
             mag = np.abs(r.normal(0.0, 0.8, n)) * self.atr_f
+            if stem.startswith(("zone_enter", "zone_exit")):  # tested zone: evl below, evx above the close
+                v = self.c - mag - 0.1 if pre == "evl" else self.c + mag * 1.3 + 0.1
+                v[main == 0] = np.nan
+                v[(main > 0) & (r.random(n) < 0.03)] = np.nan
+                return v
             if pre == "evx":
                 mag = mag * 1.3 + 0.2
             v = self.c - mag if up else self.c + mag
@@ -143,6 +148,9 @@ class _Base:
             sid = self._segments("st:" + stem, 40, 400)
             k = int(sid.max()) + 1
             return (r.random(k) < 0.6).astype(np.int8)[sid]
+        if pre == "evz":  # zid of the tested zone: >0 on the pulse, -1 elsewhere
+            main = self.arrays["ev_" + stem]
+            return np.where(main > 0, self._segments("lv:" + stem, 20, 80) + 1, -1).astype(np.int32)
         if pre == "zid":
             return self._segments("lv:" + stem, 20, 80)
         if pre == "lv":

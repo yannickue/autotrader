@@ -12,7 +12,8 @@ Register dataflow is DERIVED here, never encoded in genes:
   the "no read before capture" rule of ``spec.validate`` holds by construction;
 * at most ``MAX_REG`` registers are allocated; later captures are simply not made.
 
-SHORT genomes compile to ``spec.mirror(long_spec)`` (registry mirror table).  Feature clauses keep
+SHORT genomes compile to ``spec.mirror(long_spec)`` (registry mirror table; antisymmetric features
+become ``lt -thr(q)`` via ``Clause.neg``, positive-only ones keep the same test).  Feature clauses keep
 their quantile ``q`` in the spec (the kernel resolves ``frame.thresholds[(name, q)]``); the injected
 threshold ``resolver`` is used to (a) fail closed on unresolvable / non-finite thresholds and
 (b) record the resolved numbers in ``metadata['thr']`` so ``behavior_key`` can identify two
@@ -212,7 +213,8 @@ def compile_temporal(
 
 def _swap_q(clause: dict[str, Any], thr: dict[str, float]) -> None:
     if clause["kind"] == "feature":
-        clause["thr"] = thr[f"{clause['name']}@{clause['q']:.2f}"]
+        v = thr[f"{clause['name']}@{clause['q']:.2f}"]
+        clause["thr"] = -v if clause.pop("neg", False) else v  # effective (signed) threshold
         del clause["q"]
 
 

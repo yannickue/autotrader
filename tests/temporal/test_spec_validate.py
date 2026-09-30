@@ -393,7 +393,7 @@ def test_mirror_involution():
     g2 = with_(context=(Clause("feature", "ret_12", "M5", cmp="gt", q=0.7),
                         Clause("feature", "atr_pct", "M5", cmp="gt", q=0.7)))
     m = sp.mirror(g2)
-    assert m.context[0].cmp == "lt" and m.context[0].q == 0.3
+    assert m.context[0].cmp == "lt" and m.context[0].q == 0.7 and m.context[0].neg  # gt thr(q) <-> lt -thr(q)
     assert m.context[1].cmp == "gt" and m.context[1].q == 0.7
     assert sp.mirror(m) == g2
 
@@ -620,3 +620,22 @@ def test_distinct_semantics_hash_differently():
         seen.setdefault(h, s.to_json())
     # canonical hash equal only for canonically equal specs
     assert len(seen) > 250
+
+
+def test_clause_neg_validation_payload_and_hash():
+    pos = Clause("feature", "ret_12", "M5", cmp="lt", q=0.7)
+    neg = Clause("feature", "ret_12", "M5", cmp="lt", q=0.7, neg=True)
+    assert pos != neg and pos.key() != neg.key()
+    assert "neg" not in pos.to_dict() and neg.to_dict()["neg"] is True
+    assert Clause.from_dict(neg.to_dict()) == neg and Clause.from_dict(pos.to_dict()) == pos
+    for bad in (
+        lambda: Clause("feature", "atr_pct", "M5", cmp="gt", q=0.5, neg=True),  # positive-only feature
+        lambda: Clause("event", "BOS_UP", "M5", neg=True),
+        lambda: Clause("feature", "ret_12", "M5", cmp="gt", q=0.5, neg=1),
+    ):
+        with pytest.raises(ValueError):
+            bad()
+    a = with_(context=(pos,))
+    b = with_(context=(neg,))
+    assert a.spec_hash() != b.spec_hash() and sp.canonical_hash(a) != sp.canonical_hash(b)
+    assert sp.StateMachineStrategySpec.from_dict(b.to_dict()) == b

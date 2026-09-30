@@ -23,7 +23,7 @@ def feats():
 def test_names_are_exactly_the_registry_names(feats):
     ev = build_events(feats)
     assert sorted(ev) == sorted(schema.all_array_names())
-    assert len(ev) == len(set(ev)) == 385
+    assert len(ev) == len(set(ev)) == 439  # 385 + 54 evl/evx/evz zone companions
     # bound-only events have no arrays
     assert not any(k.startswith(("ev_m5_touch", "ev_m5_break", "ev_m5_reclaim")) for k in ev)
 
@@ -32,7 +32,7 @@ def test_no_nan_in_flags_and_masks(feats):
     ev = build_events(feats)
     for name, arr in ev.items():
         prefix = name.split("_", 1)[0]
-        if prefix in ("ev", "st", "zid", "evo", "valid"):
+        if prefix in ("ev", "st", "zid", "evo", "evz", "valid"):
             assert arr.dtype.kind in "uib", name  # integer / bool arrays cannot hold NaN
     assert ev["valid_m5"].dtype == np.bool_ and ev["valid_m5"].any() and not ev["valid_m5"].all()
     assert ev["valid_d1"].sum() == 0  # < 14 complete days -> D1 stays warming up

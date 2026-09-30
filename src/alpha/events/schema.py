@@ -22,7 +22,7 @@ import itertools
 import json
 from dataclasses import asdict, dataclass
 
-EVENT_SET_VERSION = "events-v2.1"
+EVENT_SET_VERSION = "events-v2.2"  # v2.2: ZONE_ENTER/EXIT carry the TESTED zone (evl/evx/evz)
 
 TIMEFRAMES: tuple[str, ...] = ("M5", "M15", "H1", "D1")
 TOL_GRID: tuple[float, ...] = (0.0, 0.1, 0.25)
@@ -38,6 +38,7 @@ PREFIX_DTYPE: dict[str, str] = {
     "evl": "float64",
     "evx": "float64",
     "evo": "int32",
+    "evz": "int32",
     "st": "int8",
     "lv": "float64",
     "zid": "int32",
@@ -192,11 +193,11 @@ _DEFS: list[EventDef] = [
        "BOS_DN against a prevailing up structure_state; known at bar close",
        companions=("evl", "evo"), produces=("evl",)),
     _e("ZONE_ENTER", "pulse", _LTF, ("ANCHOR", "SETUP"), "ZONE_ENTER", "close", 0,
-       "first close inside a zone known before the bar; zone bounds via lv_ zone_lo/zone_hi",
-       companions=("evo",), exposes=("ZONE_LO", "ZONE_HI"), srcs=ZONE_KINDS),
+       "first close inside a zone known before the bar; evl/evx/evz = lo/hi/zid of THAT tested zone at the pulse bar",
+       companions=("evl", "evx", "evz", "evo"), exposes=("ZONE_LO", "ZONE_HI"), srcs=ZONE_KINDS),
     _e("ZONE_EXIT", "pulse", _LTF, ("SETUP", "CONFIRM"), "ZONE_EXIT", "close", 0,
-       "first close outside a zone previously entered; known at bar close",
-       companions=("evo",), exposes=("ZONE_LO", "ZONE_HI"), srcs=ZONE_KINDS),
+       "first close outside a zone previously entered; evl/evx/evz = lo/hi/zid of THAT tested zone at the pulse bar",
+       companions=("evl", "evx", "evz", "evo"), exposes=("ZONE_LO", "ZONE_HI"), srcs=ZONE_KINDS),
     _e("TRENDLINE_TOUCH", "pulse", _LTF, ("SETUP", "TRIGGER"), "TRENDLINE_TOUCH", "second_pivot", None,
        "line through the last 2 confirmed pivots, live from the 2nd confirmation; touch known at close",
        companions=("evl",), produces=("evl",), exposes=("TRENDLINE_VALUE",), tols=TOL_GRID),
@@ -235,7 +236,7 @@ _DEFS: list[EventDef] = [
 
 _REGISTRY: dict[str, EventDef] = {d.name: d for d in _DEFS}
 
-# Features usable in feature clauses. mirror: "self" (symmetric) or "neg" (signed: cmp flips, q -> 1-q)
+# Features usable in feature clauses. mirror: "self" (positive-only: SHORT keeps the same test) or "neg" (signed/antisymmetric: SHORT = cmp flipped AND threshold negated, Clause.neg; exact price mirror)
 FEATURE_MIRROR: dict[str, str] = {
     "atr_pct": "self",
     "range_ratio": "self",

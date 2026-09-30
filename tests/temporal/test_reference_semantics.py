@@ -119,7 +119,8 @@ def golden_market(spec: StateMachineStrategySpec, levels=LEVELS) -> MarketFrame:
     fb.put(name0(a_zone.name, a_zone.tf, a_zone.variant), 5, 1, np.uint8, 0)
     zl = spec.anchor_capture[0]
     zc = next(c for c in spec.anchor if c.name == "ZONE_ENTER")
-    fb.fill(name0(zl.of, zc.tf, zc.variant), px(98.0))
+    # ZONE_LO/HI of a ZONE_ENTER capture come from the pulse companions (the TESTED zone): evl = lo, evx = hi
+    fb.fill(comp("ZONE_ENTER", zc.tf, "evl" if zl.of == "ZONE_LO" else "evx", zc.variant), px(98.0))
     t1, t3 = spec.states[0].trigger, spec.states[2].trigger
     fb.put(name0(t1.name, t1.tf, t1.variant), 7, 1, np.uint8, 0)
     fb.put(comp(t1.name, t1.tf, "evx", t1.variant), 7, px(97.2), np.float64, math.nan)
@@ -160,6 +161,44 @@ def test_short_via_mirror_is_exact_price_mirror():
     assert cand.target[0] == pytest.approx(200 - 104.5)
     assert cand.target_r[0] == pytest.approx((104.5 - 99.9) / (99.9 - 97.1))
     assert trails[0].step_idx == (5, 7, 9, 11, 13)
+
+
+def _feature_market(spec, x: float):
+    """golden_market + ret_12 (antisymmetric, price-mirrored: x' = -x) and atr_pct (positive-only, same)."""
+    m = golden_market(spec)
+    sgn = -1.0 if spec.direction == "SHORT" else 1.0
+    arrays = dict(m.arrays)
+    arrays["ret_12"] = np.full(N, sgn * x)
+    arrays["atr_pct"] = np.full(N, 1.2)
+    # ONE fixed threshold table for both frames (q=0.3 deliberately looser than -thr(0.7) for the SHORT frame)
+    thr = {("ret_12", 0.7): 0.5, ("ret_12", 0.3): -0.2, ("atr_pct", 0.5): 1.0}
+    return replace(m, arrays=arrays, thresholds=thr)
+
+
+@pytest.mark.parametrize("x, fires", [(0.6, True), (0.4, False)])
+def test_feature_filters_are_an_exact_price_mirror(x, fires):
+    """SHORT candidates on the price-mirrored frame == LONG candidates on the original (audit defect B:
+    the old quantile mirror used thr(0.3) for the SHORT ret_12 filter, i.e. a looser threshold)."""
+    from alpha.temporal.evaluate import evaluate_temporal_full
+
+    ctx = (Clause("feature", "ret_12", "M5", cmp="gt", q=0.7), Clause("feature", "atr_pct", "M5", cmp="gt", q=0.5))
+    spec = replace(golden_spec(), context=ctx)
+    ms = mirror(spec)
+    short_ctx = {c.name: c for c in ms.context}
+    assert short_ctx["ret_12"].cmp == "lt" and short_ctx["ret_12"].q == 0.7 and short_ctx["ret_12"].neg
+    assert short_ctx["atr_pct"] == ctx[1]  # positive-only feature keeps the same test
+    assert mirror(ms) == spec
+    lr, sr = result(spec, _feature_market(spec, x)), result(ms, _feature_market(ms, x))
+    assert (len(lr[0].decision_idx) == 1) == fires
+    assert sr[0].decision_idx.tolist() == lr[0].decision_idx.tolist()
+    if fires:
+        np.testing.assert_allclose(sr[0].stop, 200 - lr[0].stop)
+        np.testing.assert_allclose(sr[0].target, 200 - lr[0].target)
+        np.testing.assert_allclose(sr[0].target_r, lr[0].target_r)
+    for s_, m_ in ((spec, _feature_market(spec, x)), (ms, _feature_market(ms, x))):  # numba kernel == oracle
+        k = evaluate_temporal_full(s_, m_).candidates
+        r = evaluate_reference(s_, m_).candidates
+        assert k.decision_idx.tolist() == r.decision_idx.tolist()
 
 
 def test_next_structure_min_space_rejection_and_fallback():
@@ -245,7 +284,7 @@ def test_invalidation_beats_trigger_on_same_bar():
     for c5, expect in ((98.5, [7]), (97.5, [])):  # 97.5: close breaks below R0=98 on the sweep bar
         fb = FB()
         pulse(fb, zone(), 2)
-        fb.fill(name0("ZONE_LO", "M15", "swing_cluster"), 98.0)
+        fb.fill(comp("ZONE_ENTER", "M15", "evl", "swing_cluster"), 98.0)
         pulse(fb, sweep(), 5)
         pulse(fb, BOS, 7)
         fb.bar(5, c=c5)
@@ -263,7 +302,7 @@ def test_same_bar_ordering_advances_exactly_one_state():
     def build(bos_at, reclaim_again):
         fb = FB()
         pulse(fb, zone(), 4)
-        fb.fill(name0("ZONE_LO", "M15", "swing_cluster"), 98.0)
+        fb.fill(comp("ZONE_ENTER", "M15", "evl", "swing_cluster"), 98.0)
         fb.bar(5, c=97.0)
         fb.bar(6, c=98.8)
         pulse(fb, sweep(), 6)  # bar 6 satisfies SWEEP, RECLAIM and BOS
@@ -498,8 +537,8 @@ def _spec_array_names(spec: StateMachineStrategySpec) -> dict[str, str]:
         if c.kind in ("event", "state"):
             for a in ev.array_names(c.name, c.tf, c.variant):
                 out[a] = a.split("_")[0]
-    out[name0("ZONE_LO", "M15", "swing_cluster")] = "lv"
-    out[name0("ZONE_HI", "M15", "swing_cluster")] = "lv"
+    out[comp("ZONE_ENTER", "M15", "evl", "swing_cluster")] = "evl"
+    out[comp("ZONE_ENTER", "M15", "evx", "swing_cluster")] = "evx"
     return out
 
 
@@ -604,3 +643,31 @@ def test_reference_reads_are_causal_structurally():
         v.col("c", 6)
     with pytest.raises(IndexError):
         v.col("c", -1)
+
+
+@pytest.mark.parametrize("short", [False, True])
+def test_zone_capture_reads_pulse_companions_oracle_equals_kernel(short):
+    """Section-2 example: the zone register / entry_zone / event_ids come from the ZONE_ENTER pulse companions
+    (tested zone), NOT from the lv_ zone arrays (planted with different values as a trap); kernel == oracle."""
+    from alpha.temporal.evaluate import evaluate_temporal_full
+
+    spec = golden_spec()
+    spec = mirror(spec) if short else spec
+    m = golden_market(spec)
+    zc = next(c for c in spec.anchor if c.name == "ZONE_ENTER")
+    z_n = comp("ZONE_ENTER", zc.tf, "evz", zc.variant)
+    other = comp("ZONE_ENTER", zc.tf, "evx" if not short else "evl", zc.variant)  # the array the golden fill left empty
+    arrays = dict(m.arrays)
+    arrays[other] = np.full(N, 99.0 if not short else 101.0)
+    arrays[z_n] = np.full(N, 7, dtype=np.int32)
+    for nm in ("ZONE_LO", "ZONE_HI"):  # trap: lv arrays hold a different (close-of-bar) zone
+        arrays[name0(nm, zc.tf, zc.variant)] = np.full(N, 50.0)
+    m = replace(m, arrays=arrays)
+    ref = evaluate_reference(spec, m)
+    ker = evaluate_temporal_full(spec, m)
+    assert ref.candidates.decision_idx.tolist() == ker.candidates.decision_idx.tolist() == [13]
+    rt, kt = ref.trails[0], ker.trails.to_instance_trails()[0]
+    assert rt.event_ids == (7,) and kt.event_ids == (7,)
+    assert 50.0 not in (rt.entry_zone_lo, rt.entry_zone_hi)
+    assert (kt.entry_zone_lo, kt.entry_zone_hi) == pytest.approx((rt.entry_zone_lo, rt.entry_zone_hi))
+    assert kt.registers[0] == rt.registers[0]

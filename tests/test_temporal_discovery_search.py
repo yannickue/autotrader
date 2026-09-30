@@ -109,7 +109,7 @@ def test_short_compiles_to_the_registry_mirror_of_long():
             if cl_l.kind == "feature":
                 if ev.feature_mirror(cl_l.name) == "neg":
                     n_neg += 1
-                    assert cl_s.cmp != cl_l.cmp and abs(cl_s.q - (1 - cl_l.q)) < 1e-9
+                    assert cl_s.cmp != cl_l.cmp and cl_s.q == cl_l.q and cl_s.neg and not cl_l.neg
                 else:
                     assert cl_s == cl_l
             else:

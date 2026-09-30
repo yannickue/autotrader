@@ -127,6 +127,8 @@ class _Collector:
             if prefix == "evo":
                 m5 = self.s.origin_to_m5_index(np.asarray(arr, dtype=np.int64))
                 self.out[name] = self.s.values_to_m5(m5, mask).astype(np.int32)
+            elif prefix == "evz":  # zone id of the tested zone (int32, -1 off-pulse)
+                self.out[name] = self.s.values_to_m5(np.asarray(arr, dtype=np.int32), mask)
             else:
                 self.out[name] = self.s.values_to_m5(np.asarray(arr, dtype=float), mask)
 
@@ -306,8 +308,11 @@ def _zones(col: _Collector, features, S: TfSeries, c, atr, ph, pl, pdl, pdh, p: 
             org = np.zeros(0, np.int64)
         else:
             enter, leave, org = kz.zone_events(c, kb_lo, kb_hi, kb_zid, kb_born)
-        col.pulse("ZONE_ENTER", kind, enter, org)
-        col.pulse("ZONE_EXIT", kind, leave, org)
+        # The pulse carries the TESTED zone (kb_* = known before the bar; for HTF the box known
+        # before the bar's first M5 bar): evl = lo, evx = hi, evz = zid.  Captures/entry_zone read
+        # these, never the lv_ arrays (the zone at the CLOSE of the bar, possibly a new zone).
+        col.pulse("ZONE_ENTER", kind, enter, kb_lo, kb_hi, kb_zid, org)
+        col.pulse("ZONE_EXIT", kind, leave, kb_lo, kb_hi, kb_zid, org)
         col.level("ZONE_LO", kind, lo, zid)
         col.level("ZONE_HI", kind, hi, zid)
 

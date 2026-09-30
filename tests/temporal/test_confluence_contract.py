@@ -48,8 +48,8 @@ def market(n=30) -> MarketFrame:
     names = ev.array_names("SWEEP_LOW", "M5", "swing_low")
     arrays = {
         ev.array_names("ZONE_ENTER", "M15", "swing_cluster")[0]: zone,
-        ev.array_names("ZONE_LO", "M15", "swing_cluster")[0]: np.full(n, 98.5),
-        ev.array_names("ZONE_HI", "M15", "swing_cluster")[0]: np.full(n, 99.5),
+        ev.array_names("ZONE_ENTER", "M15", "swing_cluster")[1]: np.full(n, 98.5),
+        ev.array_names("ZONE_ENTER", "M15", "swing_cluster")[2]: np.full(n, 99.5),
         names[0]: sw,
         next(x for x in names if x.startswith("evx_")): evx,
     }

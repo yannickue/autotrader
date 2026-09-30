@@ -213,6 +213,8 @@ class _Compiler:
         else:
             if c.kind == "feature":
                 thr = self.frame.thresholds[(c.name, c.q)]
+                if c.neg:
+                    thr = -thr
                 arr = self.frame.arrays[c.name]
                 gt = c.cmp == "gt"
                 key: tuple = ("feat", c.name, float(thr), gt)

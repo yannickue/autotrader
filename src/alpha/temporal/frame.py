@@ -69,6 +69,7 @@ FEATURE_ALIASES: dict[str, str] = {
     "slope_20": "m5_ema_slope",
 }
 _DERIVED = ("atr_pct", "dist_vwap_atr")
+TWAP_ALIAS = "dist_twap_atr"  # dist_vwap_atr is a TWAP proxy; the registry name is kept for hash stability
 
 assert set(LEVEL_SOURCES) == set(ev.TARGET_LEVELS)
 assert set(FEATURE_ALIASES) | set(_DERIVED) == set(ev.FEATURE_MIRROR)
@@ -85,16 +86,18 @@ def berlin_dates(features: Mapping[str, np.ndarray]) -> np.ndarray:
 
 
 def _dist_twap_atr(features: Mapping[str, np.ndarray]) -> np.ndarray:
-    """Causal per-day running mean of the typical price, as distance from close in ATR."""
+    """Causal per-day running mean (TWAP proxy of the session VWAP: no volume in the FeatureSet) of the
+    typical price, as distance from close in ATR.  Computed per Berlin day, so the value at bar i depends
+    only on the bars of its own day up to i (never on where the frame starts)."""
     h, low, c = (np.asarray(features[k], dtype=np.float64) for k in ("h", "l", "c"))
     day = np.asarray(features["berlin_day_id"], dtype=np.int64)
     atr = np.asarray(features["m5_atr14"], dtype=np.float64)
     tp = (h + low + c) / 3.0
-    csum = np.cumsum(tp)
-    first = np.r_[True, day[1:] != day[:-1]]
-    start = np.maximum.accumulate(np.where(first, np.arange(len(day)), 0))
-    base = np.where(start > 0, csum[np.maximum(start - 1, 0)], 0.0)
-    mean = (csum - base) / (np.arange(len(day)) - start + 1)
+    first = np.flatnonzero(np.r_[True, day[1:] != day[:-1]])
+    ends = np.r_[first[1:], len(day)]
+    mean = np.empty(len(day), dtype=np.float64)
+    for s0, e0 in zip(first, ends, strict=True):  # cumsum RESET at every day start: prefix- and slice-stable
+        mean[s0:e0] = np.cumsum(tp[s0:e0]) / np.arange(1, e0 - s0 + 1)
     with np.errstate(invalid="ignore", divide="ignore"):
         return np.where(atr > 0, (c - mean) / atr, np.nan)
 
@@ -212,6 +215,7 @@ def build_market_frame(
         resolvers[name] = lambda src=src: features[src]
     for name in _DERIVED:
         resolvers[name] = lambda name=name: _derived(name, features)
+    resolvers[TWAP_ALIAS] = resolvers["dist_vwap_atr"]  # honest name of the registry's dist_vwap_atr
     for name in events:  # events win on a (currently non-existent) name clash
         resolvers[name] = lambda name=name: events[name]
     for name, src in LEVEL_SOURCES.items():

@@ -202,6 +202,8 @@ def _bound_base(c: Clause, short: bool) -> Base:
 def _compile_clause(c: Clause, spec: StateMachineStrategySpec, m: MarketFrame) -> _Pred:
     if c.kind == "feature":
         thr = m.thresholds[(c.name, c.q)]
+        if c.neg:
+            thr = -thr
         gt = c.cmp == "gt"
 
         def fbase(v: _View, t: int, regs: tuple) -> bool:
@@ -229,7 +231,14 @@ class _Cap:
 
 
 def level_arrays(of: str, clause: Clause) -> tuple[str, str | None]:
-    """(lv array name, zid array name or None) for level ``of`` exposed by ``clause``."""
+    """(level array name, zid array name or None) for level ``of`` exposed by ``clause``.
+    ZONE_LO/HI of a ZONE_ENTER/EXIT clause resolve to the pulse companions (evl/evx, evz)."""
+    if clause.name in ("ZONE_ENTER", "ZONE_EXIT") and of in ("ZONE_LO", "ZONE_HI"):
+        # the zone TESTED at the pulse bar (evl/evx/evz), not the zone at the bar's close (lv_)
+        names = ev.array_names(clause.name, clause.tf, clause.variant)
+        pre = "evl_" if of == "ZONE_LO" else "evx_"
+        zid = next(n for n in names if n.startswith("evz_"))
+        return next(n for n in names if n.startswith(pre)), zid
     d = ev.get(of)
     variant = clause.variant if clause.variant in d.variants() else ""
     names = ev.array_names(of, clause.tf, variant)

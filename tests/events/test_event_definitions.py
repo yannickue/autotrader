@@ -327,7 +327,7 @@ def test_array_names_dtypes_and_flags_match_registry(real):
         assert arr.dtype == np.dtype(schema.PREFIX_DTYPE[name.split("_", 1)[0]]), name
         if name.startswith("ev_"):
             assert set(np.unique(arr)) <= {0, 1}
-        if name.startswith(("st_", "zid_", "evo_", "valid_")):
+        if name.startswith(("st_", "zid_", "evo_", "evz_", "valid_")):
             assert arr.dtype.kind in "iub"
     assert ev.metadata["registry_fingerprint"] == schema.registry_fingerprint()
 
@@ -344,8 +344,10 @@ def test_pulse_companions_defined_exactly_where_the_pulse_is(real):
                 pulse = ev[names[0]].astype(bool)
                 for name, prefix in zip(names[1:], d.companions, strict=True):
                     arr = ev[name]
-                    if prefix == "evo":
+                    if prefix in ("evo", "evz"):
                         assert (arr[~pulse] == -1).all(), name
+                        if prefix == "evz":
+                            assert (arr[pulse] > 0).all(), name
                     else:
                         assert np.isfinite(arr[pulse]).all(), name
                         assert np.isnan(arr[~pulse]).all(), name

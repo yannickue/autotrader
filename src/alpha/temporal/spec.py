@@ -125,6 +125,9 @@ class Clause:
     cmp: str = ""
     q: float = 0.0
     variant: str = ""
+    # feature clauses only: compare against -thr(q) instead of thr(q) (exact PRICE mirror of an
+    # antisymmetric feature: LONG ``gt thr(q)`` <-> SHORT ``lt -thr(q)``; the threshold key stays (name, q)).
+    neg: bool = False
 
     def __post_init__(self) -> None:
         if self.kind not in CLAUSE_KINDS:
@@ -137,11 +140,13 @@ class Clause:
             raise ValueError("clause arg must be int")
         _set(self, "tol_atr", _num(self.tol_atr, "tol_atr"))
         _set(self, "q", _num(self.q, "q"))
+        if not isinstance(self.neg, bool):
+            raise ValueError("neg must be a bool")
         if self.kind == "feature":
             self._check_feature()
             return
-        if self.cmp != "" or self.q != 0.0:
-            raise ValueError("cmp/q are only valid on feature clauses")
+        if self.cmp != "" or self.q != 0.0 or self.neg:
+            raise ValueError("cmp/q/neg are only valid on feature clauses")
         try:
             d = ev.get(self.name)
         except KeyError as exc:
@@ -177,6 +182,8 @@ class Clause:
         if self.cmp not in ("gt", "lt"):
             raise ValueError("feature clause needs cmp in gt/lt")
         _on_grid(self.q, Q_RANGE, "q")
+        if self.neg and ev.feature_mirror(self.name) != "neg":
+            raise ValueError(f"neg is only valid on antisymmetric features, not {self.name!r}")
         if self.op != "IS" or self.arg != 0 or self.reg != "" or self.tol_atr != 0.0:
             raise ValueError("feature clause: op IS, no arg/reg/tol_atr")
         if self.variant != "":
@@ -184,12 +191,15 @@ class Clause:
 
     def key(self) -> tuple:
         return (self.kind, self.name, self.tf, self.op, self.arg, self.reg, self.tol_atr,
-                self.cmp, self.q, self.variant)
+                self.cmp, self.q, self.variant, self.neg)
 
     def to_dict(self) -> dict[str, Any]:
-        return {"kind": self.kind, "name": self.name, "tf": self.tf, "op": self.op,
-                "arg": self.arg, "reg": self.reg, "tol_atr": self.tol_atr, "cmp": self.cmp,
-                "q": self.q, "variant": self.variant}
+        d = {"kind": self.kind, "name": self.name, "tf": self.tf, "op": self.op,
+             "arg": self.arg, "reg": self.reg, "tol_atr": self.tol_atr, "cmp": self.cmp,
+             "q": self.q, "variant": self.variant}
+        if self.neg:  # omitted when False: hashes of every non-negated clause are unchanged
+            d["neg"] = True
+        return d
 
     @classmethod
     def from_dict(cls, d: dict) -> Clause:
@@ -563,9 +573,10 @@ def validate(spec: StateMachineStrategySpec) -> None:
 # ---- mirror --------------------------------------------------------------------------------
 def _mirror_clause(c: Clause) -> Clause:
     if c.kind == "feature":
-        if ev.feature_mirror(c.name) == "self":
+        if ev.feature_mirror(c.name) == "self":  # positive-only feature: same test in both directions
             return c
-        return replace(c, cmp="lt" if c.cmp == "gt" else "gt", q=round(1.0 - c.q, 2))
+        # antisymmetric feature: exact price mirror  gt thr(q) <-> lt -thr(q)  (same q key, sign flipped)
+        return replace(c, cmp="lt" if c.cmp == "gt" else "gt", neg=not c.neg)
     return replace(c, name=ev.mirror_event(c.name), variant=ev.mirror_variant(c.name, c.variant))
 
 

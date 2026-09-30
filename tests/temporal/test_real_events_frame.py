@@ -168,3 +168,35 @@ def test_needed_names_cover_every_read_and_lazy_equals_frozen(real):
     frozen = evaluate_temporal_many(specs, sub)
     assert all(x.to_bytes() == y.to_bytes() for x, y in zip(lazy, frozen, strict=True))
     assert sum(len(x.candidates.decision_idx) > 0 for x in frozen) >= 25
+
+
+def test_dist_twap_atr_is_slice_stable_bitwise(real):
+    """Per-Berlin-day cumsum: a frame that starts at any day boundary (or ends anywhere) reproduces the
+    full-frame values of the days it contains BIT-IDENTICALLY (a global cumsum differed at ~1e-7)."""
+    f = real.features
+    keys = ("h", "l", "c", "berlin_day_id", "m5_atr14")
+    full = _dist_twap_atr({k: f[k] for k in keys})
+    day = np.asarray(f["berlin_day_id"])
+    starts = np.flatnonzero(np.r_[True, day[1:] != day[:-1]])
+    checked = 0
+    for s in (starts[40], starts[len(starts) // 2], starts[-30]):
+        e = min(s + 4000, len(day))
+        part = _dist_twap_atr({k: np.asarray(f[k])[s:e] for k in keys})
+        assert np.array_equal(part, full[s:e], equal_nan=True)
+        checked += e - s
+    assert checked > 5000
+    assert "dist_twap_atr" in real.frame.arrays  # honest alias of the registry feature dist_vwap_atr
+    assert np.array_equal(real.frame.arrays["dist_twap_atr"], real.frame.arrays["dist_vwap_atr"], equal_nan=True)
+
+
+def test_workers_gt1_on_lazy_frame_materialises_specs_automatically(real):
+    """SharedFrame dumps only LOADED arrays: a lazy build_market_frame frame used to raise KeyError in workers."""
+    specs = hand_specs()[:4]
+    fresh = build_market_frame(real.features, real.events, thresholds=dict(real.frame.thresholds) or None, plan=real.plan)
+    assert fresh.arrays.loaded() == ()
+    par = evaluate_temporal_many(specs, fresh, workers=2)
+    seq = evaluate_temporal_many(specs, frame_for_specs(real.frame, specs), workers=1)
+    assert sum(len(r.candidates.decision_idx) for r in seq) > 0
+    for a, b in zip(par, seq, strict=True):
+        for fld in ("decision_idx", "direction", "stop", "target", "target_r"):
+            assert np.array_equal(getattr(a.candidates, fld), getattr(b.candidates, fld), equal_nan=True)
