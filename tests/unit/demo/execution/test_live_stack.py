@@ -1008,3 +1008,33 @@ def test_safety_flatten_is_the_exit_reason_of_a_runtime_unprotected_flatten(env)
     events = stack.poll_events()
     closed = [e for e in events if isinstance(e, PositionClosed)]
     assert closed and closed[0].exit_reason == "SAFETY_FLATTEN"
+
+
+def test_lane_snapshot_server_time_is_the_freshest_tick_not_the_first_market():
+    """A tick time is a market-event time: the first configured market may be paused (stale) while another is live."""
+    from demo.execution.live import Mt5DemoStack
+
+    base = 1_790_000_000.0
+    tick_ms = {"STALE.SYM": (base - 900) * 1000, "LIVE.SYM": base * 1000, "OTHER.SYM": (base - 30) * 1000}
+
+    class _Policy:
+        @staticmethod
+        def server_epoch_to_utc(epoch):
+            return datetime.fromtimestamp(epoch, tz=UTC)
+
+    class _Client:
+        account_info = staticmethod(lambda: SimpleNamespace(equity=1.0, balance=1.0, profit=0.0, trade_mode=0))
+        positions_get = staticmethod(lambda: [])
+        orders_get = staticmethod(lambda: [])
+        symbol_info_tick = staticmethod(lambda symbol: SimpleNamespace(time_msc=tick_ms[symbol]))
+
+    session = SimpleNamespace(client=_Client(), time_policy=_Policy(), call=lambda _name, fn, *a: fn(*a))
+    stub = SimpleNamespace(
+        _adapter=SimpleNamespace(session=session),
+        _markets={m: SimpleNamespace(broker_symbol=s) for m, s in (("A", "STALE.SYM"), ("B", "LIVE.SYM"), ("C", "OTHER.SYM"))},
+        _cfg=SimpleNamespace(magic=1),
+        _login_hash=lambda: "h",
+    )
+    snap, is_demo, _ = Mt5DemoStack._lane_snapshot(stub)
+    assert is_demo
+    assert snap.server_time == datetime.fromtimestamp(base, tz=UTC)  # the freshest, not the first (stale) market

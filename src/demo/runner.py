@@ -303,6 +303,10 @@ class RunnerConfig:
     train_timeout_s: float = 600.0
     forced_flat_on_shutdown: bool = False  # only honoured if the stack offers ``flatten_all`` (StackPort has none)
     max_clock_skew_s: float = 300.0
+    # A broker tick timestamp is a market EVENT time, not a continuously advancing wall clock. It is only a usable
+    # clock reference while the freshest tick across the markets has ADVANCED within this window (independent of the
+    # local clock, otherwise a wrong local clock would look like a stale quote). Else CLOCK_REFERENCE_UNAVAILABLE.
+    clock_reference_window_s: float = 120.0
     clock_backward_tolerance_s: float = 5.0
     manage_after_halt_s: float = 4 * 3600.0
     stop_file: Path | None = None
@@ -386,6 +390,9 @@ class DemoRunner:
         self._stale: set[str] = set()
         self._all_stale_since: datetime | None = None
         self._unprotected_since: datetime | None = None
+        self._clock_ref_tick: datetime | None = None  # freshest broker tick time seen so far
+        self._clock_ref_advanced_at: datetime | None = None  # local ``now`` when that tick time last advanced
+        self._clock_reference = "UNAVAILABLE"
         self._halted_since: datetime | None = None
         self._last_now: datetime | None = None
         self._last_account: AccountSnapshot | None = None
@@ -667,10 +674,41 @@ class DemoRunner:
                 self._fail_closed("unprotected_exposure", now)
         else:
             self._unprotected_since = None
-        if snap.server_time_utc is not None:
-            skew = abs((now - snap.server_time_utc.astimezone(UTC)).total_seconds())
-            if skew > self.cfg.max_clock_skew_s:
-                self._fail_closed(f"clock_anomaly: server skew {skew:.0f}s", now)
+        self._check_clock_reference(snap.server_time_utc, now)
+
+    def _check_clock_reference(self, tick_time: datetime | None, now: datetime) -> None:
+        """Local-vs-broker clock check that never mistakes quote staleness for clock skew.
+
+        ``tick_time`` is the freshest tick over all configured markets. It is evidence about the local clock only
+        while it keeps advancing (a paused market / weekend freezes it); then skew is checked in BOTH directions.
+        Without a live reference the check is CLOCK_REFERENCE_UNAVAILABLE and the stale-feed / session / closed-market
+        logic alone decides about exposure. A tick AHEAD of the local clock is impossible for a stale quote, so that
+        direction is fatal with or without a live reference.
+        """
+        if tick_time is None:
+            self._clock_reference = "UNAVAILABLE"
+            return
+        tick = tick_time.astimezone(UTC)
+        if self._clock_ref_tick is not None and tick > self._clock_ref_tick:
+            self._clock_ref_advanced_at = now
+        if self._clock_ref_tick is None or tick > self._clock_ref_tick:
+            self._clock_ref_tick = tick
+        skew = (now - tick).total_seconds()  # positive: tick behind the local clock
+        if -skew > self.cfg.max_clock_skew_s:
+            self._clock_reference = "AHEAD"
+            self._fail_closed(f"clock_anomaly: server skew {-skew:.0f}s ahead", now)
+            return
+        live = (
+            self._clock_ref_advanced_at is not None
+            and (now - self._clock_ref_advanced_at).total_seconds() <= self.cfg.clock_reference_window_s
+        )
+        if not live:
+            self._clock_reference = "UNAVAILABLE"
+            return
+        self._clock_reference = "OK"
+        if abs(skew) > self.cfg.max_clock_skew_s:
+            self._clock_reference = "ANOMALY"
+            self._fail_closed(f"clock_anomaly: server skew {abs(skew):.0f}s", now)
 
     def _guards(self, now: datetime) -> None:
         if now.tzinfo is None:
@@ -1577,6 +1615,7 @@ class DemoRunner:
             "feed": self._feed,
             "market_state": dict(self._market_state),
             "idle_all_markets_closed": self._idle_all,
+            "clock_reference": self._clock_reference,
             "catchup": {m: dict(v) for m, v in self._catchup.items()},
             "stale_markets": sorted(self._stale),
             "disabled_markets": dict(self.disabled),

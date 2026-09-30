@@ -380,6 +380,85 @@ def test_server_time_skew_is_clock_anomaly(env):
     assert "clock_anomaly" in (r.fail_reason or "")
 
 
+def _advancing_cycles(env, r, lag_s, n=4, step_s=5):
+    """n cycles in which the broker tick ADVANCES each cycle while it sits ``lag_s`` behind the local clock
+    (negative lag = tick ahead of the local clock). A live, moving tick is a usable clock reference."""
+    r.start()
+    for _ in range(n):
+        env.clock.advance(seconds=step_s)
+        env.stack.set_account(server_time_utc=env.clock() - timedelta(seconds=lag_s))
+        r.run_cycle()
+        if r.fail_reason:
+            break
+
+
+def _hb_clock_reference(r):
+    return json.loads(r.cfg.heartbeat_path.read_text())["clock_reference"]
+
+
+def test_clock_a_stale_tick_305s_behind_is_not_clock_anomaly(env):
+    # A paused market freezes its tick time far behind the local clock: quote staleness, not clock skew.
+    env.stack.set_account(server_time_utc=env.clock() - timedelta(seconds=305))
+    r = env.build()
+    r.start()
+    for _ in range(4):
+        env.clock.advance(seconds=5)
+        r.run_cycle()
+    assert "clock_anomaly" not in (r.fail_reason or "")
+    assert _hb_clock_reference(r) == "UNAVAILABLE"
+
+
+def test_clock_b_fresh_tick_local_clock_ahead_is_anomaly(env):
+    r = env.build()
+    _advancing_cycles(env, r, lag_s=400)  # moving tick, local clock 400 s ahead of it
+    assert "clock_anomaly" in (r.fail_reason or "")
+
+
+def test_clock_c_fresh_tick_local_clock_behind_is_anomaly(env):
+    r = env.build()
+    _advancing_cycles(env, r, lag_s=-400)  # moving tick, 400 s ahead of the local clock
+    assert "clock_anomaly" in (r.fail_reason or "")
+
+
+def test_clock_e_all_markets_stale_no_false_anomaly_and_staleness_stays_reported(env):
+    env.stack.set_account(server_time_utc=env.clock() - timedelta(hours=9))  # weekend-old, frozen
+    r = env.build()
+    r.start()
+    for _ in range(4):
+        env.clock.advance(seconds=30)
+        r.run_cycle()
+    assert "clock_anomaly" not in (r.fail_reason or "")
+    hb = json.loads(r.cfg.heartbeat_path.read_text())
+    assert hb["clock_reference"] == "UNAVAILABLE"
+    assert "market_state" in hb and "idle_all_markets_closed" in hb  # stale/closed logic keeps running
+
+
+def test_clock_f_frozen_weekend_tick_keeps_runner_healthy_and_opens_no_exposure(env):
+    env.stack.set_account(server_time_utc=env.clock() - timedelta(days=1))
+    r = env.build()
+    r.start()
+    for _ in range(3):
+        env.clock.advance(seconds=30)
+        r.run_cycle()
+    assert r.fail_reason is None
+    assert env.stack.submits == []
+
+
+def test_clock_g_normal_fresh_quotes_unchanged(env):
+    r = env.build()
+    _advancing_cycles(env, r, lag_s=1)
+    assert r.fail_reason is None
+    assert _hb_clock_reference(r) == "OK"
+
+
+def test_clock_static_tick_far_ahead_is_still_anomaly(env):
+    # A stale quote can never lie in the future: a tick far AHEAD of the local clock is fatal even if frozen.
+    env.stack.set_account(server_time_utc=env.clock() + timedelta(hours=2))
+    r = env.build()
+    _cycle(r)
+    assert "clock_anomaly" in (r.fail_reason or "")
+
+
 def test_disk_low_fail_closed(env):
     snap, dec, intent = make_pair()
     env.engine.push("GER40", (snap, dec, intent))

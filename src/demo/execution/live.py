@@ -1143,10 +1143,13 @@ class Mt5DemoStack:
         )
         server_time = None
         try:
+            # Freshest tick over ALL configured markets, never the first one as a global clock: a tick time is a
+            # market-event time and a single paused market leaves it arbitrarily old.
             for info in self._markets.values():
                 tick = session.call("symbol_info_tick", client.symbol_info_tick, info.broker_symbol)
-                server_time = session.time_policy.server_epoch_to_utc(float(tick.time_msc) / 1000)
-                break
+                tick_time = session.time_policy.server_epoch_to_utc(float(tick.time_msc) / 1000)
+                if server_time is None or tick_time > server_time:
+                    server_time = tick_time
         except (Mt5CallError, AmbiguousServerTime):
             server_time = None
         snap = _Snap(

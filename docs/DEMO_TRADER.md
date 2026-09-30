@@ -160,3 +160,14 @@ derivation (which produces the `target_price` stages) is NOT part of E1 (lane E2
   NOT run for it (`EXIT_PLAN_MULTI_TRANCHE_NOT_SUPPORTED`, TEMPORARY; add-ons stay rejected). Engine-driven FULL closes carry
   `exit_reason` `MANUAL` (the recorder's exit-reason set is owned outside this lane); the engine reason is in the registry row
   `detail` (`exit_engine:<REASON>`) and `exit_log()`.
+
+## Clock reference (2026-09-30)
+A broker tick timestamp is a market-event time, not a continuously advancing wall clock. `Mt5DemoStack._lane_snapshot` therefore reports the
+FRESHEST tick over all configured markets (never the first market) as `server_time`. The runner (`_check_clock_reference`) uses it as a clock
+reference only while it keeps ADVANCING (within `clock_reference_window_s`, a criterion independent of the local clock); then `abs(skew) > max_clock_skew_s`
+=> `clock_anomaly` fail-closed in both directions. No live reference (paused market, weekend) => heartbeat `clock_reference = UNAVAILABLE`, quote age is
+NOT read as clock skew, and the existing stale-feed / session / closed-market logic alone governs exposure. A tick AHEAD of the local clock by more than
+`max_clock_skew_s` is fatal with or without a live reference (a stale quote cannot be in the future). Trigger: the runner stopped at 20:04 UTC with a
+false 305 s skew because the first market was paused.
+Architecture note: `src/coverage_analysis` (offline hindsight analysis) and `markets/phase2.py` (offline preflight cost wiring, only
+`alpha.common.market_costs`) are the only non-alpha, non-`demo.opportunity` code allowed to import `alpha`; dedicated tests keep them off execution/risk.

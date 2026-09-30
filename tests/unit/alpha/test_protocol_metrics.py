@@ -1,3 +1,4 @@
+# ruff: noqa: E501
 """Metrics arithmetic, split plan, OOS gate, dataset admission policy, import isolation."""
 
 from __future__ import annotations
@@ -168,6 +169,10 @@ def test_research_package_is_isolated_from_production_and_vice_versa():
             continue
         if rel[:2] == ("demo", "opportunity"):
             continue  # frozen causal signal kernels only; constrained by the allowlist test below
+        if rel[:1] == ("coverage_analysis",):
+            continue  # offline read-only hindsight analysis; constrained by the dedicated test below
+        if rel == ("markets", "phase2.py"):
+            continue  # offline preflight cost wiring; only alpha.common.market_costs, see dedicated test below
         assert not importing_alpha.search(py.read_text(encoding="utf-8")), (
             f"{py} imports research code"
         )
@@ -198,3 +203,30 @@ def test_demo_opportunity_imports_only_frozen_alpha_kernels():
             assert not pattern.search(py.read_text(encoding="utf-8")), f"{py} imports research"
     for py in (src / "demo" / "execution").rglob("*.py"):
         assert not pattern.search(py.read_text(encoding="utf-8")), f"{py} imports research"
+
+
+def _imports(path, pattern):
+    return re.findall(pattern, path.read_text(encoding="utf-8"), flags=re.M)
+
+
+def test_coverage_analysis_is_offline_only_and_never_imported_by_production():
+    """src/coverage_analysis reads alpha family kernels (hindsight diagnostics), must not touch the execution /
+    risk / adapter layers, and no other package may import it."""
+    src = Path(__file__).resolve().parents[3] / "src"
+    forbidden = (
+        r"^\s*(?:from|import)\s+(adapters|nautilus_mt5|nautilus_kernel|execution|risk|portfolio|strategies|"
+        r"pipeline|persistence|exits|demo\.execution)\b"
+    )
+    for py in (src / "coverage_analysis").rglob("*.py"):
+        assert not _imports(py, forbidden), f"{py} couples offline analysis to production"
+    for py in src.rglob("*.py"):
+        if py.relative_to(src).parts[:1] == ("coverage_analysis",):
+            continue
+        assert not _imports(py, r"^\s*(?:from|import)\s+coverage_analysis\b"), f"{py} imports offline analysis"
+
+
+def test_markets_phase2_may_import_only_the_pure_cost_derivations_from_alpha():
+    """markets/phase2.py (used by the offline preflight) reuses alpha.common.market_costs and nothing else of alpha."""
+    src = Path(__file__).resolve().parents[3] / "src"
+    found = set(_imports(src / "markets" / "phase2.py", r"^\s*from\s+(alpha[\w.]*)\s+import"))
+    assert found <= {"alpha.common.market_costs"}, found
