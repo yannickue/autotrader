@@ -709,7 +709,16 @@ def _select_survivors(cands: list[TIndividual], mu: int, fam_cap: int, niche_cap
 
 def _update_hof(hof: tools.HallOfFame, inds: list[TIndividual], scorer: _Scorer) -> None:
     valid = [i for i in inds if (c := scorer.candidate(i)) is not None and scorer.eligible(c)]
-    hof.update(sorted(valid, key=lambda i: (-i.fitness.values[0], i.chash)))
+    # One hall-of-fame slot per behavioural twin group: keep the best (ties: smaller hash) even when the
+    # rival arrives in a later generation or neither twin owns an archive slot.
+    pool = {i.chash: i for i in list(hof) + valid}
+    best: dict[str, TIndividual] = {}
+    for i in sorted(pool.values(), key=lambda i: (-i.fitness.values[0], i.chash)):
+        c = scorer.candidate(i)
+        twin = c.evaluation.twin_hash if c is not None else ""
+        best.setdefault(twin or f"solo:{i.chash}", i)
+    hof.clear()
+    hof.update(sorted(best.values(), key=lambda i: (-i.fitness.values[0], i.chash)))
 
 
 def evolve_temporal(

@@ -132,7 +132,7 @@ def test_non_finite_target_means_fixed_r_path_and_is_not_guarded() -> None:
 
 def _load_old_sim(tmp_path: Path):
     src = subprocess.run(
-        ["git", "show", "HEAD:src/alpha/fast/sim.py"], capture_output=True, check=True,
+        ["git", "show", "76dcff3:src/alpha/fast/sim.py"], capture_output=True, check=True,
         cwd=Path(__file__).resolve().parents[1],
     ).stdout.decode("utf-8")
     path = tmp_path / "old_fast_sim.py"
