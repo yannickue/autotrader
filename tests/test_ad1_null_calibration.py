@@ -78,3 +78,49 @@ def test_gaps_preserved() -> None:
     r0 = np.diff(np.log(dev["close"].to_numpy()))
     r1 = np.diff(np.log(null["close"].to_numpy()))
     np.testing.assert_allclose(r1[gap], r0[gap], atol=2e-6)
+
+
+# ------------------------------------------------------------------ powered nulls
+class _Plan:  # minimal SplitPlan stand-in: only validation.start is used
+    class validation:
+        start = "2025-03-06"
+
+
+def _local_day(dev: pd.DataFrame) -> np.ndarray:
+    return (pd.DatetimeIndex(dev["ts"]).tz_convert("Europe/Berlin").normalize()
+            .tz_localize(None).to_numpy().astype("datetime64[D]"))
+
+
+def test_zerodrift_zero_segment_drift_and_ohlc() -> None:
+    dev = _frame(days=8)
+    null = make_null_frame(dev, 5, kind="shuffle_zerodrift", plan=_Plan)
+    seg = _local_day(dev) >= np.datetime64("2025-03-06")
+    c = null["close"].to_numpy()
+    # sum of log returns inside each segment is ~0 (segment 0 excludes the first bar)
+    first_val = int(np.flatnonzero(seg)[0])
+    assert abs(np.log(c[first_val - 1] / c[0])) < 2e-3
+    assert abs(np.log(c[-1] / c[first_val - 1])) < 2e-3 + abs(
+        np.log(c[first_val] / c[first_val - 1]))
+    assert (null["high"] >= null[["open", "close"]].max(axis=1) - 1e-9).all()
+    assert (null["low"] <= null[["open", "close"]].min(axis=1) + 1e-9).all()
+    again = make_null_frame(dev, 5, kind="shuffle_zerodrift", plan=_Plan)
+    pd.testing.assert_frame_equal(null, again)
+    other = make_null_frame(dev, 6, kind="shuffle_zerodrift", plan=_Plan)
+    assert not np.allclose(null["close"], other["close"])
+
+
+def test_zerodrift_requires_plan() -> None:
+    with pytest.raises(ValueError):
+        make_null_frame(_frame(), 1, kind="shuffle_zerodrift")
+
+
+def test_sign_flip_day_preserves_abs_returns_and_ohlc() -> None:
+    dev = _frame()
+    null = make_null_frame(dev, 3, kind="sign_flip_day")
+    r0 = np.diff(np.log(dev["close"].to_numpy()))
+    r1 = np.diff(np.log(null["close"].to_numpy()))
+    assert np.allclose(np.abs(r0), np.abs(r1), atol=2e-6)
+    assert (null["high"] >= null[["open", "close"]].max(axis=1) - 1e-9).all()
+    assert (null["low"] <= null[["open", "close"]].min(axis=1) + 1e-9).all()
+    with pytest.raises(ValueError):
+        make_null_frame(dev, 1, kind="bogus")

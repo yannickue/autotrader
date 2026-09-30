@@ -1,0 +1,214 @@
+{
+ "0c39cc570dfd5f65f7c8185edbabc5a63803a5b9518da19167853f4b9cad16bb": {
+  "canonical_hash": "0c39cc570dfd5f65f7c8185edbabc5a63803a5b9518da19167853f4b9cad16bb",
+  "direction": "SHORT",
+  "drift_excess_p": 0.013972055888223553,
+  "drift_ref": {
+   "pooled": {
+    "always_long_mean": -0.07404355846049794,
+    "excess_over_always_long": 0.11751885196217729
+   },
+   "train": {
+    "always_long_mean": -0.08324902354716522,
+    "excess_over_always_long": 0.05940662773011883
+   },
+   "validation": {
+    "always_long_mean": -0.05053665781343417,
+    "excess_over_always_long": 0.26326785588790963
+   }
+  },
+  "pooled": {
+   "base_mean": -0.18064615699340913,
+   "base_n_mean": 106.01,
+   "base_sd": 0.10873108572592655,
+   "cand_E": 0.04347529350167935,
+   "excess": 0.22412145049508847,
+   "n_cand": 123,
+   "n_draws": 500,
+   "p": 0.011976047904191617,
+   "p_raw": 0.01
+  },
+  "source_hash": "0c39cc570dfd5f65f7c8185edbabc5a63803a5b9518da19167853f4b9cad16bb",
+  "train": {
+   "base_mean": -0.13854635660561793,
+   "base_n_mean": 74.334,
+   "base_sd": 0.1357680177449787,
+   "cand_E": -0.023842395817046395,
+   "excess": 0.11470396078857154,
+   "n_cand": 88,
+   "n_draws": 500,
+   "p": 0.20359281437125748,
+   "p_raw": 0.202
+  },
+  "validation": {
+   "base_mean": -0.2778866430741281,
+   "base_n_mean": 31.676,
+   "base_sd": 0.1993849901195596,
+   "cand_E": 0.21273119807447544,
+   "excess": 0.4906178411486035,
+   "n_cand": 35,
+   "n_draws": 500,
+   "p": 0.013972055888223553,
+   "p_raw": 0.012
+  }
+ },
+ "6c1ce1cbb43266ed15f578968babd76674f7282f8bc96554f573195400d2e974": {
+  "canonical_hash": "6c1ce1cbb43266ed15f578968babd76674f7282f8bc96554f573195400d2e974",
+  "direction": "SHORT",
+  "drift_excess_p": 0.0499001996007984,
+  "drift_ref": {
+   "pooled": {
+    "always_long_mean": -0.06469223660755773,
+    "excess_over_always_long": 0.0758640836170282
+   },
+   "train": {
+    "always_long_mean": -0.05501567530614881,
+    "excess_over_always_long": 0.022287449605921335
+   },
+   "validation": {
+    "always_long_mean": -0.08309315763919588,
+    "excess_over_always_long": 0.18304070723938884
+   }
+  },
+  "pooled": {
+   "base_mean": -0.09982283722917643,
+   "base_n_mean": 123.856,
+   "base_sd": 0.1017035016209637,
+   "cand_E": 0.011171847009470486,
+   "excess": 0.11099468423864692,
+   "n_cand": 136,
+   "n_draws": 500,
+   "p": 0.14570858283433133,
+   "p_raw": 0.144
+  },
+  "source_hash": "6c1ce1cbb43266ed15f578968babd76674f7282f8bc96554f573195400d2e974",
+  "train": {
+   "base_mean": -0.057725823591126664,
+   "base_n_mean": 82.068,
+   "base_sd": 0.13031055506699826,
+   "cand_E": -0.03272822570022747,
+   "excess": 0.02499759789089919,
+   "n_cand": 91,
+   "n_draws": 500,
+   "p": 0.42115768463073855,
+   "p_raw": 0.42
+  },
+  "validation": {
+   "base_mean": -0.18173267121025885,
+   "base_n_mean": 41.788,
+   "base_sd": 0.1648077060293358,
+   "cand_E": 0.09994754960019296,
+   "excess": 0.2816802208104518,
+   "n_cand": 45,
+   "n_draws": 500,
+   "p": 0.0499001996007984,
+   "p_raw": 0.048
+  }
+ },
+ "b8b683b9f6da13aa5e87f156490f22277bb210b4f5f7d4b72521a1feb65fdc7c": {
+  "canonical_hash": "b8b683b9f6da13aa5e87f156490f22277bb210b4f5f7d4b72521a1feb65fdc7c",
+  "direction": "SHORT",
+  "drift_excess_p": 0.8962075848303394,
+  "drift_ref": {
+   "pooled": {
+    "always_long_mean": 0.0854658385725725,
+    "excess_over_always_long": -0.16666366549753833
+   },
+   "train": {
+    "always_long_mean": 0.10543411083890955,
+    "excess_over_always_long": -0.1656095965562098
+   },
+   "validation": {
+    "always_long_mean": 0.027914588139739835,
+    "excess_over_always_long": -0.1682377497112651
+   }
+  },
+  "pooled": {
+   "base_mean": 0.037426817084023255,
+   "base_n_mean": 114.746,
+   "base_sd": 0.0823982378980522,
+   "cand_E": -0.08119782692496583,
+   "excess": -0.11862464400898909,
+   "n_cand": 122,
+   "n_draws": 500,
+   "p": 0.9321357285429142,
+   "p_raw": 0.932
+  },
+  "source_hash": "b8b683b9f6da13aa5e87f156490f22277bb210b4f5f7d4b72521a1feb65fdc7c",
+  "train": {
+   "base_mean": 0.023204065799609097,
+   "base_n_mean": 85.498,
+   "base_sd": 0.0931368928188306,
+   "cand_E": -0.060175485717300255,
+   "excess": -0.08337955151690934,
+   "n_cand": 90,
+   "n_draws": 500,
+   "p": 0.812375249500998,
+   "p_raw": 0.812
+  },
+  "validation": {
+   "base_mean": 0.0797140264412256,
+   "base_n_mean": 29.248,
+   "base_sd": 0.1737138424817637,
+   "cand_E": -0.14032316157152525,
+   "excess": -0.22003718801275085,
+   "n_cand": 32,
+   "n_draws": 500,
+   "p": 0.8962075848303394,
+   "p_raw": 0.896
+  }
+ },
+ "efb567dd926e4a994033e054658c6fb56aae0e63e116c33439f5795a745eb1de": {
+  "canonical_hash": "efb567dd926e4a994033e054658c6fb56aae0e63e116c33439f5795a745eb1de",
+  "direction": "SHORT",
+  "drift_excess_p": 0.8662674650698603,
+  "drift_ref": {
+   "pooled": {
+    "always_long_mean": 0.07989779464803037,
+    "excess_over_always_long": -0.22834812782638933
+   },
+   "train": {
+    "always_long_mean": 0.09127100783823332,
+    "excess_over_always_long": -0.24740395891952777
+   },
+   "validation": {
+    "always_long_mean": 0.05470754659599673,
+    "excess_over_always_long": -0.1851883667132525
+   }
+  },
+  "pooled": {
+   "base_mean": 0.02644309139397979,
+   "base_n_mean": 171.42,
+   "base_sd": 0.08166832283428245,
+   "cand_E": -0.14845033317835896,
+   "excess": -0.17489342457233875,
+   "n_cand": 197,
+   "n_draws": 500,
+   "p": 0.9860279441117764,
+   "p_raw": 0.986
+  },
+  "source_hash": "efb567dd926e4a994033e054658c6fb56aae0e63e116c33439f5795a745eb1de",
+  "train": {
+   "base_mean": 0.023621056573760107,
+   "base_n_mean": 119.814,
+   "base_sd": 0.09468528546674698,
+   "cand_E": -0.15613295108129444,
+   "excess": -0.17975400765505453,
+   "n_cand": 138,
+   "n_draws": 500,
+   "p": 0.9740518962075848,
+   "p_raw": 0.974
+  },
+  "validation": {
+   "base_mean": 0.03419742986905567,
+   "base_n_mean": 51.606,
+   "base_sd": 0.14934537334940093,
+   "cand_E": -0.13048082011725579,
+   "excess": -0.16467824998631145,
+   "n_cand": 59,
+   "n_draws": 500,
+   "p": 0.8662674650698603,
+   "p_raw": 0.866
+  }
+ }
+}
