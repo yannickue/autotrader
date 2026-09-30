@@ -32,7 +32,7 @@ from alpha.fast.store import _run_start
 
 _PKG_DIR = Path(__file__).resolve().parent
 
-_ZONE_SLOT_M15_RANGE = "vwap_band"  # REGISTRY DEFECT: name is a misnomer, see EventSet docs
+_ZONE_SLOT_M15_RANGE = "m15_range"  # M15 context range box (renamed from the misnomer vwap_band)
 
 
 @dataclass(frozen=True)
@@ -61,8 +61,8 @@ class EventSet(dict[str, np.ndarray]):
     Cache hits are LAZY: only the names are known up front, an array is opened with
     ``mmap_mode='r'`` on first access.
 
-    Registry defect (reported): the zone kind ``vwap_band`` has no VWAP source at HEAD; its
-    slot carries the M15 context range box (``context_range_low/high``) as directed.
+    Zone kind ``m15_range`` (formerly ``vwap_band``, a misnomer) is the M15 context range box
+    (``context_range_low/high``).
     """
 
     def __init__(
@@ -293,7 +293,7 @@ def _zones(col: _Collector, features, S: TfSeries, c, atr, ph, pl, pdl, pdh, p: 
             lo, hi = pdl, pdh
             zid, born = kz.level_zone_ids(lo, hi)
             kb_lo, kb_hi, kb_zid, kb_born = lo, hi, zid, born
-        else:  # _ZONE_SLOT_M15_RANGE: M15 context range box (see report: registry misnomer)
+        else:  # m15_range: M15 context range box
             lo, hi = rlo_f[S.m5_end], rhi_f[S.m5_end]
             zid, born = kz.level_zone_ids(lo, hi)
             before = S.m5_start - 1

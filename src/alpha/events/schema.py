@@ -22,7 +22,7 @@ import itertools
 import json
 from dataclasses import asdict, dataclass
 
-EVENT_SET_VERSION = "events-v2.0"
+EVENT_SET_VERSION = "events-v2.1"
 
 TIMEFRAMES: tuple[str, ...] = ("M5", "M15", "H1", "D1")
 TOL_GRID: tuple[float, ...] = (0.0, 0.1, 0.25)
@@ -46,7 +46,7 @@ PREFIX_DTYPE: dict[str, str] = {
 }
 MAIN_PREFIX = {"pulse": "ev", "state": "st", "level": "lv"}
 
-ZONE_KINDS = ("swing_cluster", "prior_range", "vwap_band")
+ZONE_KINDS = ("swing_cluster", "prior_range", "m15_range")
 SWEEP_LOW_SRCS = ("prior20", "prior48", "pdl", "session_low", "swing_low")
 SWEEP_HIGH_SRCS = ("prior20", "prior48", "pdh", "session_high", "swing_high")
 PATTERN_SRCS = ("double_bottom", "double_top", "inside_bar_break_up", "inside_bar_break_dn")

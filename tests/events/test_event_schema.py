@@ -127,5 +127,5 @@ def test_fingerprint_stable_and_sensitive(monkeypatch):
     assert ev.registry_fingerprint() == base
     monkeypatch.setitem(ev._REGISTRY, "RECLAIM_UP", dataclasses.replace(ev.get("RECLAIM_UP"), ks=(3,)))
     assert ev.registry_fingerprint() != base
-    monkeypatch.setattr(ev, "EVENT_SET_VERSION", "events-v2.1")
+    monkeypatch.setattr(ev, "EVENT_SET_VERSION", "events-v9.9-test")
     assert ev.registry_fingerprint() != base

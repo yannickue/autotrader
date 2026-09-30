@@ -125,7 +125,7 @@ def test_real_bos_exactly_one_pulse_per_swing(real):
 
 def test_real_zone_and_trendline_stamps_follow_their_object(real):
     feats, ev = real
-    for kind in ("swing_cluster", "prior_range", "vwap_band"):
+    for kind in ("swing_cluster", "prior_range", "m15_range"):
         for ev_name in ("zone_enter", "zone_exit"):
             idx = _pulses(ev, f"m5_{ev_name}_{kind}")
             org = ev[f"evo_m5_{ev_name}_{kind}"][idx]

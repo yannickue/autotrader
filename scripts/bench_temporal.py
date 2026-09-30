@@ -236,7 +236,7 @@ def _anchor(rng: random.Random) -> tuple[tuple[Clause, ...], tuple[Capture, ...]
     elif kind == 5:
         cl, caps = [trend_h1], [Capture("R0", "bar_low")]
     elif kind == 6:
-        cl = [Clause("event", "ZONE_ENTER", "M15", variant="vwap_band"), _feature(rng)]
+        cl = [Clause("event", "ZONE_ENTER", "M15", variant="m15_range"), _feature(rng)]
         caps = [Capture("R0", "lv", "ZONE_LO")]
     else:
         cl = [Clause("event", "ZONE_ENTER", "M15", variant="swing_cluster", op="BEFORE",
