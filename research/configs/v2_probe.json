@@ -39,6 +39,6 @@
  "baselines": {"draws": 20, "stop_atr_mult": 1.0, "target_r": 1.5},
  "prior": {"trials": 30310, "unique_specs": 29798, "label": "v1 cumulative"},
  "cache_dir": "data/feature_store/v2r",
- "max_event_cache_mb": 300,
+ "max_event_cache_mb": 600,
  "out_root": "research/reports/v2_probe"
 }
