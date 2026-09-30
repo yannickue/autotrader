@@ -226,6 +226,8 @@ class Mt5ExecClientConfig:
     # Re-verify the attached account (expected login) and, when True, DEMO trade mode right
     # before EVERY exposure-changing order_send / SL-TP change.
     require_demo_account: bool = False
+    # When set, the attached account's server must equal it right before every send (L1).
+    expected_server: str | None = None
 
 
 @dataclass(slots=True)
@@ -711,6 +713,10 @@ class Mt5LiveExecutionClient(LiveExecutionClient):
             return "ACCOUNT_IDENTITY_CHANGED"
         if self._cfg.require_demo_account and int(account.trade_mode) != 0:
             return "ACCOUNT_IS_NOT_DEMO"
+        if self._cfg.expected_server and str(getattr(account, "server", "")) != str(
+            self._cfg.expected_server
+        ):
+            return "ACCOUNT_SERVER_CHANGED"
         return None
 
     def local_view(self) -> LocalView:
@@ -837,7 +843,7 @@ class Mt5LiveExecutionClient(LiveExecutionClient):
             if other_trace is None:
                 other_trace = self._broker_trace_tokens()
             if row.token in other_trace:
-                continue  # the broker shows the order/position/deal: adopted via ingest, not rejected
+                continue  # broker shows the order/position/deal: adopted via ingest
             # No trace at the broker (history, open orders, positions, deals of the lookback) after
             # the grace period: the send never happened. Decided from BROKER TRUTH, so it works
             # after a restart too, when the Nautilus cache is empty (order is None). Never re-sent.

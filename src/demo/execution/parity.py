@@ -41,7 +41,7 @@ def entry_tolerance(
     if configured is not None:
         try:
             value = Decimal(str(configured))
-        except Exception:  # noqa: BLE001 - malformed -> conservative default
+        except Exception:  # malformed -> conservative default
             value = Decimal(-1)
         if value.is_finite() and value >= 0:
             return value

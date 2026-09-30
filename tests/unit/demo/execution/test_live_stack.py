@@ -193,6 +193,42 @@ def test_leverage_above_ceiling_and_foreign_currency_are_refused(tmp_path):
         make_stack(build_broker(currency="USD"), tmp_path / "b").start()
 
 
+def test_leverage_refusal_names_the_observed_leverage(tmp_path):
+    with pytest.raises(StackFailClosed, match=r"observed account leverage 1:500.*30x ceiling"):
+        make_stack(build_broker(leverage=500), tmp_path).start()
+
+
+@pytest.mark.parametrize("hours", [1, 2, -1, -2])
+def test_start_refuses_when_the_inferred_server_timezone_is_off_by_whole_hours(tmp_path, hours):
+    """M5: a DST change (2026-10-25) or another server zone shifts every tick by 1-2 h."""
+    broker = build_broker()
+    broker.live_offset_s += 3600 * hours
+    stack = make_stack(broker, tmp_path)
+    with pytest.raises(StackFailClosed, match="server_time_offset_mismatch"):
+        stack.start()
+    assert broker.order_send_calls == 0
+    assert not (tmp_path / "terminal.lock").exists()
+
+
+def test_start_publishes_the_measured_server_offset(env):
+    _broker, stack = env
+    snapshot = stack.start()
+    offset = snapshot.extra["server_vs_local_offset_s"]
+    assert offset is not None and abs(offset) < 60
+    assert snapshot.extra["start_notes"]["server_vs_local_offset_s"] == round(offset, 1)
+
+
+def test_a_stale_closed_market_tick_is_logged_not_judged(tmp_path):
+    broker = build_broker()
+    broker.live_offset_s -= 5 * 3600 + 1234  # weekend-like: ticks hours old, not a whole-hour offset
+    stack = make_stack(broker, tmp_path)
+    try:
+        snapshot = stack.start()
+        assert snapshot.extra["server_vs_local_offset_s"] > 3600
+    finally:
+        stack.stop()
+
+
 def test_unreconciled_book_rejects_new_exposure_fail_closed(env):
     broker, stack = env
     stack.start()

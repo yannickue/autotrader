@@ -182,6 +182,7 @@ class StackConfig:
     feed_fatal_age_s: float = 180.0  # older => StackFailClosed("stale_feed")
     clock_skew_s: float = 5.0  # quote this far in the FUTURE => warning + reject that market (M4)
     clock_fatal_skew_s: float = 60.0  # SUSTAINED skew above this => fatal clock_anomaly
+    server_tz_tolerance_s: float = 300.0  # start self-check: tick offset within this of a whole hour
     read_retry_attempts: int = 3  # bounded retries of a failed lane READ (never of a write)
     read_retry_backoff_s: float = 0.2  # sleep before retry n is n x this
     clock_skew_sustain_obs: int = 3  # consecutive entry-time observations that make it "sustained"
@@ -536,6 +537,7 @@ class Mt5DemoStack:
         self._skew_obs: collections.deque[float] = collections.deque(
             maxlen=max(1, self._cfg.clock_skew_sustain_obs)
         )
+        self.server_vs_local_offset_s: float | None = None  # start self-check (local - tick UTC)
         self.max_clock_skew_s: float = 0.0  # logged metric: largest future skew seen (seconds)
         self._last_snap = _Snap()
         self._closing_seen: dict[str, float] = {}
@@ -703,6 +705,7 @@ class Mt5DemoStack:
                 exposure_timeout_secs=self._cfg.exposure_timeout_s,
                 dry_run=self._dry_run,
                 require_demo_account=True,
+                expected_server=self._cfg.expected_server or self._connection.server or None,
             ),
             data_config=Mt5DataClientConfig(autostart_poller=False),
             allow_multiplier_and_cross_currency=True,
@@ -780,7 +783,12 @@ class Mt5DemoStack:
         if str(account.currency) != self._cfg.account_currency:
             raise StackFailClosed(f"unsupported_account_currency:{account.currency}")
         if int(account.leverage) > int(BROKER_LEVERAGE_CEILING):
-            raise StackFailClosed("broker_leverage_above_ceiling")
+            raise StackFailClosed(
+                f"broker_leverage_above_ceiling: observed account leverage 1:{int(account.leverage)} "
+                f"is above the hard {int(BROKER_LEVERAGE_CEILING)}x ceiling; refusing to start "
+                f"(the ceiling is never raised: use an account with leverage <= "
+                f"{int(BROKER_LEVERAGE_CEILING)})"
+            )
         session.account_mode()  # RETAIL_NETTING only, else UnsupportedAccountMode
         markets: dict[str, _MarketInfo] = {}
         for mapping in self._symbols.all():
@@ -822,6 +830,49 @@ class Mt5DemoStack:
             if canonical not in markets:
                 raise StackFailClosed(f"market_not_registered:{canonical}")
         self._markets = markets
+        self._check_server_time_offset(session)
+
+    def _check_server_time_offset(self, session: Any) -> None:
+        """Start-up self-check of the INFERRED server timezone (M5).
+
+        ``history.py`` infers Europe/Berlin (NOT_BROKER_CONFIRMED). If that inference is wrong (a
+        DST change, e.g. 2026-10-25, or a server on another zone), every quote timestamp shifts by
+        a whole number of hours. The newest tick of all markets, converted with the time policy,
+        must land near the local UTC clock; landing within ``server_tz_tolerance_s`` of a NONZERO
+        whole 1-2 hour offset is the DST / wrong-zone signature => fail closed with a clear
+        message. Any other age (weekend, closed market) cannot be judged and is only logged. The
+        measured offset (local_now - tick_utc, seconds) is published in ``AccountSnapshot.extra``.
+        """
+        newest: datetime | None = None
+        for info in self._markets.values():
+            try:
+                tick = session.call(
+                    "symbol_info_tick", session.client.symbol_info_tick, info.broker_symbol
+                )
+                moment = session.time_policy.server_epoch_to_utc(
+                    float(getattr(tick, "time_msc", 0) or tick.time * 1000) / 1000.0
+                )
+            except (Mt5CallError, AmbiguousServerTime):
+                continue
+            if newest is None or moment > newest:
+                newest = moment
+        if newest is None:
+            self._start_notes["server_time_check"] = "no_tick_available"
+            return
+        delta = (self._now().astimezone(UTC) - newest).total_seconds()  # + = tick is in the past
+        self.server_vs_local_offset_s = delta
+        self._start_notes["server_vs_local_offset_s"] = round(delta, 1)
+        hours = round(abs(delta) / 3600.0)
+        if (
+            hours in (1, 2)
+            and abs(abs(delta) - 3600.0 * hours) <= self._cfg.server_tz_tolerance_s
+        ):
+            raise StackFailClosed(
+                f"server_time_offset_mismatch: the newest tick converted with the assumed server "
+                f"timezone is {delta:+.0f}s ({hours} h) away from the local UTC clock; the inferred "
+                f"Europe/Berlin server time is probably wrong (DST change or another server zone). "
+                f"Refusing to start: quote freshness cannot be trusted"
+            )
 
     # -- restart adoption ---------------------------------------------------------------------------
 
@@ -1023,6 +1074,7 @@ class Mt5DemoStack:
                 "foreign_positions": list(self._foreign),
                 "spec_diffs": {m: list(i.diffs) for m, i in self._markets.items() if i.diffs},
                 "start_notes": dict(self._start_notes),
+                "server_vs_local_offset_s": self.server_vs_local_offset_s,
                 "lane_max_concurrent": self._lane.stats.max_concurrent,
             },
         )
@@ -1548,7 +1600,10 @@ class Mt5DemoStack:
             self._set_fatal("unexpected_server")
             raise StackFailClosed("unexpected_server")
         if int(account.leverage) > int(BROKER_LEVERAGE_CEILING):
-            raise StackFailClosed("broker_leverage_above_ceiling")
+            raise StackFailClosed(
+                f"broker_leverage_above_ceiling: observed account leverage 1:{int(account.leverage)} "
+                f"is above the hard {int(BROKER_LEVERAGE_CEILING)}x ceiling"
+            )
         # New exposure needs a FRESH venue-snapshot comparison (read-only): the last comparison may
         # predate a manual trade, a foreign working order or a lost response.
         adapter.exec_client.reconcile()

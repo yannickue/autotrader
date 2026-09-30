@@ -98,7 +98,7 @@ def test_full_close_of_a_verified_own_position_is_allowed_in_any_reconciliation_
 def test_unreconciled_close_survives_stale_local_bookkeeping(h, broker, state):
     open_long(h)
     h.client.recon.state = state
-    broker.positions_get()[0].volume = 0.5  # local != broker: only legal to close under broker truth
+    broker.positions_get()[0].volume = 0.5  # local != broker
     order = h.market(SELL, "0.5", reduce_only=True)
     h.submit(order)
     assert status_of(h, order) is OrderStatus.FILLED and broker.positions_get() == ()
@@ -115,7 +115,7 @@ def test_unreconciled_reduce_only_never_increases_exposure(h, broker, state):
         assert status_of(h, order) is OrderStatus.DENIED
     assert "NOT_VENUE_RECONCILED" in h.denial(oversized)
     assert "NOT_VENUE_RECONCILED" in h.denial(wrong_side)
-    assert broker.positions_get()[0].volume == 0.25 and broker.order_send_calls == 1  # only the entry
+    assert broker.positions_get()[0].volume == 0.25 and broker.order_send_calls == 1
 
 
 @pytest.mark.parametrize("state", UNRECONCILED)

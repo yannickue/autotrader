@@ -20,7 +20,9 @@ def intent(**over) -> TradeIntent:
 
 
 def check(i, bid, ask, **kw):
-    return parity_reject(i, bid=D(str(bid)), ask=D(str(ask)), max_spread=D("5"), tick_size=D("0.1"), **kw)
+    return parity_reject(
+        i, bid=D(str(bid)), ask=D(str(ask)), max_spread=D("5"), tick_size=D("0.1"), **kw
+    )
 
 
 def test_audit_scenario_one_tick_adverse_drift_is_accepted():

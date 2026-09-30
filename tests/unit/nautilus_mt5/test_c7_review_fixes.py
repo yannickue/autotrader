@@ -176,3 +176,19 @@ def test_demo_slice_uses_the_broker_reported_account_leverage_as_the_cap(tmp_pat
         assert broker.order_send_calls == 0
     finally:
         close(loop, asm)
+
+
+def test_server_change_after_connect_blocks_the_next_send_when_a_server_is_pinned(broker, tmp_path):
+    """L1: the pre-send identity check also verifies the attached server."""
+    cfg = Mt5ExecClientConfig(
+        autostart_sync=False, require_demo_account=True, expected_server=broker.cfg.server
+    )
+    harness = ExecHarness(broker, tmp_path, cfg=cfg)
+    try:
+        broker.cfg.server = "Other-Server"
+        entry, _ = harness.submit_bracket(BUY, "0.25", 24_900.0)
+        assert harness.order(entry).status is OrderStatus.REJECTED
+        assert "ACCOUNT_SERVER_CHANGED" in harness.denial(entry)
+        assert broker.order_send_calls == 0
+    finally:
+        harness.shutdown()
