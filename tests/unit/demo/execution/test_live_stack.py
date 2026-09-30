@@ -611,3 +611,107 @@ def test_config_defaults_document_the_thresholds():
     cfg = StackConfig()
     assert cfg.max_quote_age_s == 30.0 and cfg.lock_heartbeat_s < 90.0 / 2
     assert cfg.magic == 740_003
+
+
+# -- additional safety properties ----------------------------------------------------------------------------------
+
+
+def test_stop_inside_the_broker_stop_level_is_refused_locally(env):
+    broker, stack = env
+    stack.start()
+    # broker stops level = 100 points x 0.01 = 1.0: a stop 0.5 below the bid is not placeable
+    events = stack.submit(make_intent(stop=24999.5, target=25150.0))
+    assert kinds(events) == ["Accepted", "Rejected"]
+    assert reason(events) == "stop_inside_broker_stop_level"
+    assert broker.order_send_calls == 0 and broker.positions_get() == ()
+
+
+def test_restarted_process_can_still_flatten_an_adopted_position_through_nautilus(tmp_path):
+    broker = build_broker()
+    first = make_stack(broker, tmp_path)
+    first.start()
+    first.submit(make_intent(flat_in_s=600))
+    first.stop()
+    second = make_stack(broker, tmp_path)
+    try:
+        second.start()
+        (closed,) = second.on_clock(datetime.now(UTC) + timedelta(seconds=700))
+        assert closed.exit_reason == "SESSION_END" and closed.intent_id == "intent-1"
+        assert broker.positions_get() == () and "position" in broker.request_log[-1]
+    finally:
+        second.stop()
+
+
+def test_stop_hit_before_forced_flat_is_reported_once_whichever_path_sees_it_first(env):
+    broker, stack = env
+    stack.start()
+    stack.submit(make_intent(flat_in_s=600))
+    broker.set_quote(24940.0, 24941.5)
+    (closed,) = stack.on_clock(datetime.now(UTC) + timedelta(seconds=700))
+    assert closed.exit_reason == "STOP"
+    assert [e for e in stack.poll_events() if isinstance(e, PositionClosed)] == []
+
+
+def test_losing_the_terminal_lock_is_fatal(env, tmp_path):
+    _broker, stack = env
+    stack.start()
+    (tmp_path / "terminal.lock").write_text("424242")  # another process now owns the lock file
+    import time as _time
+
+    _time.sleep(0.6)  # heartbeat interval 0.2 s
+    with pytest.raises(StackFailClosed, match="terminal_lock_lost"):
+        stack.submit(make_intent())
+
+
+def test_a_hung_mt5_call_fails_closed_instead_of_blocking_the_runner(tmp_path):
+    broker = build_broker()
+    from dataclasses import replace
+
+    stack = make_stack(broker, tmp_path, config=replace(FAST, lane_call_timeout_s=0.5))
+    try:
+        stack.start()
+        broker.call_latency_s = 1.2  # every MT5 call now blocks longer than the bound
+        with pytest.raises(StackFailClosed, match="mt5_lane_timeout"):
+            stack.submit(make_intent())
+        broker.call_latency_s = 0.0
+        assert broker.order_send_calls == 0
+        with pytest.raises(StackFailClosed):
+            stack.poll_events()  # latched
+    finally:
+        stack.stop()
+
+
+def test_threads_are_gone_after_stop(tmp_path):
+    import threading
+
+    broker = build_broker()
+    stack = make_stack(broker, tmp_path)
+    stack.start()
+    stack.submit(make_intent())
+    stack.stop()
+    stack.stop()  # idempotent
+    alive = [t.name for t in threading.enumerate() if t.name.startswith(("demo-", "mt5-lane"))]
+    assert alive == [] or all(not t.is_alive() for t in threading.enumerate() if t.name in alive)
+    assert not (tmp_path / "terminal.lock").exists()
+    with pytest.raises(StackFailClosed):
+        stack.submit(make_intent(intent_id="after-stop"))
+
+
+def test_rows_that_never_reached_the_broker_do_not_block_their_market_after_a_crash(tmp_path):
+    broker = build_broker()
+    first = make_stack(broker, tmp_path)
+    first.start()
+    first._registry.insert(
+        intent_id="crashed", client_order_id="dt-crashed", market="GER40", direction=1,
+        stop="24950", target=None, forced_flat_utc=None, status="ACCEPTED",
+        created_utc=datetime.now(UTC).isoformat(),
+    )
+    assert first.has_position("GER40")  # an in-flight intent counts while the process lives
+    first.stop()
+    second = make_stack(broker, tmp_path)
+    try:
+        second.start()
+        assert not second.has_position("GER40") and second.open_intents() == ()
+        assert kinds(second.submit(make_intent(intent_id="fresh")))[-1] == "ProtectionConfirmed"
+    finally:
+        second.stop()

@@ -59,7 +59,11 @@ from nautilus_trader.portfolio.portfolio import Portfolio
 from nautilus_trader.risk.engine import RiskEngine
 from nautilus_trader.trading.trader import Trader
 
-from adapters.activtrades_mt5.history import AmbiguousServerTime, validate_rates_schema
+from adapters.activtrades_mt5.history import (
+    AmbiguousServerTime,
+    MT5HistoryError,
+    validate_rates_schema,
+)
 from adapters.config import MT5ConnectionConfig
 from demo.contracts import TradeIntent
 from demo.execution import registry as reg
@@ -86,6 +90,7 @@ from demo.execution.risk_policy import (
 from demo.execution.stack_port import AccountSnapshot, StackFailClosed
 from demo.execution.strategy import (
     DemoTraderStrategy,
+    DemoTraderStrategyConfig,
     EntryJob,
     FlattenJob,
     JobOutcome,
@@ -94,6 +99,7 @@ from demo.execution.strategy import (
 from demo.opportunity.bar_source import Quote, validate_frame
 from nautilus_mt5.data_client import Mt5DataClientConfig
 from nautilus_mt5.execution_client import Mt5ExecClientConfig
+from nautilus_mt5.executor import LaneTimeout
 from nautilus_mt5.factory import Mt5Adapter, build_mt5_adapter
 from nautilus_mt5.instruments import InstrumentAssumptions
 from nautilus_mt5.session import AttachOnlyViolation, Mt5CallError, SessionState
@@ -151,7 +157,7 @@ class StackConfig:
     deviation_points: int = 20
     max_quote_age_s: float = 30.0  # older => intent Rejected("stale_feed")
     feed_fatal_age_s: float = 180.0  # older => StackFailClosed("stale_feed")
-    clock_skew_s: float = 2.0  # quote timestamped this far in the FUTURE => clock anomaly
+    clock_skew_s: float = 5.0  # quote timestamped this far in the FUTURE => clock anomaly
     submit_wait_s: float = 35.0  # caller-side bound for one entry (adapter bound is 30 s)
     exposure_timeout_s: float = 30.0  # adapter lane timeout for exposure-changing operations
     flatten_wait_s: float = 35.0
@@ -169,6 +175,7 @@ class StackConfig:
     expected_server: str | None = None
     account_currency: str = "EUR"
     reconcile_retry_s: float = 5.0
+    lane_call_timeout_s: float = 60.0  # a read on the MT5 lane that takes longer => fail closed
 
 
 # ---------------------------------------------------------------------------------------------
@@ -192,7 +199,8 @@ class LiveBarSource:
     def __init__(self, stack: Mt5DemoStack) -> None:
         self._stack = stack
         self._lock = threading.RLock()
-        self._cache: dict[str, tuple[pd.DataFrame, float]] = {}  # market -> (frame, fetched mono)
+        # market -> (frame, fetched monotonic time, bars requested from the terminal)
+        self._cache: dict[str, tuple[pd.DataFrame, float, int]] = {}
         self._last_quote: dict[str, Quote] = {}
         self.stats = {"fetches": 0, "cache_hits": 0, "dropped_ambiguous_bars": 0}
 
@@ -222,7 +230,10 @@ class LiveBarSource:
             0,
             count + 1,
         )
-        validate_rates_schema(rows)
+        try:
+            validate_rates_schema(rows)
+        except MT5HistoryError as exc:
+            raise StackFailClosed(f"mt5_rates_schema:{exc}") from exc
         policy = session.time_policy
         settle = stack._cfg.bar_settle_s
         keep: list[tuple[Any, ...]] = []
@@ -272,17 +283,18 @@ class LiveBarSource:
             now = self._now()
             cached = self._cache.get(market)
             if cached is not None:
-                frame, fetched = cached
+                frame, fetched, requested = cached
                 expected = pd.Timestamp(self.expected_last_open(now))
                 fresh = len(frame) > 0 and frame["ts"].iloc[-1] >= expected
                 recent = time.monotonic() - fetched < self._stack._cfg.bar_min_refetch_s
-                if len(frame) >= want and (fresh or recent):
+                # ``requested >= want``: the terminal simply has fewer bars than asked for
+                if (len(frame) >= want or requested >= want) and (fresh or recent):
                     self.stats["cache_hits"] += 1
                     return frame.iloc[-want:].reset_index(drop=True).copy()
             count = max(want, self._stack._cfg.bar_lookback)
             frame = self._stack._on_lane(self._fetch, market, count, now)
             self.stats["fetches"] += 1
-            self._cache[market] = (frame, time.monotonic())
+            self._cache[market] = (frame, time.monotonic(), count)
             return frame.iloc[-want:].reset_index(drop=True).copy()
 
     def latest_quote(self, market: str) -> Quote | None:
@@ -542,8 +554,13 @@ class Mt5DemoStack:
         """Run ``fn`` on the MT5 lane thread and wait. Broker-call failures become fail-closed."""
         if self._lane is None:
             raise StackFailClosed("stack_not_started")
+        limit = self._cfg.lane_call_timeout_s if timeout is None else timeout
         try:
-            return self._lane.run_sync(fn, *args, timeout=timeout)
+            return self._lane.run_sync(fn, *args, timeout=limit)
+        except LaneTimeout as exc:
+            # A blocked C call cannot be cancelled: the terminal state is unknown => fail closed.
+            self._set_fatal("mt5_lane_timeout")
+            raise StackFailClosed("mt5_lane_timeout") from exc
         except Mt5CallError as exc:
             session = self._adapter.session if self._adapter else None
             if session is None or session.state is not SessionState.CONNECTED:
@@ -634,8 +651,15 @@ class Mt5DemoStack:
             self._engines.append(engine)
         data_engine.register_client(adapter.data_client)
         exec_engine.register_client(adapter.exec_client)
+        # External-order claims: positions re-adopted from the venue snapshot after a restart are
+        # given to THIS strategy, so it can close them (NETTING OMS refuses foreign position ids).
         strategy = DemoTraderStrategy(
-            loop=loop, now=self._now, halt_reason=lambda: self._halt_reason
+            DemoTraderStrategyConfig(
+                external_order_claims=[m.instrument_id for m in self._symbols.all()]
+            ),
+            loop=loop,
+            now=self._now,
+            halt_reason=lambda: self._halt_reason,
         )
         trader = Trader(
             trader_id=trader_id,
@@ -770,6 +794,16 @@ class Mt5DemoStack:
                 self._registry.update(row.intent_id, status=reg.OPEN, position_ticket=ticket)
             adopted.append(row.intent_id)
         self._start_notes["adopted"] = adopted
+        # Rows that never produced a position must not block their market forever: an ACCEPTED row
+        # was never handed to the adapter; a SENT row the adapter never recorded was never sent.
+        store = self._adapter.store if self._adapter else None
+        held = {m for _, m, _ in self._lane_own_positions()}
+        for row in self._registry.with_status(reg.ACCEPTED, reg.SENT):
+            if row.market in held:
+                continue
+            recorded = store.by_client_order_id(row.client_order_id) if store else None
+            if row.status == reg.ACCEPTED or recorded is None:
+                self._registry.update(row.intent_id, status=reg.REJECTED, detail="not_sent")
 
     # -- position enumeration (lane) --------------------------------------------------------------------
 
@@ -813,11 +847,19 @@ class Mt5DemoStack:
     # ----------------------------------------------------------------------------- heartbeat
 
     def _heartbeat(self) -> None:
+        """Keep the terminal lock fresh (stale rule 90 s). Losing it while connected is fatal;
+        a lock gap during an adapter-driven reconnect is not (two consecutive misses are)."""
+        misses = 0
         while not self._hb_stop.wait(self._cfg.lock_heartbeat_s):
             session = self._adapter.session if self._adapter else None
-            if session is not None and not session.refresh_lock():
-                self._set_fatal("terminal_lock_lost")
-                return
+            if session is None or session.refresh_lock():
+                misses = 0
+                continue
+            if session.state is SessionState.CONNECTED:
+                misses += 1
+                if misses >= 2:
+                    self._set_fatal("terminal_lock_lost")
+                    return
 
     # ----------------------------------------------------------------------------- stop
 
@@ -967,6 +1009,11 @@ class Mt5DemoStack:
 
     def submit(self, intent: TradeIntent) -> list[ExecutionEvent]:
         """Risk-size and send ONE intent exactly once (entry + mandatory broker stop [+ TP]).
+
+        Event semantics: ``Fill.price/quantity/commission/swap`` are the broker's deals
+        (commission and swap are SIGNED broker amounts, negative = cost); ``Fill.spread`` is
+        ask-bid at the decision and ``Fill.slippage`` the ADVERSE-positive difference to the
+        executable quote we sent (long: fill - ask, short: bid - fill).
 
         Pre-sizing refusals return ``[Rejected]``; refusals after sizing return
         ``[Accepted, Rejected]`` (the Accepted carries the risk numbers). A protection failure
@@ -1686,9 +1733,18 @@ def _machine_refusal(reason: str) -> str:
     """Map an adapter/strategy refusal text to a stable machine reason code."""
     text = reason or ""
     upper = text.upper()
-    if "POSITION_EXISTS" in upper or text == "position_exists":
+    if upper.startswith("INVALID_STOPS"):
+        return "stop_inside_broker_stop_level"
+    if upper.startswith("INVALID_VOLUME"):
+        return "invalid_volume"
+    for code in ("INVALID_PRICE", "UNSUPPORTED_FILLING", "INVALID_COMMENT"):
+        if upper.startswith(code):
+            return "request_rejected:" + code.lower()
+    if "POSITION_EXISTS" in upper:
         return "position_exists"
-    if upper.startswith("ORDER_CHECK") or upper.startswith("ORDER_SEND") or "REJECT" in upper:
+    if "DUPLICATE" in upper:
+        return "duplicate_intent"
+    if upper.startswith(("ORDER_CHECK", "ORDER_SEND")) or "REJECT" in upper:
         return "broker_reject"
     if "NOT_VENUE_RECONCILED" in upper:
         return "not_reconciled"
@@ -1702,8 +1758,6 @@ def _machine_refusal(reason: str) -> str:
         return "account_identity_changed"
     if "BROKER_UNREACHABLE" in upper or upper.startswith("SESSION_"):
         return "broker_disconnect"
-    if "DUPLICATE" in upper:
-        return "duplicate_intent"
     if text in ("halted", "stale_signal", "past_forced_flat", "no_stop", "quantity_precision"):
         return text
     return "execution_denied:" + text[:60]
