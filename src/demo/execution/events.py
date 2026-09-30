@@ -9,6 +9,10 @@ from typing import Literal
 class Accepted:
     intent_id: str
     quantity: Decimal
+    equity: Decimal | None = None
+    risk_fraction: Decimal | None = None
+    risk_budget: Decimal | None = None
+    leverage: Decimal | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,6 +47,12 @@ class PositionClosed:
     intent_id: str
     broker_position_id: str
     exit_reason: Literal["STOP", "TARGET", "SESSION_END", "MANUAL", "EXTERNAL"]
+    exit_price: Decimal | None = None
+    exit_quantity: Decimal | None = None
+    closed_utc: str | None = None
+    commission: Decimal | None = None  # signed broker amount, negative = cost
+    swap: Decimal | None = None  # signed broker amount, negative = cost
+    profit_eur: Decimal | None = None  # broker profit on closing deal(s), before costs
 
 
 ExecutionEvent = Accepted | Rejected | Fill | ProtectionConfirmed | PositionClosed

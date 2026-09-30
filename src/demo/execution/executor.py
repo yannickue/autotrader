@@ -8,8 +8,8 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any, Protocol
 
-from adapters.activtrades_mt5.models import symbol_info_raw_from_mt5, symbol_info_to_instrument_spec
 from adapters.activtrades_mt5.history import ServerTimePolicy
+from adapters.activtrades_mt5.models import symbol_info_raw_from_mt5, symbol_info_to_instrument_spec
 from demo.contracts import TradeIntent
 from demo.execution.events import (
     Accepted,

@@ -1,3 +1,4 @@
+# ruff: noqa: E501
 """Contract between the DEMO runner loop (src/demo/runner.py) and the MT5/Nautilus stack.
 
 The runner is written and tested against ``StackPort`` (with ``FakeStack``); the real
