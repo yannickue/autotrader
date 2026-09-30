@@ -63,6 +63,9 @@ def test_generator_is_truncation_invariant(_strategy_id: str, module_name: str) 
         short = generate(prefix, params)
         mask = full.decision_idx < cutoff
         for name in full.__dataclass_fields__:
+            if getattr(full, name) is None:
+                assert getattr(short, name) is None
+                continue
             np.testing.assert_array_equal(getattr(full, name)[mask], getattr(short, name))
 
 

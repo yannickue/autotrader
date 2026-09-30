@@ -65,6 +65,9 @@ def test_group_c_generator_is_truncation_invariant(strategy_id: str, module_name
     full = generate(features, variants[0])
     known = full.decision_idx < cutoff
     for name in full.__dataclass_fields__:
+        if getattr(full, name) is None:
+            assert getattr(short, name) is None
+            continue
         np.testing.assert_array_equal(getattr(short, name), getattr(full, name)[known])
 
 

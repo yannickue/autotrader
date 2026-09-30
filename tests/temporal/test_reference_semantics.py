@@ -596,7 +596,11 @@ def _perturb(m: MarketFrame, t: int, seed: int) -> MarketFrame:
 
 
 def _same(a, b) -> bool:
-    return all(np.array_equal(getattr(a, f), getattr(b, f), equal_nan=True) for f in a.__dataclass_fields__)
+    return all(
+        (getattr(a, f) is None and getattr(b, f) is None)
+        or np.array_equal(getattr(a, f), getattr(b, f), equal_nan=True)
+        for f in a.__dataclass_fields__
+    )
 
 
 def _restrict(res, t: int):

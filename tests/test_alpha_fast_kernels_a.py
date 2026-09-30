@@ -73,9 +73,7 @@ def test_group_a_generator_is_truncation_invariant(_strategy_id, variants, modul
     for params in variants:
         full_candidates = generate(full, params)
         keep = full_candidates.decision_idx < cutoff
-        truncated = type(full_candidates)(
-            *(getattr(full_candidates, name)[keep] for name in full_candidates.__dataclass_fields__)
-        )
+        truncated = full_candidates.subset(keep)
         _assert_candidates_equal(truncated, generate(prefix, params))
 
 
