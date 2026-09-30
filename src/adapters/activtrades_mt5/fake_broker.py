@@ -53,6 +53,7 @@ class FakeBrokerConfig:
     commission_per_lot: float = 0.0
     symbol: str = "Ger40"
     magic_filter: int | None = None
+    trade_mode: int = 0  # ACCOUNT_TRADE_MODE_DEMO; tests may inject REAL/CONTEST
 
 
 class FakeMT5Broker:
@@ -229,7 +230,7 @@ class FakeMT5Broker:
             leverage=self.cfg.leverage,
             currency=self.cfg.currency,
             margin_mode=int(self.cfg.margin_mode),
-            trade_mode=0,
+            trade_mode=self.cfg.trade_mode,
             trade_allowed=True,
         )
 
