@@ -1316,8 +1316,16 @@ class DemoRunner:
     def _heartbeat(self, now: datetime, *, alive: bool = True) -> None:
         try:
             monitor.write_heartbeat(self.cfg.heartbeat_path, self.status(now, alive=alive))
-        except OSError as exc:  # cannot report health -> stop trading
-            self._fail_closed(f"heartbeat_write_failed: {exc}", now)
+            self._hb_fail_since = None
+        except OSError as exc:
+            # A single failed write (a reader briefly holding the file on Windows) must not stop
+            # trading; PERSISTENT inability to report health (> 120 s) does.
+            since = getattr(self, "_hb_fail_since", None)
+            if since is None:
+                self._hb_fail_since = now
+                self._note_error(now, f"heartbeat_write_failed (transient): {exc}")
+            elif (now - since).total_seconds() > 120.0:
+                self._fail_closed(f"heartbeat_write_failed: {exc}", now)
 
     # ----------------------------------------------------------------------------- main loop
     def _should_exit(self, now: datetime) -> bool:

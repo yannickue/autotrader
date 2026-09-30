@@ -45,9 +45,22 @@ def disk_free_bytes(path: Path) -> int:
 
 def write_heartbeat(path: Path, values: dict[str, Any]) -> None:
     """Atomic (tmp + os.replace) JSON write; reuses the Lane C status writer."""
+    import time
+
     from demo.execution.status import write_status_atomic
 
-    write_status_atomic(path, values)
+    # Windows: os.replace fails (WinError 5) while any reader (a monitor, --status) holds the target
+    # open without FILE_SHARE_DELETE. Readers are short-lived, so retry briefly before giving up.
+    last: OSError | None = None
+    for attempt in range(10):
+        try:
+            write_status_atomic(path, values)
+            return
+        except OSError as exc:
+            last = exc
+            time.sleep(0.05 * (attempt + 1))
+    assert last is not None
+    raise last
 
 
 def read_heartbeat(path: Path) -> dict[str, Any] | None:
