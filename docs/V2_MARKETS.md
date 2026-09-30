@@ -244,12 +244,22 @@ no `cash_open`/`cash_close` is read; only the operating-policy entry window (`en
 `CONSTANTS_VERSION` is part of every spec hash). `structure_levels` (range high/low, width in ATR, last confirmed swing high/low, break offset) is emitted
 additively in `snapshot.signal["structure_levels"]` for the E2 exit-plan producer.
 
-**Spec v1.2** (`production_spec_v1_2.json`, hash `a4fe51b558d03274`, strict superset of v1.1; v1 `c3eae99e782888ac` and v1.1 `4f4b33e97966cd84` untouched and loadable;
-the five core markets' entries and provenance are byte-identical). BTCUSD and BRENT: STRUCT `confirmed` = PRIMARY (fixed a priori, before measurement),
-`breakout`/`retest`/`fade` = SHADOW; ORB DROPPED for both (BTC `cash_open 08:00 UTC` is an invented open; Brent 08:00 London is inherited from XAU/EUR with no evidence of
+**Spec v1.2** (`production_spec_v1_2.json`, hash `70e323157664552d` (amended in place by Lane S before any deployment; the earlier undeployed draft hash is obsolete), strict superset of v1.1; v1 `c3eae99e782888ac` and v1.1 `4f4b33e97966cd84` untouched and loadable;
+the five core markets' entries and provenance are byte-identical). BTCUSD and BRENT: all four STRUCT variants `breakout`/`confirmed`/`retest`/`fade` =
+`ACTIVE_DISCOVERY_ELIGIBLE` + `NOT_ALPHA_VALIDATED` (each may create a real DEMO intent when the symbol is flat; none is primary, validated or preferred; the offline fixed-1.5R table mixes entry
+with a fixed stop/target/exit and does not isolate entry quality); ORB DROPPED for both (BTC `cash_open 08:00 UTC` is an invented open; Brent 08:00 London is inherited from XAU/EUR with no evidence of
 a defensible opening range for the ActivTrades Brent spot CFD, which has no session-open auction in the observed bars). `load_production_spec_for` returns v1.2 iff a Phase-2 market
 is enabled (same gating as v1.1). Tags: every Phase-2 snapshot carries `signal.phase = PHASE2_DISCOVERY`, `signal.alpha_status = NOT_ALPHA_VALIDATED`, `signal.role`; outcomes
 and counterfactual labels join the snapshot by `opportunity_id`, so the tag is persisted with them (no schema change).
+
+**Lane S: arbitration + structure-event attribution** (`demo/opportunity/arbitration.py`). MT5 nets positions (one net position per symbol). Symbol FLAT: a fresh valid signal of ANY variant may
+trade; same-cycle contenders are ordered by the EARLIEST signal timestamp, remaining ties by `sha256(structure_event_id|variant)` (never a fixed variant/name order); the loser decisions are
+persisted as engine rejects `CONCURRENT_SIGNAL`+`ADD_ON_CANDIDATE` (same direction) or `REVERSAL_CANDIDATE` (opposite), `signal.arbitration` records the winner variant/opportunity, and the existing
+counterfactual labeller labels them (source ENGINE_REJECTED, code in `counterfactual_meta`). Symbol OCCUPIED (broker position or an ACCEPTED/SENT registry row, the latter a new stack safety net): the stack gates
+`ADDON_*` / `OPPOSITE_SIDE_WHILE_OPEN_NOT_SUPPORTED_V1` stay the enforcement; the funnel `analysis.arbitration` counts them as CONCURRENT_SIGNAL/ADD_ON_CANDIDATE/REVERSAL_CANDIDATE. No pyramiding, never a flip
+through zero. After the position closes any variant may trade again. Every STRUCT snapshot persists `signal.structure_event_id` (sha256 of market + parent range edges + break bar time, shared by all variants
+reacting to one break), `variant`, `signal_timestamp`, `direction`, `price`, `parent_range`. `analysis.structure_events` reports event-level (clustered) counts next to raw counts: signals sharing an event
+are highly related and are NOT independent evidence. Gap: REVERSAL_CANDIDATE is not fed into the ExitEngine (`ExitMarketState.signal_reversal`): the runner has no per-position chart-signal feed path yet.
 
 **Forward Shadow (implemented, small).** A SHADOW-role spec is evaluated and snapshotted like any spec, but an otherwise accepted decision is turned into the terminal
 rejection `SHADOW_VARIANT` in `OpportunityEngine` (no intent, no broker order); the existing counterfactual labeller then produces MFE/MAE/R labels for it. The funnel

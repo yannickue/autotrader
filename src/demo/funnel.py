@@ -24,6 +24,13 @@ from collections.abc import Mapping
 from typing import Any
 
 from demo.execution import gates as G
+from demo.opportunity.arbitration import (
+    ADD_ON_CANDIDATE,
+    ARBITRATION_CODES,
+    CONCURRENT_SIGNAL,
+    REVERSAL_CANDIDATE,
+    classify_stack_code,
+)
 from demo.opportunity.policy import GATE_CLASSIFICATION
 
 # ---- sequential stages: an opportunity is stopped at the FIRST stage one of its gate codes belongs to ----
@@ -33,6 +40,7 @@ STAGES: tuple[str, ...] = (
 )
 _SI = {s: i for i, s in enumerate(STAGES)}
 _ENGINE_STAGE: dict[str, str] = {
+    CONCURRENT_SIGNAL: "PORTFOLIO", ADD_ON_CANDIDATE: "PORTFOLIO", REVERSAL_CANDIDATE: "PORTFOLIO",
     "NO_STRUCTURAL_STOP": "STRUCTURAL_VALID", "TARGET_ALREADY_CROSSED": "STRUCTURAL_VALID",
     "SPACE_BELOW_MIN_R": "STRUCTURAL_VALID",
     "CLOCK_ANOMALY": "TRADABLE", "MARKET_CLOSED": "TRADABLE", "STALE_SIGNAL": "TRADABLE",
@@ -79,6 +87,8 @@ UNCLASSIFIED = "UNCLASSIFIED"
 
 def engine_class(code: str) -> str:
     g = GATE_CLASSIFICATION.get(code)
+    if g is None and code in ARBITRATION_CODES:
+        return "TEMPORARY"  # Lane S: symbol occupied (MT5 netting), same family of limitation as the stack's ADDON_*/OPPOSITE codes
     return g.gate_class if g is not None else UNCLASSIFIED
 
 
@@ -171,6 +181,56 @@ class _Bucket:
                 "engine_side_without_legacy_quality_temporary": self.engine_accepted + self.engine_only_non_hard,
             },
         }
+
+
+def arbitration_counts(rows: list[Mapping[str, Any]]) -> dict[str, Any]:
+    """Signals that met an occupied symbol (MT5 netting): engine-level same-cycle losers AND stack ADDON_*/OPPOSITE rejects,
+    counted per explicit code. ``raw_signals`` are NOT independent (see ``structure_event_clusters``)."""
+    out: Counter[str] = Counter()
+    for r in rows:
+        if r["accepted"] is False:
+            codes = {c for c in r["reasons"] if c in ARBITRATION_CODES}
+        elif r["accepted"] and (r["state"] == "RISK_REJECTED" or r["stack_reject_code"]):
+            codes = set(classify_stack_code(r["stack_reject_code"]))
+        else:
+            continue
+        out.update(codes)
+    return {c: out.get(c, 0) for c in ARBITRATION_CODES}
+
+
+def structure_event_clusters(rows: list[Mapping[str, Any]]) -> dict[str, Any]:
+    """Event-level (clustered) counts next to the raw counts. Variants that react to ONE structure break share a
+    ``structure_event_id`` and are highly related, NOT independent evidence: four variants firing on one break is ONE event.
+    Rows without an id (non-STRUCT families / old data) are reported as ``unattributed`` and never merged."""
+    events: dict[str, dict[str, Any]] = {}
+    unattributed = 0
+    for r in rows:
+        eid = r.get("structure_event_id")
+        if not eid or r["accepted"] is None:
+            unattributed += 1
+            continue
+        e = events.setdefault(eid, {"market": r["market"], "variants": Counter(), "traded": 0, "engine_accepted": 0})
+        e["variants"][r.get("variant") or "?"] += 1
+        if r["accepted"]:
+            e["engine_accepted"] += 1
+        if r["state"] in TRADED_STATES and not r["stack_reject_code"]:
+            e["traded"] += 1
+    per_variant: Counter[str] = Counter()
+    for e in events.values():
+        per_variant.update(e["variants"])
+    multi = sum(1 for e in events.values() if len(e["variants"]) > 1)
+    return {
+        "raw_signals": sum(per_variant.values()),
+        "structure_events": len(events),
+        "events_with_multiple_variants": multi,
+        "signals_per_event_mean": (sum(per_variant.values()) / len(events)) if events else None,
+        "events_with_a_trade": sum(1 for e in events.values() if e["traded"] > 0),
+        "raw_by_variant": dict(sorted(per_variant.items())),
+        "events_by_variant": dict(sorted(Counter(v for e in events.values() for v in e["variants"]).items())),
+        "unattributed_signals": unattributed,
+        "note": "signals sharing a structure_event_id react to ONE break and are highly related: use event-level counts, "
+                "not raw signal counts, as the sample size of any per-variant or pooled statistic",
+    }
 
 
 def stack_stage(base: str, violated_cap: str | None = None) -> str:
@@ -354,6 +414,8 @@ def analysis(rows: list[Mapping[str, Any]], cf_rows: list[Mapping[str, Any]]) ->
             "opportunities": n, "unique_structures": len(uniq),
             "near_duplicate_ratio": (1 - len(uniq) / n) if n else None, "by_market": dup_by_market,
         },
+        "arbitration": arbitration_counts([r for r, _c in cls]),
+        "structure_events": structure_event_clusters([r for r, _c in cls]),
         "note_outside_entry_window": "OUTSIDE_ENTRY_WINDOW is not observable: out-of-window signals are not generated (family entry_mask)",
         "origin": dict(Counter(r.get("origin") or "LIVE" for r, _c in cls)),
     }
@@ -371,6 +433,9 @@ def compact(full: Mapping[str, Any]) -> dict[str, Any]:
             for k, g in list(gates.items())[:6]
         },
         "near_duplicate_ratio": (a.get("structure_duplicates") or {}).get("near_duplicate_ratio"),
+        "arbitration": a.get("arbitration", {}),
+        "structure_events": {k: (a.get("structure_events") or {}).get(k)
+                             for k in ("raw_signals", "structure_events", "events_with_a_trade")},
     }
 
 
@@ -489,5 +554,15 @@ def render(fun: Mapping[str, Any]) -> str:
             lines.append(f"  family share [{kind}]: {fam or '-'}")
         for m, t in a["opportunities_per_market_per_hour"].items():
             lines.append(f"  {m} per local hour: " + ", ".join(f"{h}h={v}" for h, v in t["opportunities_by_local_hour"].items()) + f" (active days {t['active_days']})")
+        arb = a.get("arbitration")
+        if arb:
+            lines.append("  ARBITRATION (symbol occupied, MT5 netting): " + ", ".join(f"{k}={v}" for k, v in arb.items()))
+        se = a.get("structure_events")
+        if se and se["structure_events"]:
+            lines.append(
+                f"  STRUCTURE EVENTS: {se['raw_signals']} raw signals / {se['structure_events']} events "
+                f"({se['events_with_multiple_variants']} with >1 variant, {se['events_with_a_trade']} with a trade); "
+                f"raw by variant {se['raw_by_variant']}, events by variant {se['events_by_variant']}; {se['note']}"
+            )
         lines.append("  NOTE: " + a["note_outside_entry_window"])
     return "\n".join(lines)

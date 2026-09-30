@@ -45,7 +45,7 @@ def test_enabled_phase2_market_extends_the_universe_with_the_v1_2_superset(tmp_p
                              phase2_markets=("BTCUSD",))
     try:
         assert set(r.cfg.markets) == set(CORE) | {"BTCUSD"} and "BRENT" not in r.cfg.markets  # per-market switch
-        assert r.engine.strategy_hash == "a4fe51b558d03274"  # Lane F: v1.2 supersedes v1.1 in the selector
+        assert r.engine.strategy_hash == "70e323157664552d"  # Lane F: v1.2 supersedes v1.1 in the selector
     finally:
         r.store.close()
 

@@ -1527,6 +1527,18 @@ class Mt5DemoStack:
             keep = {k: v for k, v in pre.detail.items() if k not in ("decision", "reject_code")}
             return self._reject(intent, parity, detail=keep, context=context)
 
+        # -- Lane S netting safety net: an ACCEPTED/SENT registry row of this symbol is an order in flight that the broker
+        # position list does not show yet. Never stack a second independent order on it (no pyramiding, no flip). --
+        if prepared.existing is None:
+            in_flight = [r for r in self._registry.open_for_market(intent.market)
+                         if r.status in (reg.ACCEPTED, reg.SENT)]
+            if in_flight:
+                code = G.R_ADDON if in_flight[0].direction == intent.direction else G.R_OPPOSITE
+                return self._reject(
+                    intent, code, context=context, otherwise_valid=True,
+                    detail={"netting": "BROKER_ONE_NET_POSITION_PER_SYMBOL", "in_flight_intent": in_flight[0].intent_id,
+                            "in_flight_status": in_flight[0].status, "otherwise_valid": True, "temporary_limitation": True},
+                )
         # -- netting: BROKER = one net position per symbol; INTERNAL = tranches (see tranches.py) --
         stop_for_sizing: Decimal | None = None
         addon_code: str | None = None

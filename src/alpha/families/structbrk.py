@@ -264,6 +264,8 @@ def structure_levels(data: FamilyData, spec: STRUCTSpec, decision_idx: int, dire
         "range_high": float(ev["hi"][e]), "range_low": float(ev["lo"][e]),
         "range_width_atr": float((ev["hi"][e] - ev["lo"][e]) / atr) if atr > 0 else None,
         "break_bar_offset": int(decision_idx - ev["brk"][e]),
+        # Lane S: causal identity of the structure event (the break bar's open time, UTC), shared by every variant of this break
+        "break_bar_ts": pd.Timestamp(int(data.ts_ns[int(ev["brk"][e])]), tz="UTC").isoformat(),
         "stop_buffer_atr": STOP_BUFFER_ATR, "constants_version": CONSTANTS_VERSION,
         "phase": PHASE_TAG, "alpha_status": ALPHA_STATUS,
     }

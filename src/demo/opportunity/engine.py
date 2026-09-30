@@ -41,6 +41,12 @@ from alpha.families.spec import MarketCalendar
 from alpha.fast.sim import CandidateArrays
 from alpha.session import local_clock
 from demo.contracts import Decision, OpportunitySnapshot, Phase, TradeIntent, opportunity_id_for
+from demo.opportunity.arbitration import (
+    ROLE_ACTIVE_DISCOVERY,
+    concurrent_reasons,
+    event_attribution,
+    pick_winner,
+)
 from demo.opportunity.bar_source import (
     M5_SECONDS,
     BarSource,
@@ -360,6 +366,9 @@ class OpportunityEngine:
         tick = tick_activity_of(self._source, market)
         n_dir = {d: sum(1 for f, c in found if c.direction == d and f.role != ROLE_SHADOW) for d in (1, -1)}
         pairs: list[tuple[OpportunitySnapshot, Decision]] = []
+        # Lane S arbitration: accepted ACTIVE_DISCOVERY_ELIGIBLE decisions of this bar are held back until the cycle is complete
+        # (one net position per symbol): (index in pairs, spec, candidate, snapshot, decision, structure_event_id).
+        held: list[tuple[int, FrozenSpec, Candidate, OpportunitySnapshot, Decision, str]] = []
         for fs, cand in found:
             oid = opportunity_id_of(cand)
             fresh = self._seen.add_if_new(oid)
@@ -388,6 +397,16 @@ class OpportunityEngine:
             levels = describe_candidate(data, fs.spec, i, cand.direction)
             if levels:
                 signal_meta["structure_levels"] = levels
+            variant = getattr(fs.spec, "mode", None)
+            if variant is not None:
+                signal_meta["variant"] = variant
+            attribution = (
+                event_attribution(market, str(variant), to_utc(cand.signal_ts).isoformat(), cand.direction,
+                                  float(cand.close), levels)
+                if levels and variant is not None else {}
+            )
+            if attribution:
+                signal_meta.update(attribution)
             if catchup is not None:
                 signal_meta["origin"] = ORIGIN_CATCHUP
                 signal_meta["catchup"] = {
@@ -412,13 +431,37 @@ class OpportunityEngine:
                     opportunity_id=dec.opportunity_id, phase=dec.phase, decided_utc=dec.decided_utc, accepted=False,
                     reasons=(SHADOW_VARIANT,), policy_id=dec.policy_id, shadow=dec.shadow,
                 )
-            if dec.accepted:
+            if dec.accepted and fs.role == ROLE_ACTIVE_DISCOVERY:
+                held.append((len(pairs), fs, cand, snap, dec, str(attribution.get("structure_event_id", ""))))
+            elif dec.accepted:
                 intent = self._policy.intent_for(snap, dec, ms, cand.window, operating=self._op)
                 if intent is not None:
                     self._intents[snap.opportunity_id] = intent
                     self.last_intents.append(intent)
                     self.last_candidates.append(cand)
             pairs.append((snap, dec))
+        if held:
+            win = pick_winner([(to_utc(c.signal_ts).isoformat(), ev, str(getattr(f.spec, "mode", f.strategy_id)))
+                               for _k, f, c, _s, _d, ev in held])
+            w_snap = held[win][3]
+            for n, (k, _fs, cand, snap, dec, _ev) in enumerate(held):
+                snap.signal["arbitration"] = {  # persisted with the snapshot: the loser's counterfactual stays attributable
+                    "contenders": len(held), "rule": "earliest_signal_ts_then_hash(structure_event_id,variant)",
+                    "result": "WINNER" if n == win else "LOSER",
+                    "winner_variant": w_snap.signal.get("variant"), "winner_opportunity_id": w_snap.opportunity_id,
+                }
+                if n == win:
+                    intent = self._policy.intent_for(snap, dec, ms, cand.window, operating=self._op)
+                    if intent is not None:
+                        self._intents[snap.opportunity_id] = intent
+                        self.last_intents.append(intent)
+                        self.last_candidates.append(cand)
+                else:  # the symbol is taken by the winner: persisted + counterfactually labelled, never an intent
+                    pairs[k] = (snap, Decision(
+                        opportunity_id=dec.opportunity_id, phase=dec.phase, decided_utc=dec.decided_utc, accepted=False,
+                        reasons=concurrent_reasons(cand.direction, held[win][2].direction), policy_id=dec.policy_id,
+                        shadow=dec.shadow,
+                    ))
         # marked processed only after the WHOLE bar was built without an exception: a failure anywhere
         # above leaves the bar retryable (the runner retries once, then records a SCAN_ERROR)
         self._last_bar[market] = last_ts
