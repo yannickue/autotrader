@@ -77,7 +77,7 @@ from adapters.activtrades_mt5.history import (
     validate_rates_schema,
 )
 from adapters.config import MT5ConnectionConfig
-from demo.contracts import TradeIntent
+from demo.contracts import ENGINE_EXIT_REASONS, TradeIntent
 from demo.execution import gates as G
 from demo.execution import registry as reg
 from demo.execution.events import (
@@ -92,6 +92,7 @@ from demo.execution.exit_manager import (
     EXIT_POLICIES,
     EXIT_POLICY_FIXED,
     EXIT_POLICY_STAGED,
+    ExitPlanConfig,
     StagedExitManager,
     broker_target_for_staged,
 )
@@ -238,6 +239,10 @@ class StackConfig:
     staged_exit: ExitPolicy | None = None
     # throttle: a stop modify must improve the stop by at least this many R (and one tick)
     staged_stop_min_step_r: Decimal = Decimal("0.1")
+    # Lane E2: exit-plan producer config (geometry source family|structure, stage fractions, structure
+    # parameters). DEFAULT = family geometry, documented default fractions; read by the runner's producer and
+    # by the StagedExitManager (structure trailing / failure inputs).
+    exit_plan: ExitPlanConfig = field(default_factory=ExitPlanConfig)
 
     def __post_init__(self) -> None:
         if self.exit_policy not in EXIT_POLICIES:
@@ -1560,7 +1565,7 @@ class Mt5DemoStack:
                 intent, addon_code, detail=detail, context=context, otherwise_valid=True
             )
         approval = outcome.approval
-        ctx_summary = {
+        ctx_summary: dict[str, Any] = {
             "family": family,
             "atr": atr,
             "signal_inputs": self._signal_inputs(context),
@@ -1573,6 +1578,7 @@ class Mt5DemoStack:
             # staged: the ExitEngine owns the exit plan. Broker TP = ABSENT or the FINAL stage only.
             plan = context.get("exit_plan")
             ctx_summary["exit_plan"] = plan
+            ctx_summary["exit_meta"] = context.get("exit_meta")  # geometry source, fractions, markers
             broker_target = broker_target_for_staged(
                 plan, direction=intent.direction, entry_ref=Decimal(str(intent.entry_ref))
             )
@@ -1696,8 +1702,11 @@ class Mt5DemoStack:
 
         fill, ticket, protected, stop_seen, target_seen = confirm
         events: list[ExecutionEvent] = [accepted, fill]
+        filled_context = self._filled_context(intent.intent_id, fill)
         if protected:
-            self._registry.update(intent.intent_id, status=reg.OPEN, position_ticket=ticket)
+            self._registry.update(
+                intent.intent_id, status=reg.OPEN, position_ticket=ticket, context=filled_context
+            )
             events.append(
                 ProtectionConfirmed(
                     intent_id=intent.intent_id,
@@ -1708,7 +1717,9 @@ class Mt5DemoStack:
             )
             return events
         # The broker position exists WITHOUT the stop we asked for: never leave it open.
-        self._registry.update(intent.intent_id, status=reg.OPEN, position_ticket=ticket)
+        self._registry.update(
+            intent.intent_id, status=reg.OPEN, position_ticket=ticket, context=filled_context
+        )
         self._halt("protection_unconfirmed")
         self._flatten(info, tag=f"protection-fail:{intent.intent_id}", hint="SAFETY_FLATTEN")
         row = self._registry.get(intent.intent_id)
@@ -1722,6 +1733,37 @@ class Mt5DemoStack:
             )
         )
         return events
+
+    def _filled_context(self, intent_id: str, fill: Fill) -> str | None:
+        """Registry context with the FILLED quantity as ``initial_quantity`` (Lane E2).
+
+        A partial ENTRY fill must not look like an already-taken partial exit: the stage accounting of the
+        exit manager reads ``initial_quantity`` (the broker position volume after the fill), never the size
+        that was requested. ``requested_quantity`` is kept for the audit trail."""
+        assert self._registry is not None
+        row = self._registry.get(intent_id)
+        if row is None:
+            return None
+        try:
+            ctx = json.loads(row.context) if row.context else {}
+        except ValueError:
+            ctx = {}
+        if not isinstance(ctx, dict):
+            ctx = {}
+        ctx["requested_quantity"] = ctx.get("quantity")
+        ctx["quantity"] = fill.quantity
+        ctx["initial_quantity"] = fill.quantity
+        ctx["fees_price"] = fill.fees_price_units
+        if self._exit_manager is not None and row is not None:
+            plan = ctx.get("exit_plan")
+            self._exit_manager.log_entry_plan(
+                row,
+                requested_quantity=str(ctx["requested_quantity"]),
+                initial_quantity=str(fill.quantity),
+                plan_fractions=(plan or {}).get("fractions") if isinstance(plan, dict) else None,
+                exit_meta=ctx.get("exit_meta"),
+            )
+        return json.dumps(ctx, default=str)
 
     def _reject_after_accept(
         self,
@@ -2208,7 +2250,8 @@ class Mt5DemoStack:
         elif reason_code == _REASON_TP:
             reason = "TARGET"
         elif reason_code == _REASON_EXPERT:
-            reason = row.exit_hint if row.exit_hint in ("SESSION_END", "MANUAL", "SAFETY_FLATTEN") else "MANUAL"
+            hinted = ("SESSION_END", "MANUAL", "SAFETY_FLATTEN")
+            reason = row.exit_hint if row.exit_hint in hinted or row.exit_hint in ENGINE_EXIT_REASONS else "MANUAL"
         else:
             reason = "EXTERNAL"
         entries = [d for d in deals if int(d.entry) == ENTRY_IN]
@@ -2222,6 +2265,12 @@ class Mt5DemoStack:
         level = None
         if reason == "STOP":
             level = Decimal(row.stop)
+            try:  # the stop IN FORCE (initial unless the exit manager tightened it), not the initial one
+                moved = (json.loads(row.context) if row.context else {}).get("exit_state", {}).get("current_stop")
+                if moved:
+                    level = Decimal(str(moved))
+            except (ValueError, ArithmeticError, AttributeError, TypeError):
+                pass
         elif reason == "TARGET" and row.target is not None:
             level = Decimal(row.target)
         exit_slip = None
@@ -2430,6 +2479,14 @@ class Mt5DemoStack:
         with self._submit_lock:
             self._check_fatal()
             return self._exit_manager.run(now.astimezone(UTC))
+
+    @property
+    def exit_policy(self) -> str:
+        return self._cfg.exit_policy
+
+    @property
+    def exit_plan_config(self) -> ExitPlanConfig:
+        return self._cfg.exit_plan
 
     def exit_log(self) -> list[dict[str, Any]]:
         """Audit trail of the staged exit manager (empty under fixed_1_5r)."""

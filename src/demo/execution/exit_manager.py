@@ -30,6 +30,23 @@ Netting + tranches: MT5 holds one net position per symbol. Multiple tranches wit
 plans remain an explicit technical limitation (``R_EXIT_TRANCHE_LIMITATION``): with more than one
 live tranche on a market the engine is NOT run for it (only broker stops / forced flat apply).
 
+Lane E2 (chart first, R second)
+-------------------------------
+* PLAN PRODUCER: ``produce_exit_context`` builds the per-position ``exit_plan`` (TP1 / TP2 price levels from the
+  chart, stage fractions configurable per family) and the SHADOW comparison of the family geometry against the
+  structure geometry of ``demo.structure``. ``ExitPlanConfig.geometry_source`` = ``family`` (DEFAULT: the initial
+  stop and sizing stay family-derived, nothing changes for the five core markets) or ``structure`` (opt-in per
+  family/market: the structural invalidation stop replaces the family stop BEFORE sizing).
+* REMAINDER / RUNNER POLICY (decided): stage fractions may sum to < 1. The remainder (``runner = 1 - sum``) carries
+  NO broker take-profit; it stays protected by the broker stop (tighten-only: cost-adjusted break-even after TP1,
+  then behind the newest confirmed structure swing) and is closed by that stop, by structure failure / momentum /
+  MFE-giveback / time-alpha decay, by a late-session loser rule, or by the forced flat (Lane P, which always wins).
+  When no defensible second target exists the plan is TP1 + runner and is marked
+  ``SECOND_TARGET_NOT_STRUCTURALLY_JUSTIFIED``; a TP2 is never invented from an R multiple.
+* Partial ENTRY fills: the registry keeps the FILLED quantity as the position's ``initial_quantity`` (stage
+  accounting uses it, never the requested size).
+* Engine full closes carry explicit ``EXIT_ENGINE_*`` exit reasons (uncensored strategy exits).
+
 Reduce-only risk reservation: ``DemoRiskGate`` holds no reservation for reduce-only orders (it only
 sizes ENTRIES), so ``ExitEngine.notify_terminal`` is fed a recording no-op release gate: the call is
 made on every terminal outcome (fill / cancel / reject) for audit symmetry, N/A for the risk book.
@@ -40,11 +57,14 @@ from __future__ import annotations
 import collections
 import json
 import logging
-from dataclasses import replace
-from datetime import UTC, datetime
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime, timedelta
 from decimal import ROUND_CEILING, ROUND_DOWN, ROUND_FLOOR, Decimal
 from typing import TYPE_CHECKING, Any
 
+from demo import structure as st
+from demo.contracts import ENGINE_EXIT_REASONS
 from demo.execution import registry as reg
 from demo.execution.events import ExecutionEvent
 from demo.execution.parity import parse_utc
@@ -56,6 +76,7 @@ from exits.models import (
     ExitOutcome,
     ExitPolicy,
     ExitPosition,
+    ExitReason,
     PositionSide,
     StopStage,
     TakeProfitStage,
@@ -76,6 +97,258 @@ EXIT_POLICIES = (EXIT_POLICY_FIXED, EXIT_POLICY_STAGED)
 R_EXIT_TRANCHE_LIMITATION = "EXIT_PLAN_MULTI_TRANCHE_NOT_SUPPORTED"  # TEMPORARY, explicit
 R_EXIT_QUOTE_UNAVAILABLE = "EXIT_QUOTE_MISSING_OR_STALE"
 R_EXIT_SIZE_BELOW_MIN_LOT = "EXIT_STAGE_SIZE_BELOW_BROKER_MIN_LOT"
+
+
+GEOMETRY_FAMILY = "family"
+GEOMETRY_STRUCTURE = "structure"
+GEOMETRY_SOURCES = (GEOMETRY_FAMILY, GEOMETRY_STRUCTURE)
+# TP1 / TP2 fractions of the ORIGINAL (filled) quantity; the runner is the remainder (here 25 %). Documented
+# DEFAULT only - every family/market can override it through ``ExitPlanConfig.family_fractions``.
+DEFAULT_STAGE_FRACTIONS: tuple[Decimal, ...] = (Decimal("0.5"), Decimal("0.25"))
+
+
+@dataclass(frozen=True, slots=True)
+class ExitPlanConfig:
+    """Configuration of the exit-plan producer (Lane E2). Defaults keep today's family geometry."""
+
+    geometry_source: str = GEOMETRY_FAMILY  # family | structure (applies to every market/family)
+    structure_families: frozenset[str] = frozenset()  # families that OPT IN to the structure initial stop
+    structure_markets: frozenset[str] = frozenset()  # markets that OPT IN to the structure initial stop
+    default_fractions: tuple[Decimal, ...] = DEFAULT_STAGE_FRACTIONS
+    family_fractions: Mapping[str, tuple[Decimal, ...]] = field(default_factory=dict)
+    bars: int = 120  # closed M5 bars read for structure
+    swing_n: int = 2
+    range_lookback: int = 24
+    atr_buffer_mult: float = 0.25
+    min_movement_to_cost: float = 3.0
+
+    def __post_init__(self) -> None:
+        if self.geometry_source not in GEOMETRY_SOURCES:
+            raise ValueError(f"geometry_source must be one of {GEOMETRY_SOURCES}")
+        for fr in (self.default_fractions, *self.family_fractions.values()):
+            if not fr or any(not (Decimal(0) < f <= Decimal(1)) for f in fr) or sum(fr, Decimal(0)) > Decimal(1):
+                raise ValueError("stage fractions must be in (0, 1] and sum to at most 1 (the rest is the runner)")
+
+    def fractions_for(self, family: str | None) -> tuple[Decimal, ...]:
+        return tuple(self.family_fractions.get(family or "", self.default_fractions))
+
+    def source_for(self, family: str | None, market: str | None) -> str:
+        if self.geometry_source == GEOMETRY_STRUCTURE or (family or "") in self.structure_families or (market or "") in self.structure_markets:
+            return GEOMETRY_STRUCTURE
+        return GEOMETRY_FAMILY
+
+
+def default_staged_exit_policy() -> ExitPolicy:
+    """The DEMO ``staged`` ExitPolicy (documented defaults; tune per family later, nothing here is proven edge).
+
+    Chart first: break-even only after TP1 (cost-adjusted), ATR trailing OFF, trailing behind confirmed
+    structure ON, structural-failure exit ON. The R based thresholds are deliberately conservative guards,
+    not targets: momentum exit at -1.0 ATR over 3 bars, MFE giveback 60 % of a >= 1.5R excursion, time stop
+    6 h unless the trade showed >= 0.5R, late-session window 60 min before the forced flat."""
+    return ExitPolicy(
+        policy_id="staged-e2-v1",
+        breakeven_trigger_r_multiple=Decimal("99"),
+        breakeven_after_first_stage=True,
+        breakeven_buffer_bps=Decimal("0"),
+        trailing_activation_r_multiple=Decimal("99"),
+        trailing_distance_volatility_multiplier=Decimal("2"),
+        structure_trailing=True,
+        structure_failure_exit=True,
+        momentum_deterioration_threshold=Decimal("-1.0"),
+        max_giveback_fraction=Decimal("0.6"),
+        giveback_min_mfe_r=Decimal("1.5"),
+        max_holding_duration=timedelta(hours=6),
+        time_stop_min_mfe_r=Decimal("0.5"),
+        late_window=timedelta(minutes=60),
+        late_loser_momentum_threshold=Decimal("-0.3"),
+        max_market_data_age=timedelta(seconds=30),
+    )
+
+
+def engine_exit_reason(decision: Any) -> str:
+    """Explicit exit reason of an engine FULL close (see ``demo.contracts.ENGINE_EXIT_REASONS``).
+
+    An engine EMERGENCY_RISK_EXIT is a safety action -> ``SAFETY_FLATTEN`` (censored), not a strategy exit."""
+    reason = decision.reason
+    meta = decision.metadata or {}
+    if reason is ExitReason.TAKE_PROFIT:
+        idx = int(meta.get("stage_index", 0)) + 1
+        code = f"EXIT_ENGINE_TP{min(idx, 4)}"
+    elif reason is ExitReason.INVALIDATION_STOP:
+        code = "EXIT_ENGINE_BREAK_EVEN" if meta.get("stop_stage") == "break_even" else "EXIT_ENGINE_STOP"
+    elif reason is ExitReason.TRAILING_STOP:
+        code = "EXIT_ENGINE_TRAIL"
+    elif reason in (ExitReason.STRUCTURE_FAILURE, ExitReason.SIGNAL_REVERSAL):
+        code = "EXIT_ENGINE_STRUCTURE"
+    elif reason is ExitReason.MOMENTUM_DETERIORATION:
+        code = "EXIT_ENGINE_MOMENTUM"
+    elif reason is ExitReason.LIQUIDITY_DETERIORATION:
+        code = "EXIT_ENGINE_LIQUIDITY"
+    elif reason is ExitReason.TIME_STOP:
+        code = "EXIT_ENGINE_TIME_STOP"
+    elif reason is ExitReason.LATE_SESSION_DETERIORATION:
+        code = "EXIT_ENGINE_EOD"
+    elif reason is ExitReason.MFE_GIVEBACK:
+        code = "EXIT_ENGINE_GIVEBACK"
+    else:
+        return "SAFETY_FLATTEN"
+    assert code in ENGINE_EXIT_REASONS, code
+    return code
+
+
+def _level_prices(raw: Any, direction: int, entry: Decimal) -> list[tuple[Decimal, str]]:
+    """Family-supplied ``structure_levels`` (numbers or {"price","id"}) -> (price, id) beyond entry, nearest first."""
+    out: list[tuple[Decimal, str]] = []
+    if not isinstance(raw, (list, tuple)):
+        return out
+    for i, item in enumerate(raw):
+        try:
+            price = Decimal(str(item["price"] if isinstance(item, Mapping) else item))
+            ident = str(item.get("id") or f"level{i}") if isinstance(item, Mapping) else f"level{i}"
+        except (KeyError, ValueError, ArithmeticError, TypeError):
+            continue
+        if price.is_finite() and price > 0 and ((price > entry) if direction == 1 else (price < entry)):
+            out.append((price, ident))
+    out.sort(key=lambda t: abs(t[0] - entry))
+    deduped: list[tuple[Decimal, str]] = []
+    for price, ident in out:
+        if not deduped or price != deduped[-1][0]:
+            deduped.append((price, ident))
+    return deduped
+
+
+def build_exit_plan(
+    *,
+    direction: int,
+    entry_ref: Decimal,
+    stop: Decimal,
+    fractions: Sequence[Decimal],
+    geometry: st.StructuralGeometry | None,
+    source: str,
+    family_target: Decimal | None,
+    target_is_structural: bool,
+    structure_levels: Any = None,
+) -> dict[str, Any]:
+    """``{"stages": [...], ...}`` exit plan: TP1 (+ TP2 only if structurally justified) + runner remainder.
+
+    Level priority: family-supplied ``structure_levels`` > the structure geometry (when ``source`` is
+    ``structure``) > the family's own target (a structural target as a price stage, a fixed-R family target as
+    an honest ``R`` stage). A TP2 is never invented: no second level -> ``SECOND_TARGET_NOT_STRUCTURALLY_JUSTIFIED``."""
+    markers: list[str] = []
+    levels: list[tuple[Decimal, str]] = []
+    r_stage: tuple[Decimal, str] | None = None
+    supplied = _level_prices(structure_levels, direction, entry_ref)
+    if supplied:
+        levels = supplied
+        origin = "family_structure_levels"
+    elif source == GEOMETRY_STRUCTURE and geometry is not None and geometry.tp1 is not None:
+        levels = [(geometry.tp1.price, geometry.tp1.structure_id)]
+        if geometry.tp2 is not None:
+            levels.append((geometry.tp2.price, geometry.tp2.structure_id))
+        markers.extend(m for m in geometry.markers if m.startswith(("NO_", "SECOND_")))
+        origin = "structure"
+    elif family_target is not None and ((family_target > entry_ref) if direction == 1 else (family_target < entry_ref)):
+        if target_is_structural:
+            levels = [(family_target, "family_target")]
+        else:
+            risk = abs(entry_ref - stop)
+            if risk > 0:
+                r_stage = (abs(family_target - entry_ref) / risk, "family_fixed_r_target")
+        origin = "family_target"
+    else:
+        origin = "none"
+    stages: list[dict[str, Any]] = []
+    fr = list(fractions)
+    if r_stage is not None:
+        stages.append({"r_multiple": str(r_stage[0]), "close_fraction": str(fr[0]), "stage_id": "tp1", "source": "R"})
+    else:
+        for i, (price, ident) in enumerate(levels[: len(fr)]):
+            stages.append({"target_price": str(price), "close_fraction": str(fr[i]), "stage_id": f"tp{i + 1}", "source": f"STRUCTURE:{ident}"})
+    # direction integrity (asserted): LONG stop < entry < TP1 < TP2, SHORT mirrored
+    sign = Decimal(direction)
+    if not (stop - entry_ref) * sign < 0:
+        raise ValueError("exit plan direction integrity: stop must be on the losing side of entry")
+    prev = entry_ref
+    for stg in stages:
+        if "target_price" in stg:
+            price = Decimal(stg["target_price"])
+            if not (price - prev) * sign > 0:
+                raise ValueError("exit plan direction integrity: targets must be ordered beyond entry")
+            prev = price
+    if not stages:
+        markers.append(st.NO_STRUCTURAL_TP1)
+    elif len(stages) < 2 and st.SECOND_TARGET_NOT_STRUCTURALLY_JUSTIFIED not in markers:
+        markers.append(st.SECOND_TARGET_NOT_STRUCTURALLY_JUSTIFIED)
+    used = [Decimal(x["close_fraction"]) for x in stages]
+    return {
+        "stages": stages,
+        "geometry_source": source,
+        "target_origin": origin,
+        "fractions": {
+            "tp1": str(used[0]) if used else None,
+            "tp2": str(used[1]) if len(used) > 1 else None,
+            "runner": str(Decimal(1) - sum(used, Decimal(0))),
+        },
+        "markers": markers,
+    }
+
+
+def produce_exit_context(
+    *,
+    direction: int,
+    entry_ref: float,
+    stop: float,
+    target: float | None,
+    family: str | None,
+    market: str | None,
+    atr: float | None,
+    frame: Any,
+    spread: float,
+    tick_size: float | None,
+    structure_levels: Any,
+    target_is_structural: bool,
+    cfg: ExitPlanConfig,
+    staged: bool,
+) -> dict[str, Any]:
+    """Runner-side producer (pure given ``frame``): SHADOW geometry comparison + (staged) ``exit_plan``.
+
+    Returns ``{"shadow": {...}, "exit_plan": dict | None, "exit_meta": {...}, "structure_stop": float | None,
+    "source": str}``. ``structure_stop`` is only offered when the family/market OPTED IN and a defensible
+    structural stop exists; the caller decides whether to apply it (before sizing)."""
+    source = cfg.source_for(family, market)
+    entry_d, stop_d = Decimal(str(entry_ref)), Decimal(str(stop))
+    geometry: st.StructuralGeometry | None = None
+    error: str | None = None
+    try:
+        geometry = st.structural_geometry(
+            direction, entry_ref, frame, spread, atr, cost=spread, swing_n=cfg.swing_n,
+            range_lookback=cfg.range_lookback, atr_buffer_mult=cfg.atr_buffer_mult,
+            min_movement_to_cost=cfg.min_movement_to_cost, tick_size=tick_size,
+        )
+    except Exception as exc:  # bars unusable: log it, the family geometry is unaffected
+        error = f"{type(exc).__name__}:{exc}"[:160]
+    risk = abs(entry_d - stop_d)
+    family_geo = {
+        "stop": str(stop_d), "target": None if target is None else str(target),
+        "risk": str(risk),
+        "target_r": None if target is None or risk == 0 else str(abs(Decimal(str(target)) - entry_d) / risk),
+    }
+    shadow = {"source_active": source, "family": family_geo, "structure": None if geometry is None else geometry.as_dict(), "error": error}
+    structure_stop = None
+    if source == GEOMETRY_STRUCTURE and geometry is not None and geometry.stop is not None:
+        structure_stop = float(geometry.stop)
+    plan: dict[str, Any] | None = None
+    if staged:
+        eff_stop = Decimal(str(structure_stop)) if structure_stop is not None else stop_d
+        plan = build_exit_plan(
+            direction=direction, entry_ref=entry_d, stop=eff_stop, fractions=cfg.fractions_for(family),
+            geometry=geometry, source=source, family_target=None if target is None else Decimal(str(target)),
+            target_is_structural=target_is_structural, structure_levels=structure_levels,
+        )
+    return {
+        "shadow": shadow, "exit_plan": plan, "structure_stop": structure_stop, "source": source,
+        "exit_meta": None if plan is None else {k: plan[k] for k in ("geometry_source", "target_origin", "fractions", "markers")},
+    }
 
 
 class _ReleaseRecorder:
@@ -255,7 +528,9 @@ class StagedExitManager:
         entry = Decimal(str(position.price_open))
         volume = Decimal(str(position.volume))
         try:
-            original = Decimal(str(ctx["quantity"]))
+            # the FILLED quantity (Lane E2: saved after the entry fill); never the requested size, or a
+            # partial ENTRY fill would look like an already-taken partial exit
+            original = Decimal(str(ctx.get("initial_quantity") if ctx.get("initial_quantity") is not None else ctx["quantity"]))
         except (KeyError, ValueError, ArithmeticError):
             self._log("skip_no_original_quantity", row)
             return []
@@ -274,6 +549,19 @@ class StagedExitManager:
         atr = ctx.get("atr")
         vol = (Decimal(str(atr)) / price) if atr not in (None, "") and price > 0 else None
         hwm = state.get("high_water_mark")
+        spread = ask - bid
+        try:
+            fees_price = Decimal(str(ctx.get("fees_price") or 0))
+        except (ValueError, ArithmeticError):
+            fees_price = ZERO
+        expected_cost = spread + 2 * fees_price  # close now (spread + closing fee) + the entry fee already paid
+        signals = self._signals(row, side, current_stop, price, atr, spread, now)
+        time_left: timedelta | None = None
+        if row.forced_flat_utc:
+            try:
+                time_left = max(timedelta(0), parse_utc(row.forced_flat_utc) - now)
+            except (ValueError, TypeError):
+                time_left = None
         try:
             exit_position = ExitPosition(
                 position_id=row.intent_id,
@@ -301,6 +589,11 @@ class StagedExitManager:
                 mfe_r=max(mfe_r, favourable / risk),
                 giveback_r=max(ZERO, mfe_r - favourable / risk),
                 holding_seconds=Decimal(str((now - exit_position.opened_at).total_seconds())),
+                expected_exit_cost=expected_cost,
+                structure_trail_price=None if signals is None else signals.trail_candidate,
+                structure_failure=False if signals is None else signals.structure_failure,
+                momentum_score=None if signals is None else signals.momentum_score,
+                time_to_forced_flat=time_left,
             )
         except ValueError as exc:
             self._log("skip_invalid_position", row, error=str(exc)[:200])
@@ -336,6 +629,37 @@ class StagedExitManager:
         return events
 
     # ------------------------------------------------------------------------------ inputs
+
+    def _signals(
+        self, row: reg.IntentRow, side: PositionSide, current_stop: Decimal, price: Decimal,
+        atr: Any, spread: Decimal, now: datetime,
+    ) -> st.ManagementSignals | None:
+        """Cheap structure / momentum inputs from the closed M5 frame (only when a rule needs them)."""
+        pol = self._policy
+        if not (
+            pol.structure_trailing or pol.structure_failure_exit
+            or pol.momentum_deterioration_threshold is not None or pol.late_loser_momentum_threshold is not None
+        ):
+            return None
+        stack = self._stack
+        cfg = stack._cfg.exit_plan
+        try:
+            frame = stack.bar_source.m5_frame(row.market, cfg.bars)
+            return st.management_signals(
+                row.direction, frame, entered_at=parse_utc(row.created_utc), current_stop=current_stop,
+                price=price, atr=None if atr in (None, "") else Decimal(str(atr)), spread=spread,
+                swing_n=cfg.swing_n, atr_buffer_mult=cfg.atr_buffer_mult,
+            )
+        except Exception as exc:
+            if type(exc).__name__ == "StackFailClosed":
+                raise
+            self.counters["bars_unavailable"] += 1
+            self._log("skip_bars", row, error=f"{type(exc).__name__}:{exc}"[:160])
+            return None
+
+    def log_entry_plan(self, row: reg.IntentRow, **fields: Any) -> None:
+        """Audit record at the entry fill: requested vs FILLED (= initial) quantity and the plan fractions."""
+        self._log("entry_plan", row, **fields)
 
     def _quote(self, row: reg.IntentRow, now: datetime) -> tuple[Decimal, Decimal, datetime] | None:
         stack = self._stack
@@ -411,6 +735,7 @@ class StagedExitManager:
         events: list[ExecutionEvent] = []
         if seen_stop is not None and abs(seen_stop - new_stop) < tick:
             state["stop_stage"] = stage.value
+            state["current_stop"] = str(new_stop)  # the stop in force (exit slippage is measured against it)
             state["stop_moves"] = int(state.get("stop_moves", 0)) + 1
             self._save_state(row, ctx, state)
             self._stop_failures.pop(row.intent_id, None)
@@ -512,6 +837,8 @@ class StagedExitManager:
             "stage_id": decision.metadata.get("stage_id"),
             "stage_source": decision.metadata.get("stage_source"),
             "reason": decision.reason.value,
+            "initial_quantity": str(original),
+            "plan_fractions": (ctx.get("exit_plan") or {}).get("fractions") if isinstance(ctx.get("exit_plan"), dict) else None,
             "quantity_before": str(before),
             "quantity_reduced": str(reduced),
             "quantity_remaining": str(remaining),
@@ -530,10 +857,12 @@ class StagedExitManager:
     def _close_fully(self, row: reg.IntentRow, info: Any, decision: Any) -> list[ExecutionEvent]:
         stack = self._stack
         assert stack._registry is not None
+        code = engine_exit_reason(decision)
         stack._registry.update(row.intent_id, detail=f"exit_engine:{decision.reason.value}"[:200])
-        ok = stack._flatten(info, tag=f"exit:{decision.request_id}", hint=None)
+        # the hint becomes the PositionClosed exit reason (EXIT_ENGINE_* = uncensored strategy exit)
+        ok = stack._flatten(info, tag=f"exit:{decision.request_id}", hint=code)
         self._terminal(row.market, decision.request_id, ExitOutcome.FILLED if ok else ExitOutcome.REJECTED)
-        self._log("full_close", row, reason=decision.reason.value, flat=ok)
+        self._log("full_close", row, reason=decision.reason.value, exit_reason=code, flat=ok)
         if not ok:
             return []
         fresh = stack._registry.get(row.intent_id) or row
@@ -542,15 +871,24 @@ class StagedExitManager:
 
 
 __all__ = [
+    "DEFAULT_STAGE_FRACTIONS",
     "EXIT_POLICIES",
     "EXIT_POLICY_FIXED",
     "EXIT_POLICY_STAGED",
+    "GEOMETRY_FAMILY",
+    "GEOMETRY_SOURCES",
+    "GEOMETRY_STRUCTURE",
     "R_EXIT_QUOTE_UNAVAILABLE",
     "R_EXIT_SIZE_BELOW_MIN_LOT",
     "R_EXIT_TRANCHE_LIMITATION",
     "ExitOutcome",
+    "ExitPlanConfig",
     "StagedExitManager",
     "broker_target_for_staged",
+    "build_exit_plan",
+    "default_staged_exit_policy",
+    "engine_exit_reason",
     "parse_exit_plan",
+    "produce_exit_context",
     "stage_target_price",
 ]

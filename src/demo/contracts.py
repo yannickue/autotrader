@@ -23,6 +23,19 @@ Phase = Literal["DISCOVERY", "FROZEN"]
 PHASES: tuple[str, ...] = ("DISCOVERY", "FROZEN")
 MAX_BROKER_LEVERAGE = 30  # hard cap, never a target
 
+# Lane E2: exit reasons of full closes decided by the ExitEngine (exit_policy="staged"). They are
+# STRATEGY exits (the strategy's own chart/time/deterioration rules decided them), so they are
+# UNCENSORED in the store - unlike MANUAL / EXTERNAL / SAFETY_FLATTEN. An engine
+# EMERGENCY_RISK_EXIT is a safety action, reported as SAFETY_FLATTEN (censored), never as these.
+ENGINE_EXIT_REASONS: frozenset[str] = frozenset(
+    {
+        "EXIT_ENGINE_TP1", "EXIT_ENGINE_TP2", "EXIT_ENGINE_TP3", "EXIT_ENGINE_TP4",
+        "EXIT_ENGINE_TRAIL", "EXIT_ENGINE_BREAK_EVEN", "EXIT_ENGINE_STOP", "EXIT_ENGINE_STRUCTURE",
+        "EXIT_ENGINE_MOMENTUM", "EXIT_ENGINE_LIQUIDITY", "EXIT_ENGINE_TIME_STOP", "EXIT_ENGINE_EOD",
+        "EXIT_ENGINE_GIVEBACK",
+    }
+)
+
 
 def stable_hash(*parts: Any, n: int = 16) -> str:
     raw = "|".join(str(p) for p in parts)

@@ -1,3 +1,4 @@
+# ruff: noqa: E501
 """Configuration, inputs, and outputs for the deterministic exit engine.
 
 This module is intentionally standalone: it has no dependency on `src/pipeline`
@@ -59,6 +60,10 @@ class ExitReason(StrEnum):
     TIME_STOP = "TIME_STOP"
     LIQUIDITY_DETERIORATION = "LIQUIDITY_DETERIORATION"
     EMERGENCY_RISK_EXIT = "EMERGENCY_RISK_EXIT"
+    # Lane E2 (chart-based management; every one is a STRATEGY exit, only EMERGENCY_RISK_EXIT is not):
+    STRUCTURE_FAILURE = "STRUCTURE_FAILURE"  # a closed bar broke the latest confirmed post-entry swing
+    MFE_GIVEBACK = "MFE_GIVEBACK"  # too much of a meaningful favourable excursion was given back
+    LATE_SESSION_DETERIORATION = "LATE_SESSION_DETERIORATION"  # late-session loser with adverse momentum
 
 
 class ExitOutcome(StrEnum):
@@ -201,6 +206,25 @@ class ExitPolicy:
 
     # -- time stop ------------------------------------------------------------
     max_holding_duration: timedelta | None = None
+    # Lane E2 time-ALPHA decay: when set, the time stop only fires if the trade never showed at least this
+    # much favourable excursion (a trade that worked is not cut merely for its age; None = age only).
+    time_stop_min_mfe_r: Decimal | None = None
+
+    # -- Lane E2 chart-based management (all off by default: the legacy behaviour is unchanged) --------
+    # cost-adjusted break-even also triggers once the FIRST target stage has been taken
+    breakeven_after_first_stage: bool = False
+    # ratchet the stop behind the newest confirmed post-entry swing (ExitMarketState.structure_trail_price)
+    structure_trailing: bool = False
+    # exit the remainder when a closed bar broke the latest confirmed post-entry swing against the trade
+    structure_failure_exit: bool = False
+    # give back at least this fraction of a favourable excursion of >= giveback_min_mfe_r -> exit
+    max_giveback_fraction: Decimal | None = None
+    giveback_min_mfe_r: Decimal = Decimal("1")
+    # late session (``ExitMarketState.time_to_forced_flat <= late_window``): profitable trades lock the
+    # cost-adjusted break-even; a LOSING trade whose momentum is <= the threshold exits early instead of
+    # being held to the mandatory flat (the forced flat itself always wins and is not this engine's job)
+    late_window: timedelta | None = None
+    late_loser_momentum_threshold: Decimal | None = None
 
     # -- fail-closed market-data staleness -----------------------------------
     max_market_data_age: timedelta = timedelta(seconds=30)
@@ -237,6 +261,15 @@ class ExitPolicy:
             raise ValueError("max_holding_duration must be positive when set")
         if self.max_market_data_age <= timedelta(0):
             raise ValueError("max_market_data_age must be positive")
+        if self.time_stop_min_mfe_r is not None:
+            _require_finite_non_negative("time_stop_min_mfe_r", self.time_stop_min_mfe_r)
+        if self.max_giveback_fraction is not None:
+            _require_fraction("max_giveback_fraction", self.max_giveback_fraction)
+        _require_finite_non_negative("giveback_min_mfe_r", self.giveback_min_mfe_r)
+        if self.late_window is not None and self.late_window <= timedelta(0):
+            raise ValueError("late_window must be positive when set")
+        if self.late_loser_momentum_threshold is not None:
+            _require_finite("late_loser_momentum_threshold", self.late_loser_momentum_threshold)
 
         if self.take_profit_stages:
             previous_r_multiple = ZERO
@@ -402,6 +435,15 @@ class ExitMarketState:
     mfe_r: Decimal | None = None
     giveback_r: Decimal | None = None
     holding_seconds: Decimal | None = None
+    # Lane E2 chart-based inputs (all optional; derived from closed bars by the caller, never by the engine):
+    # expected cost of closing now in PRICE units (spread + fees) -> cost-adjusted break-even;
+    expected_exit_cost: Decimal | None = None
+    # tighter stop candidate behind the newest confirmed post-entry swing (long: below price; short: above);
+    structure_trail_price: Decimal | None = None
+    # a closed bar broke the latest confirmed post-entry swing against the trade;
+    structure_failure: bool = False
+    # time left until the mandatory forced flat (Lane P's deadline); None = unknown / no deadline
+    time_to_forced_flat: timedelta | None = None
 
     def __post_init__(self) -> None:
         if not self.instrument:
@@ -420,6 +462,10 @@ class ExitMarketState:
                 "available_liquidity_notional", self.available_liquidity_notional
             )
         _require_utc_aware("timestamp", self.timestamp)
+        if self.expected_exit_cost is not None:
+            _require_finite_non_negative("expected_exit_cost", self.expected_exit_cost)
+        if self.structure_trail_price is not None:
+            _require_finite_positive("structure_trail_price", self.structure_trail_price)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
