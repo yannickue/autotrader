@@ -161,3 +161,11 @@ records and resolves them here.
     (4) BTC forced flat is only 25 min before the summer Friday break at 20:55 UTC.
     (5) The offline BTC cost model uses the recorded M1 median spread while the live tick spread is ~103 USD (live gating uses the
         actual quote).
+
+28. Lane F (2026-10-01), STRUCT family for BTCUSD/Brent. (1) All STRUCT constants are DISCOVERY PLACEHOLDERS (not fitted; no frozen Train/holdout split for Phase-2
+    markets); a validated phase must research them and bump `CONSTANTS_VERSION`. (2) BTCUSD history lacks Oct-2025 and Mar-2026 (DST fold months rejected as
+    AmbiguousServerTime); the ambiguity recurs live on 2026-10-25 server 02:00-03:00 (bars skipped fail-closed): decide whether the download/live policy should resolve the fold
+    or keep failing closed. (3) Brent calendar (bar sessions, no session open) is probe-derived and PROVISIONAL; no broker confirmation. (4) Live tick spread of BTCUSD
+    (~100 USD) is ~2x the recorded M5 median used offline; entry gating uses the actual quote. (5) SHADOW variants use the engine-level reject code `SHADOW_VARIANT`; the
+    funnel classifies it UNCLASSIFIED; add a class if the funnel becomes a decision input. (6) Offline result: no evidence the breakout trigger beats random bars; the
+    primary variant `confirmed` was fixed a priori and is NOT promoted by any of this.

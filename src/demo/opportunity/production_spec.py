@@ -66,6 +66,24 @@ DEFAULT_PATH = Path(__file__).with_name("production_spec_v1.json")
 # market is enabled (``load_production_spec_for``).
 SCHEMA_V1_1 = "demo-production-spec-1.1"
 DEFAULT_PATH_V1_1 = Path(__file__).with_name("production_spec_v1_1.json")
+# v1.2 (Lane F): a STRICT SUPERSET of v1.1 (v1 markets + provenance copied verbatim). For BRENT and BTCUSD the invented /
+# inherited session-open ORB entries are DROPPED and replaced by the session-agnostic STRUCT family (one PRIMARY variant
+# that trades + three SHADOW variants that are evaluated, recorded and counterfactually labelled but never traded).
+# Every Phase-2 snapshot is tagged PHASE2_DISCOVERY / NOT_ALPHA_VALIDATED. v1 and v1.1 (files, schemas, hashes) are untouched.
+SCHEMA_V1_2 = "demo-production-spec-1.2"
+DEFAULT_PATH_V1_2 = Path(__file__).with_name("production_spec_v1_2.json")
+ROLE_PRIMARY = "PRIMARY"
+ROLE_SHADOW = "SHADOW"  # evaluated + recorded + labelled counterfactually (reason SHADOW_VARIANT), never an intent
+PHASE2_TAG = "PHASE2_DISCOVERY"
+ALPHA_STATUS = "NOT_ALPHA_VALIDATED"
+PHASE2_V1_2_SELECTION_RULE = (
+    "Phase-2 markets (v1.2): STRUCT (session-agnostic range-structure breakout, alpha.families.structbrk) with class-default "
+    "DISCOVERY PLACEHOLDER constants (not fitted, thresholds empty). PRIMARY = mode 'confirmed' (fixed a priori, before any "
+    "BTC/Brent history was measured); SHADOW = 'breakout', 'retest', 'fade' (same break, other entry timing; measurement "
+    "only). ORB DROPPED for BTCUSD (cash_open 08:00 UTC is an invented open, not a session) and for BRENT (08:00 London is "
+    "inherited from XAUUSD/EURUSD; no evidence of a defensible opening range for the ActivTrades Brent spot CFD). "
+    "Everything is PHASE2_DISCOVERY / NOT_ALPHA_VALIDATED: no expectancy is claimed."
+)
 PHASE2_SELECTION_RULE = (
     "Phase-2 markets: ONLY the fit-free families the mechanism supports without history (ORB breakout + its fade "
     "complement, class-default parameters, thresholds = empty). GAP/OVERNIGHT/VOLREV/EOD need Train-fitted quantiles "
@@ -105,6 +123,7 @@ class FrozenSpec:
     market: str
     spec: FamilySpec
     thr_values: tuple[float, ...]
+    role: str = "PRIMARY"  # PRIMARY trades; SHADOW is recorded + counterfactually labelled only (v1.2)
 
     @property
     def family(self) -> str:
@@ -198,9 +217,50 @@ def build_v1_1_payload(base_path: str | Path | None = None) -> dict[str, Any]:
     return {**new_body, "strategy_hash": _hash_body(new_body)}
 
 
+def select_specs_phase2_v1_2(market: str) -> list[tuple[FamilySpec, str]]:
+    """(spec, role) per Phase-2 market for v1.2 (see ``PHASE2_V1_2_SELECTION_RULE``); class defaults only."""
+    from alpha.families import structbrk
+
+    if market not in PHASE2_CANONICALS:
+        raise ProductionSpecError(f"{market!r} is not a Phase-2 market")
+    base = structbrk.STRUCTSpec()
+    out = [(dataclasses.replace(base, mode="confirmed"), ROLE_PRIMARY)]
+    out += [(dataclasses.replace(base, mode=m), ROLE_SHADOW) for m in ("breakout", "retest", "fade")]
+    assert len({sp.canonical_hash() for sp, _ in out}) == len(out)
+    assert all(len(structbrk.fit(None, sp).values) == 0 for sp, _ in out)  # type: ignore[arg-type]  # fit-free
+    return out
+
+
+def build_v1_2_payload(base_path: str | Path | None = None) -> dict[str, Any]:
+    """v1.2 payload = the v1.1 file's body VERBATIM for the five v1 markets, STRUCT entries for the Phase-2 markets,
+    sealed with the v1.2 hash. Deterministic: same v1.1 file -> same v1.2 hash."""
+    base = json.loads(Path(base_path or DEFAULT_PATH_V1_1).read_text(encoding="utf-8"))
+    from_payload(base)  # the base must verify as v1.1 first
+    body = {k: v for k, v in base.items() if k not in ("strategy_hash", "schema", "selection_rule")}
+    markets = dict(body["markets"])
+    prov = dict(body["provenance"])
+    for m in PHASE2_CANONICALS:
+        markets[m] = [
+            {"spec": sp.to_dict(), "thr": [], "role": role, "tags": {"phase": PHASE2_TAG, "alpha_status": ALPHA_STATUS}}
+            for sp, role in select_specs_phase2_v1_2(m)
+        ]
+        prov[m] = {
+            "n_fit_bars": 0, "first_bar_utc": None, "last_bar_utc": None, "last_berlin_date": "",
+            "excluded_unfitted": [], "fit_free_families_only": True, "phase": PHASE2_TAG, "alpha_status": ALPHA_STATUS,
+            "note": "no history fitted; STRUCT constants are DISCOVERY PLACEHOLDERS (structbrk.constants()); ORB dropped",
+        }
+    new_body = {
+        **body, "markets": markets, "provenance": prov, "schema": SCHEMA_V1_2,
+        "selection_rule": SELECTION_RULE + " || " + PHASE2_V1_2_SELECTION_RULE,
+        "base_strategy_hash_v1_1": base["strategy_hash"],
+    }
+    return {**new_body, "strategy_hash": _hash_body(new_body)}
+
+
 def load_production_spec_for(phase2_markets: tuple[str, ...] = ()) -> ProductionSpecSet:
-    """v1 (bit-identical to today) unless a Phase-2 market is enabled, then the v1.1 superset."""
-    return load_production_spec(DEFAULT_PATH_V1_1 if phase2_markets else None)
+    """v1 (bit-identical to today) unless a Phase-2 market is enabled, then the v1.2 superset (v1.1 stays loadable
+    by path but is no longer selected)."""
+    return load_production_spec(DEFAULT_PATH_V1_2 if phase2_markets else None)
 
 
 # ------------------------------------------------------------------------------ fit
@@ -265,16 +325,17 @@ def fit_production_specs(
 
 
 def _hash_body(body: Mapping[str, Any]) -> str:
-    prefix = "demo-production-spec-1.1:" if body.get("schema") == SCHEMA_V1_1 else "demo-production-spec-1:"
+    prefix = {SCHEMA_V1_2: "demo-production-spec-1.2:", SCHEMA_V1_1: "demo-production-spec-1.1:"}.get(
+        body.get("schema"), "demo-production-spec-1:")
     return hashlib.sha256((prefix + _canon(dict(body))).encode()).hexdigest()[:16]
 
 
 # ------------------------------------------------------------------------------ load / verify
 def from_payload(payload: Mapping[str, Any]) -> ProductionSpecSet:
     body = {k: v for k, v in payload.items() if k != "strategy_hash"}
-    if body.get("schema") not in (SCHEMA, SCHEMA_V1_1):
+    if body.get("schema") not in (SCHEMA, SCHEMA_V1_1, SCHEMA_V1_2):
         raise ProductionSpecError(f"unknown schema {body.get('schema')!r}")
-    allowed = CANONICALS + (PHASE2_CANONICALS if body.get("schema") == SCHEMA_V1_1 else ())
+    allowed = CANONICALS + (PHASE2_CANONICALS if body.get("schema") in (SCHEMA_V1_1, SCHEMA_V1_2) else ())
     if payload.get("strategy_hash") != _hash_body(body):
         raise ProductionSpecError("strategy_hash mismatch: production spec file was modified")
     fit_end = str(body["fit_end"])
@@ -292,8 +353,11 @@ def from_payload(payload: Mapping[str, Any]) -> ProductionSpecSet:
             fam = e["spec"]["family"]
             if fam not in SPEC_CLASSES:
                 raise ProductionSpecError(f"unknown family {fam}")
+            role = str(e.get("role", ROLE_PRIMARY))
+            if role not in (ROLE_PRIMARY, ROLE_SHADOW):
+                raise ProductionSpecError(f"unknown role {role!r}")
             specs.append(
-                FrozenSpec(m, family_spec_from_dict(e["spec"]), tuple(_dec(v) for v in e["thr"]))
+                FrozenSpec(m, family_spec_from_dict(e["spec"]), tuple(_dec(v) for v in e["thr"]), role)
             )
         markets.append((m, tuple(specs)))
     return ProductionSpecSet(

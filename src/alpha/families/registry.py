@@ -7,7 +7,7 @@ import json
 from types import ModuleType
 from typing import Any
 
-from alpha.families import eod, gap, leadlag, orb, overnight, roundnum, volrev
+from alpha.families import eod, gap, leadlag, orb, overnight, roundnum, structbrk, volrev
 from alpha.families.common import Thr
 from alpha.families.data import FamilyData
 from alpha.families.spec import FamilySpec
@@ -15,10 +15,11 @@ from alpha.fast.sim import CandidateArrays
 
 FAMILY_MODULES: dict[str, ModuleType] = {
     "ORB": orb, "GAP": gap, "OVERNIGHT": overnight, "VOLREV": volrev, "ROUND": roundnum, "LEADLAG": leadlag, "EOD": eod,
+    "STRUCT": structbrk,
 }
 SPEC_CLASSES: dict[str, type[FamilySpec]] = {
     "ORB": orb.ORBSpec, "GAP": gap.GAPSpec, "OVERNIGHT": overnight.OVERNIGHTSpec, "VOLREV": volrev.VOLREVSpec,
-    "ROUND": roundnum.ROUNDSpec, "LEADLAG": leadlag.LEADLAGSpec, "EOD": eod.EODSpec,
+    "ROUND": roundnum.ROUNDSpec, "LEADLAG": leadlag.LEADLAGSpec, "EOD": eod.EODSpec, "STRUCT": structbrk.STRUCTSpec,
 }
 FAMILY_NAMES = tuple(FAMILY_MODULES)
 
@@ -50,7 +51,13 @@ def generate_candidates(data: FamilyData, spec: FamilySpec, thr: Thr) -> Candida
     return FAMILY_MODULES[spec.FAMILY].generate(data, spec, thr)
 
 
+def describe_candidate(data: FamilyData, spec: FamilySpec, decision_idx: int, direction: int) -> dict[str, Any]:
+    """Optional additive per-candidate metadata (e.g. STRUCT ``structure_levels``); ``{}`` for families without it."""
+    fn = getattr(FAMILY_MODULES[spec.FAMILY], "structure_levels", None)
+    return fn(data, spec, decision_idx, direction) if fn is not None else {}
+
+
 __all__ = (
-    "FAMILY_MODULES", "FAMILY_NAMES", "SPEC_CLASSES", "fit_thresholds", "generate_candidates", "grid_for",
+    "FAMILY_MODULES", "FAMILY_NAMES", "SPEC_CLASSES", "describe_candidate", "fit_thresholds", "generate_candidates", "grid_for",
     "spec_from_dict", "spec_from_json",
 )

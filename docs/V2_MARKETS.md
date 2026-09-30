@@ -223,3 +223,50 @@ Enable/disable: `configs/markets_phase2/enablement.toml` per market + runner res
 Code: `markets.spec.load_market_spec` resolves Phase-2 names to `configs/markets_phase2` by default, `markets.phase2.flag_enabled_markets`,
 `markets.preflight.run_live_preflight`, `demo.opportunity.production_spec.load_production_spec_for` (v1 unless a Phase-2 market is enabled),
 `Mt5DemoStack(extra_markets=...)` / `disabled_markets`, `demo.runner.build_live_runner(phase2_markets=...)`.
+
+## Lane F: BTCUSD + Brent Discovery-family readiness (2026-10-01)
+Status tag for everything below and for every Phase-2 snapshot: **PHASE2_DISCOVERY / NOT_ALPHA_VALIDATED**. No expectancy is claimed.
+
+**Data (read-only, bounded MT5 worker, `scripts/v2_download_market.py BTCUSD,BRENT 2025-06 2026-09 "M5,M1@2026-06"`, output kept outside `data/`, uncommitted).**
+BTCUSD M5: 83 187 bars, 2025-09-24 10:45 UTC .. 2026-09-30; months 2025-06..08 NO_DATA (terminal history starts Sep 2025); **2025-10 and 2026-03 REJECTED**
+(`AmbiguousServerTime`: a 24/7 instrument has bars inside the Berlin DST fold hour, the UTC policy refuses to guess), two missing months. BTCUSD M1: 100 000 rows
+(Jul-Sep 2026, terminal cap). Brent M5: 88 082 bars 2025-06-01 .. 2026-09-30, no rejected months; M1 100 000 rows (Jun-Sep 2026). Quality JSONs:
+`research/reports/v2_markets/{BTCUSD,BRENT}_quality.json`. Research frames are cut at the dev end (`dev_frame`, no bar after the Berlin date 2026-08-31; September 2026 is
+never loaded). These markets have **no frozen Train/holdout split**: nothing is fitted, selected or promoted from this history.
+
+**Family `STRUCT` (`src/alpha/families/structbrk.py`).** Session-agnostic range-structure breakout: prior `n_range` (24) bars, compressed
+(`MIN_WIDTH_SQRT 0.25 <= width/(ATR*sqrt(n)) <= COMP_MAX_SQRT 0.8`), break = bar CLOSE beyond the range with a volatility expansion (`TR >= 1.0 * prior ATR`),
+structural stop = opposite edge -/+ 0.25 ATR (fade: failed-excursion extreme), fixed 1.5 R target, 12-bar cooldown. Variants (one module, parameter `mode`):
+breakout / confirmed / retest / fade. **Gap-aware**: the range and the ATR window must lie inside one contiguous 5-minute segment
+(`k - seg_start >= max(n_range, 15)`), so no range is built across the Brent daily break (20:55-00:00 UTC in CEST), the weekend or any missing bar. **Session-agnostic**:
+no `cash_open`/`cash_close` is read; only the operating-policy entry window (`entry_mask`, Lane P) constrains entries. All constants are
+**DISCOVERY PLACEHOLDERS** (random-walk scaling, reuse of ORB/VOLREV values, chosen before any BTC/Brent history was looked at; `structbrk.constants()`;
+`CONSTANTS_VERSION` is part of every spec hash). `structure_levels` (range high/low, width in ATR, last confirmed swing high/low, break offset) is emitted
+additively in `snapshot.signal["structure_levels"]` for the E2 exit-plan producer.
+
+**Spec v1.2** (`production_spec_v1_2.json`, hash `a4fe51b558d03274`, strict superset of v1.1; v1 `c3eae99e782888ac` and v1.1 `4f4b33e97966cd84` untouched and loadable;
+the five core markets' entries and provenance are byte-identical). BTCUSD and BRENT: STRUCT `confirmed` = PRIMARY (fixed a priori, before measurement),
+`breakout`/`retest`/`fade` = SHADOW; ORB DROPPED for both (BTC `cash_open 08:00 UTC` is an invented open; Brent 08:00 London is inherited from XAU/EUR with no evidence of
+a defensible opening range for the ActivTrades Brent spot CFD, which has no session-open auction in the observed bars). `load_production_spec_for` returns v1.2 iff a Phase-2 market
+is enabled (same gating as v1.1). Tags: every Phase-2 snapshot carries `signal.phase = PHASE2_DISCOVERY`, `signal.alpha_status = NOT_ALPHA_VALIDATED`, `signal.role`; outcomes
+and counterfactual labels join the snapshot by `opportunity_id`, so the tag is persisted with them (no schema change).
+
+**Forward Shadow (implemented, small).** A SHADOW-role spec is evaluated and snapshotted like any spec, but an otherwise accepted decision is turned into the terminal
+rejection `SHADOW_VARIANT` in `OpportunityEngine` (no intent, no broker order); the existing counterfactual labeller then produces MFE/MAE/R labels for it. The funnel
+shows the code as UNCLASSIFIED/TRADABLE (engine-level code, like CATCHUP_*); confluence counts ignore SHADOW specs. Gap: labels use a hypothetical fill at the intended entry (no slippage).
+
+**Offline variant measurement** (`scripts/lane_f_family_variants.py`, `docs/evidence/lane_f_family_variants.md/.json`, method lane-f-variants-v1): hindsight diagnostics, n per cell
+and 'n too small' flags, random-bar base-rate control. Headline: mean R per variant is negative on both markets after spread (breakout/confirmed/retest roughly -0.05 to -0.18 R, fade
+-0.18 to -0.26 R, hypothetical walk), the breakout trigger is statistically indistinguishable from random bars for a 3-ATR move, false-break rate within 6 bars is 56-61 %.
+
+**Semantic readiness (causal, per market).**
+
+| item | BTCUSD | BRENT |
+|---|---|---|
+| lookahead | none (truncation + future-perturbation tests, all 4 modes) | same |
+| session semantics | none assumed; 24/7 structure; the Fri 20:55 -> Sat 07:00 UTC (summer) break is handled by contiguity | no open assumed; break 20:55-00:00 UTC (summer; 21:55-01:00 winter) handled by contiguity; calendar source = probe-derived bar sessions (PROVISIONAL, not broker-confirmed) |
+| DST | server clock Europe/Berlin -> UTC policy; the DST fold hour (2026-10-25 server 02:00-03:00) is ambiguous: history download rejects it, live fetch raises `AmbiguousServerTime` (fail-closed, bar skipped) | fold hour lies inside the daily break: no bars, not affected |
+| spread/price (recorded M5 median) | ~6 bps (45.7 USD); live tick spread ~100 USD | ~6 bps (0.05 USD) |
+| spread/stop (median; structural stop ~4 ATR) | ~0.10 (16 % of candidates above the policy 20 %-of-1R gate; fade 56 %) | ~0.09 (10 %; fade 47 %) |
+| movement_to_cost (median 4 h MFE / spread) | ~6 | ~8 |
+| verdict | family semantics GREEN (session-agnostic, gap-aware, causal); cost/edge UNVALIDATED | family semantics GREEN with the PROVISIONAL Brent calendar caveat; cost/edge UNVALIDATED |

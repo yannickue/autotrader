@@ -48,6 +48,7 @@ from data.historical import DatasetRejected
 from markets.quality import analyze_coarse, analyze_intraday, load_frame
 
 MARKETS = ("GER40", "NAS100", "SPX500", "XAUUSD", "EURUSD")
+PHASE2_MARKETS = ("BRENT", "BTCUSD")  # Lane F: symbol/path come from configs/markets_phase2/*.toml
 MT5_TF = {"M1": 1, "M5": 5, "H1": 16385, "H4": 16388, "D1": 16408}
 TF_SECONDS = {"M1": 60, "M5": 300, "H1": 3600, "H4": 14400, "D1": 86400}
 MONTHLY = {"M1", "M5", "H1"}
@@ -109,6 +110,12 @@ def _sha256(path: Path) -> str:
 
 
 def _snapshot_symbol(canonical: str) -> tuple[str, str]:
+    if canonical in PHASE2_MARKETS:
+        import tomllib
+
+        cfg = REPO_ROOT / "configs" / "markets_phase2" / f"{canonical}.toml"
+        m = tomllib.loads(cfg.read_text(encoding="utf-8"))["market"]
+        return m["broker_symbol"], str(m["broker_path"]).rsplit("\\", 1)[0] + "\\"
     snap = json.loads(SNAPSHOT.read_text(encoding="utf-8"))
     entry = snap["markets"].get(canonical)
     if not entry or not entry.get("resolved_broker_symbol"):
@@ -264,8 +271,8 @@ def main() -> int:
         return 2
     canons = list(MARKETS) if argv[0].upper() == "ALL" else argv[0].upper().split(",")
     for c in canons:
-        if c not in MARKETS:
-            raise SystemExit(f"unknown market {c!r}; allowed {MARKETS}")
+        if c not in MARKETS + PHASE2_MARKETS:
+            raise SystemExit(f"unknown market {c!r}; allowed {MARKETS + PHASE2_MARKETS}")
     first, last = argv[1], argv[2]
     tfs = parse_tfspec(argv[3], first)
     out = Path(argv[4]) if len(argv) > 4 else REPO_ROOT / "data" / "markets"
