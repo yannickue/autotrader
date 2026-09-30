@@ -57,6 +57,7 @@ class Gate:
 
 R_HALTED = "halted"
 R_UNKNOWN_MARKET = "unknown_market"
+R_MARKET_DISABLED = "market_disabled"
 R_SYMBOL_MISMATCH = "symbol_mismatch"
 R_INVALID_DIRECTION = "invalid_direction"
 R_STALE_SIGNAL = "stale_signal"
@@ -142,6 +143,7 @@ _ENTRIES: tuple[Gate, ...] = (
     # -- SAFETY (hard) -------------------------------------------------------------------------------
     _G(R_HALTED, S, True, "kill switch / halt latch (protection failure, unknown outcome, external activity, drawdown latch)"),
     _G(R_UNKNOWN_MARKET, S, True, "intent for a market outside the configured DEMO universe"),
+    _G(R_MARKET_DISABLED, S, True, "market disabled at start-up by its per-market preflight (Phase-2 opt-in: symbol/tradable/quote/margin/stops checks); the reason is in the heartbeat disabled_markets"),
     _G(R_SYMBOL_MISMATCH, S, True, "broker symbol of the intent differs from the configured mapping"),
     _G(R_INVALID_DIRECTION, S, True, "direction must be +1 / -1"),
     _G(R_STALE_SIGNAL, S, True, "stale signal: intent validity window elapsed (stale data)"),

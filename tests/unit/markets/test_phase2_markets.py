@@ -89,9 +89,14 @@ def test_enablement_defaults_off_and_needs_green_preflight(tmp_path):
     assert phase2.load_enablement() == {"BRENT": False, "BTCUSD": False}
     (tmp_path / "enablement.toml").write_text("[BRENT]\nenabled = true\n[BTCUSD]\nenabled = true\n", encoding="utf-8")
     assert phase2.load_enablement(tmp_path) == {"BRENT": True, "BTCUSD": True}
-    # flag on but RED (real, blocked probe evidence) -> still not enabled
+    # double gate on the REAL live-probe evidence: both flags on, but only the GREEN market passes (Brent is RED:
+    # stale quote during its daily break)
     real = json.loads(EVIDENCE.read_text(encoding="utf-8"))
+    assert phase2.enabled_market_names(run_all(real), tmp_path) == ("BTCUSD",)
+    # flag off -> never enabled, even when GREEN
+    (tmp_path / "enablement.toml").write_text("[BRENT]\nenabled = false\n[BTCUSD]\nenabled = false\n", encoding="utf-8")
     assert phase2.enabled_market_names(run_all(real), tmp_path) == ()
+    assert phase2.flag_enabled_markets(tmp_path) == ()
     # missing file -> fail closed
     assert phase2.load_enablement(tmp_path / "nope") == {"BRENT": False, "BTCUSD": False}
 
@@ -189,7 +194,8 @@ def test_cost_model_wiring_uses_spec_and_config_inputs():
     for m in ("BRENT", "BTCUSD"):
         spec, cost = phase2.load_phase2_spec(m), phase2.load_phase2_cost(m)
         model = phase2.phase2_cost_model(spec, cost)
-        assert model.spread_source == "placeholder_unverified"  # honest: no observed spread yet
+        assert model.spread_source.startswith("observed_rates_m1")  # Lane M2: the probe's observed median
+        assert model.median_spread_price == {"BRENT": 0.06, "BTCUSD": 59.83}[m]
         assert model.eur_per_price_unit_per_lot == pytest.approx(spec.contract_size * REFERENCE_EUR_PER_USD)
         assert model.slippage_base_price < model.slippage_stress_price
         assert model.leverage_cap == min(10.0, spec.max_leverage)
@@ -237,20 +243,22 @@ def _status(v, cid):
     return next(c.status for c in v.checks if c.id == cid)
 
 
-def test_preflight_on_real_static_evidence_is_red_with_unverified_reasons_not_fabricated_green():
+def test_preflight_on_the_real_live_probe_brent_red_only_on_stale_quote_btc_green():
     real = json.loads(EVIDENCE.read_text(encoding="utf-8"))
-    assert real["mode"] == "static_snapshot" and real["live_probe"]["status"] == "BLOCKED"
+    assert real["mode"] == "probe"
     verdicts = run_all(real)
+    assert verdicts["BTCUSD"].verdict == "GREEN" and verdicts["BTCUSD"].reasons == ()
+    brent = verdicts["BRENT"]
+    assert brent.verdict == "RED" and len(brent.reasons) == 1 and brent.reasons[0].startswith("quote_fresh: FAIL")
     for m, v in verdicts.items():
-        assert v.verdict == "RED", m
-        unverified = {c.id for c in v.checks if c.status is Status.UNVERIFIED}
-        assert unverified == {"quote_fresh", "margin_calc", "protection_path", "session_mapping_verified", "cost_model_enabled"}
-        # what the real data DOES prove
-        for cid in ("account_demo_bound", "symbol_exact_mapped", "tradable", "contract_facts",
-                    "structural_sl_vs_stops_level", "persistence_reconciliation_reports", "no_index_specific_hardcoding"):
+        for cid in ("account_demo_bound", "symbol_exact_mapped", "tradable", "contract_facts", "margin_calc",
+                    "structural_sl_vs_stops_level", "protection_path", "persistence_reconciliation_reports",
+                    "session_mapping_verified", "cost_model_enabled", "no_index_specific_hardcoding"):
             assert _status(v, cid) is Status.PASS, (m, cid)
         assert v.facts["cluster"] == {"BRENT": "ENERGY", "BTCUSD": "CRYPTO"}[m]
-        assert len(v.reasons) == 5
+    # observed numbers the configs now carry (no placeholder left)
+    assert verdicts["BRENT"].facts["implied_leverage"] == pytest.approx(10.0, rel=0.01)
+    assert verdicts["BTCUSD"].facts["implied_leverage"] == pytest.approx(2.0, rel=0.01)
 
 
 def test_preflight_green_on_a_healthy_complete_probe_fixture():

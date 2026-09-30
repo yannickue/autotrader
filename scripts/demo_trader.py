@@ -59,7 +59,11 @@ def _parser() -> argparse.ArgumentParser:
         help="ALPHA_EXECUTION_DISCOVERY | SMALL_ACCOUNT_FEASIBILITY | custom (default: artifacts dir meta, else "
              "ALPHA_EXECUTION_DISCOVERY). A store bound to another phase/account is refused.",
     )
-    parser.add_argument("--markets", default=None, help="comma separated subset of markets")
+    parser.add_argument(
+        "--markets", default=None,
+        help="comma separated subset of markets (default: the five live markets + every Phase-2 market switched on in "
+             "configs/markets_phase2/enablement.toml; a Phase-2 market that is not enabled there is refused)",
+    )
     parser.add_argument(
         "--forced-flat-on-shutdown", action="store_true",
         help="flatten open positions on shutdown IF the stack offers a flatten call (default off; the "

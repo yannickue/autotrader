@@ -80,6 +80,41 @@ def build_broker(*, balance: float = 10_000.0, **cfg) -> FakeMT5Broker:
     return broker
 
 
+PHASE2_QUOTES = {"Brent": (97.71, 97.78), "BTCUSD": (83662.78, 83746.28)}  # observed in the 2026-09-30 probe
+# Observed instrument leverage (probe order_calc_margin): Brent 9.99x, BTCUSD 2.00x; the fake's default is 20x.
+PHASE2_LEVERAGE = {"Brent": 10.0, "BTCUSD": 2.0}
+
+
+def add_phase2_symbols(broker: FakeMT5Broker, *, brent: bool = True, btc: bool = True, observed_margin: bool = True,
+                       brent_over: dict | None = None, btc_over: dict | None = None) -> None:
+    """Brent + BTCUSD with the facts OBSERVED in docs/evidence/phase2_symbol_probe.json."""
+    if brent:
+        info = dict(trade_contract_size=1000.0, volume_min=0.01, volume_step=0.01, volume_max=10.0,
+                    currency_base="USD", currency_profit="USD", currency_margin="USD", trade_stops_level=5,
+                    trade_tick_value=10.0, trade_tick_value_loss=10.0, trade_tick_value_profit=10.0,
+                    description="BRENT CRUDE OIL SPOT", trade_mode=4, trade_calc_mode=4)
+        info.update(brent_over or {})
+        broker.add_symbol(symbol("Brent", info.pop("path", "Spot Energy" + chr(92) + "Brent"), **info), *PHASE2_QUOTES["Brent"], profit_fx=FX_USD_TO_EUR)
+    if btc:
+        info = dict(trade_contract_size=1.0, volume_min=0.01, volume_step=0.01, volume_max=3.0,
+                    currency_base="BTC", currency_profit="USD", currency_margin="USD", trade_stops_level=0,
+                    trade_tick_value=0.01, trade_tick_value_loss=0.01, trade_tick_value_profit=0.01,
+                    description="Bitcoin vs US Dollar", trade_mode=4, trade_calc_mode=2)
+        info.update(btc_over or {})
+        broker.add_symbol(symbol("BTCUSD", info.pop("path", "Cryptocurrency" + chr(92) + "BTCUSD"), **info), *PHASE2_QUOTES["BTCUSD"], profit_fx=FX_USD_TO_EUR)
+    if observed_margin:
+        default = broker.order_calc_margin
+
+        def calc(action, sym, volume, price):
+            lev = PHASE2_LEVERAGE.get(sym)
+            if lev is None:
+                return default(action, sym, volume, price)
+            info = broker._info(sym)
+            return volume * price * float(info.trade_contract_size) * FX_USD_TO_EUR / lev
+
+        broker.order_calc_margin = calc
+
+
 def connection(broker: FakeMT5Broker) -> MT5ConnectionConfig:
     return MT5ConnectionConfig(
         login=broker.cfg.login, password="x", server=broker.cfg.server, terminal_path="t"
@@ -95,7 +130,7 @@ FAST = StackConfig(
 
 def make_stack(
     broker: FakeMT5Broker, tmp_path: Path, *, dry_run: bool = False, config: StackConfig = FAST,
-    now=None,
+    now=None, extra_markets: tuple[str, ...] = (),
 ) -> Mt5DemoStack:
     return Mt5DemoStack(
         client=broker,
@@ -105,6 +140,7 @@ def make_stack(
         dry_run=dry_run,
         config=config,
         now=now,
+        extra_markets=extra_markets,
     )
 
 

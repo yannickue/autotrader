@@ -94,6 +94,13 @@ def load_enablement(config_dir: Path | str | None = None) -> dict[str, bool]:
     return {c: bool(raw.get(c, {}).get("enabled", False)) is True for c in PHASE2_MARKETS}
 
 
+def flag_enabled_markets(config_dir: Path | str | None = None) -> tuple[str, ...]:
+    """Markets whose ``enablement.toml`` switch is on (first gate only; the live stack start-up runs the
+    per-market preflight as the second gate and disables a failing market on its own)."""
+    flags = load_enablement(config_dir)
+    return tuple(m for m in PHASE2_MARKETS if flags.get(m, False))
+
+
 def enabled_market_names(
     verdicts: Mapping[str, Any], config_dir: Path | str | None = None
 ) -> tuple[str, ...]:

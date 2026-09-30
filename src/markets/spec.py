@@ -262,7 +262,12 @@ def spec_from_dict(raw: dict[str, Any]) -> MarketSpec:
 
 
 def load_market_spec(canonical: str, config_dir: Path | str | None = None) -> MarketSpec:
-    base = Path(config_dir) if config_dir is not None else DEFAULT_CONFIG_DIR
+    # Phase-2 names resolve to their own config root by default (Lane M2); the five research
+    # markets and every explicit ``config_dir`` are untouched (load_all_specs globs five only).
+    if config_dir is not None:
+        base = Path(config_dir)
+    else:
+        base = PHASE2_CONFIG_DIR if canonical in PHASE2_CANONICALS else DEFAULT_CONFIG_DIR
     path = base / f"{canonical}.toml"
     if not path.is_file():
         raise MarketSpecError(f"no market config {path}")

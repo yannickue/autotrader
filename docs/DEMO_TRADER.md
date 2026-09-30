@@ -171,3 +171,43 @@ NOT read as clock skew, and the existing stale-feed / session / closed-market lo
 false 305 s skew because the first market was paused.
 Architecture note: `src/coverage_analysis` (offline hindsight analysis) and `markets/phase2.py` (offline preflight cost wiring, only
 `alpha.common.market_costs`) are the only non-alpha, non-`demo.opportunity` code allowed to import `alpha`; dedicated tests keep them off execution/risk.
+
+## Lane M2: Brent + BTCUSD in the DEMO trader (2026-09-30)
+
+Both markets are wired end to end and OFF by default (`configs/markets_phase2/enablement.toml`: `BRENT`/`BTCUSD` `enabled = false`).
+
+Enable / disable (per market, DEMO only; BTCUSD first, Brent after a GREEN at market open):
+1. Edit `configs/markets_phase2/enablement.toml`: `[BTCUSD] enabled = true` (later `[BRENT] enabled = true`). No other key, no code change.
+2. Restart the runner (`scripts/demo_trader.py --shadow` first, then `--demo-auto ...`). Without `--markets` the universe is the five
+   markets + every enabled Phase-2 market; `--markets BRENT` on a market that is not enabled is refused (exit 2).
+3. Disable = set the flag back to `false` and restart. A position already open on a disabled market keeps being managed by its broker stop.
+
+Double gate: (1) the flag, (2) a per-market START-UP PREFLIGHT inside `Mt5DemoStack` (`markets.preflight.run_live_preflight`, live broker
+facts): exact broker symbol/path, `trade_mode` FULL, valid + fresh quote (<= 30 s) WHILE the market's calendar says open, contract/volume
+facts vs the checked-in config, `order_calc_margin` implied leverage (<= 30x and >= the spec leverage), `stops_level` headroom for the
+reference structural stop, SL + filling allowed, repo wiring. A failing market is DISABLED ALONE: the reason is in the heartbeat
+`disabled_markets` (runner prefix `stack_preflight:`) and in `AccountSnapshot.extra` (`disabled_markets`, `start_notes.phase2_preflight`);
+new entries on it reject with gate `market_disabled`; the runner never scans it; the stack and the five core markets keep running. The
+runner only fails closed if EVERY market is disabled. A market in its break (calendar closed + stale quote) is IDLE, not a fault (R2). A
+symbol that does not exist / is not tradable / has a foreign path is dropped at instrument-load time (`instrument_load_failed`, intents
+-> `unknown_market`). A disabled market is re-checked only at the next restart.
+
+Strategies: frozen production spec v1 (hash `c3eae99e782888ac`, five markets, untouched, still the default) and v1.1 (hash
+`4f4b33e97966cd84`, `production_spec_v1_1.json`, a STRICT superset: the five v1 markets verbatim + BRENT/BTCUSD). v1.1 is loaded only when
+a Phase-2 market is enabled. Enabling therefore changes the `strategy_hash` stamped in every snapshot (new hash, documented here); with
+both flags off nothing changes (golden fingerprint + `test_default_runner_is_the_five_markets_on_the_frozen_v1_spec`).
+Family set for BRENT/BTCUSD: ORB breakout + ORB fade (class-default parameters, no thresholds). GAP / OVERNIGHT / VOLREV / EOD need
+Train-fitted quantiles and no Phase-2 history exists at or before the fit end (probe bars start 2026-07-28 / 2026-08-17 for M5), ROUND needs
+an unresearched round-number scale (`ROUND_TICKS` has PROVISIONAL entries for `energy_cfd`/`crypto_cfd` only so `_assemble` can build the
+context features), LEADLAG has no leader pair for energy/crypto: these are documented GAPS (research work: download history, fit, seal v1.2).
+No parameter was tuned on these markets.
+
+Calendars (PROVISIONAL, Mon-Fri only, out-of-window = shadow only): BRENT London 08:00-18:00, entries 08:00-16:30, flat 17:55 (inside the
+observed bars: server 02:00-22:55 daily, break 22:55-02:00). BTCUSD UTC 08:00-20:30, entries 08:00-19:30, forced flat 20:30 (moved from
+21:55 so it stays before the observed Friday 22:55 server = 20:55 UTC break); no automatic 24/7, no weekend entries.
+
+Margin / leverage: unchanged generic logic. The sizer takes `margin_per_lot` from `order_calc_margin` at the executable price (F2
+reference price) and caps the position at `min(spec.max_leverage, account leverage, 30)`; the observed instrument leverages are BRENT
+9.99x (min lot 86.32 EUR at 97.78) and BTCUSD 2.00x (min lot 369.69 EUR at 83746.28), i.e. `max_leverage` 10 / 2. The broker's
+account leverage 1:30 is NOT the instrument leverage and `price x contract / 30` does not reproduce the observed margins. Structural
+stops are used as given; no stop is tightened; min-lot vs hard-cap logic is unchanged.

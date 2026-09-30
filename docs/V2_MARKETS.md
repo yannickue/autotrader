@@ -199,3 +199,27 @@ Run (when the MT5 lock is free; attach-only, read-only, calc-only margin/profit)
 1. `uv run python scripts/phase2_symbol_probe.py probe Brent,BTCUSD` (writes `docs/evidence/phase2_symbol_probe.json`; needs the symbols in
    Market Watch: the stack's `symbol_select` does this, the probe never calls it)
 2. `uv run python scripts/phase2_symbol_probe.py verdict` (writes `docs/evidence/phase2_preflight_verdict.json`).
+
+## Lane M2: Brent + BTCUSD wired into the DEMO trader (2026-09-30)
+
+Facts and sources: all numbers below are OBSERVED in `docs/evidence/phase2_symbol_probe.json` (probe 2026-09-30 21:04 UTC, attach-only,
+read-only) and `docs/evidence/phase2_preflight_verdict.json` (BTCUSD GREEN; BRENT RED only on `quote_fresh`: stale during its daily break).
+Placeholders replaced (configs carry the provenance in `spread_model_notes` / `margin_notes` / `[cost]`):
+
+| item | former placeholder | observed value used |
+|---|---|---|
+| BRENT spread cap `max_entry_spread_price` | 0.10 | 0.08 USD (= M1/M5 observed max 8 pts; M1 median 6, p95 6, p99 6) |
+| BRENT reference median spread | 0.05 | 0.06 USD (M1 recorded median, 5000 bars) |
+| BRENT `max_leverage` | 10 (assumed) | 10 (implied 9.99x, min lot 86.32 EUR at 97.78) |
+| BTCUSD spread cap | 100 | 100 USD kept, now validated (M1 p99 71.65, max 104.7; M5 p99 66.0) |
+| BTCUSD reference median spread | 40.0 | 59.83 USD (M1 recorded median; M5 median 47.25) |
+| BTCUSD `max_leverage` | 2 (assumed) | 2 (implied 2.00x, min lot 369.69 EUR at 83746.28) |
+| BTCUSD calendar | entry 08:00-20:00, flat 21:55 UTC | entry 08:00-19:30, flat/cash close 20:30 UTC (Friday break 22:55 server = 20:55 UTC) |
+
+PROVISIONAL (not broker-confirmed): both calendars, the server clock = Europe/Berlin inference (observed +2 h at the probe), commission
+(assumed 0), swaps (not modelled, forced flat), the ROUND-number scale entries for the new asset classes, and every strategy statement
+(no edge claim; ORB class defaults only, see `docs/DEMO_TRADER.md` Lane M2 for the gaps).
+Enable/disable: `configs/markets_phase2/enablement.toml` per market + runner restart; the start-up preflight then gates each market alone.
+Code: `markets.spec.load_market_spec` resolves Phase-2 names to `configs/markets_phase2` by default, `markets.phase2.flag_enabled_markets`,
+`markets.preflight.run_live_preflight`, `demo.opportunity.production_spec.load_production_spec_for` (v1 unless a Phase-2 market is enabled),
+`Mt5DemoStack(extra_markets=...)` / `disabled_markets`, `demo.runner.build_live_runner(phase2_markets=...)`.

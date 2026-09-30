@@ -555,6 +555,11 @@ class DemoRunner:
             (self.cfg.artifacts_dir / "clock_chain.json").write_text(
                 json.dumps([dataclasses.asdict(r) for r in self.clock_rows], indent=1), encoding="utf-8"
             )
+        # Per-market start-up preflight of the stack (Phase-2 opt-ins): a market the stack disabled is recorded here
+        # (heartbeat ``disabled_markets``) and never scanned; it does not stop the other markets.
+        for m, why in dict(getattr(self.stack, "disabled_markets", None) or {}).items():
+            if m in self.cfg.markets:
+                self.disabled.setdefault(m, f"stack_preflight: {why}")
         print(render_clock_table(self.clock_rows), file=sys.stderr)
         if self.cfg.markets and len(self.disabled) == len(self.cfg.markets):
             self._fail_closed("all markets disabled by clock chain", now)
@@ -1750,6 +1755,7 @@ def build_live_runner(
     forced_flat_on_shutdown: bool = False,
     stack_kwargs: Mapping[str, Any] | None = None,
     account_phase: str | None = None,
+    phase2_markets: Sequence[str] | None = None,
 ) -> DemoRunner:
     """Wire the runner to the REAL ``Mt5DemoStack``.
 
@@ -1767,17 +1773,36 @@ def build_live_runner(
     ``stack_kwargs`` (tests only: ``lock_path`` / ``config`` / ``now``) is forwarded to ``Mt5DemoStack``.
     ``stack_factory(dry_run=..., state_dir=..., markets=...)`` is the test seam (FakeStack etc.); with it
     the real client is never touched.  Raises ``LiveStackUnavailable`` if the real stack / MT5 package /
-    connection config is not usable in this checkout."""
+    connection config is not usable in this checkout.
+
+    ``phase2_markets`` (Lane M2): the Phase-2 markets opted in (default ``None`` = the ``enabled`` flags of
+    ``configs/markets_phase2/enablement.toml``, all false as committed). With none enabled the frozen production spec v1
+    and the five-market stack are used exactly as before; with any enabled, the strict-superset spec v1.1 is used, the
+    markets are added to the DEMO registry and each one is verified by its own start-up preflight (a failing market is
+    disabled alone, see ``Mt5DemoStack.disabled_markets``)."""
     from demo.opportunity.engine import OpportunityEngine
-    from demo.opportunity.production_spec import load_production_spec
+    from demo.opportunity.production_spec import load_production_spec_for
+    from markets.phase2 import PHASE2_MARKETS, flag_enabled_markets
 
     if mode not in MODES:
         raise ValueError(f"mode must be one of {MODES}")
     if os.environ.get("MT5_ALLOW_ACCOUNT_LOGIN") == "1":
         raise LiveStackRefused("MT5_ALLOW_ACCOUNT_LOGIN=1 is not permitted; the DEMO trader only attaches")
     art = Path(artifacts_dir or "artifacts/demo_trader")
-    production = load_production_spec()
-    names = tuple(markets) if markets else production.market_names()
+    extra = tuple(phase2_markets) if phase2_markets is not None else flag_enabled_markets()
+    unknown_extra = [m for m in extra if m not in PHASE2_MARKETS]
+    if unknown_extra:
+        raise LiveStackRefused(f"unknown Phase-2 market(s) {unknown_extra}")
+    production = load_production_spec_for(extra)
+    if markets:
+        names = tuple(markets)
+        not_enabled = [m for m in names if m in PHASE2_MARKETS and m not in extra]
+        if not_enabled:
+            raise LiveStackRefused(
+                f"{not_enabled} not enabled: set enabled = true in configs/markets_phase2/enablement.toml first"
+            )
+    else:
+        names = tuple(m for m in production.market_names() if m not in PHASE2_MARKETS or m in extra)
     state_dir = art / "stack"
     dry_run = mode == "shadow"
     if stack_factory is None:
@@ -1785,7 +1810,7 @@ def build_live_runner(
             from adapters.activtrades_mt5.real_client import get_real_client
             from adapters.config import MT5ConfigError, load_attach_only_config
             from demo.execution.live import Mt5DemoStack
-            from demo.execution.market_config import load_demo_market_specs
+            from demo.execution.market_config import load_demo_market_specs_for
         except ImportError as exc:
             raise LiveStackUnavailable(
                 f"the real Mt5DemoStack cannot be imported in this checkout ({type(exc).__name__}: {exc})"
@@ -1794,7 +1819,7 @@ def build_live_runner(
             connection = load_attach_only_config()
         except MT5ConfigError as exc:
             raise LiveStackUnavailable(f"MT5 attach-only configuration unusable: {exc}") from exc
-        all_specs = load_demo_market_specs()
+        all_specs = load_demo_market_specs_for(extra)
         missing = [m for m in names if m not in all_specs]
         if missing:
             raise LiveStackUnavailable(f"no checked-in DEMO market config for {missing}")
@@ -1818,6 +1843,7 @@ def build_live_runner(
         stack: StackPort = Mt5DemoStack(  # type: ignore[assignment]
             client=client, connection=connection, state_dir=state_dir,
             market_specs=all_specs,  # the stack needs the FULL universe (symbol registry cross-check); ``names`` only limits what the runner scans
+            extra_markets=extra,  # enabled Phase-2 markets: registered + individually preflighted by the stack
             dry_run=dry_run, **kwargs,
         )
     else:

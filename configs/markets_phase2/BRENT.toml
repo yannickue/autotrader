@@ -1,7 +1,8 @@
 # BRENT (Phase 2, Lane M): MarketSpec for the ActivTrades DEMO "Brent" SPOT CFD (NOT the dated ICE futures CFDs BrentDec26/BrentNov26).
 # Instrument facts OBSERVED via symbols_get, snapshot 2026-09-30 (research/reports/v2_markets/symbol_snapshot.json; docs/evidence/phase2_symbol_probe.json).
-# The symbol was NOT in Market Watch (visible=false) at that snapshot: no quote, no margin, no rates, no session data yet.
-# Everything marked UNVERIFIED below must be replaced by scripts/phase2_symbol_probe.py output before preflight can be GREEN.
+# Lane M2: the live probe (docs/evidence/phase2_symbol_probe.json, 2026-09-30 21:04 UTC) OBSERVED quote, margin, spreads and
+# bar sessions; the former placeholders (spread cap, reference median spread) are replaced by those numbers below.
+# Bar sessions are PROVISIONAL until broker-confirmed.
 # Research/trading stays disabled here (trading_enabled must be false); the runner switch is configs/markets_phase2/enablement.toml.
 
 [market]
@@ -34,9 +35,9 @@ entry_start = "08:00"
 entry_end = "16:30"
 forced_flat = "17:55"
 status = "provisional"
-weekend_policy = "UNVERIFIED: no entries Sat/Sun; weekly open/close hours must be taken from observed bar gaps (scripts/phase2_symbol_probe.py), not assumed."
+weekend_policy = "No entries Sat/Sun (calendar is Mon-Fri). OBSERVED (M5 bars, server clock = UTC+2 at the probe): daily break 22:55 -> 02:00 server (= 20:55 -> 00:00 UTC), weekend break Fri 22:55 -> Mon 00:00 server (= Fri 20:55 -> Sun 22:00 UTC); no bars on Sat/Sun. PROVISIONAL until broker-confirmed."
 holiday_policy = "UNVERIFIED: holiday/early-close behaviour of the Brent spot CFD not observed."
-dst_notes = "ICE Brent and the US crude inventory release move with EU/US DST; the London reference session is provisional. Server clock = Europe/Berlin (inferred, not broker-confirmed)."
+dst_notes = "ICE Brent and the US crude inventory release move with EU/US DST; the London reference session (08:00-18:00) lies fully inside the observed bars (server 02:00-22:55). Server clock = Europe/Berlin (observed +2 h offset at the probe; not broker-confirmed)."
 
 [[calendar.buckets]]
 name = "ASIA_PRE"
@@ -64,22 +65,22 @@ start = "18:00"
 end = "24:00"
 
 [risk]
-max_entry_spread_price = 0.10
-spread_model_notes = "PLACEHOLDER_UNVERIFIED cap in PRICE units (10 points): no spread observed yet (symbol was not quoting at the snapshot). The probe's M1 recorded-spread distribution and live tick sample replace it; preflight requires cap >= observed p95 and <= 10x median. Cost model must use the recorded spread, not this cap."
-max_leverage = 10.0  # ASSUMPTION (conservative, ESMA-retail-style commodity leverage); broker margin NOT yet observed. Hard ceiling 30x, never a target.
-margin_notes = "UNVERIFIED: order_calc_margin not yet run (symbol not selected). trade_calc_mode=4 (CFD leverage): margin = lots x contract x price / leverage. Preflight requires spec max_leverage <= observed implied leverage (sizing must never assume more leverage than the broker gives)."
+max_entry_spread_price = 0.08
+spread_model_notes = "OBSERVED (probe 2026-09-30): recorded spread in points (1 pt = 0.01 USD): M1 n=5000 median 6, p95 6, p99 6, max 8; M5 n=12000 median 6, p99 6, max 8; H1 p99 7, max 10; live tick 7 pts. Cap 0.08 USD (= 8 pts = the M1/M5 observed max, one point above the p99 of any timeframe) replaces the former 0.10 placeholder (preflight: cap >= p95 and <= 10x median). Cost model uses the recorded median, not this cap."
+max_leverage = 10.0  # OBSERVED broker margin: min-lot order_calc_margin 86.32 EUR at 97.78 => implied 9.99x (probe 2026-09-30). Hard ceiling 30x, never a target.
+margin_notes = "OBSERVED: order_calc_margin(0.01 lot, 97.78) = 86.32 EUR buy / 86.26 sell (1 lot 8631.71 EUR); implied leverage 9.99x (trade_calc_mode=4 CFD leverage). Account leverage 1:30 is NOT the instrument leverage. Preflight requires spec max_leverage <= observed implied leverage."
 
 [data_quality]
-flags = ["symbol_not_in_market_watch_at_snapshot", "no_quote_observed", "no_margin_observed", "sessions_not_observed", "spread_cap_placeholder", "no_history_downloaded"]
+flags = ["quote_observed_2026-09-30", "margin_observed", "sessions_observed_from_bar_gaps", "calendar_provisional", "commission_unverified", "no_history_downloaded", "no_fitted_thresholds"]
 
 [provenance]
 snapshot_date = "2026-09-30"
-server_tz_policy = "MT5 server clock = Europe/Berlin (UTC+2 CEST / UTC+1 CET); inferred from a live +7199s offset on the existing markets, cross-checked by DST-shifting cash-open volume peaks; not broker-confirmed. Not yet checked on Brent itself."
+server_tz_policy = "MT5 server clock = Europe/Berlin (UTC+2 CEST / UTC+1 CET); inferred from a live +7199s offset on the existing markets, cross-checked by DST-shifting cash-open volume peaks; not broker-confirmed. Observed on Brent itself: tick_time_minus_utc_s 6930 (2026-09-30, probe)."
 
 [cost]
 # Inputs wired into alpha.common.market_costs.cost_scenarios_for / sizing_for (median_spread_price override).
-reference_median_spread_price = 0.05         # PLACEHOLDER_UNVERIFIED (5 points); replaced by the probe's observed median
-spread_source = "placeholder_unverified"
+reference_median_spread_price = 0.06         # OBSERVED: M1 recorded-spread median 6 pts (probe 2026-09-30); replaced the 0.05 placeholder
+spread_source = "observed_rates_m1_recorded_spread_probe_2026-09-30"
 commission_eur_per_lot = 0.0
 commission_source = "unverified_assumed_zero"   # same status as every non-GER40 market
 swap_mode = 1                                   # observed enum value (MT5 docs: SYMBOL_SWAP_MODE_POINTS)

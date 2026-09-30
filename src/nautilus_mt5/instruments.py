@@ -138,8 +138,13 @@ class Mt5InstrumentProvider(InstrumentProvider):
         config: InstrumentProviderConfig | None = None,
         now: Any = None,
         allow_multiplier_and_cross_currency: bool = False,
+        optional_canonicals: frozenset[str] = frozenset(),
     ) -> None:
         super().__init__(config=config)
+        # Markets that may fail to load WITHOUT killing the start (Phase-2 opt-ins): recorded in
+        # ``load_failures`` and unregistered (consistent universe).
+        self._optional = frozenset(optional_canonicals)
+        self.load_failures: dict[str, str] = {}
         self._allow_multi = allow_multiplier_and_cross_currency
         self._client = client
         self._assumptions = assumptions
@@ -185,7 +190,13 @@ class Mt5InstrumentProvider(InstrumentProvider):
     def load_all_sync(self) -> None:
         """Blocking MT5 IPC: call from the MT5 lane (see `nautilus_mt5.executor`)."""
         for mapping in self._registry.all():
-            self._load_mapping(mapping)
+            try:
+                self._load_mapping(mapping)
+            except Mt5InstrumentError as exc:
+                if mapping.canonical not in self._optional:
+                    raise
+                self.load_failures[mapping.canonical] = f"instrument_load_failed: {exc}"
+                self._registry.unregister(mapping.canonical)
 
     def load_ids_sync(self, instrument_ids: list[InstrumentId]) -> None:
         for instrument_id in instrument_ids:

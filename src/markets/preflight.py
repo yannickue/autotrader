@@ -528,10 +528,96 @@ def run_preflight(
     )
 
 
+def calendar_open(spec: MarketSpec, now: datetime) -> bool:
+    """MarketSpec calendar (same rule as the runner's closed-market idling): local weekday Mon-Fri and inside the cash
+    session. Used to tell 'closed / idle' from a real stale-quote fault."""
+    cal = spec.calendar
+    local = now.astimezone(ZoneInfo(cal.tz))
+    if local.weekday() >= 5:
+        return False
+    return cal.cash_open_min <= local.hour * 60 + local.minute < cal.cash_close_min
+
+
+def info_to_dict(info: Any) -> dict[str, Any]:
+    """MT5 ``symbol_info`` namedtuple / namespace -> plain dict of the fields the checks read."""
+    fields = (
+        "name", "path", "description", "trade_mode", "trade_contract_size", "trade_tick_size", "trade_tick_value",
+        "point", "digits", "volume_min", "volume_step", "volume_max", "currency_profit", "currency_margin",
+        "trade_stops_level", "trade_freeze_level", "order_mode", "filling_mode", "trade_exemode",
+    )
+    return {k: getattr(info, k) for k in fields if hasattr(info, k)}
+
+
+def run_live_preflight(
+    canonical: str,
+    *,
+    account: Mapping[str, Any],
+    info: Mapping[str, Any] | None,
+    bid: float | None,
+    ask: float | None,
+    quote_age_s: float | None,
+    margin_min_buy: float | None,
+    margin_min_sell: float | None,
+    now: datetime,
+    eur_per_usd: float | None = None,
+    config_dir: Path | str | None = None,
+) -> Verdict:
+    """Start-up preflight of ONE enabled Phase-2 market from LIVE broker facts (same checks as ``run_preflight``'s
+    runtime-relevant subset): exact symbol mapping, tradable (trade_mode FULL), quote validity + freshness WHILE the
+    calendar says the market is open (a closed market with a stale quote is IDLE, not a fault), contract/volume facts,
+    order_calc_margin implied leverage (<= 30x and >= the spec leverage), stops_level headroom for the reference
+    structural stop, SL/filling allowed, repo wiring. The history-derived checks (session coverage, spread cost model)
+    stay with the committed probe evidence. Pure: the caller does the broker reads (and owns the MT5 lane)."""
+    spec = load_phase2_spec(canonical, config_dir)
+    cost = load_phase2_cost(canonical, config_dir)
+    from demo.execution.risk_policy import cluster_of
+
+    probe: dict[str, Any] = {"mode": "probe", "retrieved_at": now.astimezone(UTC).isoformat(), "account": dict(account)}
+    eur = EUR_PER_USD_FALLBACK if not eur_per_usd or eur_per_usd <= 0 else float(eur_per_usd)
+    sym: dict[str, Any] = {"symbol_info": dict(info or {})}
+    if bid is not None and ask is not None:
+        sym["tick_now"] = {"bid": bid, "ask": ask}
+    if margin_min_buy and ask:
+        sym["calc"] = {
+            "calc_price": ask,
+            "margin_lot_min_buy_acct_ccy": margin_min_buy,
+            "margin_lot_min_sell_acct_ccy": margin_min_sell,
+        }
+    facts: dict[str, Any] = {"broker_symbol": spec.broker_symbol, "cluster": cluster_of(canonical), "probe_mode": "live_start"}
+    market_open = calendar_open(spec, now)
+    facts["calendar_open"] = market_open
+    if not (bid and ask and float(bid) > 0 and float(ask) >= float(bid)):
+        quote = Check(id="quote_fresh", status=Status.FAIL, detail=f"invalid or missing quote bid={bid} ask={ask}")
+    elif quote_age_s is None:
+        quote = Check(id="quote_fresh", status=Status.FAIL, detail="quote age not derivable")
+    elif quote_age_s <= MAX_QUOTE_AGE_S:
+        quote = Check(id="quote_fresh", status=Status.PASS, detail=f"age {quote_age_s:.1f}s, bid={bid} ask={ask}")
+    elif not market_open:
+        quote = Check(id="quote_fresh", status=Status.PASS, detail=f"closed/idle: quote age {quote_age_s:.0f}s while the calendar says closed (not a fault)")
+    else:
+        quote = Check(id="quote_fresh", status=Status.FAIL, detail=f"quote age {quote_age_s:.0f}s > {MAX_QUOTE_AGE_S:.0f}s while the calendar says OPEN")
+    checks = (
+        _c_account(probe),
+        _c_symbol(spec, sym["symbol_info"] or None),
+        _c_tradable(probe, sym["symbol_info"] or None),
+        quote,
+        _c_contract(spec, sym["symbol_info"] or None, eur),
+        _c_margin(probe, spec, sym["symbol_info"] or None, sym, eur, facts),
+        _c_stops(probe, spec, cost, sym["symbol_info"] or None, sym, facts),
+        _c_protection(probe, sym["symbol_info"] or None),
+        _c_repo_support(spec),
+    )
+    reasons = tuple(f"{c.id}: {c.status.value} - {c.detail}" for c in checks if c.status is not Status.PASS)
+    return Verdict(market=canonical, verdict="GREEN" if not reasons else "RED", checks=checks, reasons=reasons, facts=facts)
+
+
 def run_all(probe: Mapping[str, Any], **kw: Any) -> dict[str, Verdict]:
     from markets.phase2 import PHASE2_MARKETS
 
     return {m: run_preflight(m, probe, **kw) for m in PHASE2_MARKETS}
 
 
-__all__ = ("Check", "Status", "Verdict", "run_all", "run_preflight", "scan_hardcoded_markets")
+__all__ = (
+    "Check", "Status", "Verdict", "calendar_open", "info_to_dict", "run_all", "run_live_preflight", "run_preflight",
+    "scan_hardcoded_markets",
+)
