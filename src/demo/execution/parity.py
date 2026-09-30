@@ -26,8 +26,38 @@ def executable_price(direction: int, bid: Decimal, ask: Decimal) -> Decimal:
     return ask if direction == 1 else bid
 
 
+def entry_tolerance(
+    intent: TradeIntent, *, spread: Decimal, tick_size: Decimal | None
+) -> Decimal:
+    """Adverse entry drift (price units) tolerated between the decision price and the fill.
+
+    ``intent.entry_tolerance`` wins when present (finite, >= 0; anything else falls back to the
+    conservative default). Default: ``max(ENTRY_TOLERANCE_SPREAD_MULTIPLE x current spread,
+    ENTRY_TOLERANCE_TICK_MULTIPLE x tick)``. Zero tolerance rejected ~half of all accepted
+    intents on a plain one-tick move. The drift never widens the stop; the target/stop/min_space_r
+    checks still run on the ACTUAL executable price.
+    """
+    configured = intent.entry_tolerance
+    if configured is not None:
+        try:
+            value = Decimal(str(configured))
+        except Exception:  # noqa: BLE001 - malformed -> conservative default
+            value = Decimal(-1)
+        if value.is_finite() and value >= 0:
+            return value
+    tick = tick_size if tick_size is not None and tick_size > 0 else Decimal(0)
+    return max(
+        G.ENTRY_TOLERANCE_SPREAD_MULTIPLE * spread, G.ENTRY_TOLERANCE_TICK_MULTIPLE * tick
+    )
+
+
 def parity_reject(
-    intent: TradeIntent, *, bid: Decimal, ask: Decimal, max_spread: Decimal
+    intent: TradeIntent,
+    *,
+    bid: Decimal,
+    ask: Decimal,
+    max_spread: Decimal,
+    tick_size: Decimal | None = None,
 ) -> str | None:
     """First failing parity rule, in the fixed order the DEMO executor has always used."""
     executable = executable_price(intent.direction, bid, ask)
@@ -36,9 +66,10 @@ def parity_reject(
     entry_ref = Decimal(str(intent.entry_ref))
     if ask - bid > max_spread:
         return G.R_SPREAD_CAP
-    if (intent.direction == 1 and executable > entry_ref) or (
-        intent.direction == -1 and executable < entry_ref
-    ):
+    adverse_drift = (
+        executable - entry_ref if intent.direction == 1 else entry_ref - executable
+    )
+    if adverse_drift > entry_tolerance(intent, spread=ask - bid, tick_size=tick_size):
         return G.R_ENTRY_OVERSHOOT
     if (intent.direction == 1 and executable <= stop) or (
         intent.direction == -1 and executable >= stop

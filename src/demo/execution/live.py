@@ -1204,7 +1204,8 @@ class Mt5DemoStack:
         atr = self._decimal_or_none(context.get("atr"))
         multiplier = self._decimal_or_none(context.get("risk_budget_multiplier"))
         parity = parity_reject(
-            intent, bid=prepared.bid, ask=prepared.ask, max_spread=info.spec.max_spread
+            intent, bid=prepared.bid, ask=prepared.ask, max_spread=info.spec.max_spread,
+            tick_size=info.spec.tick_size,
         )
         if parity:
             pre = self._gate.size(

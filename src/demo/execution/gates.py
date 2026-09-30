@@ -115,6 +115,10 @@ R_EXECUTION_DENIED = "execution_denied"
 R_NO_STOP = "no_stop"
 R_QUANTITY_PRECISION = "quantity_precision"
 
+# entry-drift tolerance default (parity.entry_tolerance): max(2 x current spread, 2 x tick)
+ENTRY_TOLERANCE_SPREAD_MULTIPLE = 2
+ENTRY_TOLERANCE_TICK_MULTIPLE = 2
+
 _G = Gate
 S, T, Q, L, X = (
     GateClass.SAFETY,
@@ -177,7 +181,7 @@ _ENTRIES: tuple[Gate, ...] = (
     _G(R_NO_STOP, S, True, "a broker-side stop is mandatory for every entry"),
     _G(R_QUANTITY_PRECISION, T, True, "quantity not representable on the instrument step"),
     # -- STRUCTURAL ----------------------------------------------------------------------------------------
-    _G(R_ENTRY_OVERSHOOT, T, True, "intent geometry: executable price is already beyond the intended entry on the adverse side"),
+    _G(R_ENTRY_OVERSHOOT, T, True, "intent geometry: the executable price drifted beyond the intended entry on the adverse side by MORE than the tolerance (TradeIntent.entry_tolerance, else max(2 x spread, 2 x tick))"),
     _G(R_TARGET_CROSSED, T, True, "intent geometry: the target is already crossed at the executable price"),
     _G(R_STOP_LEVEL, T, True, "broker constraint: stop inside the broker minimum stop distance"),
     _G(R_INVALID_VOLUME, T, True, "broker constraint: volume outside min/max/step"),
