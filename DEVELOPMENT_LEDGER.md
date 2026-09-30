@@ -910,3 +910,9 @@ STATE: V1 COMPLETE except deferred Nautilus stage F. Evaluator speed optimisatio
 - FINDING: at 500 EUR with 10x research cap a min lot needs 12.7x (GER40) / 10.7x (NAS100): all index trades size_below_min; discovery therefore runs on a normalised 10,000 EUR research account, 500 EUR feasibility is a separate annotation.
 - FormulaAlpha (own implementation; AlphaGen has no licence; RD-Agent classified Linux/Docker-blocked by documentation only, NOT install-tested; Qlib heavy): GP vs random on GER40 Train: best fitness 0.067 vs 0.073 (null <= 0.058), expectancy ~0 at BASE and -0.11 R at adverse cost: no edge.
 - Open: real multi-market probe (1-2k candidates/market), confluence measurement, ML meta-label, Gemini adversarial review, exit research, growth simulator, Nautilus Stage F (deferred: no finalist), clean forward holdout (from 2026-09-01) untouched.
+
+## AD2 FINAL (2026-09-30): see docs/V2_FINAL_REPORT.md
+- Engineering complete and pushed (5e45e5b, 3,087 tests green); survival stage executed ONCE on frozen finalist hash 34aba8bf...; results in research/reports/v2_survival/.
+- Discovery verdict: NO robust edge; all 5 markets' best-of-1500 indistinguishable from 63 structure-free null runs; survival: 8/150 positive (chance ~10), 0 with t>2, mean -0.315 R.
+- Not run / open: RD-Agent+Qlib (docs-only blocker classification), LLM hypothesis loop, dynamic sizing, exit research, Nautilus Stage F, provisional calendars of 4 markets, ML libs not installed (owner approval).
+- Clean forward holdout (>= 2026-09-01) UNTOUCHED. Cumulative trials in the survival ledger: 40,443.

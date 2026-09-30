@@ -1,0 +1,165 @@
+# V2 survival stage (survival stage - not for selection)
+
+finalist hash 34aba8bfa129052fb1450ab7659734ee8910fab1dba7fc6c45279b4126b41e3c
+cumulative trials 40443
+
+## EURUSD
+- 005a5c0d31 rank 25: test E -0.713828 t -2.816246 n 51 folds+ 0/3 | shock -0.358235 delay -0.531027 | neigh+ 0.0 | checks 0/7
+- 0d6886728b rank 0: test E -0.290612 t -1.96814 n 149 folds+ 0/3 | shock -0.339909 delay -0.280943 | neigh+ 0.0 | checks 1/7
+- 0e606d71ff rank 19: test E -0.562114 t -3.796671 n 253 folds+ 0/3 | shock -0.412828 delay -0.550672 | neigh+ 0.0 | checks 0/7
+- 10b7d2ff68 rank 1: test E -0.213858 t -0.708465 n 52 folds+ 1/3 | shock -0.163873 delay -0.221024 | neigh+ 0.0 | checks 1/7
+- 144693567c rank 17: test E -0.623516 t -2.292707 n 75 folds+ 1/3 | shock -0.648072 delay -0.246478 | neigh+ 0.0 | checks 0/7
+- 1814632eb6 rank 2: test E 0.152648 t 0.7449 n 54 folds+ 2/3 | shock 0.174034 delay 0.134393 | neigh+ 0.9091 | checks 6/7
+- 1c771c72d5 rank 27: test E -0.601188 t -3.625859 n 101 folds+ 0/3 | shock -0.506584 delay -0.624483 | neigh+ 0.0 | checks 0/7
+- 252e668579 rank 14: test E -0.344428 t -3.36719 n 196 folds+ 0/3 | shock -0.334399 delay -0.408046 | neigh+ 0.0 | checks 1/7
+- 2a873d3619 rank 28: test E -0.253548 t -1.971918 n 115 folds+ 0/3 | shock -0.287653 delay -0.268939 | neigh+ 0.0 | checks 1/7
+- 3c3ea1def3 rank 16: test E -0.522272 t -0.971258 n 36 folds+ 1/3 | shock -0.612461 delay -0.480024 | neigh+ 0.0 | checks 0/7
+- 4e96052edc rank 3: test E -0.276366 t -0.496947 n 71 folds+ 2/3 | shock -0.569527 delay -0.495035 | neigh+ 0.0 | checks 2/7
+- 62acfa612a rank 10: test E -0.335101 t -1.207195 n 101 folds+ 1/3 | shock -0.494164 delay -0.676916 | neigh+ 0.0 | checks 1/7
+- 6826136eff rank 22: test E -0.548053 t -2.872642 n 124 folds+ 0/3 | shock -0.717833 delay -0.532379 | neigh+ 0.0 | checks 0/7
+- 7b64992795 rank 13: test E -0.674018 t -5.303596 n 129 folds+ 0/3 | shock -0.441666 delay -0.681453 | neigh+ 0.0 | checks 0/7
+- 8579befac1 rank 15: test E -0.601251 t -1.479443 n 102 folds+ 1/3 | shock -0.959736 delay -1.003088 | neigh+ 0.0 | checks 0/7
+- 88776d04a2 rank 11: test E -0.540891 t -3.341672 n 268 folds+ 0/3 | shock -0.78376 delay -0.473691 | neigh+ 0.0 | checks 0/7
+- ae5e48a4ed rank 26: test E -0.401128 t -1.14086 n 42 folds+ 1/3 | shock -0.327043 delay -0.13065 | neigh+ 0.0 | checks 0/7
+- b2633a80b9 rank 23: test E -0.609523 t -2.808745 n 63 folds+ 1/3 | shock -0.663851 delay -0.700555 | neigh+ 0.0 | checks 0/7
+- b66a46d4df rank 9: test E -0.855797 t -8.64572 n 338 folds+ 0/3 | shock -0.921935 delay -0.780607 | neigh+ 0.0 | checks 0/7
+- b953e839b5 rank 18: test E -0.67718 t -4.53509 n 193 folds+ 0/3 | shock -0.363317 delay -0.682919 | neigh+ 0.0 | checks 0/7
+- bc2aebd73b rank 4: test E -0.160384 t -0.768762 n 43 folds+ 0/3 | shock -0.265799 delay -0.246496 | neigh+ 0.0 | checks 1/7
+- c44ff9c021 rank 5: test E 0.037283 t 0.235421 n 94 folds+ 1/3 | shock -0.025843 delay 0.109924 | neigh+ 0.8182 | checks 4/7
+- c4d63faa66 rank 12: test E -0.751699 t -5.240076 n 110 folds+ 0/3 | shock -0.621686 delay -0.752266 | neigh+ 0.0 | checks 0/7
+- c67580bc58 rank 20: test E -0.019857 t -0.066433 n 136 folds+ 1/3 | shock -0.439211 delay -0.169935 | neigh+ 0.0 | checks 1/7
+- df9e488e4c rank 6: test E -0.56215 t -1.957706 n 29 folds+ 0/3 | shock -0.353446 delay -0.291699 | neigh+ 0.0 | checks 0/7
+- e9ae6d4809 rank 24: test E -0.605964 t -2.232284 n 30 folds+ 0/3 | shock -0.644446 delay -0.790748 | neigh+ 0.0 | checks 0/7
+- ebfcd14113 rank 7: test E 0.05097 t 0.120956 n 73 folds+ 2/3 | shock -0.642423 delay -0.090884 | neigh+ 0.7143 | checks 4/7
+- ec1a718e5d rank 29: test E -0.257907 t -2.068508 n 157 folds+ 0/3 | shock -0.285945 delay -0.324864 | neigh+ 0.0 | checks 1/7
+- ed403c2657 rank 21: test E -0.489954 t -1.769115 n 73 folds+ 0/3 | shock -0.359393 delay -0.298625 | neigh+ 0.0 | checks 0/7
+- faded3aaeb rank 8: test E -0.146138 t -1.704215 n 290 folds+ 0/3 | shock -0.16902 delay -0.189782 | neigh+ 0.0 | checks 1/7
+
+## GER40
+- 07100f9e46 rank 21: test E -0.38199 t -1.765802 n 62 folds+ 0/3 | shock -0.337406 delay -0.410381 | neigh+ 0.0 | checks 0/7
+- 12f356ce99 rank 28: test E -0.280496 t -1.409655 n 42 folds+ 0/3 | shock -0.206541 delay -0.25273 | neigh+ 0.0 | checks 0/7
+- 191827e87c rank 17: test E -0.223275 t -1.771849 n 139 folds+ 1/3 | shock -0.148758 delay -0.287941 | neigh+ 0.0 | checks 0/7
+- 1e206c0fc3 rank 0: test E -0.544316 t -4.003978 n 61 folds+ 1/3 | shock -0.517845 delay -0.363963 | neigh+ 0.0 | checks 0/7
+- 2639588fd4 rank 1: test E -0.180101 t -2.536877 n 131 folds+ 0/3 | shock -0.155483 delay -0.261653 | neigh+ 0.0 | checks 0/7
+- 31bd2cf841 rank 20: test E -0.198274 t -1.90167 n 132 folds+ 0/3 | shock -0.181138 delay -0.195947 | neigh+ 0.0 | checks 0/7
+- 35f1df6a5a rank 2: test E -0.12915 t -0.549737 n 44 folds+ 1/3 | shock -0.095068 delay -0.375788 | neigh+ 0.0 | checks 0/7
+- 3f88818100 rank 13: test E -0.447268 t -2.14066 n 45 folds+ 1/3 | shock -0.459754 delay -0.276272 | neigh+ 0.0 | checks 0/7
+- 418195a0b3 rank 11: test E -0.508629 t -2.817427 n 64 folds+ 0/3 | shock -0.541581 delay -0.075658 | neigh+ 0.0 | checks 0/7
+- 46b8ed8bfa rank 16: test E -0.177106 t -1.251863 n 70 folds+ 1/3 | shock -0.181506 delay -0.093889 | neigh+ 0.0 | checks 0/7
+- 4e3dd8894c rank 27: test E -0.132362 t -1.678462 n 218 folds+ 1/3 | shock -0.129349 delay -0.150746 | neigh+ 0.0 | checks 0/7
+- 549c03695c rank 12: test E -0.210071 t -1.38583 n 78 folds+ 1/3 | shock -0.185874 delay -0.191572 | neigh+ 0.0 | checks 0/7
+- 5af090a4de rank 3: test E -0.555805 t -4.033555 n 126 folds+ 0/3 | shock -0.524085 delay -0.243078 | neigh+ 0.0 | checks 0/7
+- 5d01209b27 rank 19: test E -0.192141 t -1.95601 n 172 folds+ 0/3 | shock -0.162223 delay -0.224477 | neigh+ 0.0 | checks 0/7
+- 60975ee70d rank 24: test E -0.121978 t -1.943734 n 402 folds+ 0/3 | shock -0.097413 delay -0.154681 | neigh+ 0.0 | checks 1/7
+- 626ba54fba rank 29: test E -0.20389 t -2.142601 n 130 folds+ 1/3 | shock -0.200953 delay -0.252531 | neigh+ 0.0 | checks 0/7
+- 62acfa612a rank 9: test E -0.409892 t -3.854186 n 263 folds+ 0/3 | shock -0.360133 delay -0.392187 | neigh+ 0.0 | checks 0/7
+- 73fcfce6c9 rank 23: test E -0.207946 t -1.736576 n 175 folds+ 2/3 | shock -0.111692 delay -0.429584 | neigh+ 0.0 | checks 1/7
+- 761a46dc16 rank 8: test E -0.329357 t -2.066567 n 117 folds+ 0/3 | shock -0.305039 delay -0.324593 | neigh+ 0.0 | checks 0/7
+- 7dffb25dd5 rank 15: test E -0.247215 t -3.385961 n 266 folds+ 0/3 | shock -0.243017 delay -0.27067 | neigh+ 0.0 | checks 0/7
+- 9401f25780 rank 4: test E -0.170748 t -1.446252 n 121 folds+ 1/3 | shock -0.149058 delay -0.145605 | neigh+ 0.0 | checks 0/7
+- 941fbec498 rank 14: test E -0.157527 t -1.669494 n 211 folds+ 0/3 | shock -0.134357 delay -0.152263 | neigh+ 0.0 | checks 0/7
+- 961ee03337 rank 5: test E -0.60641 t -2.795763 n 54 folds+ 0/3 | shock -0.507713 delay -0.57561 | neigh+ 0.0 | checks 0/7
+- a9858cd637 rank 6: test E -0.60141 t -4.1697 n 128 folds+ 0/3 | shock -0.587409 delay -0.322635 | neigh+ 0.0 | checks 0/7
+- af7f013d9c rank 22: test E 0.000874 t 0.006251 n 108 folds+ 1/3 | shock 0.02078 delay -0.041232 | neigh+ 0.9 | checks 4/7
+- b44a7840ef rank 25: test E -0.085452 t -0.647482 n 67 folds+ 1/3 | shock -0.061554 delay -0.169971 | neigh+ 0.0 | checks 1/7
+- b6ee8d046f rank 18: test E -0.272697 t -1.251186 n 96 folds+ 1/3 | shock -0.174347 delay -0.354858 | neigh+ 0.0 | checks 0/7
+- c7e8c14136 rank 26: test E -0.203479 t -2.843336 n 226 folds+ 0/3 | shock -0.17342 delay -0.277473 | neigh+ 0.0 | checks 0/7
+- c8d29a44e9 rank 10: test E -0.173639 t -1.218677 n 62 folds+ 0/3 | shock -0.165995 delay -0.137501 | neigh+ 0.0 | checks 0/7
+- e99e317a44 rank 7: test E -0.122273 t -2.924015 n 676 folds+ 1/3 | shock -0.109818 delay -0.138037 | neigh+ 0.0 | checks 1/7
+
+## NAS100
+- 0414efec37 rank 20: test E -0.121589 t -1.565967 n 275 folds+ 0/3 | shock -0.080273 delay -0.183141 | neigh+ 0.0 | checks 0/7
+- 11c7d074d3 rank 29: test E -0.15955 t -2.109096 n 566 folds+ 0/3 | shock -0.110518 delay -0.040387 | neigh+ 0.0 | checks 0/7
+- 135e9ea332 rank 15: test E -0.277944 t -2.001401 n 79 folds+ 0/3 | shock -0.269632 delay -0.152428 | neigh+ 0.0 | checks 0/7
+- 191827e87c rank 26: test E -0.258519 t -1.580539 n 69 folds+ 1/3 | shock -0.237903 delay -0.094293 | neigh+ 0.0 | checks 0/7
+- 2a2d0e8fc0 rank 28: test E -0.170854 t -1.365453 n 101 folds+ 1/3 | shock -0.169692 delay -0.200498 | neigh+ 0.0 | checks 0/7
+- 3b1ab53689 rank 27: test E -0.253162 t -1.197644 n 53 folds+ 0/3 | shock -0.2343 delay -0.184485 | neigh+ 0.0 | checks 0/7
+- 3c9a8341ca rank 22: test E -0.227278 t -2.0952 n 142 folds+ 0/3 | shock -0.190536 delay -0.108254 | neigh+ 0.0 | checks 0/7
+- 3c9b7363b4 rank 21: test E -0.117281 t -1.088248 n 172 folds+ 1/3 | shock -0.085654 delay -0.226811 | neigh+ 0.0 | checks 0/7
+- 3e4280a89f rank 0: test E -0.12379 t -0.462 n 40 folds+ 1/3 | shock -0.118419 delay -0.568267 | neigh+ 0.0667 | checks 0/7
+- 3e638fa644 rank 9: test E -0.158787 t -1.392569 n 192 folds+ 1/3 | shock -0.126439 delay -0.169111 | neigh+ 0.0 | checks 0/7
+- 40b5efddaa rank 23: test E -0.147751 t -0.925811 n 77 folds+ 1/3 | shock -0.145053 delay -0.059287 | neigh+ 0.0 | checks 0/7
+- 4a617b5d7c rank 1: test E -0.003251 t -0.020775 n 66 folds+ 1/3 | shock -0.000563 delay 0.006848 | neigh+ 0.3333 | checks 1/7
+- 4cdf0d776b rank 16: test E -0.074875 t -0.568906 n 98 folds+ 0/3 | shock -0.062689 delay -0.094248 | neigh+ 0.0909 | checks 0/7
+- 5c9ad7987a rank 11: test E -0.312777 t -2.915038 n 162 folds+ 0/3 | shock -0.307364 delay -0.401575 | neigh+ 0.0 | checks 0/7
+- 6afe35e9dd rank 18: test E -0.281838 t -1.915389 n 174 folds+ 0/3 | shock -0.26056 delay -0.287536 | neigh+ 0.0 | checks 0/7
+- 6d6a5f8cd5 rank 13: test E -0.284908 t -1.65696 n 82 folds+ 0/3 | shock -0.227571 delay 0.393796 | neigh+ 0.0 | checks 1/7
+- 757a73d0c2 rank 7: test E -0.400872 t -2.849778 n 91 folds+ 0/3 | shock -0.419654 delay -0.307533 | neigh+ 0.0 | checks 0/7
+- 777f222b0b rank 2: test E -0.422978 t -2.03215 n 42 folds+ 0/3 | shock -0.259109 delay -0.617733 | neigh+ 0.0 | checks 0/7
+- 77db408b9a rank 3: test E -0.736714 t -3.811475 n 40 folds+ 0/3 | shock -0.740801 delay -0.678895 | neigh+ 0.0 | checks 0/7
+- 799bf5c28b rank 17: test E -0.300379 t -1.791073 n 55 folds+ 0/3 | shock -0.305053 delay -0.434396 | neigh+ 0.0 | checks 0/7
+- 811bcbb7cc rank 4: test E -0.197329 t -0.903652 n 52 folds+ 1/3 | shock -0.131937 delay 0.005692 | neigh+ 0.0 | checks 1/7
+- adfaff56bd rank 8: test E -0.461619 t -1.053565 n 64 folds+ 1/3 | shock -0.394648 delay -0.338326 | neigh+ 0.0 | checks 0/7
+- b2633a80b9 rank 25: test E 0.045371 t 0.19052 n 56 folds+ 2/3 | shock 0.099374 delay -0.143662 | neigh+ 0.7857 | checks 5/7
+- bd7c0226c7 rank 10: test E -0.201228 t -1.274907 n 175 folds+ 1/3 | shock -0.155418 delay -0.277288 | neigh+ 0.0 | checks 0/7
+- c0645b0981 rank 14: test E 0.131331 t 1.083507 n 65 folds+ 3/3 | shock 0.13008 delay -0.142566 | neigh+ 1.0 | checks 5/7
+- e4e823d005 rank 5: test E -0.0762 t -1.27413 n 284 folds+ 0/3 | shock -0.049984 delay -0.093541 | neigh+ 0.0 | checks 0/7
+- ebd974b897 rank 12: test E -0.336836 t -2.458326 n 306 folds+ 0/3 | shock -0.282771 delay -0.319561 | neigh+ 0.0 | checks 0/7
+- f16e5d9a1e rank 6: test E -0.127879 t -1.027518 n 242 folds+ 1/3 | shock -0.107746 delay -0.030987 | neigh+ 0.0 | checks 0/7
+- f56bee5639 rank 19: test E -0.079541 t -0.568114 n 100 folds+ 2/3 | shock -0.057304 delay 0.101809 | neigh+ 0.0 | checks 2/7
+- fafcc9c442 rank 24: test E -0.127924 t -0.889632 n 74 folds+ 1/3 | shock -0.096245 delay -0.244267 | neigh+ 0.0714 | checks 0/7
+
+## SPX500
+- 0282518f69 rank 23: test E -0.474806 t -4.540054 n 79 folds+ 0/3 | shock -0.439581 delay -0.391895 | neigh+ 0.0 | checks 0/7
+- 065422998a rank 20: test E -0.185629 t -1.353762 n 129 folds+ 1/3 | shock -0.039942 delay -0.238656 | neigh+ 0.0 | checks 1/7
+- 1638650b32 rank 11: test E -0.672394 t -5.290342 n 68 folds+ 0/3 | shock -0.676669 delay -0.768764 | neigh+ 0.0 | checks 0/7
+- 2a37760366 rank 0: test E -0.331986 t -2.537228 n 42 folds+ 0/3 | shock -0.276897 delay -0.303559 | neigh+ 0.0 | checks 0/7
+- 2f5bbbd319 rank 1: test E -0.581845 t -3.49898 n 88 folds+ 0/3 | shock -0.336259 delay -0.642393 | neigh+ 0.0 | checks 0/7
+- 3177365954 rank 15: test E -0.511418 t -6.235405 n 178 folds+ 0/3 | shock -0.371261 delay -0.433931 | neigh+ 0.0 | checks 0/7
+- 3b894af67e rank 24: test E -0.104677 t -0.950556 n 183 folds+ 1/3 | shock -0.075826 delay -0.213371 | neigh+ 0.0 | checks 1/7
+- 40cec44468 rank 12: test E -0.463157 t -4.120441 n 208 folds+ 0/3 | shock -0.293487 delay -0.661362 | neigh+ 0.0 | checks 0/7
+- 4f36fe8d20 rank 19: test E -0.427619 t -5.16176 n 218 folds+ 0/3 | shock -0.28483 delay -0.413896 | neigh+ 0.0 | checks 0/7
+- 539e085999 rank 26: test E -0.316921 t -3.333829 n 177 folds+ 0/3 | shock -0.264847 delay -0.294641 | neigh+ 0.0 | checks 0/7
+- 63e57681f2 rank 2: test E -0.094058 t -1.028749 n 148 folds+ 1/3 | shock -0.032125 delay -0.146261 | neigh+ 0.0 | checks 1/7
+- 6521d3d627 rank 13: test E -0.44391 t -3.931098 n 75 folds+ 0/3 | shock -0.27393 delay -0.502516 | neigh+ 0.0 | checks 0/7
+- 7585f5aaec rank 29: test E -0.346435 t -4.311761 n 316 folds+ 0/3 | shock -0.22697 delay -0.316896 | neigh+ 0.0 | checks 0/7
+- 78f00dfa62 rank 14: test E -0.476711 t -6.359591 n 396 folds+ 0/3 | shock -0.247712 delay -0.480859 | neigh+ 0.0 | checks 0/7
+- 8024bd4d4e rank 3: test E -0.431163 t -4.386919 n 164 folds+ 0/3 | shock -0.267712 delay -0.420123 | neigh+ 0.0 | checks 0/7
+- 8e69a25dd0 rank 21: test E -0.382152 t -4.299438 n 158 folds+ 0/3 | shock -0.288785 delay -0.447736 | neigh+ 0.0 | checks 0/7
+- 9acd9402f6 rank 17: test E -0.584096 t -4.531295 n 66 folds+ 0/3 | shock -0.436281 delay -0.635602 | neigh+ 0.0 | checks 0/7
+- 9c5036c7e7 rank 18: test E -0.22963 t -1.429471 n 107 folds+ 2/3 | shock -0.126192 delay -0.302824 | neigh+ 0.0 | checks 2/7
+- 9e24779760 rank 4: test E -0.377779 t -2.012672 n 45 folds+ 0/3 | shock -0.3281 delay -0.331987 | neigh+ 0.0 | checks 0/7
+- a1549c2b51 rank 5: test E -0.700398 t -4.284048 n 81 folds+ 0/3 | shock -0.662138 delay -0.717747 | neigh+ 0.0 | checks 0/7
+- a6d7eb00f4 rank 6: test E -0.451572 t -5.785302 n 406 folds+ 0/3 | shock -0.247084 delay -0.470425 | neigh+ 0.0 | checks 0/7
+- a86727072a rank 27: test E -0.220684 t -1.878704 n 120 folds+ 0/3 | shock -0.159698 delay -0.271917 | neigh+ 0.0 | checks 1/7
+- a8a4f41f9c rank 25: test E -0.403315 t -4.856295 n 174 folds+ 0/3 | shock -0.3183 delay -0.264877 | neigh+ 0.0 | checks 0/7
+- b2633a80b9 rank 7: test E -0.740086 t -4.477975 n 37 folds+ 0/3 | shock -0.551662 delay -0.645997 | neigh+ 0.0 | checks 0/7
+- b5dfd79c48 rank 8: test E -0.330346 t -2.212449 n 45 folds+ 1/3 | shock -0.244963 delay -0.390927 | neigh+ 0.0 | checks 0/7
+- bae65d10c2 rank 9: test E -0.051974 t -0.595496 n 134 folds+ 1/3 | shock -0.008027 delay -0.177366 | neigh+ 0.0 | checks 1/7
+- dbb63d5619 rank 22: test E -0.139649 t -0.730728 n 62 folds+ 1/3 | shock -0.115854 delay -0.251133 | neigh+ 0.0 | checks 1/7
+- df9e488e4c rank 10: test E -0.322212 t -2.276375 n 62 folds+ 0/3 | shock -0.114489 delay -0.199752 | neigh+ 0.0 | checks 0/7
+- f2b02024cb rank 16: test E -0.358626 t -2.772951 n 70 folds+ 0/3 | shock -0.229587 delay -0.372077 | neigh+ 0.0 | checks 0/7
+- f4c6ce22b6 rank 28: test E -0.388705 t -1.776262 n 33 folds+ 0/3 | shock -0.276466 delay -0.402431 | neigh+ 0.0 | checks 0/7
+
+## XAUUSD
+- 041bd167c5 rank 15: test E -0.24587 t -1.124452 n 96 folds+ 1/3 | shock -0.229478 delay -0.431035 | neigh+ 0.0 | checks 0/7
+- 059ff67488 rank 28: test E -0.245483 t -4.585282 n 358 folds+ 0/3 | shock -0.153338 delay -0.235781 | neigh+ 0.0 | checks 0/7
+- 078fd94dec rank 0: test E -0.140839 t -1.178152 n 165 folds+ 1/3 | shock -0.124707 delay -0.204741 | neigh+ 0.0 | checks 1/7
+- 09dc8756d9 rank 21: test E -0.280592 t -2.61818 n 154 folds+ 0/3 | shock -0.229608 delay -0.298782 | neigh+ 0.0 | checks 0/7
+- 11ba9107cf rank 1: test E 0.22869 t 0.89559 n 52 folds+ 3/3 | shock 0.244704 delay 0.09688 | neigh+ 1.0 | checks 6/7
+- 191827e87c rank 29: test E -0.40082 t -2.802733 n 86 folds+ 0/3 | shock -0.40612 delay -0.543044 | neigh+ 0.0 | checks 0/7
+- 1b067f1f3b rank 24: test E -0.395637 t -2.488096 n 70 folds+ 0/3 | shock -0.359946 delay -0.443771 | neigh+ 0.0 | checks 0/7
+- 25a9cd2c1c rank 2: test E -0.267192 t -2.362673 n 76 folds+ 0/3 | shock -0.21267 delay -0.261151 | neigh+ 0.0 | checks 0/7
+- 3520c60973 rank 3: test E -0.317742 t -1.769487 n 88 folds+ 0/3 | shock -0.26667 delay -0.533111 | neigh+ 0.0 | checks 0/7
+- 44bae6353d rank 22: test E -0.25178 t -1.324664 n 144 folds+ 1/3 | shock -0.202039 delay -0.297437 | neigh+ 0.0 | checks 0/7
+- 4606c1e5b3 rank 20: test E -0.294569 t -4.124018 n 358 folds+ 0/3 | shock -0.218481 delay -0.407372 | neigh+ 0.0 | checks 0/7
+- 5e8609a675 rank 11: test E -0.545317 t -5.222509 n 269 folds+ 0/3 | shock -0.488108 delay -0.547056 | neigh+ 0.0 | checks 0/7
+- 62acfa612a rank 4: test E -0.534177 t -3.455571 n 159 folds+ 0/3 | shock -0.463704 delay -0.588932 | neigh+ 0.0 | checks 0/7
+- 72a1bd81f6 rank 13: test E -0.199014 t -1.223595 n 70 folds+ 1/3 | shock -0.160682 delay -0.215236 | neigh+ 0.0 | checks 1/7
+- 899d1689c5 rank 27: test E -0.251732 t -1.462001 n 58 folds+ 1/3 | shock -0.239268 delay -0.231504 | neigh+ 0.0 | checks 0/7
+- 95745e4c7d rank 26: test E -1.064562 t -360.723395 n 5 folds+ 0/3 | shock -1.078918 delay -1.060692 | neigh+ 0.0 | checks 0/7
+- ad5602533b rank 5: test E -0.464733 t -2.69838 n 84 folds+ 0/3 | shock -0.419503 delay -0.359971 | neigh+ 0.0 | checks 0/7
+- af7f013d9c rank 6: test E -0.003319 t -0.018567 n 75 folds+ 2/3 | shock 0.041164 delay 0.02138 | neigh+ 0.2 | checks 4/7
+- b2633a80b9 rank 7: test E -0.567968 t -3.592488 n 64 folds+ 0/3 | shock -0.590329 delay -0.568712 | neigh+ 0.0 | checks 0/7
+- bc09a0112d rank 19: test E -0.286956 t -3.900352 n 236 folds+ 0/3 | shock -0.224888 delay -0.34285 | neigh+ 0.0 | checks 0/7
+- bc562b02de rank 14: test E -0.210329 t -2.161091 n 83 folds+ 1/3 | shock -0.166574 delay -0.442048 | neigh+ 0.0 | checks 0/7
+- c6a684dcb0 rank 8: test E -0.243271 t -2.045877 n 397 folds+ 0/3 | shock -0.174918 delay -0.363511 | neigh+ 0.0 | checks 0/7
+- cb533ab826 rank 12: test E -0.396666 t -3.260342 n 170 folds+ 0/3 | shock -0.3578 delay -0.356033 | neigh+ 0.0 | checks 0/7
+- ce02fdc07d rank 17: test E -0.47748 t -2.976654 n 105 folds+ 0/3 | shock -0.38795 delay -0.348583 | neigh+ 0.0 | checks 0/7
+- d3ab502506 rank 9: test E -0.273252 t -5.153978 n 367 folds+ 0/3 | shock -0.178421 delay -0.263407 | neigh+ 0.0 | checks 0/7
+- e2c5f68981 rank 10: test E -0.343263 t -4.410585 n 185 folds+ 0/3 | shock -0.2394 delay -0.33884 | neigh+ 0.0 | checks 0/7
+- ebfcd14113 rank 23: test E -0.334874 t -2.174106 n 70 folds+ 0/3 | shock -0.243257 delay -0.282349 | neigh+ 0.0 | checks 0/7
+- ec244f13c8 rank 18: test E 0.281335 t 1.330471 n 51 folds+ 3/3 | shock 0.295399 delay 0.192746 | neigh+ 1.0 | checks 6/7
+- fa2118dc0c rank 16: test E -0.430668 t -4.366159 n 158 folds+ 0/3 | shock -0.344075 delay -0.342912 | neigh+ 0.0 | checks 0/7
+- fc3b104302 rank 25: test E -0.076654 t -0.585575 n 55 folds+ 1/3 | shock 0.03266 delay -0.019417 | neigh+ 0.0 | checks 2/7
+

@@ -1,0 +1,31 @@
+{
+ "calls": {
+  "34aba8bfa129052fb1450ab7659734ee8910fab1dba7fc6c45279b4126b41e3c": {
+   "completed_utc": "2026-09-30T10:58:10Z",
+   "evaluations": 2633,
+   "finalist_count": 150,
+   "plan": {
+    "finalist_hash": "34aba8bfa129052fb1450ab7659734ee8910fab1dba7fc6c45279b4126b41e3c",
+    "finalists_per_market": {
+     "EURUSD": 30,
+     "GER40": 30,
+     "NAS100": 30,
+     "SPX500": 30,
+     "XAUUSD": 30
+    },
+    "finalists_total": 150,
+    "max_evaluations": 4350,
+    "note": "dry run: no data read, no ledger entry written",
+    "test_fold_indices": [
+     1,
+     2,
+     3
+    ]
+   },
+   "results": "C:\\Users\\yanni\\.codex\\.chatgpt-projects\\g-p-6ab858dc4d7c8191818034e19b772625\\trader\\research\\reports\\v2_survival\\survival_results.json",
+   "started_utc": "2026-09-30T10:55:05Z",
+   "status": "completed"
+  }
+ },
+ "version": "v2-survival-v1"
+}
