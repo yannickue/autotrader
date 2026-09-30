@@ -1,0 +1,170 @@
+{
+ "evaluated_at_probe": "2026-09-30T01:34:43.753136+00:00",
+ "probe_mode": "static_snapshot",
+ "verdicts": {
+  "BRENT": {
+   "market": "BRENT",
+   "verdict": "RED",
+   "reasons": [
+    "quote_fresh: UNVERIFIED - no quote: symbol not quoting / not in Market Watch (visible=false at last snapshot)",
+    "margin_calc: UNVERIFIED - order_calc_margin result not available (symbol not quoting / not probed)",
+    "protection_path: UNVERIFIED - order_mode / filling_mode not exposed in probe data (older snapshot or symbol not probed)",
+    "session_mapping_verified: UNVERIFIED - no observed M5 bar structure (need >= 1000 bars): sessions not derivable",
+    "cost_model_enabled: UNVERIFIED - no observed spread distribution (M1 recorded spread >= 500 bars or >= 20 live ticks)"
+   ],
+   "checks": [
+    {
+     "id": "account_demo_bound",
+     "status": "PASS",
+     "detail": "DEMO account, currency=EUR, leverage=None"
+    },
+    {
+     "id": "symbol_exact_mapped",
+     "status": "PASS",
+     "detail": "'Brent' @ 'Spot Energy\\\\Brent' (BRENT CRUDE OIL SPOT)"
+    },
+    {
+     "id": "tradable",
+     "status": "PASS",
+     "detail": "trade_mode=FULL"
+    },
+    {
+     "id": "quote_fresh",
+     "status": "UNVERIFIED",
+     "detail": "no quote: symbol not quoting / not in Market Watch (visible=false at last snapshot)"
+    },
+    {
+     "id": "contract_facts",
+     "status": "PASS",
+     "detail": "contract=1000.0, tick=0.01, tick_value=10.0, vol 0.01/0.01/10.0 match the broker"
+    },
+    {
+     "id": "margin_calc",
+     "status": "UNVERIFIED",
+     "detail": "order_calc_margin result not available (symbol not quoting / not probed)"
+    },
+    {
+     "id": "structural_sl_vs_stops_level",
+     "status": "PASS",
+     "detail": "stops_level=0.05 freeze_level=0.0 spread=0.0000 leave headroom for a structural stop of 1.0 (no stop is tightened to fit)"
+    },
+    {
+     "id": "protection_path",
+     "status": "UNVERIFIED",
+     "detail": "order_mode / filling_mode not exposed in probe data (older snapshot or symbol not probed)"
+    },
+    {
+     "id": "persistence_reconciliation_reports",
+     "status": "PASS",
+     "detail": "cluster=ENERGY, demo registry + demo market spec load; stores/reports/reconciliation are keyed by the registry market name, not a whitelist"
+    },
+    {
+     "id": "session_mapping_verified",
+     "status": "UNVERIFIED",
+     "detail": "no observed M5 bar structure (need >= 1000 bars): sessions not derivable"
+    },
+    {
+     "id": "cost_model_enabled",
+     "status": "UNVERIFIED",
+     "detail": "no observed spread distribution (M1 recorded spread >= 500 bars or >= 20 live ticks)"
+    },
+    {
+     "id": "no_index_specific_hardcoding",
+     "status": "PASS",
+     "detail": "no market-name literals outside the reviewed registries in 9 generic source dirs; spec-driven calendar/cost/sizing"
+    }
+   ],
+   "facts": {
+    "broker_symbol": "Brent",
+    "cluster": "ENERGY",
+    "probe_mode": "static_snapshot",
+    "probe_retrieved_at": "2026-09-30T01:34:43.753136+00:00",
+    "stops_level_price": 0.05,
+    "freeze_level_price": 0.0,
+    "reference_structural_stop": 1.0
+   }
+  },
+  "BTCUSD": {
+   "market": "BTCUSD",
+   "verdict": "RED",
+   "reasons": [
+    "quote_fresh: UNVERIFIED - no quote: symbol not quoting / not in Market Watch (visible=false at last snapshot)",
+    "margin_calc: UNVERIFIED - order_calc_margin result not available (symbol not quoting / not probed)",
+    "protection_path: UNVERIFIED - order_mode / filling_mode not exposed in probe data (older snapshot or symbol not probed)",
+    "session_mapping_verified: UNVERIFIED - no observed M5 bar structure (need >= 1000 bars): sessions not derivable",
+    "cost_model_enabled: UNVERIFIED - no observed spread distribution (M1 recorded spread >= 500 bars or >= 20 live ticks)"
+   ],
+   "checks": [
+    {
+     "id": "account_demo_bound",
+     "status": "PASS",
+     "detail": "DEMO account, currency=EUR, leverage=None"
+    },
+    {
+     "id": "symbol_exact_mapped",
+     "status": "PASS",
+     "detail": "'BTCUSD' @ 'Cryptocurrency\\\\BTCUSD' (Bitcoin vs US Dollar)"
+    },
+    {
+     "id": "tradable",
+     "status": "PASS",
+     "detail": "trade_mode=FULL"
+    },
+    {
+     "id": "quote_fresh",
+     "status": "UNVERIFIED",
+     "detail": "no quote: symbol not quoting / not in Market Watch (visible=false at last snapshot)"
+    },
+    {
+     "id": "contract_facts",
+     "status": "PASS",
+     "detail": "contract=1.0, tick=0.01, tick_value=0.01, vol 0.01/0.01/3.0 match the broker"
+    },
+    {
+     "id": "margin_calc",
+     "status": "UNVERIFIED",
+     "detail": "order_calc_margin result not available (symbol not quoting / not probed)"
+    },
+    {
+     "id": "structural_sl_vs_stops_level",
+     "status": "PASS",
+     "detail": "stops_level=0.0 freeze_level=0.0 spread=0.0000 leave headroom for a structural stop of 500.0 (no stop is tightened to fit)"
+    },
+    {
+     "id": "protection_path",
+     "status": "UNVERIFIED",
+     "detail": "order_mode / filling_mode not exposed in probe data (older snapshot or symbol not probed)"
+    },
+    {
+     "id": "persistence_reconciliation_reports",
+     "status": "PASS",
+     "detail": "cluster=CRYPTO, demo registry + demo market spec load; stores/reports/reconciliation are keyed by the registry market name, not a whitelist"
+    },
+    {
+     "id": "session_mapping_verified",
+     "status": "UNVERIFIED",
+     "detail": "no observed M5 bar structure (need >= 1000 bars): sessions not derivable"
+    },
+    {
+     "id": "cost_model_enabled",
+     "status": "UNVERIFIED",
+     "detail": "no observed spread distribution (M1 recorded spread >= 500 bars or >= 20 live ticks)"
+    },
+    {
+     "id": "no_index_specific_hardcoding",
+     "status": "PASS",
+     "detail": "no market-name literals outside the reviewed registries in 9 generic source dirs; spec-driven calendar/cost/sizing"
+    }
+   ],
+   "facts": {
+    "broker_symbol": "BTCUSD",
+    "cluster": "CRYPTO",
+    "probe_mode": "static_snapshot",
+    "probe_retrieved_at": "2026-09-30T01:34:43.753136+00:00",
+    "stops_level_price": 0.0,
+    "freeze_level_price": 0.0,
+    "reference_structural_stop": 500.0
+   }
+  }
+ }
+}

@@ -1,0 +1,92 @@
+# BRENT (Phase 2, Lane M): MarketSpec for the ActivTrades DEMO "Brent" SPOT CFD (NOT the dated ICE futures CFDs BrentDec26/BrentNov26).
+# Instrument facts OBSERVED via symbols_get, snapshot 2026-09-30 (research/reports/v2_markets/symbol_snapshot.json; docs/evidence/phase2_symbol_probe.json).
+# The symbol was NOT in Market Watch (visible=false) at that snapshot: no quote, no margin, no rates, no session data yet.
+# Everything marked UNVERIFIED below must be replaced by scripts/phase2_symbol_probe.py output before preflight can be GREEN.
+# Research/trading stays disabled here (trading_enabled must be false); the runner switch is configs/markets_phase2/enablement.toml.
+
+[market]
+canonical = "BRENT"
+broker_symbol = "Brent"
+broker_path = 'Spot Energy\Brent'
+asset_class = "energy_cfd"
+timezone = "Europe/London"
+research_only = true
+trading_enabled = false
+
+[instrument]
+point_size = 0.01
+digits = 2
+contract_size = 1000.0       # barrels per lot (observed)
+tick_size = 0.01
+volume_min = 0.01
+volume_step = 0.01
+volume_max = 10.0
+currency_profit = "USD"
+currency_margin = "USD"
+
+[calendar]
+# PROVISIONAL structural proposal (London reference day, like the existing non-GER40 markets). NOT broker-confirmed and
+# NOT observed yet (symbol_info exposes no session times; the probe derives sessions from bar timestamps).
+tz = "Europe/London"
+cash_open = "08:00"
+cash_close = "18:00"
+entry_start = "08:00"
+entry_end = "16:30"
+forced_flat = "17:55"
+status = "provisional"
+weekend_policy = "UNVERIFIED: no entries Sat/Sun; weekly open/close hours must be taken from observed bar gaps (scripts/phase2_symbol_probe.py), not assumed."
+holiday_policy = "UNVERIFIED: holiday/early-close behaviour of the Brent spot CFD not observed."
+dst_notes = "ICE Brent and the US crude inventory release move with EU/US DST; the London reference session is provisional. Server clock = Europe/Berlin (inferred, not broker-confirmed)."
+
+[[calendar.buckets]]
+name = "ASIA_PRE"
+start = "00:00"
+end = "08:00"
+
+[[calendar.buckets]]
+name = "LONDON_0800_1000"
+start = "08:00"
+end = "10:00"
+
+[[calendar.buckets]]
+name = "LONDON_MID_1000_1330"
+start = "10:00"
+end = "13:30"
+
+[[calendar.buckets]]
+name = "NY_OVERLAP_1330_1800"
+start = "13:30"
+end = "18:00"
+
+[[calendar.buckets]]
+name = "LATE_1800_2400"
+start = "18:00"
+end = "24:00"
+
+[risk]
+max_entry_spread_price = 0.10
+spread_model_notes = "PLACEHOLDER_UNVERIFIED cap in PRICE units (10 points): no spread observed yet (symbol was not quoting at the snapshot). The probe's M1 recorded-spread distribution and live tick sample replace it; preflight requires cap >= observed p95 and <= 10x median. Cost model must use the recorded spread, not this cap."
+max_leverage = 10.0  # ASSUMPTION (conservative, ESMA-retail-style commodity leverage); broker margin NOT yet observed. Hard ceiling 30x, never a target.
+margin_notes = "UNVERIFIED: order_calc_margin not yet run (symbol not selected). trade_calc_mode=4 (CFD leverage): margin = lots x contract x price / leverage. Preflight requires spec max_leverage <= observed implied leverage (sizing must never assume more leverage than the broker gives)."
+
+[data_quality]
+flags = ["symbol_not_in_market_watch_at_snapshot", "no_quote_observed", "no_margin_observed", "sessions_not_observed", "spread_cap_placeholder", "no_history_downloaded"]
+
+[provenance]
+snapshot_date = "2026-09-30"
+server_tz_policy = "MT5 server clock = Europe/Berlin (UTC+2 CEST / UTC+1 CET); inferred from a live +7199s offset on the existing markets, cross-checked by DST-shifting cash-open volume peaks; not broker-confirmed. Not yet checked on Brent itself."
+
+[cost]
+# Inputs wired into alpha.common.market_costs.cost_scenarios_for / sizing_for (median_spread_price override).
+reference_median_spread_price = 0.05         # PLACEHOLDER_UNVERIFIED (5 points); replaced by the probe's observed median
+spread_source = "placeholder_unverified"
+commission_eur_per_lot = 0.0
+commission_source = "unverified_assumed_zero"   # same status as every non-GER40 market
+swap_mode = 1                                   # observed enum value (MT5 docs: SYMBOL_SWAP_MODE_POINTS)
+swap_long_points = 9.536                        # observed 2026-09-30
+swap_short_points = -15.252                     # observed 2026-09-30
+swap_modelled = false                           # positions are forced flat (no overnight); financing not modelled
+min_movement_to_cost = 3.0                      # planned move (to target, else 1R) / round-trip cost, same semantics as TCA movement_to_cost
+
+[preflight]
+reference_structural_stop_price = 1.0           # USD/bbl; ONLY used to validate stops_level headroom, never a sizing rule

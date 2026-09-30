@@ -17,10 +17,15 @@ from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 CANONICALS = ("GER40", "NAS100", "SPX500", "XAUUSD", "EURUSD")
-ASSET_CLASSES = ("index_cfd", "metal_cfd", "fx_cfd")
+# Phase-2 markets (Lane M) are deliberately NOT part of CANONICALS: every research/opportunity
+# module iterates CANONICALS and needs downloaded history + production strategy lists for each
+# entry. Phase-2 specs live in `configs/markets_phase2/` and are loaded via `markets.phase2`.
+PHASE2_CANONICALS = ("BRENT", "BTCUSD")
+ASSET_CLASSES = ("index_cfd", "metal_cfd", "fx_cfd", "energy_cfd", "crypto_cfd")
 MAX_LEVERAGE_CAP = 30  # hard permitted ceiling; an upper bound, NEVER a target
 CALENDAR_STATUSES = ("verified_current_constants", "provisional")
 DEFAULT_CONFIG_DIR = Path(__file__).resolve().parents[2] / "configs" / "markets"
+PHASE2_CONFIG_DIR = Path(__file__).resolve().parents[2] / "configs" / "markets_phase2"
 
 
 class MarketSpecError(ValueError):
@@ -126,8 +131,9 @@ class MarketSpec:
 
     def validate(self) -> None:
         errs: list[str] = []
-        if self.canonical not in CANONICALS:
-            errs.append(f"canonical {self.canonical!r} not in {CANONICALS}")
+        known = CANONICALS + PHASE2_CANONICALS
+        if self.canonical not in known:
+            errs.append(f"canonical {self.canonical!r} not in {known}")
         if self.asset_class not in ASSET_CLASSES:
             errs.append(f"asset_class {self.asset_class!r} not in {ASSET_CLASSES}")
         if not self.broker_symbol.strip():
