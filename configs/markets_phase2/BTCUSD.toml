@@ -2,6 +2,7 @@
 # Instrument facts OBSERVED via symbols_get, snapshot 2026-09-30 (research/reports/v2_markets/symbol_snapshot.json; docs/evidence/phase2_symbol_probe.json).
 # Lane M2: the live probe (docs/evidence/phase2_symbol_probe.json, 2026-09-30 21:04 UTC) OBSERVED quote, margin, spreads and bar sessions;
 # the former placeholders (spread cap, reference median spread) are replaced by those numbers below.
+# BOOTSTRAP / SAFETY SCHEDULE — not alpha-validated; must not become an undocumented permanent rule: the Mon-Fri / entry cutoff ~19:30 UTC / forced flat 20:30 UTC schedule below.
 # No 24/7 assumption is made: the calendar below is a PROVISIONAL Mon-Fri liquid-hours window (entries only inside it, weekends are never traded).
 
 [market]

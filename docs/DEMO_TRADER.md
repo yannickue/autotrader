@@ -180,7 +180,20 @@ Enable / disable (per market, DEMO only; BTCUSD first, Brent after a GREEN at ma
 1. Edit `configs/markets_phase2/enablement.toml`: `[BTCUSD] enabled = true` (later `[BRENT] enabled = true`). No other key, no code change.
 2. Restart the runner (`scripts/demo_trader.py --shadow` first, then `--demo-auto ...`). Without `--markets` the universe is the five
    markets + every enabled Phase-2 market; `--markets BRENT` on a market that is not enabled is refused (exit 2).
-3. Disable = set the flag back to `false` and restart. A position already open on a disabled market keeps being managed by its broker stop.
+3. Disable = set the flag back to `false` and restart. A market whose intent-registry rows are still open (an open position) is NOT
+   dropped: it is kept registered in MANAGE-ONLY mode (`start_notes.manage_only_markets`, `disabled_markets` reason `manage_only: ...`):
+   entries reject with `market_disabled`; exits, forced-flat, protection repair and reconciliation stay active; the position is not
+   foreign and the core markets keep trading. If such a market cannot be verified at start (symbol gone / facts mismatch) the stack
+   REFUSES TO START (`open_exposure_on_unverifiable_market:<market>`): flatten by hand first. A market with no open exposure is simply
+   not registered. (Limit: a broker position with no registry row on an unregistered Phase-2 symbol is still classified foreign and halts.)
+
+BOOTSTRAP / SAFETY SCHEDULE — not alpha-validated; must not become an undocumented permanent rule: the BTCUSD Mon-Fri window, entry
+cutoff ~19:30 UTC and forced flat 20:30 UTC are a provisional safety schedule, not a validated edge window.
+
+Margin note (small accounts): an open BTCUSD min lot needs about 370 EUR margin (observed 369.69 EUR at 83746.28, 2x). That margin is no
+longer free, so a core-market entry can fail on the `max_margin_fraction_of_free_margin = 0.90` cap (`sizing.py`) on a small account.
+The start preflight reports it as information only (no gate): `start_notes.phase2_preflight.<M>.free_margin_eur` and
+`min_lot_margin_pct_of_free_margin`.
 
 Double gate: (1) the flag, (2) a per-market START-UP PREFLIGHT inside `Mt5DemoStack` (`markets.preflight.run_live_preflight`, live broker
 facts): exact broker symbol/path, `trade_mode` FULL, valid + fresh quote (<= 30 s) WHILE the market's calendar says open, contract/volume

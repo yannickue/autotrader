@@ -214,7 +214,7 @@ Placeholders replaced (configs carry the provenance in `spread_model_notes` / `m
 | BTCUSD spread cap | 100 | 100 USD kept, now validated (M1 p99 71.65, max 104.7; M5 p99 66.0) |
 | BTCUSD reference median spread | 40.0 | 59.83 USD (M1 recorded median; M5 median 47.25) |
 | BTCUSD `max_leverage` | 2 (assumed) | 2 (implied 2.00x, min lot 369.69 EUR at 83746.28) |
-| BTCUSD calendar | entry 08:00-20:00, flat 21:55 UTC | entry 08:00-19:30, flat/cash close 20:30 UTC (Friday break 22:55 server = 20:55 UTC) |
+| BTCUSD calendar (BOOTSTRAP / SAFETY SCHEDULE — not alpha-validated; must not become an undocumented permanent rule) | entry 08:00-20:00, flat 21:55 UTC | entry 08:00-19:30, flat/cash close 20:30 UTC (Friday break 22:55 server = 20:55 UTC) |
 
 PROVISIONAL (not broker-confirmed): both calendars, the server clock = Europe/Berlin inference (observed +2 h at the probe), commission
 (assumed 0), swaps (not modelled, forced flat), the ROUND-number scale entries for the new asset classes, and every strategy statement

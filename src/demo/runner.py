@@ -332,6 +332,9 @@ class RunnerConfig:
             raise ValueError(f"mode must be one of {MODES}")
         if self.phase not in ("DISCOVERY", "FROZEN"):
             raise ValueError("phase must be DISCOVERY or FROZEN")
+        if not (0 < self.clock_reference_window_s < self.max_clock_skew_s):
+            # the reference window must be shorter than the skew bound, or a stale reference could mask real skew
+            raise ValueError("clock_reference_window_s must be > 0 and < max_clock_skew_s")
         self.artifacts_dir = Path(self.artifacts_dir)
         if self.stop_file is None:
             self.stop_file = self.artifacts_dir / "STOP"

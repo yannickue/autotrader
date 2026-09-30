@@ -151,3 +151,13 @@ records and resolves them here.
     is a contract decision (which bound, what tolerance), not something to guess while fixing a
     bug. See `DEVELOPMENT_LEDGER.md`'s "Independent review findings" (final Codex review,
     2026-09-27) for the full repro.
+
+27. Phase-2 (Brent/BTCUSD) V1 limitations, Lane M3 (2026-09-30). BTC Mon-Fri / entry cutoff ~19:30 UTC / forced flat 20:30 UTC is a
+    BOOTSTRAP / SAFETY SCHEDULE — not alpha-validated; must not become an undocumented permanent rule.
+    (1) Disabled markets are re-checked only at restart (a Brent daily pause is idle, not a structural failure).
+    (2) BTC ORB anchor = cash_open 08:00 UTC is NOT a session open (family semantics NOT READY, F1).
+    (3) Brent ORB anchor 08:00 London is inherited from XAUUSD/EURUSD with no fitted data (F2; n_fit_bars 0); required before enabling:
+        offline range-completeness and spread-to-1R check on the probe M5 bars.
+    (4) BTC forced flat is only 25 min before the summer Friday break at 20:55 UTC.
+    (5) The offline BTC cost model uses the recorded M1 median spread while the live tick spread is ~103 USD (live gating uses the
+        actual quote).
