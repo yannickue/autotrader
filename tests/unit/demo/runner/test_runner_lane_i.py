@@ -159,7 +159,7 @@ def test_rejected_before_sizing_records_exact_code_class_and_detail(env):
     assert [(x["reject_code"], x["gate_class"], x["opportunity_id"]) for x in rows] == [
         ("size_below_min", "SAFETY", snap.opportunity_id)]
     assert rows[0]["detail"]["violated_cap"] == "max_position_stop_risk_fraction"
-    ev = [e for e in st.intent_events(iid) if e["to_state"] == RISK_REJECTED][0]
+    ev = next(e for e in st.intent_events(iid) if e["to_state"] == RISK_REJECTED)
     assert ev["detail"] == {"reason": "size_below_min", "gate_class": "SAFETY"}
 
 
@@ -201,7 +201,7 @@ def _mixed_env(env):
 
 
 def test_funnel_combines_engine_and_stack_rejections_by_class_market_family(env):
-    r, ok, addon, safe = _mixed_env(env)
+    r = _mixed_env(env)[0]
     f = funnel(env.store, env.stack, "DISCOVERY")
     s = f["summary"]
     assert s["opportunities"] == 5 and s["engine_accepted"] == 3 and s["engine_rejected"] == 2
@@ -314,4 +314,4 @@ def test_feed_uses_last_closed_bar_and_latest_quote(env):
     fd = r.status(env.clock())["feed"]["GER40"]
     assert fd["stale"] is False and fd["quote_age_s"] is not None
     assert (env.clock() - env.stack.bar_source.last_closed_bar_close_utc("GER40")).total_seconds() == fd["bar_age_s"]
-    assert M5 == timedelta(minutes=5)
+    assert timedelta(minutes=5) == M5
