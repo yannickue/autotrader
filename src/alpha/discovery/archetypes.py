@@ -146,7 +146,7 @@ def trend_pullback(rng, pool):
         "TREND_PULLBACK", pool, rng,
         regime=[_s(_c("regime_direction", labels=("UP",)), _c("h1_ema_slope", ">", (0.5, 0.85))),
                 _s(_c("h1_adx14", ">", (0.4, 0.8)), p=0.5)],
-        context=[_s(_c("context_pullback"), p=0.5)],
+        context=[_s(_c("context_pullback_up"), p=0.5)],
         trigger=[_s(_c("from_high_24_atr", ">", (0.35, 0.65)), _c("m5_rsi14", "<", (0.25, 0.55))),
                  _s(_c("mom_3_atr", ">", (0.5, 0.8)), _c("m5_normalized_return", ">", (0.5, 0.85))),
                  _s(_c("from_high_24_atr", "<", (0.8, 0.95)), p=0.4)],
@@ -157,7 +157,7 @@ def momentum_continuation(rng, pool):
     return _build(
         "MOMENTUM_CONTINUATION", pool, rng,
         regime=[_s(_c("h1_ema_slope", ">", (0.5, 0.85)), _c("regime_direction", labels=("UP",)), p=0.7)],
-        context=[_s(_c("context_momentum_continuation"), _c("m15_ema_slope", ">", (0.6, 0.9)))],
+        context=[_s(_c("context_momentum_continuation_up"), _c("m15_ema_slope", ">", (0.6, 0.9)))],
         trigger=[_s(_c("mom_6_atr", ">", (0.6, 0.9)), _c("m5_ema_slope", ">", (0.6, 0.9))),
                  _s(_c("m5_efficiency_ratio", ">", (0.5, 0.85))),
                  _s(_c("m5_adx14", ">", (0.5, 0.85)), p=0.6)],
@@ -179,7 +179,7 @@ def breakout(rng, pool):
     return _build(
         "BREAKOUT", pool, rng,
         regime=[_s(_c("h1_volatility_percentile", ">", (0.3, 0.7)), p=0.4)],
-        context=[_s(_c("context_breakout_setup"), _c("context_consolidation"), p=0.3)],
+        context=[_s(_c("context_breakout_setup_up"), _c("context_consolidation"), p=0.3)],
         trigger=[_s(_c("brk_up_20", ">", (0.85, 0.95)), _c("brk_up_48", ">", (0.8, 0.95)),
                     _c("lvl_c_pdh"), _c("lvl_c_sess_high", ">=")),
                  _s(_c("bar_body_ratio", ">", (0.4, 0.75)), _c("m5_volatility_percentile", ">", (0.4, 0.8))),
@@ -191,7 +191,7 @@ def breakout_retest(rng, pool):
     return _build(
         "BREAKOUT_RETEST", pool, rng,
         regime=[_s(_c("regime_direction", labels=("UP",)), _c("h1_ema_slope", ">", (0.5, 0.85)), p=0.7)],
-        context=[_s(_c("context_retest"))],
+        context=[_s(_c("context_retest_up"))],
         trigger=[_s(_c("dist_pdh_atr", "<", (0.5, 0.8)), _c("dist_sess_high_atr", "<", (0.5, 0.8)),
                     _c("lvl_c_pdh"), _c("lvl_c_sess_open")),
                  _s(_c("dist_pdh_atr", ">", (0.3, 0.5)), _c("dist_swing_high_atr", ">", (0.3, 0.5)),
@@ -219,7 +219,7 @@ def failed_breakout(rng, pool):
     sweep = ("sweep_lo_20", "sweep_pdl") if rng.random() < 0.6 else ("sweep_pdl", "sweep_lo_20")
     return _build(
         "FAILED_BREAKOUT", pool, rng,
-        context=[_s(_c("context_failed_breakout"), _c("context_reversal_context"), p=0.25)],
+        context=[_s(_c("context_failed_breakout_up"), _c("context_reversal_up"), p=0.25)],
         trigger=[_s(_c(sweep[0]), _c(sweep[1])),
                  _s(_c("bar_close_loc", ">", (0.4, 0.75)), _c("lower_wick_ratio", ">", (0.3, 0.7)),
                     _c("m5_range_position", ">", (0.3, 0.6))),
@@ -233,7 +233,7 @@ def mean_reversion(rng, pool):
         "MEAN_REVERSION", pool, rng,
         regime=[_s(_c("regime_trend_strength", labels=("RANGE_LIKE",)), _c("h1_adx14", "<", (0.2, 0.5))),
                 _s(_c("h1_efficiency_ratio", "<", (0.2, 0.5)), p=0.5)],
-        context=[_s(_c("context_range_extreme"), _c("m15_range_position", "<", (0.05, 0.3)))],
+        context=[_s(_c("context_range_extreme_bottom"), _c("m15_range_position", "<", (0.05, 0.3)))],
         trigger=[_s(_c("m5_rsi14", "<", (0.05, 0.25))),
                  _s(_c("m5_range_position", "<", (0.05, 0.3)), _c("dist_sess_low_atr", "<", (0.1, 0.35)), p=0.7)],
     )
@@ -243,7 +243,7 @@ def range_rejection(rng, pool):
     return _build(
         "RANGE_REJECTION", pool, rng,
         regime=[_s(_c("regime_trend_strength", labels=("RANGE_LIKE", "WEAK")), _c("h1_adx14", "<", (0.2, 0.55)), p=0.7)],
-        context=[_s(_c("context_consolidation"), _c("context_range_extreme")),
+        context=[_s(_c("context_consolidation"), _c("context_range_extreme_bottom")),
                  _s(_c("m15_range_position", "<", (0.05, 0.3)))],
         trigger=[_s(_c("lower_wick_ratio", ">", (0.5, 0.9)), _c("bar_close_loc", ">", (0.5, 0.85)), _c("m5_rsi14", "<", (0.1, 0.35))),
                  _s(_c("m5_range_position", "<", (0.1, 0.4)), p=0.6)],
@@ -299,7 +299,7 @@ def price_action_continuation(rng, pool):
 def price_action_reversal(rng, pool):
     return _build(
         "PA_REVERSAL", pool, rng,
-        context=[_s(_c("context_reversal_context"), _c("m15_range_position", "<", (0.1, 0.4)), p=0.4)],
+        context=[_s(_c("context_reversal_up"), _c("m15_range_position", "<", (0.1, 0.4)), p=0.4)],
         trigger=[_s(_c("lower_wick_ratio", ">", (0.4, 0.8)), _c("m5_rsi14", "<", (0.2, 0.45))),
                  _s(_c("bar_close_loc", ">", (0.5, 0.8)), _c("m5_range_position", ">", (0.3, 0.6))),
                  _s(_c("from_high_24_atr", ">", (0.6, 0.9)), _c("bar_dir", ">"), p=0.6)],

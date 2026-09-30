@@ -13,6 +13,12 @@ Regime dimensions are ``regime_direction``, ``regime_trend_strength``,
 ``context_trend_continuation/pullback/consolidation/compression/range_extreme/``
 ``breakout_setup/retest/failed_breakout/momentum_continuation/reversal_context`` (bool);
 ``context_range_low/high`` (float64, M15 range bounds from the context frame, NaN unknown).
+
+V2 (feature set 3) adds CASH-session levels/distances (``alpha.session.CASH_LEVEL_NAMES``: pdh_cash,
+sess_open_cash, overnight_high, gap_cash_atr, ...) driven by ``FeatureConfig.session`` and the
+directional context flags ``context_{pullback,breakout_setup,retest,momentum_continuation,
+reversal,failed_breakout}_{up,down}`` / ``context_range_extreme_{top,bottom}`` (bool; suffix =
+direction of the trade the context favours, see ``alpha.context.DIRECTIONAL_LABELS``).
 Integer-to-string maps live in metadata and the cache manifest.
 
 For each of ``m5``, ``m15`` and ``h1``, the curated arrays are ``{tf}_atr14``,
@@ -45,14 +51,23 @@ import talib
 
 import alpha.context as context_module
 import alpha.regime as regime_module
+import alpha.session as session_module
 import alpha.timeframe as timeframe_module
-from alpha.context import CONTEXT_LABELS, ContextConfig, classify_context
+from alpha.context import (
+    CONTEXT_LABELS,
+    DIRECTIONAL_LABELS,
+    ContextConfig,
+    classify_context,
+    directional_context,
+)
 from alpha.regime import REGIME_DIMENSIONS, RegimeConfig, classify_regime
+from alpha.session import CASH_LEVEL_NAMES, DEFAULT_CALENDAR, SessionCalendar, cash_session_arrays
+from alpha.session import local_clock as _local_clock
 from alpha.timeframe import MtfView
 
 FEATURE_SCHEMA_VERSION = 2
 # Bump whenever the set/definition of price-action feature arrays changes (cache invalidation).
-FEATURE_SET_VERSION = 2
+FEATURE_SET_VERSION = 3
 NEW_FEATURE_NAMES: tuple[str, ...] = (
     "dist_pdh_atr",
     "dist_pdl_atr",
@@ -84,6 +99,12 @@ NEW_FEATURE_NAMES: tuple[str, ...] = (
     "sweep_pdl",
     "gap_atr",
 )
+# V2 additions: cash-session levels (alpha.session) and directional context flags
+SESSION_FEATURE_NAMES: tuple[str, ...] = CASH_LEVEL_NAMES
+DIRECTIONAL_CONTEXT_NAMES: tuple[str, ...] = tuple(
+    f"context_{label.lower()}" for label in DIRECTIONAL_LABELS
+)
+V2_FEATURE_NAMES: tuple[str, ...] = SESSION_FEATURE_NAMES + DIRECTIONAL_CONTEXT_NAMES
 _PHASES = ("EUROPEAN_OPEN", "MORNING", "MIDDAY", "US_CASH_OPEN_OVERLAP", "LATE")
 _TA_NAMES = (
     "atr14",
@@ -118,6 +139,7 @@ class FeatureConfig:
     timeframes: tuple[str, ...] = ("M5", "M15", "H1")
     regime: RegimeConfig = field(default_factory=RegimeConfig)
     context: ContextConfig = field(default_factory=ContextConfig)
+    session: SessionCalendar = field(default_factory=SessionCalendar)
 
 
 class FeatureSet(dict[str, np.ndarray]):
@@ -150,6 +172,11 @@ def _config(config: FeatureConfig | Mapping[str, Any] | None) -> FeatureConfig:
         values["regime"] = RegimeConfig(**values["regime"])
     if isinstance(values.get("context"), Mapping):
         values["context"] = ContextConfig(**values["context"])
+    if isinstance(values.get("session"), Mapping):
+        session = dict(values["session"])
+        if "buckets" in session:
+            session["buckets"] = tuple(tuple(b) for b in session["buckets"])
+        values["session"] = SessionCalendar(**session)
     if "timeframes" in values:
         values["timeframes"] = tuple(values["timeframes"])
     return FeatureConfig(**values)
@@ -170,6 +197,7 @@ def _code_fingerprint() -> str:
     for module in (
         inspect.getmodule(_code_fingerprint),
         timeframe_module,
+        session_module,
         regime_module,
         context_module,
     ):
@@ -198,6 +226,7 @@ def _key_components(frame: pd.DataFrame, config: FeatureConfig) -> dict[str, Any
         "schema_version": FEATURE_SCHEMA_VERSION,
         "feature_set_version": FEATURE_SET_VERSION,
         "new_feature_names": list(NEW_FEATURE_NAMES),
+        "v2_feature_names": list(V2_FEATURE_NAMES),
         "timeframes": list(config.timeframes),
         "parameters": _plain(config),
         "code_fingerprint": _code_fingerprint(),
@@ -349,6 +378,9 @@ def _encoded_labels(
         maps["regime"][dimension] = {str(code): label for label, code in encode.items()}
     for label in CONTEXT_LABELS:
         arrays[f"context_{label.lower()}"] = context[label].to_numpy(bool)
+    direction = regime["DIRECTION"].astype(str).to_numpy()
+    for name, flag in directional_context(context, direction == "UP", direction == "DOWN").items():
+        arrays[f"context_{name}"] = flag
     # M15 range bounds exactly as the semantic mean-reversion strategy reads them (NaN = unknown)
     arrays["context_range_low"] = context["range_low"].to_numpy(float)
     arrays["context_range_high"] = context["range_high"].to_numpy(float)
@@ -489,6 +521,18 @@ def _price_action_arrays(a: Mapping[str, np.ndarray]) -> dict[str, np.ndarray]:
     return {name: out[name].astype(np.float64) for name in NEW_FEATURE_NAMES}
 
 
+def _session_arrays(
+    m5: pd.DataFrame, a: Mapping[str, np.ndarray], calendar: SessionCalendar
+) -> dict[str, np.ndarray]:
+    if calendar == DEFAULT_CALENDAR:  # Berlin clock arrays already built for the store
+        minute, day_id = a["berlin_minute"], a["berlin_day_id"]
+    else:
+        minute, day_id = _local_clock(a["ts_ns"], calendar)
+    return cash_session_arrays(
+        minute, day_id, a["o"], a["h"], a["l"], a["c"], a["m5_atr14"], calendar
+    )
+
+
 class FeatureStore:
     """Build and persist an immutable set of causal research features."""
 
@@ -559,6 +603,7 @@ class FeatureStore:
             short, long, out=np.full(n, np.nan), where=long > 0
         )
         arrays.update(_price_action_arrays(arrays))
+        arrays.update(_session_arrays(m5, arrays, cfg.session))
         for name, value in arrays.items():
             if value.ndim != 1 or len(value) != n:
                 raise AssertionError(f"unaligned feature {name}: {value.shape}")
@@ -619,6 +664,8 @@ __all__ = (
     "FEATURE_SCHEMA_VERSION",
     "FEATURE_SET_VERSION",
     "NEW_FEATURE_NAMES",
+    "SESSION_FEATURE_NAMES",
+    "V2_FEATURE_NAMES",
     "FeatureConfig",
     "FeatureSet",
     "FeatureStore",

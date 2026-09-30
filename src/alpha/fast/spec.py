@@ -11,7 +11,8 @@ from typing import Any, Literal
 import numpy as np
 
 from alpha.fast.sim import EXIT_FIXED_R, CandidateArrays
-from alpha.fast.store import NEW_FEATURE_NAMES, FeatureSet
+from alpha.fast.store import NEW_FEATURE_NAMES, V2_FEATURE_NAMES, FeatureSet
+from alpha.session import SQ_FEATURE_NAMES
 
 SPEC_SCHEMA_VERSION = 1
 
@@ -88,6 +89,8 @@ FEATURE_NAMES = frozenset(
     | _HTF_RANGES
     | _CONTEXT_FEATURES
     | set(NEW_FEATURE_NAMES)
+    | set(V2_FEATURE_NAMES)
+    | set(SQ_FEATURE_NAMES)
 )
 _OPS = {">", ">=", "<", "<=", "==", "!=", "crosses_above", "crosses_below"}
 _LEVELS = {

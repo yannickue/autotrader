@@ -25,6 +25,53 @@ CONTEXT_LABELS = (
     "REVERSAL_CONTEXT",
 )
 
+# V2 directional context.  Suffix semantics: ``_up`` / ``_down`` (``_bottom`` / ``_top`` for range
+# extremes) name the direction of the trade the context FAVOURS, so a LONG strategy reads the
+# ``_up`` flag and its SHORT mirror the ``_down`` flag:
+#   pullback_up          dip below the M15 reference inside an H1 UP trend (buy the dip)
+#   breakout_setup_up    close parked just under the M15 breakout high (upside break pending)
+#   retest_up            retest of a broken-out M15 high from above (after an UP break)
+#   momentum_continuation_up  M15 up-impulse inside an H1 UP trend
+#   reversal_up          bullish turn AGAINST the prior trend: failed breakdown or bullish
+#                        reference cross, while H1 was DOWN or the previous M15 slope was down
+#   failed_breakout_up   trapped sellers: failed BREAKDOWN below the M15 breakout low
+#   range_extreme_bottom / _top   close in the lower / upper fraction of the M15 range
+DIRECTIONAL_LABELS = (
+    "PULLBACK_UP",
+    "PULLBACK_DOWN",
+    "BREAKOUT_SETUP_UP",
+    "BREAKOUT_SETUP_DOWN",
+    "RETEST_UP",
+    "RETEST_DOWN",
+    "MOMENTUM_CONTINUATION_UP",
+    "MOMENTUM_CONTINUATION_DOWN",
+    "REVERSAL_UP",
+    "REVERSAL_DOWN",
+    "RANGE_EXTREME_TOP",
+    "RANGE_EXTREME_BOTTOM",
+    "FAILED_BREAKOUT_UP",
+    "FAILED_BREAKOUT_DOWN",
+)
+# direction-free M15 geometry columns (bool) the directional flags are assembled from
+GEOMETRY_COLUMNS = (
+    "geo_pullback_up",
+    "geo_pullback_down",
+    "geo_breakout_up",
+    "geo_breakout_down",
+    "geo_retest_up",
+    "geo_retest_down",
+    "geo_momentum_up",
+    "geo_momentum_down",
+    "geo_reversal_up",
+    "geo_reversal_down",
+    "geo_prior_down",
+    "geo_prior_up",
+    "geo_extreme_top",
+    "geo_extreme_bottom",
+    "geo_failed_up",
+    "geo_failed_down",
+)
+
 
 @dataclass(frozen=True)
 class ContextConfig:
@@ -149,6 +196,44 @@ def _m15_context(bars: pd.DataFrame, config: ContextConfig) -> pd.DataFrame:
     result["REVERSAL_CONTEXT"] = result["FAILED_BREAKOUT"] | (
         crossed_reference & (momentum.abs() >= config.momentum_atr * atr_long)
     )
+    # ---- V2 directional geometry (favoured-direction naming, see DIRECTIONAL_LABELS) ----------
+    mom_thr = config.momentum_atr * atr_long
+    cross_up = (previous_close < reference.shift(1)) & (close > reference) & (momentum >= mom_thr)
+    cross_down = (previous_close > reference.shift(1)) & (close < reference) & (
+        momentum <= -mom_thr
+    )
+    failed_favours_up = prior_down_break & close.ge(previous_breakout_low)
+    failed_favours_down = prior_up_break & close.le(previous_breakout_high)
+    result["geo_pullback_up"] = close.lt(reference) & close.ge(
+        reference - config.pullback_atr * atr_long
+    )
+    result["geo_pullback_down"] = close.gt(reference) & close.le(
+        reference + config.pullback_atr * atr_long
+    )
+    inside = close.between(breakout_low, breakout_high)
+    result["geo_breakout_up"] = inside & (breakout_high - close <= buffer)
+    result["geo_breakout_down"] = inside & (close - breakout_low <= buffer)
+    result["geo_retest_up"] = (
+        prior_up_break
+        & bars["low"].le(previous_breakout_high + tolerance)
+        & close.ge(previous_breakout_high - tolerance)
+    )
+    result["geo_retest_down"] = (
+        prior_down_break
+        & bars["high"].ge(previous_breakout_low - tolerance)
+        & close.le(previous_breakout_low + tolerance)
+    )
+    result["geo_momentum_up"] = momentum.ge(mom_thr)
+    result["geo_momentum_down"] = momentum.le(-mom_thr)
+    result["geo_reversal_up"] = failed_favours_up | cross_up
+    result["geo_reversal_down"] = failed_favours_down | cross_down
+    prior_slope = slope.shift(1)
+    result["geo_prior_down"] = prior_slope < -config.direction_threshold
+    result["geo_prior_up"] = prior_slope > config.direction_threshold
+    result["geo_extreme_top"] = upper_extreme
+    result["geo_extreme_bottom"] = lower_extreme
+    result["geo_failed_up"] = failed_favours_up
+    result["geo_failed_down"] = failed_favours_down
     required = [
         "normalized_slope",
         "atr_short",
@@ -161,7 +246,7 @@ def _m15_context(bars: pd.DataFrame, config: ContextConfig) -> pd.DataFrame:
         "compression_ratio",
     ]
     result["defined"] = result[required].notna().all(axis=1)
-    result.loc[~result["defined"], list(CONTEXT_LABELS)] = False
+    result.loc[~result["defined"], list(CONTEXT_LABELS) + list(GEOMETRY_COLUMNS)] = False
     result["labels"] = [
         tuple(label for label in CONTEXT_LABELS if bool(row[label]))
         if row["defined"]
@@ -185,8 +270,13 @@ def classify_context(frame: pd.DataFrame, config: ContextConfig | None = None) -
     rows: dict[pd.Timestamp, dict[str, object]] = {}
     for position in view.m15_alignment:
         if position < 0:
-            record = {column: np.nan for column in context.columns if column not in CONTEXT_LABELS}
+            record = {
+                column: np.nan
+                for column in context.columns
+                if column not in CONTEXT_LABELS and column not in GEOMETRY_COLUMNS
+            }
             record.update({label: False for label in CONTEXT_LABELS})
+            record.update({column: False for column in GEOMETRY_COLUMNS})
             record.update({"defined": False, "labels": (UNDEFINED,), "higher_bar_ts": None})
         else:
             stamp = position_to_stamp[int(position)]
@@ -198,4 +288,48 @@ def classify_context(frame: pd.DataFrame, config: ContextConfig | None = None) -
     return pd.DataFrame(records, index=view.m5.index)
 
 
-__all__ = ["CONTEXT_LABELS", "UNDEFINED", "ContextConfig", "classify_context"]
+def directional_context(
+    context: pd.DataFrame, h1_up: np.ndarray, h1_down: np.ndarray
+) -> dict[str, np.ndarray]:
+    """Directional context flags from ``classify_context`` output plus the H1 regime direction.
+
+    ``h1_up`` / ``h1_down`` are M5-aligned booleans (H1 regime direction UP / DOWN).  Pure per-bar
+    combination of causal inputs, so it inherits their truncation invariance.  Keys are
+    ``DIRECTIONAL_LABELS`` lower-cased.
+    """
+
+    defined = context["defined"].to_numpy(bool)
+    up = np.asarray(h1_up, dtype=bool)
+    down = np.asarray(h1_down, dtype=bool)
+
+    def geo(name: str) -> np.ndarray:
+        return context[f"geo_{name}"].to_numpy(bool) & defined
+
+    flags = {
+        "pullback_up": up & geo("pullback_up"),
+        "pullback_down": down & geo("pullback_down"),
+        "breakout_setup_up": geo("breakout_up"),
+        "breakout_setup_down": geo("breakout_down"),
+        "retest_up": geo("retest_up"),
+        "retest_down": geo("retest_down"),
+        "momentum_continuation_up": up & geo("momentum_up"),
+        "momentum_continuation_down": down & geo("momentum_down"),
+        "reversal_up": geo("reversal_up") & (down | geo("prior_down")),
+        "reversal_down": geo("reversal_down") & (up | geo("prior_up")),
+        "range_extreme_top": geo("extreme_top"),
+        "range_extreme_bottom": geo("extreme_bottom"),
+        "failed_breakout_up": geo("failed_up"),
+        "failed_breakout_down": geo("failed_down"),
+    }
+    return {name: np.asarray(value, dtype=bool) for name, value in flags.items()}
+
+
+__all__ = [
+    "CONTEXT_LABELS",
+    "DIRECTIONAL_LABELS",
+    "GEOMETRY_COLUMNS",
+    "UNDEFINED",
+    "ContextConfig",
+    "classify_context",
+    "directional_context",
+]

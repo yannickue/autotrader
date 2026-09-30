@@ -213,6 +213,11 @@ def _entry(name: str) -> CatalogEntry:
     return CATALOG[name]
 
 
+def _partner_feature(entry: CatalogEntry) -> str:
+    """Feature the SHORT mirror of a 'pair' entry reads (raw partner or a catalog partner)."""
+    return entry.mirror.partner_feature or _entry(entry.mirror.partner).feature
+
+
 def mirror_rule_parts(
     clause: Clause, resolver: ThresholdResolver | None, short: bool
 ) -> tuple[str, str, float | bool | None, str | None]:
@@ -229,7 +234,7 @@ def mirror_rule_parts(
     if entry.kind == "flag":
         feature = clause.feature
         if short and entry.mirror.kind == "pair":
-            feature = _entry(entry.mirror.partner).feature
+            feature = _partner_feature(entry)
         return feature, "==", True, None
     if entry.kind == "fixed":
         value = float(entry.fixed_value)
@@ -276,7 +281,9 @@ def compile_genome(
                     raise GenomeError(f"contradictory regime labels for {entry.dimension}")
             regime_filters[entry.dimension] = labels
         elif entry.kind == "flag" and entry.feature.startswith("context_"):
-            context_filters.append(entry.feature[len("context_"):].upper())
+            mirrored = short and entry.mirror.kind == "pair"
+            flag = _partner_feature(entry) if mirrored else entry.feature
+            context_filters.append(flag[len("context_"):].upper())
         else:
             rules.append(_rule(clause, resolver, short))
     if g.time_window is not None:

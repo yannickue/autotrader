@@ -6,7 +6,9 @@ written in the LONG frame; the ``mirror`` rule says how the same clause reads fo
 
 * ``self``          identical rule (direction-agnostic feature, e.g. ADX, context flags)
 * ``reflect``       same feature, op flipped, value -> 2*center - value (negate for center 0)
-* ``pair``          partner feature, same op and value (brk_up<->brk_dn, from_high<->from_low)
+* ``pair``          partner feature, same op and value (brk_up<->brk_dn, from_high<->from_low);
+                    ``Mirror.partner_feature`` names a raw feature that is not itself a catalog
+                    entry (V2 directional context: ``context_pullback_up`` -> ``..._down``)
 * ``pair_reflect``  partner feature, op flipped, value reflected (dist_pdh<->dist_pdl)
 * ``level``         ``close <op> level`` rules: partner level (or the same level) with op flipped
 
@@ -22,6 +24,7 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 from alpha.fast import spec as _spec
+from alpha.session import SQ_BASE_FEATURES
 
 Layer = Literal["REGIME", "CONTEXT", "TRIGGER", "LEVEL", "TIME"]
 Kind = Literal["continuous", "flag", "signed", "label", "fixed", "level", "time"]
@@ -38,6 +41,7 @@ def flip_op(op: str) -> str:
 class Mirror:
     kind: Literal["self", "reflect", "pair", "pair_reflect", "level"] = "self"
     partner: str | None = None  # catalog entry name of the mirrored feature
+    partner_feature: str | None = None  # raw partner feature (not a catalog entry)
     center: float = 0.0
     labels: tuple[tuple[str, str], ...] = ()  # label -> mirrored label (regime labels)
 
@@ -61,6 +65,9 @@ class CatalogEntry:
     dimension: str | None = None  # kind == "label": regime dimension
     labels: tuple[str, ...] = ()
     alias_group: str | None = None
+    # V2 opt-in: the entry reads the session-quantile-rank array ``{base}_sq`` (see
+    # alpha.discovery.session_norm); only available when the FeatureSet was augmented with it
+    session_conditioned: bool = False
 
     @property
     def feature(self) -> str:
@@ -126,21 +133,29 @@ _add("compression_expansion_ratio", "CONTEXT", "continuous",
      "short/long range ratio: <1 compressed, >1 expanding", alias_group="compress")
 _add("range_ratio_12_48", "CONTEXT", "continuous",
      "12-bar vs 48-bar range: contraction before expansion", alias_group="compress")
-_FLAGS = {
+_FLAGS = {  # direction-agnostic flags keep the symmetric 'self' mirror
     "trend_continuation": "established trend still intact",
-    "pullback": "shallow counter-move inside a trend (buy the dip)",
     "consolidation": "price coiling in a tight box",
     "compression": "volatility squeeze precedes expansion",
-    "range_extreme": "price at the edge of a range (fade candidate)",
-    "breakout_setup": "price parked at a breakout boundary",
-    "retest": "return to a broken level",
-    "failed_breakout": "breakout that trapped participants",
-    "momentum_continuation": "impulse leg still extending",
-    "reversal_context": "conditions favouring a turn",
 }
 for _n, _why in _FLAGS.items():
     _add(f"context_{_n}", "CONTEXT", "flag", f"M15 context flag: {_why}", ops=("==",),
          alias_group="compress" if _n == "compression" else None)
+# V2 directional flags: the catalog entry is the LONG frame ('_up' / '_bottom'); SHORT mirrors to
+# the partner raw feature ('_down' / '_top').  The suffix names the trade direction favoured.
+_DIRECTIONAL = (
+    ("pullback_up", "pullback_down", "dip inside an H1 up-trend (buy the dip)"),
+    ("breakout_setup_up", "breakout_setup_down", "price parked under the M15 breakout high"),
+    ("retest_up", "retest_down", "retest of a broken-out M15 high from above"),
+    ("momentum_continuation_up", "momentum_continuation_down",
+     "M15 up-impulse inside an H1 up-trend"),
+    ("reversal_up", "reversal_down", "bullish turn against the prior down-trend"),
+    ("failed_breakout_up", "failed_breakout_down", "failed breakdown that trapped sellers"),
+    ("range_extreme_bottom", "range_extreme_top", "close at the bottom edge of the M15 range"),
+)
+for _n, _p, _why in _DIRECTIONAL:
+    _add(f"context_{_n}", "CONTEXT", "flag", f"M15 directional context (LONG frame): {_why}",
+         ops=("==",), mirror=Mirror("pair", partner_feature=f"context_{_p}"))
 
 # ------------------------------------------------------------------ TRIGGER (M5)
 _add("m5_adx14", "TRIGGER", "continuous", "M5 trend strength at entry", q_lo=0.3, q_hi=0.9)
@@ -216,6 +231,24 @@ _add("dist_pdc_atr", "LEVEL", "signed", "signed ATR distance to previous close",
 _add("dist_sess_open_atr", "LEVEL", "signed", "signed ATR distance to session open", mirror=_R,
      q_lo=0.1, q_hi=0.9)
 _add("gap_atr", "LEVEL", "signed", "opening gap in ATR units", mirror=_R, q_lo=0.1, q_hi=0.9)
+# V2 CASH-session levels (alpha.session): the same structure on the cash session only
+for _h, _l, _lab in (
+    ("dist_pdh_cash_atr", "dist_pdl_cash_atr", "previous cash-session high/low"),
+    ("dist_sess_high_cash_atr", "dist_sess_low_cash_atr", "cash-session high/low so far"),
+    ("dist_ovn_high_atr", "dist_ovn_low_atr", "overnight (pre-cash-open) high/low"),
+):
+    _a, _b = _pair(_h, _l, reflect=True)
+    _k = "continuous" if "sess" in _h else "signed"
+    _add(_h, "LEVEL", _k, f"signed ATR distance to {_lab} (high side)", mirror=_a,
+         q_lo=0.1, q_hi=0.85)
+    _add(_l, "LEVEL", _k, f"signed ATR distance to {_lab} (low side)", mirror=_b,
+         q_lo=0.1, q_hi=0.85)
+_add("dist_pdc_cash_atr", "LEVEL", "signed", "signed ATR distance to the previous cash close",
+     mirror=_R, q_lo=0.1, q_hi=0.85)
+_add("dist_sess_open_cash_atr", "LEVEL", "signed", "signed ATR distance to the cash open",
+     mirror=_R, q_lo=0.1, q_hi=0.9)
+_add("gap_cash_atr", "LEVEL", "signed", "cash-open gap (cash open vs previous cash close) in ATR",
+     mirror=_R, q_lo=0.1, q_hi=0.9)
 # close-vs-level rules that need no new features (rule other_feature)
 for _h, _l, _hf, _lf, _ops, _lab in (
     ("lvl_c_pdh", "lvl_c_pdl", "previous_day_high", "previous_day_low", (">", "<"),
@@ -237,6 +270,29 @@ _add("lvl_c_sess_open", "LEVEL", "level", "close above/below the session open (i
      ops=(">", "<"), rule_feature="c", other_feature="session_open", mirror=Mirror("level"))
 _add("lvl_c_pdc", "LEVEL", "level", "close above/below the previous close", ops=(">", "<"),
      rule_feature="c", other_feature="previous_day_close", mirror=Mirror("level"))
+_add("lvl_c_pdh_cash", "LEVEL", "level", "close relative to the previous cash-session high",
+     ops=(">", "<"), rule_feature="c", other_feature="pdh_cash",
+     mirror=Mirror("level", partner="lvl_c_pdl_cash"))
+_add("lvl_c_pdl_cash", "LEVEL", "level", "close relative to the previous cash-session low",
+     ops=(">", "<"), rule_feature="c", other_feature="pdl_cash",
+     mirror=Mirror("level", partner="lvl_c_pdh_cash"))
+
+# ------------------------------------------------------------------ SESSION-CONDITIONED (opt-in)
+# ``{base}_sq`` = within-session-bucket Train quantile rank in [0,1] of the base feature.  The
+# clause quantile q then reads "top (1-q) of the distribution of THIS time of day".  Same grammar
+# and mirror as the base entry; rank space is bounded so no floor is needed (brk_* ranks are 0 for
+# non-breakout bars, see session_norm).
+_BASE = {e.name: e for e in _E}
+for _base in SQ_BASE_FEATURES:
+    _b = _BASE[_base]
+    _m = _b.mirror
+    if _m.kind == "reflect":
+        _m = Mirror("reflect", center=0.5)  # rank space is centred on 0.5
+    elif _m.kind == "pair":
+        _m = Mirror("pair", partner=f"{_m.partner}_sq")
+    _add(f"{_base}_sq", _b.layer, _b.kind, f"{_b.role} (session-conditioned rank)",
+         ops=_b.ops, q_lo=_b.q_lo, q_hi=_b.q_hi, mirror=_m, session_conditioned=True,
+         alias_group=_b.alias_group)
 
 # ------------------------------------------------------------------ TIME
 _add("berlin_minute", "TIME", "time", "intraday window in Berlin minutes (session phase edge)",
@@ -275,6 +331,7 @@ class FeaturePool:
         ok = {
             n for n, e in CATALOG.items()
             if e.kind != "time" and all(f in avail for f in e.required_features())
+            and (e.mirror.partner_feature is None or e.mirror.partner_feature in avail)
         }
         # partner-dependent mirrors need the partner present, otherwise SHORT is not expressible
         changed = True

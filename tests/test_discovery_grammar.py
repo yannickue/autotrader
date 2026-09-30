@@ -87,7 +87,7 @@ def test_determinism_per_seed(env):
 def test_pool_is_catalog_intersection_and_adapts(env):
     pool = env["pool"]
     assert pool.names <= set(CATALOG)
-    assert {"h1_adx14", "m5_rsi14", "context_pullback", "regime_direction"} <= pool.names
+    assert {"h1_adx14", "m5_rsi14", "context_pullback_up", "regime_direction"} <= pool.names
     assert all(f in env["features"] or f == "c" for e in pool.entries.values()
                for f in e.required_features())
 
@@ -229,13 +229,14 @@ def test_mirror_short_is_exact_mirror_of_long(env):
     # reflect around 50 (RSI), around 0 (slope), op flipped
     v = lr[("m5_rsi14", "<")].threshold
     assert sr[("m5_rsi14", ">")].threshold == pytest.approx(100.0 - v)
-    extra = dict(context=(Clause("context_pullback", "==", None),),
+    extra = dict(context=(Clause("context_pullback_up", "==", None),),
                  trigger=(Clause("m5_ema_slope", ">", 0.6),), stop=StopGene(), target_r=2.0)
     le = compile_genome(Genome(direction="LONG", **extra), res)
     se = compile_genome(Genome(direction="SHORT", **extra), res)
     v = le.entry_rules[0].threshold
     assert se.entry_rules[0].op == "<" and se.entry_rules[0].threshold == pytest.approx(-v)
-    assert le.context_filters == se.context_filters == ("PULLBACK",)
+    assert le.context_filters == ("PULLBACK_UP",)  # V2: directional flag mirrors to the partner
+    assert se.context_filters == ("PULLBACK_DOWN",)
     # level rule: close > pdh  <->  close < pdl
     assert lr[("c", ">")].other_feature == "previous_day_high"
     assert sr[("c", "<")].other_feature == "previous_day_low"
