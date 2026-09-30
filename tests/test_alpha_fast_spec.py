@@ -10,7 +10,15 @@ import pytest
 from alpha.common.sim import ExitSpec
 from alpha.fast.provider import KernelFamilyProvider, SpecProvider, to_signal_candidates
 from alpha.fast.sim import EXIT_FIXED_R, CandidateArrays
-from alpha.fast.spec import Rule, StopSpec, StrategySpec, TargetSpec, evaluate_spec
+from alpha.fast.spec import (
+    Rule,
+    RuleMaskCache,
+    StopSpec,
+    StrategySpec,
+    TargetSpec,
+    _rule_mask,
+    evaluate_spec,
+)
 from alpha.fast.store import FeatureSet
 from tests._fast_equiv import golden_setup, requires_dataset
 
@@ -231,3 +239,13 @@ def test_conversion_matches_reference_fields_for_golden_variants() -> None:
         ]
         checked += 1
     assert checked >= 2
+def test_rule_mask_cache_matches_uncached_for_every_operator_and_nan() -> None:
+    features = _features()
+    features["m5_normalized_return"] = np.array([np.nan, -1.0, 0.0, 1.0, 2.0, np.nan])
+    features["h1_ema_slope"] = np.array([0.0, -1.0, np.nan, 0.5, 2.0, 3.0])
+    cache = RuleMaskCache(features, max_entries=20)
+    for op in (">", ">=", "<", "<=", "==", "!=", "crosses_above", "crosses_below"):
+        rule = Rule("m5_normalized_return", op, other_feature="h1_ema_slope")
+        np.testing.assert_array_equal(cache.get(rule), _rule_mask(features, rule))
+        np.testing.assert_array_equal(cache.get(rule), _rule_mask(features, rule))
+    assert cache.hits == 8

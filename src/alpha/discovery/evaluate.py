@@ -22,6 +22,9 @@ import hashlib
 import importlib
 import json
 import math
+import os
+import time
+import weakref
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -39,12 +42,20 @@ from alpha.discovery.compile import (
     canonicalize,
     compile_genome,
 )
+from alpha.discovery.disk import prune_oldest_shards
 from alpha.discovery.genome import Genome, GenomeError, complexity
-from alpha.fast.screen import PartitionScreen, RejectReason, reject_reason, screen_trades
+from alpha.fast.screen import (
+    PartitionScreen,
+    RejectReason,
+    reject_reason,
+    screen_partition_trades,
+)
 from alpha.fast.sim import CandidateArrays, TradeArrays, simulate_fast
-from alpha.fast.spec import evaluate_spec
+from alpha.fast.spec import RuleMaskCache, evaluate_spec
 
-EVALUATOR_VERSION = "ad1-genome-eval-v3"  # v3: wider source/library fingerprint; v2: MIN 60
+# v4: lazy BASE/Validation scenarios (cache entries carry a completeness flag), shard cache;
+#     v3: wider source/library fingerprint; v2: MIN 60
+EVALUATOR_VERSION = "ad1-genome-eval-v4"
 # Stage A / fitness minimum of Train trades (COMBINED_ADVERSE).  Principled from the standard
 # error: at n = 60 with sd(R) ~ 1..1.5 the mean is resolved to ~0.13-0.19 R (1 SE).
 MIN_TRAIN_TRADES = 60
@@ -112,16 +123,21 @@ class TrainView:
 
     genome_hash: str
     complexity: int
-    base: SideMetrics
+    # ``base`` is None on a LEAN evaluation (need_base=False, valid genome): the search fitness
+    # reads ``adverse`` only.  Use ``GenomeEvaluator.ensure_full`` to obtain BASE.
+    base: SideMetrics | None
     adverse: SideMetrics  # COMBINED_ADVERSE cost
 
     def to_dict(self) -> dict[str, Any]:
         return {"genome_hash": self.genome_hash, "complexity": self.complexity,
-                "base": self.base.to_dict(), "adverse": self.adverse.to_dict()}
+                "base": None if self.base is None else self.base.to_dict(),
+                "adverse": self.adverse.to_dict()}
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> TrainView:
-        return cls(raw["genome_hash"], raw["complexity"], SideMetrics.from_dict(raw["base"]),
+        base = raw["base"]
+        return cls(raw["genome_hash"], raw["complexity"],
+                   None if base is None else SideMetrics.from_dict(base),
                    SideMetrics.from_dict(raw["adverse"]))
 
 
@@ -155,18 +171,23 @@ class GenomeEval:
     n_candidates: int
     reject: str | None  # RejectReason value, "invalid_genome" or None
     train: TrainView
-    _validation: ValidationView  # sealed: use validation_gate_view()
+    _validation: ValidationView | None  # sealed: use validation_gate_view(); None when lean
 
     @property
     def rejected(self) -> bool:
         return self.reject is not None
+
+    @property
+    def is_full(self) -> bool:
+        """False for a lean evaluation (BASE + Validation views not computed)."""
+        return self._validation is not None
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "genome_hash": self.genome_hash, "lineage": self.lineage,
             "complexity": self.complexity, "n_candidates": self.n_candidates,
             "reject": self.reject, "train": self.train.to_dict(),
-            "validation": self._validation.to_dict(),
+            "validation": None if self._validation is None else self._validation.to_dict(),
         }
 
     def to_json(self) -> str:
@@ -174,15 +195,19 @@ class GenomeEval:
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> GenomeEval:
+        val = raw["validation"]
         return cls(
             raw["genome_hash"], raw["lineage"], raw["complexity"], raw["n_candidates"],
             raw["reject"], TrainView.from_dict(raw["train"]),
-            ValidationView.from_dict(raw["validation"]),
+            None if val is None else ValidationView.from_dict(val),
         )
 
 
 def validation_gate_view(ev: GenomeEval) -> ValidationView:
     """The ONLY accessor of Validation metrics.  Never call from a search-time decision."""
+    if ev._validation is None:
+        raise ValueError("lean evaluation carries no Validation view; call "
+                         "GenomeEvaluator.ensure_full(ev, genome) first")
     return ev._validation
 
 
@@ -247,6 +272,21 @@ def _source_hashes() -> dict[str, str]:
     return out
 
 
+def _flush_shard(root: Path, buf: list[str]) -> None:
+    """Append-only shard of ``key<TAB>json`` lines (one file per flush, later shards win)."""
+    if not buf or not root.is_dir():
+        return
+    name = f"shard_{time.time_ns():020d}_{os.getpid()}.jsonl"
+    tmp = root / (name + ".tmp")
+    tmp.write_text("\n".join(buf) + "\n", encoding="utf-8")
+    tmp.replace(root / name)
+    buf.clear()
+
+
+_SHARD_FLUSH_EVERY = 2000
+_RULE_MASK_ENTRIES = 768
+
+
 class GenomeEvaluator:
     """Deterministic evaluator with a shared trial ledger and an on-disk result cache."""
 
@@ -254,6 +294,7 @@ class GenomeEvaluator:
         self, store: Any, market: Any, dates: np.ndarray, split: SplitPlan, cfg: dict,
         cache_dir: Path | str, ledger: TrialLedger | None = None,
         min_train_trades: int | None = None,
+        max_cache_mb: float = 500.0,
     ) -> None:
         self.store, self.market, self.split, self.cfg = store, market, split, cfg
         self.dates = np.asarray(dates).astype("datetime64[D]")
@@ -267,11 +308,23 @@ class GenomeEvaluator:
                               cfg.get("sample_rules", {}).get("min_trades_flag", MIN_TRAIN_TRADES))
         self.cache_root = Path(cache_dir) / "genome_evals"
         self.cache_root.mkdir(parents=True, exist_ok=True)
+        self.max_cache_bytes = max(0, int(max_cache_mb * 1024 * 1024))
+        prune_oldest_shards(self.cache_root, self.max_cache_bytes)
         self._memory: dict[str, dict] = {}
+        self._shard_buf: list[str] = []
+        self._load_shards()
+        # flushed on garbage collection / interpreter exit; runners also call flush() explicitly
+        self._finalizer = weakref.finalize(self, _flush_shard, self.cache_root, self._shard_buf)
         self.sim_count = 0
         self.evaluations = 0
+        self._rule_masks = RuleMaskCache(store, _RULE_MASK_ENTRIES)
 
         train_mask = split.mask(self.dates, split.train)
+        # Partition masks over bars + Train/Validation day counts are fixed: precompute once
+        self._tm_bar = train_mask
+        self._vm_bar = split.mask(self.dates, split.validation)
+        self._n_days_train = len(np.unique(market.day[self._tm_bar]))
+        self._n_days_val = len(np.unique(market.day[self._vm_bar]))
         self.resolver = ThresholdResolver(store, train_mask)
         # chunk id (0..N-1) per bar over equal-calendar thirds of the TRAIN date range
         start = np.datetime64(split.train.start)
@@ -299,10 +352,29 @@ class GenomeEvaluator:
     def fingerprint(self, genome_hash: str) -> str:
         return stable_hash({"static": self._fp_static, "genome": genome_hash})
 
+    def _load_shards(self) -> None:
+        """Load shard files (sorted by name = time order; a complete entry is never replaced
+        by a lean one).  Truncated / corrupt lines are skipped, i.e. treated as cache misses."""
+        for path in sorted(self.cache_root.glob("shard_*.jsonl")):
+            try:
+                text = path.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            for line in text.splitlines():
+                key, _, body = line.partition("\t")
+                try:
+                    raw = json.loads(body)
+                except ValueError:
+                    continue
+                cur = self._memory.get(key)
+                if cur is not None and cur.get("full", True) and not raw.get("full", True):
+                    continue
+                self._memory[key] = raw
+
     def _cache_get(self, key: str) -> dict | None:
         if key in self._memory:
             return self._memory[key]
-        path = self.cache_root / f"{key}.json"
+        path = self.cache_root / f"{key}.json"  # legacy one-file-per-result entries
         if path.is_file():
             try:
                 raw = json.loads(path.read_text(encoding="utf-8"))
@@ -314,12 +386,34 @@ class GenomeEvaluator:
 
     def _cache_put(self, key: str, raw: dict) -> None:
         self._memory[key] = raw
-        (self.cache_root / f"{key}.json").write_text(
-            json.dumps(raw, sort_keys=True, allow_nan=False), encoding="utf-8")
+        self._shard_buf.append(f"{key}\t" + json.dumps(raw, sort_keys=True, allow_nan=False))
+        if len(self._shard_buf) >= _SHARD_FLUSH_EVERY:
+            self.flush()
+
+    def flush(self) -> None:
+        """Persist buffered results (call at phase end; also runs on GC / exit)."""
+        _flush_shard(self.cache_root, self._shard_buf)
+        prune_oldest_shards(self.cache_root, self.max_cache_bytes)
+
+    def cleanup(self) -> None:
+        self.flush()
+
+    def __enter__(self) -> GenomeEvaluator:
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        self.cleanup()
 
     # ------------------------------------------------------------------ evaluation
-    def evaluate(self, genome: Genome, kind: str = "structural") -> GenomeEval:
-        """Evaluate one genome; ``kind`` ('structural' | 'param') is recorded on the ledger."""
+    def evaluate(self, genome: Genome, kind: str = "structural",
+                 need_base: bool = True) -> GenomeEval:
+        """Evaluate one genome; ``kind`` ('structural' | 'param') is recorded on the ledger.
+
+        ``need_base=False`` (search drivers) skips the BASE-cost simulation and the Validation
+        views: the returned ``GenomeEval`` is LEAN (``train.base is None``, no Validation view)
+        but every number ``train_fitness`` reads is bit-identical.  The default returns a full
+        evaluation, upgrading a lean cache entry when necessary.
+        """
         self.evaluations += 1
         status = self.ledger.record(genome, kind)  # validates ``kind``
         if status == "invalid":
@@ -330,26 +424,72 @@ class GenomeEvaluator:
         canon = canonicalize(genome)
         ghash = canonical_hash(canon)
         # behaviour-level uniqueness (identical resolved spec), reported by the ledger
+        spec = None
         with contextlib.suppress(GenomeError, ValueError):
-            self.ledger.behaviors.add(
-                behavior_key(compile_genome(canon, self.resolver, snap=False)))
+            spec = compile_genome(canon, self.resolver, snap=False)
+            self.ledger.behaviors.add(behavior_key(spec))
         key = self.fingerprint(ghash)
         raw = self._cache_get(key)
         if raw is not None:
             self.ledger.cache_hits += 1
-        else:
-            raw = self._compute(canon, ghash).to_dict()
+        if raw is None or (need_base and not raw.get("full", True)):
+            raw = self._compute_raw(canon, ghash, spec, need_base)
             self._cache_put(key, raw)
         return dataclasses.replace(GenomeEval.from_dict(raw), lineage=genome.lineage)
 
-    def _compute(self, canon: Genome, ghash: str) -> GenomeEval:
-        spec = compile_genome(canon, self.resolver, snap=False)
-        cands = evaluate_spec(self.store, spec)
+    def ensure_full(self, ev: GenomeEval, genome: Genome) -> GenomeEval:
+        """Upgrade a lean evaluation of ``genome`` to a full one (no ledger side effects)."""
+        if ev.is_full:
+            return ev
+        canon = canonicalize(genome)
+        ghash = canonical_hash(canon)
+        if ghash != ev.genome_hash:
+            raise ValueError("ensure_full: genome does not match the evaluation")
+        key = self.fingerprint(ghash)
+        raw = self._cache_get(key)
+        if raw is None or not raw.get("full", True):
+            raw = self._compute_raw(canon, ghash, None, True)
+            self._cache_put(key, raw)
+        return dataclasses.replace(GenomeEval.from_dict(raw), lineage=ev.lineage)
+
+    def _compute_raw(self, canon: Genome, ghash: str, spec: Any, need_full: bool) -> dict:
+        result = self._compute(canon, ghash, spec, need_full)
+        raw = result.to_dict()
+        raw["full"] = result.is_full  # cache-only completeness flag (not part of GenomeEval)
+        return raw
+
+    def _reduce(self, trades: TradeArrays, want_val: bool
+                ) -> tuple[SideMetrics, SideMetrics | None]:
+        """Train (+ optionally Validation) metrics from precomputed bar-level partition masks."""
+        contract = self.sizing.contract_size
+        if len(trades):
+            t_mask = self._tm_bar[trades.entry_idx]
+            chunks = self._chunk_of_bar[trades.entry_idx]
+        else:
+            t_mask = np.zeros(0, bool)
+            chunks = np.zeros(0, int)
+        train = screen_partition_trades(trades, t_mask, self._n_days_train,
+                                        contract_size=contract)
+        train_side = _side(trades, t_mask, train, chunks)
+        if not want_val:
+            return train_side, None
+        v_mask = self._vm_bar[trades.entry_idx] if len(trades) else np.zeros(0, bool)
+        val = screen_partition_trades(trades, v_mask, self._n_days_val, contract_size=contract)
+        return train_side, _side(trades, v_mask, val, None)
+
+    def _compute(self, canon: Genome, ghash: str, spec: Any = None,
+                 need_full: bool = True) -> GenomeEval:
+        if spec is None:
+            spec = compile_genome(canon, self.resolver, snap=False)
+        cands = evaluate_spec(self.store, spec, self._rule_masks)
         n_cand = len(cands.decision_idx)
         cx = complexity(canon)
-        train_dates = self.dates[cands.decision_idx] if n_cand else self.dates[:0]
-        n_train_cand = int(self.split.mask(train_dates, self.split.train).sum()) if n_cand else 0
         empty = _empty_side()
+        if n_cand:
+            tm = self._tm_bar[cands.decision_idx]
+            n_train_cand = int(tm.sum())
+        else:
+            n_train_cand = 0
 
         def rejected(reason: str, n: int) -> GenomeEval:
             side = _empty_side(n)
@@ -359,7 +499,6 @@ class GenomeEvaluator:
         # Stage A judges TRAIN candidates only (Validation decisions must not count towards
         # the Train sample or the impossible-spec check)
         if n_cand:
-            tm = self.split.mask(train_dates, self.split.train)
             train_cands = CandidateArrays(
                 cands.decision_idx[tm], cands.direction[tm], cands.stop[tm], cands.target[tm],
                 cands.target_r[tm], cands.exit_kind[tm])
@@ -371,23 +510,19 @@ class GenomeEvaluator:
             n = n_train_cand if reason is RejectReason.TOO_FEW_TRADES else 0
             return rejected(reason.value, n)
 
-        sides: dict[str, tuple[SideMetrics, SideMetrics]] = {}
-        for name in (ADVERSE_COST, BASE_COST):
+        sides: dict[str, tuple[SideMetrics, SideMetrics | None]] = {}
+        for name in (ADVERSE_COST, BASE_COST) if need_full else (ADVERSE_COST,):
             trades = simulate_fast(self.market, cands, self._costs[name], self.sizing, self.rules)
             self.sim_count += 1
-            screen = screen_trades(trades, self.market, self.split, dates=self.dates,
-                                   sizing=self.sizing)
-            entry_dates = self.dates[trades.entry_idx] if len(trades) else self.dates[:0]
-            t_mask = self.split.mask(entry_dates, self.split.train)
-            v_mask = self.split.mask(entry_dates, self.split.validation)
-            chunks = self._chunk_of_bar[trades.entry_idx] if len(trades) else np.zeros(0, int)
-            sides[name] = (_side(trades, t_mask, screen.train, chunks),
-                           _side(trades, v_mask, screen.validation, None))
-            if name == ADVERSE_COST and screen.train.n_trades < self.min_trades:
+            sides[name] = self._reduce(trades, want_val=need_full)
+            if name == ADVERSE_COST and sides[name][0].screen.n_trades < self.min_trades:
                 side = sides[name][0]
                 return GenomeEval(ghash, canon.lineage, cx, n_cand,
                                   RejectReason.TOO_FEW_TRADES.value,
                                   TrainView(ghash, cx, side, side), ValidationView(empty, empty))
+        if not need_full:  # lean: the fitness reads only the COMBINED_ADVERSE Train side
+            return GenomeEval(ghash, canon.lineage, cx, n_cand, None,
+                              TrainView(ghash, cx, None, sides[ADVERSE_COST][0]), None)
         return GenomeEval(
             ghash, canon.lineage, cx, n_cand, None,
             TrainView(ghash, cx, sides[BASE_COST][0], sides[ADVERSE_COST][0]),

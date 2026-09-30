@@ -129,7 +129,7 @@ class _Scorer:
         if not self.can_afford(ind.chash):
             return False
         if ind.chash not in self.memo:
-            ev = self.evaluator.evaluate(ind.genome, kind="structural")
+            ev = self.evaluator.evaluate(ind.genome, kind="structural", need_base=False)
             self.calls += 1
             fit = train_fitness(ev.train, self.evaluator.min_trades)
             cand = None if ev.rejected else Candidate(canonicalize(ind.genome), ev.genome_hash,

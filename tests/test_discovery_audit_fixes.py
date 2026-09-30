@@ -115,7 +115,7 @@ def test_ledger_counts_unique_specs_and_behaviours(env, tmp_path):
 
 
 def test_fingerprint_sources_and_versions():
-    assert EVALUATOR_VERSION == "ad1-genome-eval-v3"
+    assert EVALUATOR_VERSION == "ad1-genome-eval-v4"
     hashes = _source_hashes()
     for mod in ("alpha.common.frame", "alpha.common.sim", "alpha.common.protocol",
                 "alpha.discovery.genome"):

@@ -63,14 +63,15 @@ def _subset(trades: TradeArrays, mask: np.ndarray) -> TradeArrays:
 
 
 def _loss_streak(values: np.ndarray) -> int:
-    longest = current = 0
-    for value in values:
-        if value < 0:
-            current += 1
-            longest = max(longest, current)
-        else:
-            current = 0
-    return longest
+    """Longest run of consecutive negative values (vectorised; NaN counts as non-loss)."""
+    neg = np.asarray(values) < 0
+    if not neg.any():
+        return 0
+    padded = np.concatenate(([False], neg, [False])).astype(np.int8)
+    edges = np.diff(padded)
+    starts = np.flatnonzero(edges == 1)
+    ends = np.flatnonzero(edges == -1)
+    return int((ends - starts).max())
 
 
 def _metrics(
@@ -116,6 +117,17 @@ def _metrics(
         mean_mfe_r=float(trades.mfe_r.mean()),
         mean_mae_r=float(trades.mae_r.mean()),
     )
+
+
+def screen_partition_trades(
+    trades: TradeArrays, trade_mask: np.ndarray, n_days: int, *, contract_size: float
+) -> PartitionScreen:
+    """Metrics of ``trades[trade_mask]`` for a partition with ``n_days`` market days.
+
+    Identical to what ``screen_trades`` computes per partition; exposed so callers that hold
+    precomputed partition masks / day counts avoid recomputing them for every candidate.
+    """
+    return _metrics(_subset(trades, trade_mask), n_days, contract_size=contract_size)
 
 
 def _partition_screen(

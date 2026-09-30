@@ -35,7 +35,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -267,7 +269,7 @@ def run_one(seed: int, out_root: Path, config: Path, kind: str = "shuffle_drift"
     real_dev = ar2_fast.dev_frame(ds.frame, plan)
     null_dev = make_null_frame(real_dev, seed, kind=kind, plan=plan)
     out_dir = out_root / f"seed_{seed}"
-    cache_dir = REPO_ROOT / f"data/feature_store/ad1_null_{seed}"
+    cache_dir = Path(tempfile.mkdtemp(prefix=f"ad1_null_{seed}_"))
     args = ad1_discovery.build_parser().parse_args([
         "--config", str(config), "--seed", str(seed), "--tag", f"null_{seed}",
         "--out-dir", str(out_dir), "--random-structures", "1200", "--optuna-structures", "80",
@@ -276,15 +278,18 @@ def run_one(seed: int, out_root: Path, config: Path, kind: str = "shuffle_drift"
         "--prior-trials", str(PRIOR_TRIALS), "--prior-unique-specs", str(PRIOR_UNIQUE_SPECS),
         "--cache-dir", str(cache_dir)])
     t0 = time.perf_counter()
-    disc = ad1_discovery.run(args, dev_override=null_dev)
-    surv = ad1_survivors.run(out_dir / "candidate_pool.json", config, out_dir, cache_dir,
-                             dev_override=null_dev)
-    raw = json.loads((out_dir / "survivors.json").read_text(encoding="utf-8"))
-    rec = _digest(seed, disc, surv, raw, time.perf_counter() - t0)
-    rec["null_kind"] = kind
-    rec["finalists_dir"] = {f["canonical_hash"][:12]: f["genome"]["direction"]
-                            for f in raw["finalists"]}
-    return rec
+    try:
+        disc = ad1_discovery.run(args, dev_override=null_dev)
+        surv = ad1_survivors.run(out_dir / "candidate_pool.json", config, out_dir, cache_dir,
+                                 dev_override=null_dev)
+        raw = json.loads((out_dir / "survivors.json").read_text(encoding="utf-8"))
+        rec = _digest(seed, disc, surv, raw, time.perf_counter() - t0)
+        rec["null_kind"] = kind
+        rec["finalists_dir"] = {f["canonical_hash"][:12]: f["genome"]["direction"]
+                                for f in raw["finalists"]}
+        return rec
+    finally:
+        shutil.rmtree(cache_dir, ignore_errors=True)
 
 
 def _digest(seed: int, disc: dict, surv: dict, raw: dict, wall: float) -> dict:
@@ -392,6 +397,8 @@ def aggregate_powered(out_root: Path) -> dict:
 
 
 def main(argv: list[str] | None = None) -> int:
+    from alpha.discovery.disk import assert_free_space, limit_workers_by_space
+
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--seed", type=int, default=None)
     p.add_argument("--aggregate", action="store_true")
@@ -403,6 +410,7 @@ def main(argv: list[str] | None = None) -> int:
     a = p.parse_args(argv)
     out_root = Path(a.out_root) if a.out_root else (
         OUT_ROOT if a.null_kind == "shuffle_drift" else ZERODRIFT_ROOT)
+    assert_free_space(out_root)
     out_root.mkdir(parents=True, exist_ok=True)
     if a.aggregate:
         agg = aggregate(out_root) if a.null_kind == "shuffle_drift" else aggregate_powered(out_root)
@@ -411,6 +419,7 @@ def main(argv: list[str] | None = None) -> int:
     default = {"shuffle_drift": NULL_SEEDS, "shuffle_zerodrift": ZERODRIFT_SEEDS,
                "sign_flip_day": SIGNFLIP_SEEDS}[a.null_kind]
     seeds = a.seeds if a.seeds else ([a.seed] if a.seed is not None else list(default))
+    limit_workers_by_space(1, out_root)
     for s in seeds:
         rec = run_one(s, out_root, Path(a.config), a.null_kind)
         (out_root / f"seed_{s}" / "digest.json").write_text(
