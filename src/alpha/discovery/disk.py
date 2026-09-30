@@ -38,7 +38,7 @@ def limit_workers_by_space(
     per_worker_gb: float = 1.0,
 ) -> int:
     """Cap parallel workers to the remaining scratch budget; refuse when none fit."""
-    free = shutil.disk_usage(Path(path).anchor or path).free / GIB
+    free = shutil.disk_usage(_existing_ancestor(path)).free / GIB
     affordable = int(max(0.0, free - min_free_gb) // per_worker_gb)
     if affordable < 1:
         raise CacheSpaceError(
