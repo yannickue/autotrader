@@ -283,7 +283,10 @@ class DemoRiskGate:
             min_quantity=market.volume_min * units,
             min_notional=ZERO,
             max_notional=market.volume_max * units * mid * 1000,
-            max_spread_bps=(market.max_spread * fx) / mid * TEN_THOUSAND + Decimal("0.0001"),
+            # The evaluator's absolute spread bound is only the SAFETY cap (4x the per-market p99 bound);
+            # the PRIMARY cost gate (spread <= 20% of 1R) runs earlier in demo.execution.parity.
+            max_spread_bps=(market.max_spread * G.SPREAD_EXTREME_MULTIPLE * fx) / mid * TEN_THOUSAND
+            + Decimal("0.0001"),
             maintenance_margin_rate=Decimal(1) / instrument_leverage,
         )
         risk_state = AccountRiskState(
