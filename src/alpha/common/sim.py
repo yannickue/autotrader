@@ -24,13 +24,7 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 
-from alpha.common.frame import (
-    ENTRY_END_MIN,
-    ENTRY_START_MIN,
-    FLAT_MIN,
-    Frame,
-    session_bucket,
-)
+from alpha.common.frame import Frame, session_bucket
 
 
 @dataclass(frozen=True)
@@ -143,7 +137,7 @@ def simulate(
         if not fr.contig_next[i] or fr.day[j] != fr.day[i]:
             skips["gap_before_entry"] += 1
             continue
-        if not (ENTRY_START_MIN <= fr.minute[j] < ENTRY_END_MIN):
+        if not (fr.params.entry_start_min <= fr.minute[j] < fr.params.entry_end_min):
             skips["outside_window"] += 1
             continue
         if trades_on_day.get(int(fr.day[j]), 0) >= rules.max_trades_per_day:
@@ -208,7 +202,7 @@ def simulate(
                 px = o[k] - slip if side > 0 else o[k] + sp[k] + slip
                 exit_idx, exit_px, reason = k, px, "DATA_GAP"
                 break
-            if fr.minute[k] >= FLAT_MIN:
+            if fr.minute[k] >= fr.params.flat_min:
                 px = o[k] - slip if side > 0 else o[k] + sp[k] + slip
                 exit_idx, exit_px, reason = k, px, "SESSION_END"
                 break
@@ -281,7 +275,7 @@ def simulate(
                 pnl_pts, pnl_eur, r_mult, spread_cost, slip_cost, commission, cost_eur,
                 pnl_eur + cost_eur, reason, mfe, mae, mfe / risk, mae / risk,
                 bars_to_mfe, bars_held, bars_held * 5, entry_spread_pts, int(fr.minute[j]),
-                session_bucket(int(fr.minute[j])), capped,
+                session_bucket(int(fr.minute[j]), fr.params.buckets), capped,
                 bool(fr.date[exit_idx] != fr.date[j]),
             )
         )  # fmt: skip

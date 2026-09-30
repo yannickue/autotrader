@@ -7,7 +7,7 @@ truncation-invariance.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import numpy as np
 import pandas as pd
@@ -29,11 +29,52 @@ SESSION_BUCKETS = (
 )
 
 
-def session_bucket(minute_of_day: int) -> str:
-    for name, lo, hi in SESSION_BUCKETS:
+def session_bucket(minute_of_day: int, buckets: tuple = SESSION_BUCKETS) -> str:
+    for name, lo, hi in buckets:
         if lo <= minute_of_day < hi:
             return name
     raise ValueError(minute_of_day)
+
+
+@dataclass(frozen=True)
+class FrameParams:
+    """Per-market constants the V1 pipeline hard-coded for GER40 (V2: taken from MarketSpec).
+
+    The defaults ARE the GER40 constants, so `Frame.from_dataframe(df)` is bit-identical to V1.
+    `max_entry_spread_price` is in PRICE units (recorded points x `point`), like `Frame.spread`.
+    """
+
+    tz: str = BERLIN
+    point: float = POINT
+    entry_start_min: int = ENTRY_START_MIN
+    entry_end_min: int = ENTRY_END_MIN
+    flat_min: int = FLAT_MIN
+    buckets: tuple = SESSION_BUCKETS
+    max_entry_spread_price: float = 8.0  # == SimRules().max_entry_spread_pts default
+    bar_seconds: int = BAR_SECONDS
+    name: str = "GER40"
+
+    def sim_rules(self, rules):
+        """`rules` with the spread cap replaced by this market's cap (PRICE units)."""
+        return replace(rules, max_entry_spread_pts=self.max_entry_spread_price)
+
+
+GER40_PARAMS = FrameParams()
+
+
+def params_from_spec(spec) -> FrameParams:
+    """FrameParams from a `markets.spec.MarketSpec` (single source of truth)."""
+    cal = spec.calendar
+    return FrameParams(
+        tz=cal.tz,
+        point=spec.point_size,
+        entry_start_min=cal.entry_start_min,
+        entry_end_min=cal.entry_end_min,
+        flat_min=cal.forced_flat_min,
+        buckets=cal.bucket_tuples(),
+        max_entry_spread_price=spec.max_entry_spread_price,
+        name=spec.canonical,
+    )
 
 
 @dataclass
@@ -45,34 +86,36 @@ class Frame:
     h: np.ndarray
     l: np.ndarray  # noqa: E741
     c: np.ndarray
-    spread: np.ndarray  # price units (points * 0.01)
-    minute: np.ndarray  # Berlin minute of day at bar OPEN
+    spread: np.ndarray  # price units (recorded points * params.point)
+    minute: np.ndarray  # local (params.tz) minute of day at bar OPEN; Berlin for GER40
     day: np.ndarray  # integer Berlin-date id (monotone)
     date: np.ndarray  # Berlin date (datetime64[D])
     contig_next: np.ndarray  # bool: bar i+1 exists and starts exactly one bar after bar i
     _cache: dict = field(default_factory=dict)
+    params: FrameParams = GER40_PARAMS
 
     @classmethod
-    def from_dataframe(cls, df: pd.DataFrame) -> Frame:
+    def from_dataframe(cls, df: pd.DataFrame, params: FrameParams = GER40_PARAMS) -> Frame:
         ts = pd.DatetimeIndex(df["ts"])
-        local = ts.tz_convert(BERLIN)
+        local = ts.tz_convert(params.tz)
         minute = np.asarray(local.hour * 60 + local.minute)
         dates = local.normalize().tz_localize(None).to_numpy().astype("datetime64[D]")
         _, day = np.unique(dates, return_inverse=True)
         secs = ts.as_unit("s").asi8
         contig = np.zeros(len(df), dtype=bool)
-        contig[:-1] = (secs[1:] - secs[:-1]) == BAR_SECONDS
+        contig[:-1] = (secs[1:] - secs[:-1]) == params.bar_seconds
         return cls(
             ts=ts,
             o=df["open"].to_numpy(float),
             h=df["high"].to_numpy(float),
             l=df["low"].to_numpy(float),
             c=df["close"].to_numpy(float),
-            spread=df["spread_pts"].to_numpy(float) * POINT,
+            spread=df["spread_pts"].to_numpy(float) * params.point,
             minute=minute,
             day=day.astype(np.int64),
             date=dates,
             contig_next=contig,
+            params=params,
         )
 
     def __len__(self) -> int:
@@ -94,6 +137,7 @@ class Frame:
             day=self.day[:n],
             date=self.date[:n],
             contig_next=contig,
+            params=self.params,
         )
 
     # ---- causal features -------------------------------------------------------------

@@ -9,6 +9,7 @@ in points (1 point = 0.01 index points). Timestamps are bar OPEN times in UTC.
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -55,25 +56,37 @@ class ResearchDataset:
     frame: pd.DataFrame
     months: tuple[MonthInfo, ...]
     excluded: tuple[dict, ...]
+    # V2 multi-market: provenance labels/gap review of the source (defaults = the GER40 V1 set)
+    source: str = "ActivTrades MT5 DEMO, Ger40 (canonical GER40), M5 BID OHLC + spread points"
+    broker_account_kind: str = "DEMO"
+    gap_review: tuple[tuple[tuple[str, str], str], ...] | None = None  # None -> REVIEWED_GAPS
 
     @property
     def n_bars(self) -> int:
         return len(self.frame)
 
+    def _gaps(self) -> tuple[tuple[tuple[str, str], str], ...]:
+        return tuple(REVIEWED_GAPS.items()) if self.gap_review is None else self.gap_review
+
     def provenance(self) -> dict:
         return {
-            "source": "ActivTrades MT5 DEMO, Ger40 (canonical GER40), M5 BID OHLC + spread points",
-            "broker_account_kind": "DEMO",
+            "source": self.source,
+            "broker_account_kind": self.broker_account_kind,
             "n_bars": self.n_bars,
             "first_bar_utc": self.frame["ts"].iloc[0].isoformat(),
             "last_bar_utc": self.frame["ts"].iloc[-1].isoformat(),
             "months": [m.__dict__ for m in self.months],
             "excluded_months": list(self.excluded),
-            "reviewed_gaps": {f"{a}..{b}": why for (a, b), why in REVIEWED_GAPS.items()},
+            "reviewed_gaps": {f"{a}..{b}": why for (a, b), why in self._gaps()},
         }
 
 
-def _admit(entry: dict) -> tuple[bool, str]:
+def _admit(
+    entry: dict, reviewed_gaps: dict[tuple[str, str], str] | None = None, *, any_gap: bool = False
+) -> tuple[bool, str]:
+    """`any_gap=True` (V2 markets, no per-gap review yet) admits every RECORDED gap; the gaps stay
+    listed in the month info and the sanity report. Default = the GER40 V1 reviewed allow-list."""
+    reviewed = REVIEWED_GAPS if reviewed_gaps is None else reviewed_gaps
     status = entry.get("status")
     if status == "PASSED":
         return True, "PASSED"
@@ -83,25 +96,44 @@ def _admit(entry: dict) -> tuple[bool, str]:
     if not kinds <= ACCEPTED_WARNING_KINDS:
         return False, f"unreviewed warning kinds {sorted(kinds - ACCEPTED_WARNING_KINDS)}"
     for start, end in entry.get("suspicious_gaps", []):
-        if (start, end) not in REVIEWED_GAPS:
+        if not any_gap and (start, end) not in reviewed:
             return False, f"unreviewed gap {start}..{end}"
     return True, "PASSED_WITH_WARNINGS (all warnings reviewed)"
 
 
-def load_research_dataset(root: str | Path) -> ResearchDataset:
-    """Load every admitted month listed in `<root>/download_manifest.json`."""
+def load_research_dataset(
+    root: str | Path,
+    *,
+    manifest_name: str = "download_manifest.json",
+    entries_key: str = "months",
+    entry_filter: Callable[[dict], bool] | None = None,
+    resolve_path: Callable[[dict], Path | str] | None = None,
+    broker_account_kind: str = "DEMO",
+    reviewed_gaps: dict[tuple[str, str], str] | None = None,
+    any_gap: bool = False,
+    source: str | None = None,
+) -> ResearchDataset:
+    """Load every admitted month listed in `<root>/<manifest_name>` (default: the GER40 V1 set).
+
+    All keyword arguments default to the exact V1 GER40 behaviour; the V2 multi-market loader
+    (`alpha.common.market_data`) passes its own manifest layout, path resolver, entry filter (one
+    timeframe) and gap policy.
+    """
     root = Path(root)
-    manifest = json.loads((root / "download_manifest.json").read_text(encoding="utf-8"))
+    manifest = json.loads((root / manifest_name).read_text(encoding="utf-8"))
     frames: list[pd.DataFrame] = []
     months: list[MonthInfo] = []
     excluded: list[dict] = []
-    for entry in manifest["months"]:
-        ok, why = _admit(entry)
+    for entry in manifest[entries_key]:
+        if entry_filter is not None and not entry_filter(entry):
+            continue
+        ok, why = _admit(entry, reviewed_gaps, any_gap=any_gap)
         if not ok:
             excluded.append({"month": entry["month"], "reason": why})
             continue
-        bars, prov = read_bar_dataset(entry["path"])  # verifies content_sha256
-        if prov.broker_account_kind != "DEMO":
+        path = entry["path"] if resolve_path is None else resolve_path(entry)
+        bars, prov = read_bar_dataset(path)  # verifies content_sha256
+        if prov.broker_account_kind != broker_account_kind:
             raise DatasetPolicyError(f"{entry['month']}: unexpected account kind")
         df = pd.DataFrame(
             {
@@ -119,7 +151,7 @@ def load_research_dataset(root: str | Path) -> ResearchDataset:
         months.append(
             MonthInfo(
                 month=entry["month"],
-                path=Path(entry["path"]).name,
+                path=Path(path).name,
                 rows=prov.row_count,
                 validation_status=prov.validation_status,
                 warning_summary=dict(prov.validation_summary),
@@ -141,4 +173,15 @@ def load_research_dataset(root: str | Path) -> ResearchDataset:
     frame["spread_pts"] = frame["spread_pts"].astype(float)
     if not ((frame["high"] >= frame["low"]) & (frame["spread_pts"] >= 0)).all():
         raise DatasetPolicyError("invalid OHLC/spread rows")
-    return ResearchDataset(frame=frame, months=tuple(months), excluded=tuple(excluded))
+    extra: dict = {}
+    if source is not None:
+        extra["source"] = source
+    if reviewed_gaps is not None:
+        extra["gap_review"] = tuple(reviewed_gaps.items())
+    return ResearchDataset(
+        frame=frame,
+        months=tuple(months),
+        excluded=tuple(excluded),
+        broker_account_kind=broker_account_kind,
+        **extra,
+    )
