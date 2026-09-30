@@ -4,6 +4,7 @@ from decimal import Decimal
 
 import pytest
 from nautilus_trader.model.enums import OrderSide, OrderStatus
+from nautilus_trader.model.identifiers import ClientOrderId
 from nautilus_trader.model.objects import Price, Quantity
 
 from risk.models import ReconciliationState, RuntimeMode
@@ -309,3 +310,61 @@ def test_exception_before_execution_is_rejected_only_after_grace_with_no_broker_
     h.client.reconcile()
     assert status_of(h, entry) is OrderStatus.REJECTED
     assert h.client.recon.state is ReconciliationState.RECONCILED
+
+
+# -- H4: after a restart the Nautilus cache is empty; broker truth still resolves unresolved rows
+
+
+def _restart(broker, tmp_path, first):
+    first.shutdown()
+    return ExecHarness(broker, tmp_path)
+
+
+def test_crash_between_write_ahead_row_and_send_is_resolved_by_broker_truth_after_restart(
+    broker, tmp_path
+):
+    first = ExecHarness(broker, tmp_path)
+    parent = first.store.record_intent(
+        client_order_id="O-crashed", strategy_id="S-001", instrument_id=str(IID), kind="MARKET",
+        side="BUY", quantity="0.25", created_ns=first.client._now_ns(),
+    )
+    first.store.record_intent(
+        client_order_id="O-crashed-SL", strategy_id="S-001", instrument_id=str(IID), kind="SL",
+        side="SELL", quantity="0.25", parent_client_order_id="O-crashed",
+    )
+    assert parent.startswith("NT")
+    second = _restart(broker, tmp_path, first)  # fresh process: empty Nautilus cache
+    try:
+        assert second.cache.order(ClientOrderId("O-crashed")) is None
+        sends_before = broker.order_send_calls
+        second.client.reconcile()  # too early: inside the in-doubt grace, authority stays withheld
+        assert second.store.by_client_order_id("O-crashed").status == "INTENT"
+        assert second.client.recon.state is not ReconciliationState.RECONCILED
+        broker.server_time += 600  # past the grace, still no trace at the broker
+        second.client.reconcile()
+        row = second.store.by_client_order_id("O-crashed")
+        assert row.status == "REJECTED"
+        assert second.store.by_client_order_id("O-crashed-SL").status == "REJECTED"
+        assert second.store.unresolved() == []
+        assert second.client.recon.state is ReconciliationState.RECONCILED
+        assert any("NO_TRACE O-crashed" in line for line in second.client.audit)
+        assert broker.order_send_calls == sends_before  # NEVER re-sent
+    finally:
+        second.shutdown()
+
+
+def test_restart_does_not_reject_a_row_the_broker_has_a_trace_for(broker, tmp_path):
+    first = ExecHarness(broker, tmp_path)
+    broker.lose_response_after_execute = 1
+    entry, _ = first.submit_bracket(BUY, "0.25", 24_900.0)
+    assert first.store.by_client_order_id(str(entry.client_order_id)).status == "IN_DOUBT"
+    assert len(broker.positions_get()) == 1
+    second = _restart(broker, tmp_path, first)
+    try:
+        broker.server_time += 600
+        second.client.reconcile()
+        row = second.store.by_client_order_id(str(entry.client_order_id))
+        assert row.status != "REJECTED"  # the executed order is never called "never executed"
+        assert len(broker.positions_get()) == 1 and broker.order_send_calls == 1
+    finally:
+        second.shutdown()

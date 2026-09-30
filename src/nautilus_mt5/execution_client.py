@@ -805,6 +805,7 @@ class Mt5LiveExecutionClient(LiveExecutionClient):
         start, end = self._history_window()
         history = self._call("history_orders_get", client.history_orders_get, start, end)
         by_token = {str(o.comment).split("[")[0].strip(): o for o in history if o.comment}
+        other_trace: set[str] | None = None  # tokens seen in open orders / positions / deals
         for row in self._store.unresolved():
             if row.parent_client_order_id:
                 continue  # children are resolved together with their parent
@@ -831,8 +832,21 @@ class Mt5LiveExecutionClient(LiveExecutionClient):
                     )
                 continue  # its deals (if any) were/are ingested by sync_once via the token
             age = self._now() - datetime.fromtimestamp(row.created_ns / NS, tz=UTC)
-            if age >= self._cfg.in_doubt_grace and order is not None:
-                self._store.update_order(row.client_order_id, status="REJECTED")
+            if age < self._cfg.in_doubt_grace:
+                continue
+            if other_trace is None:
+                other_trace = self._broker_trace_tokens()
+            if row.token in other_trace:
+                continue  # the broker shows the order/position/deal: adopted via ingest, not rejected
+            # No trace at the broker (history, open orders, positions, deals of the lookback) after
+            # the grace period: the send never happened. Decided from BROKER TRUTH, so it works
+            # after a restart too, when the Nautilus cache is empty (order is None). Never re-sent.
+            self._store.update_order(row.client_order_id, status="REJECTED")
+            self.audit.append(
+                f"NO_TRACE {row.client_order_id} token={row.token}: no order/position/deal at the "
+                f"broker within the lookback; marked REJECTED, NOT re-sent"
+            )
+            if order is not None:
                 self.generate_order_rejected(
                     order.strategy_id,
                     order.instrument_id,
@@ -841,6 +855,20 @@ class Mt5LiveExecutionClient(LiveExecutionClient):
                     self._now_ns(),
                 )
                 self._deny_children(order, "PARENT_NO_BROKER_RECORD")
+            else:
+                for child in self._store.children_of(row.client_order_id):
+                    if child.status in ("INTENT", "SENT", "IN_DOUBT", "ACCEPTED"):
+                        self._store.update_order(child.client_order_id, status="REJECTED")
+
+    def _broker_trace_tokens(self) -> set[str]:
+        """Tokens of OUR requests visible anywhere at the broker (open orders, positions, deals)."""
+        comments: list[str] = []
+        comments.extend(o.comment for o in self._broker_open_orders())
+        comments.extend(p.comment for p in self._broker_positions())
+        comments.extend(
+            d.comment for d in self._broker_deals(self._now() - self._cfg.deal_lookback)
+        )
+        return {str(c).split("[")[0].strip() for c in comments if c}
 
     # ------------------------------------------------------------- controlled sync --
 
