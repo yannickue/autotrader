@@ -54,6 +54,16 @@ def _parser() -> argparse.ArgumentParser:
     modes.add_argument("--analyze", action="store_true")
     modes.add_argument("--restart-proof", action="store_true")
     modes.add_argument("--record-canary", type=Path, default=None, metavar="FILE")
+    parser.add_argument(
+        "--exit-policy", choices=("fixed_1_5r", "staged"), default="fixed_1_5r",
+        help="fixed_1_5r (DEFAULT, unchanged): broker SL + one fixed-R TP. staged: the ExitEngine manages TP1/TP2/runner "
+             "partials, tighten-only stop moves, structure trailing and engine exits (DEMO only)",
+    )
+    parser.add_argument(
+        "--geometry-source", choices=("family", "structure"), default="family",
+        help="initial stop geometry: family (DEFAULT, unchanged) or structure (chart invalidation stop; per-family "
+             "opt-in is the supported use). The structure geometry is always logged next to the family one (shadow)",
+    )
     parser.add_argument("--confirm-demo-auto")
     parser.add_argument("--heartbeat", type=Path, default=None)
     parser.add_argument("--artifacts", type=Path, default=ARTIFACTS)
@@ -138,6 +148,7 @@ def _record_canary(args: argparse.Namespace) -> int:
 
 def _run(args: argparse.Namespace, mode: str) -> int:
     from demo import runner as rn
+    from demo.execution.exit_manager import ExitPlanConfig
 
     markets = tuple(m.strip() for m in args.markets.split(",")) if args.markets else None
     try:
@@ -145,6 +156,8 @@ def _run(args: argparse.Namespace, mode: str) -> int:
             mode, phase=args.phase or "DISCOVERY", db_path=args.db, artifacts_dir=args.artifacts,
             markets=markets, learning=args.learning,
             forced_flat_on_shutdown=args.forced_flat_on_shutdown, account_phase=args.account_phase,
+            exit_policy=args.exit_policy,
+            exit_plan=None if args.geometry_source == "family" else ExitPlanConfig(geometry_source=args.geometry_source),
         )
     except rn.LiveStackRefused as exc:
         print(f"REFUSED: {exc}", file=sys.stderr)

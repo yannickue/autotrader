@@ -1100,7 +1100,51 @@ class DemoRunner:
             "independent_clusters": sig.get("independent_clusters"),
         }
 
+    def _exit_geometry(
+        self, intent: TradeIntent, context: dict[str, Any] | None
+    ) -> tuple[TradeIntent, dict[str, Any] | None, dict[str, Any] | None]:
+        """Lane E2 plan producer: SHADOW family-vs-structure geometry + (staged) the ``exit_plan``.
+
+        Only for a stack that exposes ``exit_plan_config`` (the real one; fakes are untouched). The family
+        geometry stays the ACTIVE one unless the family / market opted in to ``structure`` (then the structural
+        invalidation stop replaces the family stop BEFORE the intent is recorded and sized). Any failure here is
+        logged in the shadow payload and never blocks the trade: the family geometry is the fallback."""
+        cfg = getattr(self.stack, "exit_plan_config", None)
+        if cfg is None:
+            return intent, context, None
+        ctx = dict(context or {})
+        try:
+            from demo.execution.exit_manager import EXIT_POLICY_STAGED, produce_exit_context
+
+            staged = getattr(self.stack, "exit_policy", None) == EXIT_POLICY_STAGED
+            source = self.stack.bar_source
+            frame = source.m5_frame(intent.market, cfg.bars)
+            quote = source.latest_quote(intent.market)
+            spread = float(quote.ask - quote.bid) if quote is not None and quote.valid else 0.0
+            tick = getattr(self._spec(intent.market), "tick_size", None)
+            signal_ctx = ctx.get("signal") or {}
+            out = produce_exit_context(
+                direction=intent.direction, entry_ref=intent.entry_ref, stop=intent.stop, target=intent.target,
+                family=ctx.get("family"), market=intent.market, atr=ctx.get("atr"), frame=frame, spread=spread,
+                tick_size=None if tick is None else float(tick), structure_levels=ctx.get("structure_levels"),
+                target_is_structural=bool(signal_ctx.get("structural_target")), cfg=cfg, staged=staged,
+            )
+        except Exception as exc:  # never blocks the trade: the family geometry is the fallback
+            return intent, context, {"error": f"{type(exc).__name__}:{exc}"[:200]}
+        shadow = dict(out["shadow"])
+        stop = out["structure_stop"]
+        if stop is not None and intent.direction * (intent.entry_ref - stop) > 0 and stop != intent.stop:
+            shadow["applied"] = {"family_stop": intent.stop, "structure_stop": stop}
+            intent = dataclasses.replace(intent, stop=stop)
+        if out["exit_plan"] is not None:
+            ctx["exit_plan"] = out["exit_plan"]
+            ctx["exit_meta"] = out["exit_meta"]
+            shadow["exit_plan"] = out["exit_meta"]
+        ctx["geometry_source"] = out["source"]
+        return intent, ctx, shadow
+
     def _execute(self, intent: TradeIntent, now: datetime, context: dict[str, Any] | None = None) -> None:
+        intent, context, geometry = self._exit_geometry(intent, context)
         try:
             self.store.record_intent(intent)  # PLANNED, durable BEFORE the stack sees it
         except DemoStoreError as exc:  # duplicate / immutable -> exactly-once: do nothing
@@ -1108,6 +1152,9 @@ class DemoRunner:
             return
         if self.store.get_state(intent.intent_id) != PLANNED:
             return  # already handled (restart / duplicate)
+        if geometry:
+            with contextlib.suppress(Exception):  # shadow evidence only; never blocks a trade
+                self.store.record_tca(intent.intent_id, geometry, "GEOMETRY")
         iid, ts = intent.intent_id, _iso(now)
         shadow = self.cfg.mode == "shadow"
         if self.cfg.mode not in ("demo-auto", "shadow"):  # defence in depth
@@ -1759,6 +1806,8 @@ def build_live_runner(
     stack_kwargs: Mapping[str, Any] | None = None,
     account_phase: str | None = None,
     phase2_markets: Sequence[str] | None = None,
+    exit_policy: str = "fixed_1_5r",
+    exit_plan: Any | None = None,
 ) -> DemoRunner:
     """Wire the runner to the REAL ``Mt5DemoStack``.
 
@@ -1789,6 +1838,8 @@ def build_live_runner(
 
     if mode not in MODES:
         raise ValueError(f"mode must be one of {MODES}")
+    if exit_policy not in ("fixed_1_5r", "staged"):
+        raise LiveStackRefused(f"unknown exit_policy {exit_policy!r} (fixed_1_5r | staged)")
     if os.environ.get("MT5_ALLOW_ACCOUNT_LOGIN") == "1":
         raise LiveStackRefused("MT5_ALLOW_ACCOUNT_LOGIN=1 is not permitted; the DEMO trader only attaches")
     art = Path(artifacts_dir or "artifacts/demo_trader")
@@ -1840,8 +1891,19 @@ def build_live_runner(
             # DEMO terminal 2026-09-30, trade_mode 0) while the .env display value differs. DEMO-ness is
             # proven by trade_mode == 0 + the expected login, never by the server name; the server is
             # pinned as an identity tripwire (override: DEMO_TRADER_EXPECTED_SERVER).
+            # Lane E2: ``exit_policy`` (DEFAULT fixed_1_5r = unchanged behaviour) / ``staged`` (ExitEngine manages
+            # partials, tighten-only stops, structure trailing and engine exits) and the optional ExitPlanConfig
+            # (geometry source family|structure, stage fractions). Both are stack configuration, not sizing.
+            exit_kw: dict[str, Any] = {}
+            if exit_policy == "staged":
+                from demo.execution.exit_manager import default_staged_exit_policy
+
+                exit_kw.update(exit_policy="staged", staged_exit=default_staged_exit_policy())
+            if exit_plan is not None:
+                exit_kw["exit_plan"] = exit_plan
             kwargs["config"] = StackConfig(
-                expected_server=os.environ.get("DEMO_TRADER_EXPECTED_SERVER", EXPECTED_DEMO_SERVER)
+                expected_server=os.environ.get("DEMO_TRADER_EXPECTED_SERVER", EXPECTED_DEMO_SERVER),
+                **exit_kw,
             )
         stack: StackPort = Mt5DemoStack(  # type: ignore[assignment]
             client=client, connection=connection, state_dir=state_dir,

@@ -141,3 +141,24 @@ defaults to `0.0` (exact simulator behaviour); candidate-carried `min_space_r` s
 (entry already crossed) is STRUCTURAL. Quality inputs are logged only and have no reject code. `DemoStore` gained `risk_detail`, `tca_records`
 and the non-terminal `IN_DOUBT` intent state (all backward compatible). Open: shadow mode does not run the stack risk gate, so the funnel's stack
 part is empty in shadow; add-on execution (`ADDON_SHARED_STOP_POSSIBLE_NOT_YET_IMPLEMENTED`) is the largest known trade-count limiter.
+
+## Decision 2026-10-01: exit engine activation and chart-first geometry (Lane E2)
+
+- `exit_policy="fixed_1_5r"` stays the DEFAULT (bit-identical orders). `staged` (CLI `--exit-policy staged`,
+  `build_live_runner(exit_policy="staged")`) activates the existing `ExitEngine` through `StagedExitManager`; there is
+  no second exit engine and no bypass of the reduce-only / modify-stop jobs.
+- Geometry source: `family` (DEFAULT, the five core markets: initial stop and sizing stay family-derived) or
+  `structure` (per-family / per-market opt-in: the confirmed-swing / range-edge invalidation stop + ATR buffer replaces the
+  family stop BEFORE sizing). The structure geometry (`src/demo/structure.py`, causal, closed M5/M15 bars) is always logged
+  next to the family geometry as a SHADOW (`tca_records` stage `GEOMETRY`); it never affects orders unless opted in.
+- Targets come from the chart (family-supplied `structure_levels`, else structure geometry, else the family target); R is a
+  result. No defensible TP2 -> TP1 + runner, marker `SECOND_TARGET_NOT_STRUCTURALLY_JUSTIFIED`. A TP2 is never invented.
+- Runner remainder policy: fractions may sum to < 1; the remainder has no broker TP, stays protected by the tighten-only
+  stop (cost-adjusted break-even after TP1, then behind the newest confirmed post-entry swing) and ends by stop / structure
+  failure / momentum / MFE giveback / time-alpha decay / late-session loser rule / the forced flat (Lane P's deadline always wins).
+- Late session: a profitable position may only ratchet protection (cost-adjusted break-even, structure trail), never loosen; a
+  clearly deteriorating loser may exit early (`EXIT_ENGINE_EOD`) instead of waiting for the mandatory flat.
+- Accounting: the FILLED quantity is the position's initial quantity (partial ENTRY fills), engine full closes carry
+  `EXIT_ENGINE_*` reasons (uncensored strategy exits; an engine emergency exit stays `SAFETY_FLATTEN`), and STOP exit slippage
+  is measured against the stop in force. OPEN: real-MT5 behaviour of partial closes / SLTP modify is unverified (fake broker only);
+  one net position per symbol still means no engine management with several live tranches (E1 limitation).

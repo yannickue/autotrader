@@ -38,6 +38,7 @@ from pathlib import Path
 from typing import Any
 
 from demo.contracts import (
+    ENGINE_EXIT_REASONS,
     PHASES,
     ClockCheck,
     CounterfactualLabel,
@@ -136,7 +137,8 @@ class AccountMismatch(DemoStoreError):
 TRADE_TYPES: tuple[str, ...] = ("STRATEGY", "EXECUTION_CANARY", "TEST_TRADE")
 # exit reasons of a STRATEGY exit; everything else (MANUAL, EXTERNAL, SAFETY_FLATTEN, emergency flatten,
 # unknown hints) is a CENSORED exit: the strategy's own stop/target/time rule did not decide it.
-UNCENSORED_EXITS: frozenset[str] = frozenset({"STOP", "TARGET", "SESSION_END"})
+# Lane E2: an ExitEngine full close (EXIT_ENGINE_*) is a strategy exit too, not a manual one.
+UNCENSORED_EXITS: frozenset[str] = frozenset({"STOP", "TARGET", "SESSION_END"}) | ENGINE_EXIT_REASONS
 OUTCOME_KINDS = ("strategy", "censored", "canary", "all")
 
 
@@ -348,7 +350,7 @@ _IMMUTABLE_TABLES = (
     "risk_detail", "tca_records",
 )
 RISK_DETAIL_KINDS = ("ACCEPTED", "REJECTED")
-TCA_STAGES = ("ENTRY", "EXIT")
+TCA_STAGES = ("ENTRY", "EXIT", "GEOMETRY")  # GEOMETRY (Lane E2): family vs structure geometry + exit plan, at submit
 
 
 def _triggers() -> str:
@@ -1185,11 +1187,12 @@ class DemoStore:
         sql = (
             "SELECT COUNT(*) n FROM outcomes o LEFT JOIN trade_tags t ON t.intent_id=o.intent_id "
             "WHERE (t.trade_type IS NULL OR t.trade_type='STRATEGY') AND COALESCE(t.censored,0)=0 "
-            "AND json_extract(o.json,'$.exit_reason') IN ('STOP','TARGET','SESSION_END')"
+            "AND json_extract(o.json,'$.exit_reason') IN (" + ",".join("?" * len(UNCENSORED_EXITS)) + ")"
         )
+        uncensored = tuple(sorted(UNCENSORED_EXITS))
         if phase:
-            return self._q(sql + " AND o.phase=?", (phase,))[0]["n"]
-        return self._q(sql)[0]["n"]
+            return self._q(sql + " AND o.phase=?", (*uncensored, phase))[0]["n"]
+        return self._q(sql, uncensored)[0]["n"]
 
     # ---- trade type / censoring / outcome analytics (Lane R2) ----------------------------------
     def record_trade_tag(

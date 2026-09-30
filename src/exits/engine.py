@@ -1,3 +1,4 @@
+# ruff: noqa: E501
 """Deterministic exit engine: decides when and how much of an open position
 to reduce, from measurable position/market state only.
 
@@ -239,6 +240,20 @@ class ExitEngine:
                 )
             )
 
+        # C2. Structural failure (Lane E2): a closed bar broke the newest confirmed post-entry swing.
+        if policy.structure_failure_exit and market.structure_failure:
+            return evaluation(
+                self._build_decision(
+                    position=position,
+                    quantity=position.quantity,
+                    is_partial=False,
+                    reason=ExitReason.STRUCTURE_FAILURE,
+                    reason_detail="closed bar broke the latest confirmed post-entry swing",
+                    now=now,
+                    metadata={},
+                )
+            )
+
         # D. Momentum deterioration.
         threshold = policy.momentum_deterioration_threshold
         if (
@@ -255,6 +270,54 @@ class ExitEngine:
                     reason_detail=f"momentum_score {market.momentum_score} <= {threshold}",
                     now=now,
                     metadata={"momentum_score": str(market.momentum_score)},
+                )
+            )
+
+        # D2. Late-session loser (Lane E2): a losing trade with adverse momentum near the mandatory flat
+        # exits early through the same reduce-only path instead of being held hoping for a reversal.
+        late_threshold = policy.late_loser_momentum_threshold
+        if (
+            late_threshold is not None
+            and self._in_late_window(market)
+            and market.momentum_score is not None
+            and market.momentum_score <= late_threshold
+            and (market.price < position.entry_price if is_long else market.price > position.entry_price)
+        ):
+            return evaluation(
+                self._build_decision(
+                    position=position,
+                    quantity=position.quantity,
+                    is_partial=False,
+                    reason=ExitReason.LATE_SESSION_DETERIORATION,
+                    reason_detail=(
+                        f"late-session loser, momentum_score {market.momentum_score} <= {late_threshold}"
+                    ),
+                    now=now,
+                    metadata={"momentum_score": str(market.momentum_score)},
+                )
+            )
+
+        # D3. MFE giveback (Lane E2).
+        if (
+            policy.max_giveback_fraction is not None
+            and market.mfe_r is not None
+            and market.giveback_r is not None
+            and market.mfe_r >= policy.giveback_min_mfe_r
+            and market.mfe_r > 0
+            and market.giveback_r / market.mfe_r >= policy.max_giveback_fraction
+        ):
+            return evaluation(
+                self._build_decision(
+                    position=position,
+                    quantity=position.quantity,
+                    is_partial=False,
+                    reason=ExitReason.MFE_GIVEBACK,
+                    reason_detail=(
+                        f"gave back {market.giveback_r}R of a {market.mfe_r}R excursion "
+                        f"(>= {policy.max_giveback_fraction})"
+                    ),
+                    now=now,
+                    metadata={"mfe_r": str(market.mfe_r), "giveback_r": str(market.giveback_r)},
                 )
             )
 
@@ -276,7 +339,13 @@ class ExitEngine:
         # F. Time stop.
         if policy.max_holding_duration is not None:
             held_for = now - position.opened_at
-            if held_for >= policy.max_holding_duration:
+            # time-alpha decay (Lane E2): a trade that showed enough favourable excursion is not aged out
+            worked = (
+                policy.time_stop_min_mfe_r is not None
+                and market.mfe_r is not None
+                and market.mfe_r >= policy.time_stop_min_mfe_r
+            )
+            if held_for >= policy.max_holding_duration and not worked:
                 return evaluation(
                     self._build_decision(
                         position=position,
@@ -295,6 +364,11 @@ class ExitEngine:
             return evaluation(target_decision)
 
         return evaluation(None)
+
+    def _in_late_window(self, market: ExitMarketState) -> bool:
+        window = self._policy.late_window
+        left = market.time_to_forced_flat
+        return window is not None and left is not None and left <= window
 
     def _ratchet_high_water_mark(
         self, position: ExitPosition, price: Decimal, is_long: bool
@@ -326,17 +400,27 @@ class ExitEngine:
         )
         r_multiple = favorable_move / initial_risk
 
-        # Break-even: only from ORIGINAL, only forward, only once.
-        breakeven_ready = (
-            stop_stage == StopStage.ORIGINAL and r_multiple >= policy.breakeven_trigger_r_multiple
-        )
+        cost = market.expected_exit_cost if market.expected_exit_cost is not None else ZERO
+        in_late_window = self._in_late_window(market)
+        # Break-even: only from ORIGINAL, only forward, only once. Triggers: the configured R, the first
+        # target stage taken (Lane E2) or, late in the session, any profit that covers the exit cost.
+        trigger = r_multiple >= policy.breakeven_trigger_r_multiple
+        if policy.breakeven_after_first_stage and position.stages_completed >= 1:
+            trigger = True
+        if in_late_window and favorable_move > cost:
+            trigger = True
+        breakeven_ready = stop_stage == StopStage.ORIGINAL and trigger
         if breakeven_ready:
-            buffer = position.entry_price * policy.breakeven_buffer_bps / TEN_THOUSAND
+            # cost-adjusted: entry +/- (configured buffer + expected cost of exiting), so a stop-out at
+            # "break-even" does not lose money to spread/fees
+            buffer = position.entry_price * policy.breakeven_buffer_bps / TEN_THOUSAND + cost
             breakeven_price = (
                 position.entry_price + buffer if is_long else position.entry_price - buffer
             )
             improves = breakeven_price > stop_price if is_long else breakeven_price < stop_price
-            if improves:
+            # never place the stop at/through the current price (that would be an immediate stop-out)
+            safe = breakeven_price < market.price if is_long else breakeven_price > market.price
+            if improves and safe:
                 stop_price = breakeven_price
                 stop_stage = StopStage.BREAK_EVEN
                 break_even_activated = True
@@ -350,6 +434,16 @@ class ExitEngine:
             improves = candidate > stop_price if is_long else candidate < stop_price
             if improves and candidate > 0:
                 stop_price = candidate
+                stop_stage = StopStage.TRAILING
+
+        # Structure trailing (Lane E2): behind the newest CONFIRMED post-entry swing, forward only, never
+        # through the price. The candidate is computed from closed bars by the caller.
+        structure = market.structure_trail_price
+        if policy.structure_trailing and structure is not None:
+            improves = structure > stop_price if is_long else structure < stop_price
+            safe = structure < market.price if is_long else structure > market.price
+            if improves and safe:
+                stop_price = structure
                 stop_stage = StopStage.TRAILING
 
         return stop_price, stop_stage, break_even_activated

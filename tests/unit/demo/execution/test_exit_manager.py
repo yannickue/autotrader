@@ -312,7 +312,7 @@ def test_break_even_moves_the_broker_stop_and_never_loosens_it(tmp_path):
         broker.set_quote(25055.0, 25056.5)  # +1.04R: break-even, below TP1
         stack.manage_exits(now_of(stack))
         (pos,) = broker.positions_get()
-        assert pos.sl == pytest.approx(25001.5, abs=0.26)  # entry (ask) - tick rounding
+        assert pos.sl == pytest.approx(25003.0, abs=0.26)  # Lane E2 cost-adjusted: entry (ask 25001.5) + exit spread 1.5
         assert pos.sl > 24950.0 and pos.volume == 1.75
         wait_sync(stack)
         moved = pos.sl

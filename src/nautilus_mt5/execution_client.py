@@ -711,7 +711,9 @@ class Mt5LiveExecutionClient(LiveExecutionClient):
         broker_open_quantity == local_remaining_quantity == stop-protected quantity. Broker truth
         (the position just read) is the size; a child is never enlarged here."""
         row = self._row_for_deal(deal)
-        if row is None or row.kind != KIND_EXIT:
+        # Lane E2: a partial ENTRY fill (IOC remainder cancelled) leaves the SL/TP children sized to
+        # the REQUESTED quantity just the same: shrink to the filled volume (never enlarge).
+        if row is None or row.kind not in (KIND_EXIT, KIND_MARKET):
             return
         volume = Decimal(str(remaining[0].volume))
         self._resync_protective_quantity(int(deal.position_id), instrument_id, volume)
