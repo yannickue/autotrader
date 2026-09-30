@@ -146,3 +146,18 @@ the price mirror (swap high/low, flip comparisons). ATR = m5_atr14[u]; tol in {0
 - A bound clause never reads any bar > u; registers are prices captured at the transition bar (evl/evx/bar_low/bar_high/close/min_low_since_enter
   /max_high_since_enter/lv). min/max_since_enter cover (t_enter, u] inclusive of u and are recomputed only from bars <= u.
 - PULLBACK_HOLD is NOT an event: express as state clause (st_{tf}_trend_up) with op HOLD arg k.
+
+## 9. Oracle rulings (orchestrator, after reference.py W2; the numba kernel MUST match these)
+1. `within=w`: a transition may fire at u iff `u - enter_idx <= w`. `expires_after=e`: a transition may fire at u iff `u - anchor_idx <= e`.
+2. Pulse and state clauses are active iff value > 0. Op wrappers apply to any base predicate: HOLD(k) true on all of (u-k, u] inside the run;
+   BEFORE(k) on (u-k, u) (strictly before u); SINCE_ENTER on (enter_idx, u]; NOT is negation.
+3. A bound clause takes its tolerance from `Clause.tol_atr` (BREAK/TOUCH/RETEST) and its k from the k3/k6 variant (RECLAIM/HOLD).
+4. RETEST_HOLD uses a constant lookback k = 6 (`RETEST_LOOKBACK`); TOUCH is self-mirror, its mirror form is chosen by `spec.direction`.
+5. CLOSE_ABOVE_REG / CLOSE_BELOW_REG from section 8 are NOT in the registry and are NOT implemented (the example uses BREAK_REG down as invalidation).
+6. Feature clauses read `frame.thresholds[(name, q)]` and `arrays[name]`; next_structure level arrays are keyed by the TARGET_LEVELS name.
+7. A non-finite register capture kills the instance. A failed guard leaves the instance waiting; only timeout, invalidate or a run boundary kill it.
+8. The dedup group is the instances advanced to a stage at bar u (all share enter=u); finalize (context, session, stop, target) runs on the dedup survivor only.
+9. next_structure target: levels strictly beyond the close, nearest one taken; none -> fixed `fallback_r` with target NaN; space_r < min_space_r rejects; the
+   stop is measured against c[u] (not o[u+1]). A finite target already on the wrong side of the decision close is rejected.
+10. lv captures find their array through the backing IS clause; `event_ids` are the zid values of lv captures; entry_zone_lo/hi come from the anchor ZONE_ENTER's ZONE_LO/HI arrays.
+Open: `simulate_fast` behaviour for a finite target already crossed by the gap at o[i+1] must be pinned by a test before structural targets are used in campaigns.
