@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections import OrderedDict
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
 from typing import Any, Literal
@@ -264,20 +265,56 @@ def _stops(features: FeatureSet, spec: StrategySpec, direction: np.ndarray) -> n
     return level - direction * stop.offset
 
 
-def evaluate_spec(features: FeatureSet, spec: StrategySpec) -> CandidateArrays:
-    """Evaluate one spec at M5 closes without constructing per-bar Python objects."""
+class RuleMaskCache:
+    """Bounded LRU of per-rule boolean masks for ONE feature set.
+
+    Keyed by ``(feature, op, threshold, other_feature)``; a mask is a pure function of the
+    (immutable) feature arrays and the rule, so a hit is bit-identical to recomputation.
+    Cached arrays are only ever read (``mask &= cached``), never mutated.
+    """
+
+    def __init__(self, features: FeatureSet, max_entries: int = 768) -> None:
+        self._features = features
+        self._max = max_entries
+        self._data: OrderedDict[tuple, np.ndarray] = OrderedDict()
+        self.hits = 0
+        self.misses = 0
+
+    def get(self, rule: Rule) -> np.ndarray:
+        key = (rule.feature, rule.op, rule.threshold, rule.other_feature)
+        hit = self._data.get(key)
+        if hit is not None:
+            self._data.move_to_end(key)
+            self.hits += 1
+            return hit
+        self.misses += 1
+        value = _rule_mask(self._features, rule)
+        value.flags.writeable = False
+        self._data[key] = value
+        if len(self._data) > self._max:
+            self._data.popitem(last=False)
+        return value
+
+
+def evaluate_spec(features: FeatureSet, spec: StrategySpec,
+                  rule_masks: RuleMaskCache | None = None) -> CandidateArrays:
+    """Evaluate one spec at M5 closes without constructing per-bar Python objects.
+
+    ``rule_masks`` (optional) memoises per-rule masks across calls; results are identical.
+    """
     n = len(features["c"])
     if any(len(value) != n for value in features.values()):
         raise ValueError("feature arrays must be aligned")
+    rule_mask = _rule_mask if rule_masks is None else (lambda _f, r: rule_masks.get(r))
     mask = _regime_mask(features, spec.regime_filters)
     for name in spec.context_filters:
         mask &= np.asarray(features[f"context_{name.lower()}"], dtype=bool)
     for rule in spec.entry_rules:
-        mask &= _rule_mask(features, rule)
+        mask &= rule_mask(features, rule)
     for group in spec.or_groups:
         group_mask = np.zeros(n, dtype=bool)
         for rule in group:
-            group_mask |= _rule_mask(features, rule)
+            group_mask |= rule_mask(features, rule)
         mask &= group_mask
     direction = _directions(features, spec)
     stop = _stops(features, spec, direction)
@@ -304,6 +341,7 @@ __all__ = (
     "FEATURE_NAMES",
     "SPEC_SCHEMA_VERSION",
     "Rule",
+    "RuleMaskCache",
     "StopSpec",
     "StrategySpec",
     "TargetSpec",

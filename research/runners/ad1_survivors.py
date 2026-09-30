@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import sys
 from pathlib import Path
 from typing import Any
@@ -33,6 +34,7 @@ from alpha.discovery import selection as sel  # noqa: E402
 from alpha.discovery import stages as st  # noqa: E402
 from alpha.discovery.compile import TrialLedger  # noqa: E402
 from alpha.discovery.describe import describe_genome  # noqa: E402
+from alpha.discovery.disk import assert_free_space  # noqa: E402
 from alpha.discovery.evaluate import GenomeEvaluator  # noqa: E402
 from alpha.fast.store import FeatureStore  # noqa: E402
 from research.runners import ar2_fast  # noqa: E402
@@ -368,6 +370,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--config", default=str(DEFAULT_CONFIG))
     parser.add_argument("--out-dir", required=True)
     parser.add_argument("--cache-dir", default=str(DEFAULT_CACHE))
+    parser.add_argument("--cleanup", action="store_true")
     parser.add_argument("--overlap", type=float, default=OVERLAP_THRESHOLD)
     parser.add_argument("--prior-trials", type=int, default=None,
                         help="trials of EARLIER campaigns on this data (default: meta, else 0)")
@@ -388,12 +391,17 @@ def main(argv: list[str] | None = None) -> int:
                              "list, all stages re-run on the CURRENT evaluator)")
     parser.add_argument("--oos-access-log", default=None)
     args = parser.parse_args(argv)
-    summary = run(Path(args.pool), Path(args.config), Path(args.out_dir), Path(args.cache_dir),
+    assert_free_space(args.cache_dir)
+    try:
+        summary = run(Path(args.pool), Path(args.config), Path(args.out_dir), Path(args.cache_dir),
                   args.overlap, args.prior_trials, args.prior_unique_specs,
                   args.min_train_trades, args.c_min_trades, None, args.allow_evaluator_mismatch,
                   args.prior_validation_looks,
                   Path(args.drift_baseline_json) if args.drift_baseline_json else None,
-                  Path(args.oos_access_log) if args.oos_access_log else None)
+                      Path(args.oos_access_log) if args.oos_access_log else None)
+    finally:
+        if args.cleanup:
+            shutil.rmtree(Path(args.cache_dir), ignore_errors=True)
     print(f"counts: {summary['counts']}")
     print(f"accounting: {summary['accounting']}")
     print(f"clusters: {len(summary['clusters'])}  neighbour param trials: "

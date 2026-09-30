@@ -52,6 +52,8 @@ class ThresholdResolver:
         self._features = features
         self._mask = np.asarray(train_mask, dtype=bool)
         self._sorted: dict[str, np.ndarray] = {}
+        # (feature, q, floor) -> resolved value; the Train mask is fixed for the resolver's life
+        self._values: dict[tuple[str, float, float | None], float] = {}
 
     @classmethod
     def from_plan(cls, features: Any, plan: Any, dates: np.ndarray) -> ThresholdResolver:
@@ -67,13 +69,19 @@ class ThresholdResolver:
 
     def value(self, feature: str, q: float, floor: float | None = None) -> float:
         """TRAIN quantile of ``feature``; ``floor`` (catalog domain) lower-bounds the result."""
+        key = (feature, q, floor)
+        hit = self._values.get(key)
+        if hit is not None:
+            return hit
         values = self._train_values(feature)
         if not len(values):
             raise ValueError(f"no finite TRAIN values for {feature}")
         v = float(np.quantile(values, q))
         if floor is not None:
             v = max(v, float(floor))
-        return float(round(v, 6))
+        out = float(round(v, 6))
+        self._values[key] = out
+        return out
 
 
 # --------------------------------------------------------------------------- canonicalisation
@@ -163,7 +171,24 @@ def _canon_window(window: tuple[int, int] | None) -> tuple[int, int] | None:
     return (start, end)
 
 
+# Bounded memo tables.  Keyed by ``repr(genome)`` (exact float repr, so -0.0 / 0.0 and every
+# other value stay distinguished); values are immutable (frozen Genome / str).
+_MEMO_MAX = 50_000
+_CANON_MEMO: dict[str, Genome] = {}
+_HASH_MEMO: dict[str, str] = {}
+
+
 def canonicalize(genome: Genome) -> Genome:
+    key = repr(genome)
+    hit = _CANON_MEMO.get(key)
+    if hit is None:
+        if len(_CANON_MEMO) >= _MEMO_MAX:
+            _CANON_MEMO.clear()
+        hit = _CANON_MEMO[key] = _canonicalize_uncached(genome)
+    return hit
+
+
+def _canonicalize_uncached(genome: Genome) -> Genome:
     """Return the canonical form: logically identical genomes map to identical values.
 
     Iterated to a FIXED POINT (``canonicalize(canonicalize(g)) == canonicalize(g)``): merging a
@@ -202,10 +227,16 @@ def _canonicalize_once(genome: Genome) -> Genome:
 
 
 def canonical_hash(genome: Genome) -> str:
-    canon = canonicalize(genome)
-    payload = json.dumps(canon.to_dict(with_lineage=False), sort_keys=True,
-                         separators=(",", ":"), allow_nan=False)
-    return hashlib.sha256(payload.encode()).hexdigest()
+    key = repr(genome)
+    hit = _HASH_MEMO.get(key)
+    if hit is None:
+        if len(_HASH_MEMO) >= _MEMO_MAX:
+            _HASH_MEMO.clear()
+        canon = canonicalize(genome)
+        payload = json.dumps(canon.to_dict(with_lineage=False), sort_keys=True,
+                             separators=(",", ":"), allow_nan=False)
+        hit = _HASH_MEMO[key] = hashlib.sha256(payload.encode()).hexdigest()
+    return hit
 
 
 # --------------------------------------------------------------------------- mirror + compile

@@ -7,11 +7,13 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from alpha.discovery import compile as discovery_compile
 from alpha.discovery.archetypes import random_genome
 from alpha.discovery.catalog import FeaturePool
 from alpha.discovery.compile import TrialLedger, canonical_hash, canonicalize
 from alpha.discovery.evaluate import GenomeEval, GenomeEvaluator, validation_gate_view
 from alpha.discovery.fitness import train_fitness
+from alpha.discovery.genome import Genome, StopGene
 from alpha.discovery.optuna_driver import (
     MAX_TRIALS_PER_STRUCTURE,
     optimize_structure,
@@ -59,6 +61,17 @@ def _good(env, ev, n=60):
     pytest.skip("no Stage-A survivor among random genomes")
 
 
+def test_canonical_memo_distinguishes_negative_and_positive_zero() -> None:
+    discovery_compile._CANON_MEMO.clear()
+    discovery_compile._HASH_MEMO.clear()
+    negative = Genome("LONG", stop=StopGene("session_level", None, "previous_day_low", -0.0))
+    positive = replace(negative, stop=replace(negative.stop, offset=0.0))
+    discovery_compile.canonicalize(negative)
+    discovery_compile.canonicalize(positive)
+    assert repr(negative) != repr(positive)
+    assert len(discovery_compile._CANON_MEMO) == 2
+
+
 def test_evaluate_roundtrip_cache_and_ledger(env, tmp_path):
     ledger = TrialLedger()
     ev = _evaluator(env, tmp_path, ledger)
@@ -74,10 +87,45 @@ def test_evaluate_roundtrip_cache_and_ledger(env, tmp_path):
     assert ledger.unique <= ledger.total_trials
     assert GenomeEval.from_dict(json.loads(a.to_json())).train == a.train
     # fresh evaluator over the same on-disk cache: identical results, zero simulations
+    ev.flush()
     ev2 = _evaluator(env, tmp_path)
     c = ev2.evaluate(g)
     assert c.train == a.train and validation_gate_view(c) == validation_gate_view(a)
     assert ev2.sim_count == 0 and ev2.ledger.cache_hits == 1
+
+
+def test_lean_fitness_matches_full_and_cache_upgrades_without_downgrade(env, tmp_path):
+    g = _good(env, _evaluator(env, tmp_path / "find"))
+    lean_eval = _evaluator(env, tmp_path / "cache")
+    lean = lean_eval.evaluate(g, need_base=False)
+    assert not lean.is_full and lean.train.base is None
+    lean_fitness = train_fitness(lean.train, lean_eval.min_trades)
+
+    full = lean_eval.ensure_full(lean, g)
+    assert full.is_full and full.train.base is not None
+    assert train_fitness(full.train, lean_eval.min_trades) == lean_fitness
+    lean_eval.flush()
+
+    # A later lean request must return the complete cached entry, never replace it.
+    again = _evaluator(env, tmp_path / "cache").evaluate(g, need_base=False)
+    assert again.is_full and again.to_dict() == full.to_dict()
+
+
+def test_shard_loader_skips_corrupt_line_and_keeps_full_over_later_lean(env, tmp_path):
+    g = _good(env, _evaluator(env, tmp_path / "find"))
+    writer = _evaluator(env, tmp_path / "cache")
+    full = writer.evaluate(g)
+    key = writer.fingerprint(full.genome_hash)
+    writer.flush()
+    lean_raw = full.to_dict()
+    lean_raw["train"]["base"] = None
+    lean_raw["validation"] = None
+    lean_raw["full"] = False
+    shard = writer.cache_root / "shard_99999999999999999999_1.jsonl"
+    shard.write_text("corrupt\n" + key + "\t" + json.dumps(lean_raw) + "\n", encoding="utf-8")
+
+    loaded = _evaluator(env, tmp_path / "cache").evaluate(g, need_base=False)
+    assert loaded.is_full and loaded.to_dict() == full.to_dict()
 
 
 def test_fingerprint_depends_on_split_embargo(env, tmp_path):
@@ -158,7 +206,7 @@ def test_param_kind_evaluation(env, tmp_path):
 def test_stage_a_min_train_trades_is_60_and_version_bumped(env, tmp_path):
     from alpha.discovery.evaluate import EVALUATOR_VERSION, MIN_TRAIN_TRADES
 
-    assert MIN_TRAIN_TRADES == 60 and EVALUATOR_VERSION == "ad1-genome-eval-v3"
+    assert MIN_TRAIN_TRADES == 60 and EVALUATOR_VERSION == "ad1-genome-eval-v4"
     ev = _evaluator(env, tmp_path)
     assert ev.min_trades == 60  # research/configs/ad1_discovery.json sample_rules
 

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import statistics
 import subprocess
 import sys
@@ -33,6 +34,7 @@ from alpha.discovery.archetypes import random_genome  # noqa: E402
 from alpha.discovery.catalog import FeaturePool  # noqa: E402
 from alpha.discovery.compile import TrialLedger, canonicalize  # noqa: E402
 from alpha.discovery.deap_driver import evolve_structures, lineage_family  # noqa: E402
+from alpha.discovery.disk import assert_free_space  # noqa: E402
 from alpha.discovery.evaluate import (  # noqa: E402
     EVALUATOR_VERSION,
     GenomeEvaluator,
@@ -115,7 +117,8 @@ def run(args: argparse.Namespace, dev_override=None) -> dict:
     pool = FeaturePool.from_features(features)
     ledger = TrialLedger()
     evaluator = GenomeEvaluator(features, market, dates, plan, cfg, args.cache_dir, ledger,
-                                min_train_trades=args.min_train_trades)
+                                min_train_trades=args.min_train_trades,
+                                max_cache_mb=args.cache_max_mb)
     log(f"[setup] {len(dates)} dev bars, feature pool ready, seed={seed}, "
         f"max_unique_specs={args.max_unique_specs}")
 
@@ -124,6 +127,7 @@ def run(args: argparse.Namespace, dev_override=None) -> dict:
 
     def phase_stats(name: str, t0: float, u0: int, hits0: int, trials0: int, best: float | None,
                     n_new: int) -> None:
+        evaluator.flush()  # persist buffered evaluation cache shard at phase end
         wall = time.perf_counter() - t0
         trials = ledger.total_trials - trials0
         phases[name] = {
@@ -150,7 +154,7 @@ def run(args: argparse.Namespace, dev_override=None) -> dict:
             log(f"[random] budget guard hit at {i} genomes")
             break
         g = random_genome(rng, pool)
-        ev = evaluator.evaluate(g, kind="structural")
+        ev = evaluator.evaluate(g, kind="structural", need_base=False)
         if not ev.rejected:
             fit = train_fitness(ev.train, evaluator.min_trades)
             c = Candidate(canonicalize(g), ev.genome_hash, fit, ev)
@@ -279,11 +283,20 @@ def build_parser() -> argparse.ArgumentParser:
                         "to N by ad1_survivors")
     p.add_argument("--prior-unique-specs", type=int, default=0)
     p.add_argument("--cache-dir", default=str(DEFAULT_CACHE))
+    p.add_argument("--cache-max-mb", type=float, default=500.0)
+    p.add_argument("--cleanup", action="store_true",
+                   help="remove this run's cache directory after completion")
     return p
 
 
 def main(argv: list[str] | None = None) -> int:
-    run(build_parser().parse_args(argv))
+    args = build_parser().parse_args(argv)
+    assert_free_space(args.cache_dir)
+    try:
+        run(args)
+    finally:
+        if args.cleanup:
+            shutil.rmtree(Path(args.cache_dir), ignore_errors=True)
     return 0
 
 

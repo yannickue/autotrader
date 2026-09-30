@@ -8,7 +8,14 @@ import pytest
 from alpha.common.dataset import POINT, load_research_dataset
 from alpha.common.sim import COST_SCENARIOS, SimRules, SizingSpec
 from alpha.fast.registry import discover
-from alpha.fast.screen import RejectReason, light_screen, light_screen_many, reject_reason
+from alpha.fast.screen import (
+    RejectReason,
+    _partition_screen,
+    light_screen,
+    light_screen_many,
+    reject_reason,
+    screen_partition_trades,
+)
 from alpha.fast.sim import CandidateArrays, MarketArrays, fast_metrics, simulate_fast
 from alpha.fast.spec import Rule, StopSpec, StrategySpec, TargetSpec
 from alpha.fast.store import FeatureStore
@@ -107,6 +114,15 @@ def test_light_screen_matches_fast_metrics_for_three_real_variants(tmp_path) -> 
             assert part.expectancy_r == pytest.approx(reference["expectancy_r"], abs=1e-9)
             assert part.profit_factor == pytest.approx(reference["profit_factor"], abs=1e-9)
             assert part.win_rate == pytest.approx(reference["win_rate"], abs=1e-9)
+            partition = plan.train if part is got.train else plan.validation
+            old = _partition_screen(
+                trades, market, dates, plan, partition, contract_size=sizing.contract_size
+            )
+            new = screen_partition_trades(
+                trades, mask, len(np.unique(market.day[plan.mask(dates, partition)])),
+                contract_size=sizing.contract_size,
+            )
+            assert new == old
         candidate_sets.append(candidates)
         checked += 1
         if checked == 3:
