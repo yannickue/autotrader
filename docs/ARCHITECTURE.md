@@ -125,3 +125,10 @@ Not in V1: dashboards, deep learning, reinforcement learning, options, or multip
 6. Execution latency/error budgets and clock-synchronization requirements.
 7. Authentication and replay protection for optional TradingView alerts.
 8. Criteria and target date for evaluating NautilusTrader 2.0.
+
+## Decision 2026-09-30: demo OpportunityEngine may import FROZEN alpha kernels only
+`src/demo/opportunity/**` (signal layer, not execution) reuses the causal V2 family generators. Allowed imports:
+`alpha.families.*`, `alpha.common.market_data`, `alpha.fast.sim`, `alpha.session`. Search / optimisation / ML research code
+(discovery, formula, rawscan, metalabel, growth, Optuna/DEAP) is forbidden there, and no execution / risk / adapter / persistence /
+`demo.execution` module may import `alpha` (enforced by `tests/unit/alpha/test_protocol_metrics.py`). The hot path stays deterministic
+and needs no AI agent; specs are frozen (`production_spec_v1.json`, strategy hash recorded on every snapshot).

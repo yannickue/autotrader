@@ -163,8 +163,38 @@ def test_research_package_is_isolated_from_production_and_vice_versa():
         assert not forbidden_in_alpha.search(text), f"{py} couples research to production"
     importing_alpha = re.compile(r"^\s*(?:from|import)\s+alpha\b", re.M)
     for py in src.rglob("*.py"):
-        if "alpha" in py.relative_to(src).parts[:1]:
+        rel = py.relative_to(src).parts
+        if rel[:1] == ("alpha",):
             continue
+        if rel[:2] == ("demo", "opportunity"):
+            continue  # frozen causal signal kernels only; constrained by the allowlist test below
         assert not importing_alpha.search(py.read_text(encoding="utf-8")), (
             f"{py} imports research code"
         )
+
+
+# The demo OpportunityEngine (signal layer, NOT execution) reuses the FROZEN, causal V2 family
+# kernels. It may import only these alpha modules; never search/optimisation/ML research code, and
+# no execution/risk/adapter layer may import alpha (docs/DEMO_TRADER.md).
+_DEMO_OPPORTUNITY_ALPHA_ALLOWLIST = (
+    "alpha.common.market_data",
+    "alpha.families",
+    "alpha.fast.sim",
+    "alpha.session",
+)
+
+
+def test_demo_opportunity_imports_only_frozen_alpha_kernels():
+    src = Path(__file__).resolve().parents[3] / "src"
+    pattern = re.compile(r"^\s*(?:from|import)\s+(alpha[\w.]*)", re.M)
+    for py in (src / "demo" / "opportunity").rglob("*.py"):
+        for module in pattern.findall(py.read_text(encoding="utf-8")):
+            assert module.startswith(_DEMO_OPPORTUNITY_ALPHA_ALLOWLIST), (
+                f"{py} imports non-allowlisted research module {module}"
+            )
+    layers = ("execution", "risk", "nautilus_mt5", "nautilus_kernel", "adapters", "persistence")
+    for layer in layers:
+        for py in (src / layer).rglob("*.py"):
+            assert not pattern.search(py.read_text(encoding="utf-8")), f"{py} imports research"
+    for py in (src / "demo" / "execution").rglob("*.py"):
+        assert not pattern.search(py.read_text(encoding="utf-8")), f"{py} imports research"
