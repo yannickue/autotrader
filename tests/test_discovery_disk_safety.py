@@ -57,3 +57,10 @@ def test_free_space_guard_and_worker_budget(
     assert limit_workers_by_space(4, tmp_path, min_free_gb=0.5, per_worker_gb=0.25) == 2
     with pytest.raises(CacheSpaceError):
         limit_workers_by_space(1, tmp_path, min_free_gb=2, per_worker_gb=1)
+
+
+def test_free_space_guard_accepts_relative_and_not_yet_created_paths(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    assert assert_free_space("data/feature_store/never_created_yet", min_gb=0.0) > 0
+    workers = limit_workers_by_space(2, "nested/not/created", min_free_gb=0.0, per_worker_gb=0.0001)
+    assert workers == 2

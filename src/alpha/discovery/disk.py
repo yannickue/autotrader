@@ -14,13 +14,21 @@ class CacheSpaceError(RuntimeError):
     """Raised before a research run would exceed its disk-space budget."""
 
 
+def _existing_ancestor(path: str | Path) -> Path:
+    """Nearest existing directory of ``path``, so not-yet-created cache dirs can be measured."""
+    p = Path(path).resolve()
+    while not p.exists() and p != p.parent:
+        p = p.parent
+    return p
+
+
 def assert_free_space(path: str | Path = "C:/", min_gb: float = 2.0) -> int:
     """Return free bytes, or fail closed when fewer than ``min_gb`` remain."""
-    free = shutil.disk_usage(Path(path).anchor or path).free
+    where = _existing_ancestor(path)
+    free = shutil.disk_usage(where).free
     if free < min_gb * GIB:
         raise CacheSpaceError(
-            f"need at least {min_gb:.2f} GiB free on {Path(path).anchor or path}; "
-            f"only {free / GIB:.2f} GiB available"
+            f"need at least {min_gb:.2f} GiB free on {where}; only {free / GIB:.2f} GiB available"
         )
     return free
 
