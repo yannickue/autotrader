@@ -116,6 +116,7 @@ class FakeStack:
     account: AccountSnapshot = field(default_factory=lambda: FakeStack.default_account())
     bar_source: FakeBarSource = field(init=False)
     submits: list[TradeIntent] = field(default_factory=list)
+    shadow_submits: list[TradeIntent] = field(default_factory=list)  # dry-run submits (shadow only)
     halts: list[str] = field(default_factory=list)
     positions: dict[str, TradeIntent] = field(default_factory=dict)
     pending: list[ExecutionEvent] = field(default_factory=list)
@@ -173,11 +174,28 @@ class FakeStack:
         return any(i.market == market for i in self.positions.values())
 
     def submit(self, intent: TradeIntent, context: Any = None) -> list[ExecutionEvent]:
-        if self.shadow:
-            raise AssertionError("submit() called in shadow mode")
         if intent.intent_id in self.known:  # exactly-once per intent_id
             return []
         self.known.add(intent.intent_id)
+        if self.shadow:
+            # DRY-RUN like Mt5DemoStack(dry_run=True): risk/sizing/gates only, a real send is refused
+            self.shadow_submits.append(intent)
+            self.contexts[intent.intent_id] = dict(context or {})
+            evs = self.script.get(intent.intent_id)
+            if evs is not None:
+                if any(isinstance(e, (Fill, ProtectionConfirmed)) for e in evs):
+                    raise AssertionError("real send scripted in shadow mode")
+                for e in evs:
+                    if isinstance(e, Rejected):
+                        self.reject_reasons.append(e.reason)
+                return list(evs)
+            if self.mode == "fail_closed":
+                raise StackFailClosed("scripted fail closed")
+            if self.mode == "reject":
+                self.reject_reasons.append("risk: scripted rejection")
+                return [Rejected(intent.intent_id, "risk: scripted rejection")]
+            return [Accepted(intent.intent_id, Decimal("1"), Decimal("10000"), Decimal("0.01"), Decimal("100"), Decimal("2"),
+                             risk_detail={"decision": "TRADE", "shadow": True})]
         self.submits.append(intent)
         self.contexts[intent.intent_id] = dict(context or {})
         iid = intent.intent_id

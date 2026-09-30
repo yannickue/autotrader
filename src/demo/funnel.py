@@ -55,14 +55,14 @@ class _Bucket:
 
     __slots__ = (
         "engine_accepted", "engine_by_class", "engine_only_non_hard", "engine_reasons", "engine_rejected",
-        "opportunities", "stack_approved_not_traded", "stack_by_class", "stack_codes", "stack_rejected",
+        "opportunities", "shadow_would_trade", "stack_approved_not_traded", "stack_by_class", "stack_codes", "stack_rejected",
         "temporary_blocked", "temporary_codes", "traded",
     )
 
     def __init__(self) -> None:
         self.opportunities = self.engine_accepted = self.engine_rejected = 0
         self.engine_only_non_hard = self.stack_rejected = self.temporary_blocked = 0
-        self.traded = self.stack_approved_not_traded = 0
+        self.traded = self.stack_approved_not_traded = self.shadow_would_trade = 0
         self.engine_reasons: Counter[str] = Counter()
         self.engine_by_class: Counter[str] = Counter()
         self.stack_codes: Counter[str] = Counter()
@@ -86,7 +86,9 @@ class _Bucket:
         state = row["state"]
         code = row["stack_reject_code"]
         rejected = state == "RISK_REJECTED" or bool(code)
-        if state in TRADED_STATES and not rejected:
+        if row.get("shadow_dry_run") and not rejected:
+            self.shadow_would_trade += 1  # shadow DRY-RUN approval: never a trade, kept out of trade metrics
+        elif state in TRADED_STATES and not rejected:
             self.traded += 1
         elif rejected:
             cls = stack_class(code, row["stack_gate_class"])
@@ -101,7 +103,7 @@ class _Bucket:
             self.stack_approved_not_traded += 1
 
     def as_dict(self) -> dict[str, Any]:
-        would_without_temp = self.traded + self.stack_approved_not_traded + self.temporary_blocked
+        would_without_temp = self.traded + self.stack_approved_not_traded + self.shadow_would_trade + self.temporary_blocked
         legacy_stack = self.stack_by_class.get("LEGACY_ARBITRARY", 0)
         return {
             "opportunities": self.opportunities,
@@ -115,6 +117,7 @@ class _Bucket:
             "stack_by_class": dict(self.stack_by_class),
             "traded": self.traded,
             "stack_approved_not_traded": self.stack_approved_not_traded,
+            "shadow_would_trade": self.shadow_would_trade,
             "temporary_otherwise_valid_blocked": self.temporary_blocked,
             "trades_that_would_have_existed": {
                 "actual": self.traded,
@@ -167,6 +170,7 @@ def funnel(store: Any, stack: Any | None = None, phase: str | None = None) -> di
             "engine_rejected": top["engine_rejected"],
             "stack_rejected": top["stack_rejected"],
             "traded": top["traded"],
+            "shadow_would_trade": top["shadow_would_trade"],
             "temporary_otherwise_valid_blocked": top["temporary_otherwise_valid_blocked"],
             "trades_that_would_have_existed": top["trades_that_would_have_existed"],
             "engine_top_reasons": dict(list(top["engine_reasons"].items())[:5]),
@@ -198,7 +202,7 @@ def render(fun: Mapping[str, Any]) -> str:
     lines = [
         f"REJECTION FUNNEL [{fun['phase']}]",
         f"  opportunities {s['opportunities']} | engine accepted {s['engine_accepted']} | engine rejected {s['engine_rejected']}"
-        f" | stack rejected {s['stack_rejected']} | traded {s['traded']}",
+        f" | stack rejected {s['stack_rejected']} | traded {s['traded']} | shadow would-trade {s['shadow_would_trade']}",
         f"  trades that would have existed: actual {w['actual']} | w/o TEMPORARY {w['without_temporary_limitations']}"
         f" | w/o TEMPORARY+LEGACY stack {w['without_temporary_and_legacy_stack_gates']}"
         f" | engine-side w/o LEGACY/QUALITY {w['engine_side_without_legacy_quality_temporary']}",
@@ -212,6 +216,6 @@ def render(fun: Mapping[str, Any]) -> str:
         for name, b in fun[key].items():
             lines.append(
                 f"  {label} {name}: opp {b['opportunities']} acc {b['engine_accepted']} rej {b['engine_rejected']}"
-                f" stack_rej {b['stack_rejected']} traded {b['traded']} temp_blocked {b['temporary_otherwise_valid_blocked']}"
+                f" stack_rej {b['stack_rejected']} traded {b['traded']} shadow_would {b['shadow_would_trade']} temp_blocked {b['temporary_otherwise_valid_blocked']}"
             )
     return "\n".join(lines)
