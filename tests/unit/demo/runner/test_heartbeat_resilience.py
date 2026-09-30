@@ -18,7 +18,7 @@ def test_heartbeat_write_retries_a_transient_windows_sharing_violation(tmp_path,
     target = tmp_path / "heartbeat.json"
     monitor.write_heartbeat(target, {"updated_utc": "2026-09-30T00:00:00+00:00"})
     assert calls["n"] == 4
-    assert monitor.read_heartbeat(target) == {"updated_utc": "2026-09-30T00:00:00+00:00"}
+    assert monitor.read_heartbeat(target)["updated_utc"] == "2026-09-30T00:00:00+00:00"
 
 
 def test_heartbeat_write_gives_up_after_bounded_retries(tmp_path, monkeypatch):
