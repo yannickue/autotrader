@@ -1,4 +1,7 @@
 {
+ "amendments": [
+  "Lane S (amended in place before any deployment): STRUCT breakout/confirmed/retest/fade all ACTIVE_DISCOVERY_ELIGIBLE (previous undeployed draft: one trading variant, three measurement-only). The offline fixed-1.5R table mixes entry with a fixed stop/target/exit and does NOT establish any variant as a winner or isolate entry quality; no variant is promoted, demoted or inverted."
+ ],
  "base_strategy_hash_v1": "c3eae99e782888ac",
  "base_strategy_hash_v1_1": "4f4b33e97966cd84",
  "fit_end": "2026-06-30",
@@ -6,7 +9,7 @@
  "markets": {
   "BRENT": [
    {
-    "role": "PRIMARY",
+    "role": "ACTIVE_DISCOVERY_ELIGIBLE",
     "spec": {
      "constants_version": "struct-discovery-placeholders-v1",
      "exit_clock": "flat",
@@ -24,7 +27,7 @@
     "thr": []
    },
    {
-    "role": "SHADOW",
+    "role": "ACTIVE_DISCOVERY_ELIGIBLE",
     "spec": {
      "constants_version": "struct-discovery-placeholders-v1",
      "exit_clock": "flat",
@@ -42,7 +45,7 @@
     "thr": []
    },
    {
-    "role": "SHADOW",
+    "role": "ACTIVE_DISCOVERY_ELIGIBLE",
     "spec": {
      "constants_version": "struct-discovery-placeholders-v1",
      "exit_clock": "flat",
@@ -60,7 +63,7 @@
     "thr": []
    },
    {
-    "role": "SHADOW",
+    "role": "ACTIVE_DISCOVERY_ELIGIBLE",
     "spec": {
      "constants_version": "struct-discovery-placeholders-v1",
      "exit_clock": "flat",
@@ -80,7 +83,7 @@
   ],
   "BTCUSD": [
    {
-    "role": "PRIMARY",
+    "role": "ACTIVE_DISCOVERY_ELIGIBLE",
     "spec": {
      "constants_version": "struct-discovery-placeholders-v1",
      "exit_clock": "flat",
@@ -98,7 +101,7 @@
     "thr": []
    },
    {
-    "role": "SHADOW",
+    "role": "ACTIVE_DISCOVERY_ELIGIBLE",
     "spec": {
      "constants_version": "struct-discovery-placeholders-v1",
      "exit_clock": "flat",
@@ -116,7 +119,7 @@
     "thr": []
    },
    {
-    "role": "SHADOW",
+    "role": "ACTIVE_DISCOVERY_ELIGIBLE",
     "spec": {
      "constants_version": "struct-discovery-placeholders-v1",
      "exit_clock": "flat",
@@ -134,7 +137,7 @@
     "thr": []
    },
    {
-    "role": "SHADOW",
+    "role": "ACTIVE_DISCOVERY_ELIGIBLE",
     "spec": {
      "constants_version": "struct-discovery-placeholders-v1",
      "exit_clock": "flat",
@@ -1301,6 +1304,6 @@
   }
  },
  "schema": "demo-production-spec-1.2",
- "selection_rule": "per family: class-default spec + mode complement (LEADLAG: one default spec per leader); thresholds fitted once on dev frames with Berlin date <= fit_end; no performance-based selection || Phase-2 markets (v1.2): STRUCT (session-agnostic range-structure breakout, alpha.families.structbrk) with class-default DISCOVERY PLACEHOLDER constants (not fitted, thresholds empty). PRIMARY = mode 'confirmed' (fixed a priori, before any BTC/Brent history was measured); SHADOW = 'breakout', 'retest', 'fade' (same break, other entry timing; measurement only). ORB DROPPED for BTCUSD (cash_open 08:00 UTC is an invented open, not a session) and for BRENT (08:00 London is inherited from XAUUSD/EURUSD; no evidence of a defensible opening range for the ActivTrades Brent spot CFD). Everything is PHASE2_DISCOVERY / NOT_ALPHA_VALIDATED: no expectancy is claimed.",
- "strategy_hash": "a4fe51b558d03274"
+ "selection_rule": "per family: class-default spec + mode complement (LEADLAG: one default spec per leader); thresholds fitted once on dev frames with Berlin date <= fit_end; no performance-based selection || Phase-2 markets (v1.2): STRUCT (session-agnostic range-structure breakout, alpha.families.structbrk) with class-default DISCOVERY PLACEHOLDER constants (not fitted, thresholds empty). ALL FOUR variants 'confirmed', 'breakout', 'retest', 'fade' (same break, other entry timing) are ACTIVE_DISCOVERY_ELIGIBLE: each may create a real DEMO intent when the symbol is flat (MT5 netting arbitration in demo.opportunity.arbitration; none is primary or validated; measurement comes from the counterfactual/outcome tracking). ORB DROPPED for BTCUSD (cash_open 08:00 UTC is an invented open, not a session) and for BRENT (08:00 London is inherited from XAUUSD/EURUSD; no evidence of a defensible opening range for the ActivTrades Brent spot CFD). Everything is PHASE2_DISCOVERY / NOT_ALPHA_VALIDATED: no expectancy is claimed.",
+ "strategy_hash": "70e323157664552d"
 }

@@ -1046,6 +1046,8 @@ class DemoStore:
             "json_extract(s.json,'$.market_state.clock.session_bucket') AS session_bucket, "
             "json_extract(s.json,'$.signal.origin') AS origin, "
             "json_extract(s.json,'$.signal.cluster') AS cluster, json_extract(s.json,'$.signal.sequence') AS sequence, "
+            "json_extract(s.json,'$.signal.structure_event_id') AS structure_event_id, "
+            "json_extract(s.json,'$.signal.variant') AS variant, "
             "json_extract(rd.json,'$.violated_cap') AS violated_cap, "
             "(SELECT json_extract(e.detail,'$.reason') FROM intent_events e WHERE e.intent_id=i.intent_id "
             " AND e.to_state IN ('CANCELLED','SEND_FAILED') ORDER BY e.seq DESC LIMIT 1) AS cancel_reason, "
@@ -1081,6 +1083,7 @@ class DemoStore:
                 "cluster": r["cluster"], "sequence": None if r["sequence"] is None else json.loads(r["sequence"]),
                 "violated_cap": r["violated_cap"], "cancel_reason": r["cancel_reason"] or r["cancel_restart"],
                 "trade_type": r["trade_type"] or "STRATEGY",
+                "structure_event_id": r["structure_event_id"], "variant": r["variant"],
             })
         return out
 

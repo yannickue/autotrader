@@ -1,6 +1,6 @@
 # ruff: noqa: E501
 """Production spec v1.2 (Lane F): strict superset of v1.1 with the STRUCT family for BRENT/BTCUSD, PHASE2_DISCOVERY tags,
-PRIMARY/SHADOW roles. v1 and v1.1 (files, schemas, hashes) stay untouched."""
+ACTIVE_DISCOVERY_ELIGIBLE roles (Lane S; PRIMARY/SHADOW mechanism kept). v1 and v1.1 (files, schemas, hashes) stay untouched."""
 
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ from demo.opportunity.production_spec import (
 
 V1_HASH = "c3eae99e782888ac"
 V1_1_HASH = "4f4b33e97966cd84"
-V1_2_HASH = "a4fe51b558d03274"  # sealed hash of production_spec_v1_2.json (documented in docs/V2_MARKETS.md, Lane F)
+V1_2_HASH = "70e323157664552d"  # sealed hash of production_spec_v1_2.json (amended in place by Lane S; docs/V2_MARKETS.md)
 CORE = ("GER40", "NAS100", "SPX500", "XAUUSD", "EURUSD")
 PHASE2 = ("BRENT", "BTCUSD")
 
@@ -68,13 +68,13 @@ def test_selector_gating():
     assert load_production_spec_for(("BTCUSD", "BRENT")).strategy_hash == V1_2_HASH
 
 
-def test_phase2_markets_use_struct_with_one_primary_and_no_orb():
+def test_phase2_markets_use_four_active_discovery_struct_variants_and_no_orb():
     v12 = load_production_spec(DEFAULT_PATH_V1_2)
     for m in PHASE2:
         specs = v12.specs_for(m)
         assert [fs.family for fs in specs] == ["STRUCT"] * 4  # ORB dropped (no defensible session open)
         assert [fs.spec.mode for fs in specs] == ["confirmed", "breakout", "retest", "fade"]
-        assert [fs.role for fs in specs] == ["PRIMARY", "SHADOW", "SHADOW", "SHADOW"]
+        assert [fs.role for fs in specs] == ["ACTIVE_DISCOVERY_ELIGIBLE"] * 4  # none primary / shadow / validated
         assert all(fs.thr_values == () for fs in specs)  # nothing fitted
         prov = json.loads(v12.provenance)[m]
         assert prov["n_fit_bars"] == 0 and prov["phase"] == "PHASE2_DISCOVERY" and prov["alpha_status"] == "NOT_ALPHA_VALIDATED"
@@ -133,7 +133,7 @@ def _run(market: str, tail: list[float]):
 
 
 @pytest.mark.parametrize("market", PHASE2)
-def test_engine_primary_trades_while_shadow_variants_are_recorded_but_never_traded(market):
+def test_engine_all_variants_are_active_discovery_eligible_none_is_shadow(market):
     pairs = _run(market, [102.6, 102.5, 102.6])  # break, then two confirming closes beyond the edge
     assert pairs, "the planted compressed-range breakout must produce opportunities"
     by_mode = {}
@@ -141,15 +141,15 @@ def test_engine_primary_trades_while_shadow_variants_are_recorded_but_never_trad
         assert snap.versions["strategy_hash"] == V1_2_HASH
         assert snap.signal["family"] == "STRUCT"
         assert snap.signal["phase"] == "PHASE2_DISCOVERY" and snap.signal["alpha_status"] == "NOT_ALPHA_VALIDATED"
+        assert snap.signal["role"] == "ACTIVE_DISCOVERY_ELIGIBLE" and snap.signal["variant"] == snap.signal["spec"]["mode"]
         assert snap.signal["structure_levels"]["range_high"] > snap.signal["structure_levels"]["range_low"]
+        assert SHADOW_VARIANT not in dec.reasons
         by_mode.setdefault(snap.signal["spec"]["mode"], []).append((snap, dec))
     assert "breakout" in by_mode and "confirmed" in by_mode
-    for snap, dec in by_mode["breakout"]:
-        assert snap.signal["role"] == "SHADOW" and dec.accepted is False and dec.reasons == (SHADOW_VARIANT,)
-    for snap, dec in by_mode["confirmed"]:
-        assert snap.signal["role"] == "PRIMARY"
-        assert snap.geometry.stop < snap.geometry.intended_entry  # structural stop = opposite range edge side
-        assert dec.accepted is True, dec.reasons
+    for mode in ("breakout", "confirmed"):
+        for snap, dec in by_mode[mode]:
+            assert snap.geometry.stop < snap.geometry.intended_entry  # structural stop = opposite range edge side
+            assert dec.accepted is True, dec.reasons
 
 
 def test_engine_emits_no_orb_on_phase2_markets_and_tags_v1_markets_nothing():

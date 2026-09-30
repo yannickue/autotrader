@@ -67,20 +67,29 @@ DEFAULT_PATH = Path(__file__).with_name("production_spec_v1.json")
 SCHEMA_V1_1 = "demo-production-spec-1.1"
 DEFAULT_PATH_V1_1 = Path(__file__).with_name("production_spec_v1_1.json")
 # v1.2 (Lane F): a STRICT SUPERSET of v1.1 (v1 markets + provenance copied verbatim). For BRENT and BTCUSD the invented /
-# inherited session-open ORB entries are DROPPED and replaced by the session-agnostic STRUCT family (one PRIMARY variant
-# that trades + three SHADOW variants that are evaluated, recorded and counterfactually labelled but never traded).
+# inherited session-open ORB entries are DROPPED and replaced by the session-agnostic STRUCT family. AMENDED IN PLACE before
+# any deployment (Lane S): ALL FOUR variants are ACTIVE_DISCOVERY_ELIGIBLE (each may create a real DEMO intent when the symbol is
+# flat); none is primary / validated. The PRIMARY/SHADOW role mechanism stays available for other uses.
 # Every Phase-2 snapshot is tagged PHASE2_DISCOVERY / NOT_ALPHA_VALIDATED. v1 and v1.1 (files, schemas, hashes) are untouched.
 SCHEMA_V1_2 = "demo-production-spec-1.2"
 DEFAULT_PATH_V1_2 = Path(__file__).with_name("production_spec_v1_2.json")
 ROLE_PRIMARY = "PRIMARY"
 ROLE_SHADOW = "SHADOW"  # evaluated + recorded + labelled counterfactually (reason SHADOW_VARIANT), never an intent
+ROLE_ACTIVE_DISCOVERY = "ACTIVE_DISCOVERY_ELIGIBLE"  # may trade when the symbol is flat; NOT_ALPHA_VALIDATED (Lane S)
+ROLES = (ROLE_PRIMARY, ROLE_SHADOW, ROLE_ACTIVE_DISCOVERY)
+AMENDMENT_LANE_S = (
+    "Lane S (amended in place before any deployment): STRUCT breakout/confirmed/retest/fade all ACTIVE_DISCOVERY_ELIGIBLE "
+    "(previous undeployed draft: one trading variant, three measurement-only). The offline fixed-1.5R table mixes entry with a fixed stop/target/exit and does "
+    "NOT establish any variant as a winner or isolate entry quality; no variant is promoted, demoted or inverted."
+)
 PHASE2_TAG = "PHASE2_DISCOVERY"
 ALPHA_STATUS = "NOT_ALPHA_VALIDATED"
 PHASE2_V1_2_SELECTION_RULE = (
     "Phase-2 markets (v1.2): STRUCT (session-agnostic range-structure breakout, alpha.families.structbrk) with class-default "
-    "DISCOVERY PLACEHOLDER constants (not fitted, thresholds empty). PRIMARY = mode 'confirmed' (fixed a priori, before any "
-    "BTC/Brent history was measured); SHADOW = 'breakout', 'retest', 'fade' (same break, other entry timing; measurement "
-    "only). ORB DROPPED for BTCUSD (cash_open 08:00 UTC is an invented open, not a session) and for BRENT (08:00 London is "
+    "DISCOVERY PLACEHOLDER constants (not fitted, thresholds empty). ALL FOUR variants 'confirmed', 'breakout', 'retest', 'fade' "
+    "(same break, other entry timing) are ACTIVE_DISCOVERY_ELIGIBLE: each may create a real DEMO intent when the symbol is flat "
+    "(MT5 netting arbitration in demo.opportunity.arbitration; none is primary or validated; measurement comes from the "
+    "counterfactual/outcome tracking). ORB DROPPED for BTCUSD (cash_open 08:00 UTC is an invented open, not a session) and for BRENT (08:00 London is "
     "inherited from XAUUSD/EURUSD; no evidence of a defensible opening range for the ActivTrades Brent spot CFD). "
     "Everything is PHASE2_DISCOVERY / NOT_ALPHA_VALIDATED: no expectancy is claimed."
 )
@@ -224,8 +233,7 @@ def select_specs_phase2_v1_2(market: str) -> list[tuple[FamilySpec, str]]:
     if market not in PHASE2_CANONICALS:
         raise ProductionSpecError(f"{market!r} is not a Phase-2 market")
     base = structbrk.STRUCTSpec()
-    out = [(dataclasses.replace(base, mode="confirmed"), ROLE_PRIMARY)]
-    out += [(dataclasses.replace(base, mode=m), ROLE_SHADOW) for m in ("breakout", "retest", "fade")]
+    out = [(dataclasses.replace(base, mode=m), ROLE_ACTIVE_DISCOVERY) for m in ("confirmed", "breakout", "retest", "fade")]
     assert len({sp.canonical_hash() for sp, _ in out}) == len(out)
     assert all(len(structbrk.fit(None, sp).values) == 0 for sp, _ in out)  # type: ignore[arg-type]  # fit-free
     return out
@@ -253,6 +261,7 @@ def build_v1_2_payload(base_path: str | Path | None = None) -> dict[str, Any]:
         **body, "markets": markets, "provenance": prov, "schema": SCHEMA_V1_2,
         "selection_rule": SELECTION_RULE + " || " + PHASE2_V1_2_SELECTION_RULE,
         "base_strategy_hash_v1_1": base["strategy_hash"],
+        "amendments": [AMENDMENT_LANE_S],
     }
     return {**new_body, "strategy_hash": _hash_body(new_body)}
 
@@ -354,7 +363,7 @@ def from_payload(payload: Mapping[str, Any]) -> ProductionSpecSet:
             if fam not in SPEC_CLASSES:
                 raise ProductionSpecError(f"unknown family {fam}")
             role = str(e.get("role", ROLE_PRIMARY))
-            if role not in (ROLE_PRIMARY, ROLE_SHADOW):
+            if role not in ROLES:
                 raise ProductionSpecError(f"unknown role {role!r}")
             specs.append(
                 FrozenSpec(m, family_spec_from_dict(e["spec"]), tuple(_dec(v) for v in e["thr"]), role)

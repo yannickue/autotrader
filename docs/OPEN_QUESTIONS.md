@@ -166,6 +166,7 @@ records and resolves them here.
     markets); a validated phase must research them and bump `CONSTANTS_VERSION`. (2) BTCUSD history lacks Oct-2025 and Mar-2026 (DST fold months rejected as
     AmbiguousServerTime); the ambiguity recurs live on 2026-10-25 server 02:00-03:00 (bars skipped fail-closed): decide whether the download/live policy should resolve the fold
     or keep failing closed. (3) Brent calendar (bar sessions, no session open) is probe-derived and PROVISIONAL; no broker confirmation. (4) Live tick spread of BTCUSD
-    (~100 USD) is ~2x the recorded M5 median used offline; entry gating uses the actual quote. (5) SHADOW variants use the engine-level reject code `SHADOW_VARIANT`; the
-    funnel classifies it UNCLASSIFIED; add a class if the funnel becomes a decision input. (6) Offline result: no evidence the breakout trigger beats random bars; the
-    primary variant `confirmed` was fixed a priori and is NOT promoted by any of this.
+    (~100 USD) is ~2x the recorded M5 median used offline; entry gating uses the actual quote. (5) SHADOW-role specs (mechanism kept; the STRUCT variants are no longer SHADOW since Lane S) use the engine-level reject code `SHADOW_VARIANT`; the
+    funnel classifies it UNCLASSIFIED; add a class if the funnel becomes a decision input. (6) Offline result: no evidence the breakout trigger beats random bars. The fixed-1.5R table mixes entry with a fixed stop/target/stop-first/finite-horizon exit, so it neither
+    isolates entry quality nor promotes/demotes any variant: all four STRUCT variants are ACTIVE_DISCOVERY_ELIGIBLE + NOT_ALPHA_VALIDATED (Lane S).
+    (7) Lane S: REVERSAL_CANDIDATE is not fed into the ExitEngine reversal input (`ExitMarketState.signal_reversal`) - gap; same-symbol concurrent signals are counted, never pyramided.
