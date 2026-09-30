@@ -209,12 +209,19 @@ def verify_clock_chain(
     now: datetime,
     spec_loader: Callable[[str], Any] | None = None,
     production: Any | None = None,
+    operating: Any | None = None,
 ) -> list[ClockChainRow]:
     """UTC -> market tz -> DST -> local trading minute -> session bucket -> SimWindow, per market.
 
     A market whose chain fails is DISABLED (``ok=False``); nothing is guessed.  ``calendar_status`` is
     copied from the spec: a ``provisional`` calendar stays ``provisional``."""
-    from demo.opportunity.clock import forced_flat_utc, local_minute_of, local_of, session_bucket_of
+    from demo.opportunity.clock import (
+        forced_flat_utc,
+        local_minute_of,
+        local_of,
+        market_flat_utc,
+        session_bucket_of,
+    )
 
     if spec_loader is None:
         from markets.spec import load_market_spec as spec_loader
@@ -251,10 +258,20 @@ def verify_clock_chain(
             day = datetime(year, 7, 15).date()
             entry_local = datetime(day.year, day.month, day.day, cal.entry_start_min // 60, cal.entry_start_min % 60, tzinfo=tz)
             entry_utc = entry_local.astimezone(UTC)
-            ff = forced_flat_utc(spec, entry_utc, cal.forced_flat_min)
+            # the self-check is of the MARKET-LOCAL clock exit (research semantics); the live operating policy
+            # legitimately moves the effective flat earlier, which is checked separately below
+            ff = market_flat_utc(spec, entry_utc, cal.forced_flat_min)
             if (ff - entry_utc) != timedelta(minutes=cal.forced_flat_min - cal.entry_start_min):
                 raise ValueError("forced-flat instant inconsistent with local clock")
             win_txt = f"entry {cal.entry_start_min}-{cal.entry_end_min} flat {cal.forced_flat_min}"
+            if operating is not None:
+                for probe_day in (datetime(year, 1, 15).date(), datetime(year, 7, 15).date()):
+                    p_entry = datetime(probe_day.year, probe_day.month, probe_day.day, cal.entry_start_min // 60,
+                                       cal.entry_start_min % 60, tzinfo=tz).astimezone(UTC)
+                    eff = forced_flat_utc(spec, p_entry, cal.forced_flat_min, operating)
+                    if eff > operating.deadline_utc(operating.day_of(p_entry)):
+                        raise ValueError(f"effective flat {eff.isoformat()} is after the global deadline")
+                win_txt += f" +op {operating.version}"
             if production is not None:
                 from demo.opportunity.production_spec import validate_sim_windows
 
@@ -326,6 +343,13 @@ class RunnerConfig:
     idle_poll_interval_s: float = 30.0  # poll cadence while EVERY enabled market is closed (heartbeat stays < 90 s)
     idle_account_check_s: float = 60.0  # account snapshot / reconcile cadence while idle
     idle_transient_grace_s: float = 12 * 3600.0  # a broker disconnect with all markets closed and no exposure is tolerated this long
+    # ---- live operating policy / operating day (Lane P) -----------------------------------------
+    # ``operating_policy`` (demo.opportunity.operating_policy.OperatingPolicy): None = today's behaviour (cash-session
+    # feed semantics, no flatten heartbeat). ``daily``: after the 22:00 Berlin deadline, once the broker is flat
+    # and reconciled, finalize the day and exit 0 with stop_reason ``eod_flat_shutdown``; entries refused outside the
+    # operating day (Mon-Fri Berlin date). Default off.
+    operating_policy: Any = None
+    daily: bool = False
 
     def __post_init__(self) -> None:
         if self.mode not in MODES:
@@ -422,6 +446,7 @@ class DemoRunner:
         self._funnel_at: datetime | None = None
         self._funnel_dirty = True
         self._market_state: dict[str, str] = {}  # FRESH | OPEN_OUT_OF_SESSION | CLOSED_IDLE | STALE_FAULT | DISABLED
+        self._eod_noted_at: datetime | None = None
         self._idle_all = False  # every enabled market is closed per calendar AND quote-stale (idle, not a fault)
         self._last_account_at: datetime | None = None
         self._scan_pending: set[str] = set()  # markets whose newest bar is not fully scanned yet (retry next cycle)
@@ -549,7 +574,8 @@ class DemoRunner:
         if not self._bind_account(snap, now):
             return
         self.clock_rows = verify_clock_chain(
-            self.cfg.markets, now=now, spec_loader=self._spec_loader, production=self._production
+            self.cfg.markets, now=now, spec_loader=self._spec_loader, production=self._production,
+            operating=self.cfg.operating_policy,
         )
         for r in self.clock_rows:
             if not r.ok:
@@ -773,6 +799,16 @@ class DemoRunner:
         for m in enabled:
             info: dict[str, Any] = {"bar_age_s": None, "quote_age_s": None, "stale": True}
             should_open = self._market_should_be_open(m, now)
+            idle_state = "CLOSED_IDLE"
+            op = self.cfg.operating_policy
+            if op is not None:
+                # Lane P: broker-session aware. A KNOWN daily broker pause is not a stale-feed fault; a genuinely
+                # stale feed inside an OPEN broker session (also after the cash close) stays a real fault.
+                session = op.session_state(m, now)
+                if session is not None:
+                    should_open = session == "OPEN"
+                    if session == "KNOWN_SESSION_PAUSE":
+                        idle_state = "KNOWN_SESSION_PAUSE"
             try:
                 close = src.last_closed_bar_close_utc(m)
             except StackFailClosed:
@@ -783,7 +819,7 @@ class DemoRunner:
                 if not should_open:
                     idle.add(m)
                     self._feed[m]["idle_market_closed"] = True
-                    self._market_state[m] = "CLOSED_IDLE"
+                    self._market_state[m] = idle_state
                 else:
                     self._market_state[m] = "STALE_FAULT"
                 continue
@@ -804,7 +840,7 @@ class DemoRunner:
                 if not should_open and not quote_fresh:
                     idle.add(m)
                     info["idle_market_closed"] = True
-                    self._market_state[m] = "CLOSED_IDLE"
+                    self._market_state[m] = idle_state
                 else:
                     self._market_state[m] = "STALE_FAULT"
                 continue
@@ -819,7 +855,7 @@ class DemoRunner:
                 if not should_open and not quote_fresh:
                     idle.add(m)
                     info["idle_market_closed"] = True
-                    self._market_state[m] = "CLOSED_IDLE"
+                    self._market_state[m] = idle_state
                 else:
                     self._market_state[m] = "STALE_FAULT"
                     if not should_open and quote_fresh:
@@ -898,6 +934,27 @@ class DemoRunner:
             events += list(manage_exits(now))
         events += list(self.stack.on_clock(now))
         self._handle_events(events, now)
+        self._note_eod(now)
+
+    def _eod_status(self) -> dict[str, Any] | None:
+        if self.cfg.operating_policy is None:
+            return None
+        fn = getattr(self.stack, "eod_status", None)
+        if fn is None:
+            return None
+        try:
+            return dict(fn())
+        except Exception:
+            return None
+
+    def _note_eod(self, now: datetime) -> None:
+        """Never give up silently: an OVERDUE flatten (not flat at the deadline) is reported loudly, every 60 s."""
+        eod = self._eod_status()
+        if eod is None or eod.get("flatten_state") != "OVERDUE":
+            return
+        if self._eod_noted_at is None or (now - self._eod_noted_at).total_seconds() >= 60.0:
+            self._eod_noted_at = now
+            self._note_error(now, f"eod_flat_overdue: {eod.get('eod_detail')}")
 
     # ---------------------------------------------------------------------------- opportunities
     def _catchup_stats(self, market: str) -> dict[str, Any]:
@@ -1170,6 +1227,13 @@ class DemoRunner:
             cancel = "halted"
         elif parse_utc(intent.valid_until_utc) < now:
             cancel = "expired"
+        elif self.cfg.operating_policy is not None and self.cfg.operating_policy.flatten_active(now):
+            cancel = G.R_FLATTEN_WINDOW  # mandatory flatten phase: no new exposure
+        elif (
+            self.cfg.operating_policy is not None and self.cfg.daily
+            and not self.cfg.operating_policy.is_operating_day(now)
+        ):
+            cancel = G.R_OUTSIDE_OPERATING_DAY
         if cancel:
             self.store.transition(iid, CANCELLED, detail={"reason": cancel}, ts=ts)
             return
@@ -1688,6 +1752,21 @@ class DemoRunner:
             "warnings": self._warnings[-20:],
             "milestones_emitted": list(self.milestones),
             "calendar_status": {r.market: r.calendar_status for r in self.clock_rows},
+            **self._operating_status(now),
+        }
+
+    def _operating_status(self, now: datetime) -> dict[str, Any]:
+        op = self.cfg.operating_policy
+        if op is None:
+            return {}
+        eod = self._eod_status() or {}
+        return {
+            "operating_policy": op.describe(),
+            "operating_day": op.is_operating_day(now),
+            "daily_mode": self.cfg.daily,
+            "flatten_state": eod.get("flatten_state", "UNKNOWN"),
+            "eod_flat_confirmed_utc": eod.get("eod_flat_confirmed_utc"),
+            "eod_detail": eod.get("eod_detail"),
         }
 
     def _heartbeat(self, now: datetime, *, alive: bool = True) -> None:
@@ -1705,8 +1784,32 @@ class DemoRunner:
                 self._fail_closed(f"heartbeat_write_failed: {exc}", now)
 
     # ----------------------------------------------------------------------------- main loop
+    def _eod_shutdown_ready(self, now: datetime) -> bool:
+        """--daily: past the 22:00 Berlin deadline AND broker flat confirmed by the stack AND reconciled at the
+        account level AND no open / in-doubt intent left. Only then may the day be finalized (exit 0)."""
+        op = self.cfg.operating_policy
+        if not self.cfg.daily or op is None or self.fail_reason is not None or not op.deadline_passed(now):
+            return False
+        eod = self._eod_status()
+        acct = self._last_account
+        if eod is None or eod.get("flatten_state") != "FLAT_CONFIRMED" or not eod.get("eod_flat_confirmed_utc"):
+            return False
+        if acct is None or not acct.connected or acct.reconciliation != "RECONCILED" or acct.open_positions:
+            return False
+        if self._last_account_at is None or (now - self._last_account_at).total_seconds() > max(
+            2 * self.cfg.idle_account_check_s, 120.0
+        ):
+            return False
+        try:
+            return not self.store.recover_open_intents() and not self._in_doubt_ids()
+        except Exception:
+            return False
+
     def _should_exit(self, now: datetime) -> bool:
         if self._stopping:
+            return True
+        if self._eod_shutdown_ready(now):
+            self.request_stop("eod_flat_shutdown")
             return True
         if self.fail_reason is not None:
             # keep managing exits while a position may still be open, up to manage_after_halt_s
@@ -1808,6 +1911,8 @@ def build_live_runner(
     phase2_markets: Sequence[str] | None = None,
     exit_policy: str = "fixed_1_5r",
     exit_plan: Any | None = None,
+    operating_policy: Any | None = None,
+    daily: bool = False,
 ) -> DemoRunner:
     """Wire the runner to the REAL ``Mt5DemoStack``.
 
@@ -1826,6 +1931,12 @@ def build_live_runner(
     ``stack_factory(dry_run=..., state_dir=..., markets=...)`` is the test seam (FakeStack etc.); with it
     the real client is never touched.  Raises ``LiveStackUnavailable`` if the real stack / MT5 package /
     connection config is not usable in this checkout.
+
+    ``operating_policy`` (Lane P): a ``demo.opportunity.operating_policy.OperatingPolicy`` (the CLI passes the
+    versioned ``configs/live_operating_policy.toml``); None (library default) = behaviour exactly as before.  It is
+    given to the engine (entry-window overlay + forced-flat), the real stack (flatten sweep + entry gate) and the
+    runner (broker-session aware feed semantics, flatten heartbeat).  ``daily`` = exit 0 with stop_reason
+    ``eod_flat_shutdown`` after the deadline once broker-flat + reconciled; refuses entries outside the operating day.
 
     ``phase2_markets`` (Lane M2): the Phase-2 markets opted in (default ``None`` = the ``enabled`` flags of
     ``configs/markets_phase2/enablement.toml``, all false as committed). With none enabled the frozen production spec v1
@@ -1904,6 +2015,7 @@ def build_live_runner(
             kwargs["config"] = StackConfig(
                 expected_server=os.environ.get("DEMO_TRADER_EXPECTED_SERVER", EXPECTED_DEMO_SERVER),
                 **exit_kw,
+                operating_policy=operating_policy,
             )
         stack: StackPort = Mt5DemoStack(  # type: ignore[assignment]
             client=client, connection=connection, state_dir=state_dir,
@@ -1920,12 +2032,14 @@ def build_live_runner(
         production=production,
         phase=phase,  # type: ignore[arg-type]
         seen_store=StoreSeenAdapter(store),
+        operating=operating_policy,
     )
     if learning is None:
         learning = mode == "shadow"
     predictor, trainer, err = load_learning(art / "models", learning)
     cfg = RunnerConfig(mode=mode, phase=phase, markets=names, artifacts_dir=art, learning=learning,
-                       forced_flat_on_shutdown=forced_flat_on_shutdown, account_phase=account_phase)
+                       forced_flat_on_shutdown=forced_flat_on_shutdown, account_phase=account_phase,
+                       operating_policy=operating_policy, daily=daily)
     return DemoRunner(
         stack, engine, store, config=cfg, predictor=predictor, trainer=trainer,
         learning_error=err, production=production,

@@ -84,6 +84,11 @@ def _parser() -> argparse.ArgumentParser:
         help="flatten open positions on shutdown IF the stack offers a flatten call (default off; the "
              "current StackPort has none: positions stay protected by their broker-side stops)",
     )
+    parser.add_argument(
+        "--daily", action="store_true",
+        help="operating-day mode: after the 22:00 Europe/Berlin deadline, once the broker is flat and reconciled, "
+             "finalize the day and exit 0 (stop_reason eod_flat_shutdown); no entries outside Mon-Fri (Berlin). Default off.",
+    )
     learn = parser.add_mutually_exclusive_group()
     learn.add_argument(
         "--learning", dest="learning", action="store_true", default=None,
@@ -151,6 +156,9 @@ def _run(args: argparse.Namespace, mode: str) -> int:
     from demo.execution.exit_manager import ExitPlanConfig
 
     markets = tuple(m.strip() for m in args.markets.split(",")) if args.markets else None
+    from demo.opportunity.operating_policy import load_operating_policy
+
+    operating = load_operating_policy()  # Lane P: versioned live operating policy (flatten deadline, sessions)
     try:
         r = rn.build_live_runner(
             mode, phase=args.phase or "DISCOVERY", db_path=args.db, artifacts_dir=args.artifacts,
@@ -158,6 +166,7 @@ def _run(args: argparse.Namespace, mode: str) -> int:
             forced_flat_on_shutdown=args.forced_flat_on_shutdown, account_phase=args.account_phase,
             exit_policy=args.exit_policy,
             exit_plan=None if args.geometry_source == "family" else ExitPlanConfig(geometry_source=args.geometry_source),
+            operating_policy=operating, daily=args.daily,
         )
     except rn.LiveStackRefused as exc:
         print(f"REFUSED: {exc}", file=sys.stderr)

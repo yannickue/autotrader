@@ -224,3 +224,42 @@ reference price) and caps the position at `min(spec.max_leverage, account levera
 9.99x (min lot 86.32 EUR at 97.78) and BTCUSD 2.00x (min lot 369.69 EUR at 83746.28), i.e. `max_leverage` 10 / 2. The broker's
 account leverage 1:30 is NOT the instrument leverage and `price x contract / 30` does not reproduce the observed margins. Structural
 stops are used as given; no stop is tightened; min-lot vs hard-cap logic is unchanged.
+
+## Lane P: live operating policy, flatten deadline, broker sessions, `--daily` (2026-10-01)
+
+User rules: trades after 21:00 Europe/Berlin are allowed; at 22:00 Europe/Berlin zero strategy-managed (own-magic) positions; all
+times Berlin (DST-aware via zoneinfo); only the final flatten window (plus a 10 min entry runway) blocks new exposure.
+
+* `configs/live_operating_policy.toml` (+ `demo.opportunity.operating_policy`): LIVE-only, versioned (`version` + `policy_hash` are
+  written to every snapshot as `versions.operating_policy`). Research SimWindows / frozen family windows / `market_spec_hash` are NOT
+  touched: the policy is an overlay (`clock.live_spec`) used by the live engine only. `flatten_start` 21:55, `global_flat_deadline`
+  22:00, `broker_close_buffer_min` 5, `min_entry_runway_min` 10 (two M5 bars: a later entry would be force-closed before it can be
+  managed and would race the flatten phase). Per-market `entry_end_live` (NAS100/SPX500 = 15:55 New York, clamped to the local flat)
+  lets those markets enter after 21:00 Berlin up to the runway; EURUSD / XAUUSD / GER40 keep their strategy windows.
+  Side effect to know: the EOD family computes its session end as `min(cash_close, entry_end)`, so the widened NAS100/SPX500
+  `entry_end` also moves EOD's window there (frozen family code untouched; decide before trusting those two markets' EOD results).
+* `clock.forced_flat_utc(spec, entry_utc, exit_min, operating=None)` stays the single choke point: earliest of the market-local flat,
+  the Berlin flatten start and (broker session close - buffer). `operating=None` is bit-identical to before. The runner start-up
+  self-check now verifies the MARKET-LOCAL flat (`market_flat_utc`) and, with a policy, that the effective flat never exceeds the
+  global deadline (BTCUSD summer 20:30 UTC = 22:30 Berlin is moved to 21:55).
+* `Mt5DemoStack.on_clock` sweep (`StackConfig.operating_policy`, default None = unchanged): from the flatten start (earlier for an
+  instrument whose broker session closes earlier) EVERY own-magic broker position is closed reduce-only, also rows that are not OPEN
+  in the registry and after a restart (broker truth is re-read before and after every attempt; a failed/uncertain close never flips
+  exposure; bounded backoff 5/10/20/30/60 s; never given up). Heartbeat: `flatten_state` IDLE | WINDOW | OVERDUE | FLAT_CONFIRMED,
+  `eod_flat_confirmed_utc`, `eod_detail`. Not flat at 22:00 = OVERDUE + halt + `eod_flat_overdue` error every 60 s, retries continue.
+  Entries are refused from the flatten start (`flatten_window_active`, stack gate + runner gate) and inside the runway
+  (`entry_runway_too_short`).
+* Foreign-position gap: an own-magic position whose symbol the stack cannot map (e.g. a Phase-2 symbol without registry row) stays
+  fail-closed (`foreign_position_at_broker` halt in `poll_events`, unchanged) and is NOT swept (no registered instrument to close it
+  through; no second exit path was added): the sweep reports it as `unmapped_own_position:<symbol>` (state WINDOW/OVERDUE) and halts
+  new exposure. Phase-2 markets with open registry rows are adopted in manage-only mode at start and ARE swept.
+* Feed semantics (runner, only with a policy): `should be open` = broker session (known daily pauses, weekend) instead of the cash
+  session. A known broker pause is `KNOWN_SESSION_PAUSE` (idle, never counts towards all-stale, healthy markets keep trading,
+  on_clock keeps managing positions); silence inside an open broker session (also after the cash close) is `STALE_FAULT`. Session
+  schedules: NAS100/SPX500/XAUUSD daily break 23:00-00:00 Berlin, EURUSD Fri 23:00 close, GER40 22:00 Berlin -> 00:15 UTC
+  (all `observed` from the M5 history, summer and winter); BRENT 20:55-00:00 UTC and BTCUSD Fri 20:55 -> Sat 07:00 UTC are
+  `provisional` (single summer probe). US/EU DST-mismatch weeks are not observed for the broker breaks.
+* `scripts/demo_trader.py --daily` (default off): after 22:00 Berlin, once the stack reports FLAT_CONFIRMED, the account is
+  RECONCILED with 0 positions and no open/in-doubt intent is left, the runner finalizes (final label/report) and exits 0 with
+  `stop_reason = eod_flat_shutdown`; otherwise it keeps running. Entries outside Mon-Fri (Berlin date) are refused
+  (`outside_operating_day`). The CLI always loads the policy; `build_live_runner(operating_policy=None)` stays the library default.

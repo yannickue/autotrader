@@ -59,6 +59,7 @@ from demo.opportunity.clock import (
     make_clock_check,
     to_utc,
 )
+from demo.opportunity.operating_policy import OperatingPolicy
 from markets.spec import MarketSpec
 
 POLICY_ID = "static-demo-policy-v1"
@@ -317,7 +318,7 @@ class StaticDemoPolicy:
 
     def intent_for(
         self, snapshot: OpportunitySnapshot, decision: Decision, mspec: MarketSpec,
-        window: EffectiveWindow,
+        window: EffectiveWindow, operating: OperatingPolicy | None = None,
     ) -> TradeIntent | None:
         """TradeIntent of an ACCEPTED decision (None for a rejected one). Pure function of the records."""
         if not decision.accepted or decision.opportunity_id != snapshot.opportunity_id:
@@ -336,6 +337,6 @@ class StaticDemoPolicy:
             target=g.target,
             min_space_r=g.min_space_r,
             valid_until_utc=(sig + timedelta(seconds=self.config.valid_for_s)).isoformat(),
-            forced_flat_utc=forced_flat_utc(mspec, sig, window.exit_min).isoformat(),
+            forced_flat_utc=forced_flat_utc(mspec, sig, window.exit_min, operating).isoformat(),
             risk_fraction=self.config.risk_fraction,
         )

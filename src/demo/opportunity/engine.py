@@ -21,7 +21,7 @@ from __future__ import annotations
 import math
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Protocol
 
 import numpy as np
@@ -49,7 +49,8 @@ from demo.opportunity.bar_source import (
     tick_activity_of,
     validate_frame,
 )
-from demo.opportunity.clock import forced_flat_utc, to_utc
+from demo.opportunity.clock import forced_flat_utc, live_spec, to_utc
+from demo.opportunity.operating_policy import OperatingPolicy
 from demo.opportunity.policy import (
     Candidate,
     StaticDemoPolicy,
@@ -222,8 +223,11 @@ class OpportunityEngine:
         min_history_bars: int = DEFAULT_MIN_HISTORY_BARS,
         emit_duplicates: bool = False,
         commit: str | None = None,
+        operating: OperatingPolicy | None = None,
     ) -> None:
         self._source = source
+        # LIVE operating policy (Lane P). None (default, research / tests) = windows and forced-flat exactly as before.
+        self._op = operating
         self._prod = production or load_production_spec()
         names = self._prod.market_names()
         self._mspec: dict[str, MarketSpec] = (
@@ -258,6 +262,8 @@ class OpportunityEngine:
                 commit=self._commit, config_hash=cfg, market_spec_hash=market_spec_hash(self._mspec[market]),
                 strategy_hash=self._prod.strategy_hash, policy_id=self._policy.policy_id,
             )
+            if self._op is not None:
+                v = {**v, "operating_policy": f"{self._op.version}:{self._op.policy_hash}"}
             self._versions_cache[market] = v
         return v
 
@@ -319,9 +325,18 @@ class OpportunityEngine:
         last_ts = pd.Timestamp(frame["ts"].iloc[-1])
         if self._last_bar.get(market) == last_ts:
             return []  # this closed bar was already processed (idempotent per bar)
+        live_ms = ms
+        if self._op is not None:
+            signal_utc = to_utc(last_ts.to_pydatetime()) + timedelta(seconds=M5_SECONDS)
+            overlay = live_spec(ms, self._op, signal_utc)
+            if overlay is None:  # flatten runway / flatten phase: no entry can be generated on this bar
+                self.health[market] = "outside_live_entry_window"
+                self._last_bar[market] = last_ts
+                return []
+            live_ms = overlay
         self.health[market] = "ok"
 
-        data = assemble_live(market, ms, frame, self._leaders(market, now))
+        data = assemble_live(market, live_ms, frame, self._leaders(market, now))
         i = len(data) - 2  # deciding bar; the last row is the placeholder
         if catchup is None:
             quote = self._source.latest_quote(market)
@@ -335,7 +350,7 @@ class OpportunityEngine:
             hit = np.flatnonzero(cands.decision_idx == i)
             if len(hit) == 0:
                 continue
-            found.append((fs, make_candidate(market, ms, fs, data, cands, int(hit[0]))))
+            found.append((fs, make_candidate(market, live_ms, fs, data, cands, int(hit[0]))))
         if not found:
             self._last_bar[market] = last_ts
             return []
@@ -381,7 +396,7 @@ class OpportunityEngine:
                     "synthetic_quote": "bar_close_plus_recorded_bar_spread",
                     "engine_verdict": "ACCEPTED" if assessment.accepted else list(assessment.reasons),
                 }
-            ff = forced_flat_utc(ms, cand.signal_ts, cand.window.exit_min).isoformat()
+            ff = forced_flat_utc(ms, cand.signal_ts, cand.window.exit_min, self._op).isoformat()
             snap = build_snapshot(
                 cand=cand, assessment=assessment, phase=self._phase, created_utc=now, mspec=ms,
                 versions=self._versions(market), context=ctx,
@@ -398,7 +413,7 @@ class OpportunityEngine:
                     reasons=(SHADOW_VARIANT,), policy_id=dec.policy_id, shadow=dec.shadow,
                 )
             if dec.accepted:
-                intent = self._policy.intent_for(snap, dec, ms, cand.window)
+                intent = self._policy.intent_for(snap, dec, ms, cand.window, operating=self._op)
                 if intent is not None:
                     self._intents[snap.opportunity_id] = intent
                     self.last_intents.append(intent)
