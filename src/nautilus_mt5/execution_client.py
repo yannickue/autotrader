@@ -929,16 +929,27 @@ class Mt5LiveExecutionClient(LiveExecutionClient):
         else:
             self._deny(order, f"UNSUPPORTED_ORDER_TYPE_{order.order_type.name}")
 
-    def _prepare(self, order: Any, kind: OutboundKind, *, position_verified: bool = False) -> Any:
-        """Shared pre-flight: session, gate. Returns spec+mapping or None (already denied)."""
+    def _prepare(
+        self,
+        order: Any,
+        kind: OutboundKind,
+        *,
+        position_verified: bool = False,
+        defer_admission: bool = False,
+    ) -> Any:
+        """Shared pre-flight: session, gate. Returns spec+mapping or None (already denied).
+
+        ``defer_admission``: the caller admits itself after reading the broker position (the
+        reduce-only path, whose gate depends on a broker-verified own position)."""
         self._check_generation()
         if not self._session.is_connected:
             self._deny(order, f"SESSION_{self._session.state.value}")
             return None
-        admission = admit(kind, self.status, position_verified=position_verified)
-        if not admission.ok:
-            self._deny(order, admission.reason)
-            return None
+        if not defer_admission:
+            admission = admit(kind, self.status, position_verified=position_verified)
+            if not admission.ok:
+                self._deny(order, admission.reason)
+                return None
         mapping = self._provider.registry.by_instrument_id(order.instrument_id)
         return mapping, self._provider.spec(order.instrument_id)
 
@@ -1016,22 +1027,41 @@ class Mt5LiveExecutionClient(LiveExecutionClient):
         self._send_market(order, request, mapping.instrument_id, sl_order, tp_order)
 
     def _submit_reduce_only(self, order: Any) -> None:
-        prepared = self._prepare(order, OutboundKind.REDUCE_ONLY)
+        prepared = self._prepare(order, OutboundKind.REDUCE_ONLY, defer_admission=True)
         if prepared is None:
             return
         mapping, spec = prepared
         try:
             positions = self._broker_positions(mapping.broker_symbol)
+            base = admit(OutboundKind.REDUCE_ONLY, self.status)  # normal (reconciled) authority
             if len(positions) != 1:
-                return self._deny(order, f"REDUCE_ONLY_BROKER_POSITIONS_{len(positions)}")
+                return self._deny(
+                    order,
+                    f"REDUCE_ONLY_BROKER_POSITIONS_{len(positions)}"
+                    if base.ok
+                    else base.reason,
+                )
             position = positions[0]
-            broker_signed = position.volume if str(position.side) == "BUY" else -position.volume
-            if self._local_signed(order.instrument_id) != broker_signed:
-                return self._deny(order, "REDUCE_ONLY_LOCAL_BROKER_POSITION_MISMATCH")
             position_is_long = str(position.side) == "BUY"
+            quantity = Decimal(str(order.quantity))
+            # A position read from the broker just now, OWN (our magic), closed by an order on the
+            # opposite side that is not larger than the position can only REDUCE exposure: it is
+            # allowed in every runtime/reconciliation state (the flatten of last resort).
+            verified = (
+                int(position.magic) == int(self._cfg.magic)
+                and (order.side == OrderSide.SELL) == position_is_long
+                and quantity <= position.volume
+            )
+            admission = admit(OutboundKind.REDUCE_ONLY, self.status, position_verified=verified)
+            if not admission.ok:
+                return self._deny(order, admission.reason)
+            broker_signed = position.volume if position_is_long else -position.volume
+            if base.ok and self._local_signed(order.instrument_id) != broker_signed:
+                # Only enforced under normal authority; an unreconciled state is exactly when
+                # local bookkeeping may be stale, and broker truth already proves the reduction.
+                return self._deny(order, "REDUCE_ONLY_LOCAL_BROKER_POSITION_MISMATCH")
             if (order.side == OrderSide.SELL) != position_is_long:
                 return self._deny(order, "REDUCE_ONLY_WRONG_SIDE")
-            quantity = Decimal(str(order.quantity))
             if quantity > position.volume:
                 return self._deny(order, "REDUCE_ONLY_EXCEEDS_POSITION")  # never clamp silently
             token = self._store.record_intent(

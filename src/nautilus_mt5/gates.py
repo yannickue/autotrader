@@ -6,7 +6,11 @@ ingested, in every runtime/reconciliation state (enforced in the execution
 client, which does not call this module for inbound events).
 
     NEW_EXPOSURE           READY  + RECONCILED(VENUE_SNAPSHOT)   and no unprotected position
-    REDUCE_ONLY            RECONCILED(VENUE_SNAPSHOT) and runtime in {READY, HALTED}
+    REDUCE_ONLY            RECONCILED(VENUE_SNAPSHOT) and runtime in {READY, HALTED}; OR, for a
+                           broker-verified OWN position (fresh positions_get in the same lane
+                           call, opposite side, volume <= position volume, ticket bound), ANY
+                           runtime/reconciliation state (it can only reduce exposure - the flatten
+                           of last resort must not be blockable by a reconciliation MISMATCH)
     PROTECT_TIGHTEN        broker-verified position ticket; any state (it only reduces risk)
     PROTECT_LOOSEN_REMOVE  READY + RECONCILED(VENUE_SNAPSHOT)   (it increases risk)
     CANCEL_UNFILLED        any state (removes not-yet-filled exposure)
@@ -60,6 +64,8 @@ def admit(
     if kind is OutboundKind.PROTECT_TIGHTEN:
         if not position_verified:
             return Admission(ok=False, reason="PROTECT_NEEDS_BROKER_VERIFIED_POSITION")
+        return Admission(ok=True)
+    if kind is OutboundKind.REDUCE_ONLY and position_verified:
         return Admission(ok=True)
     if not _venue_reconciled(status):
         return Admission(

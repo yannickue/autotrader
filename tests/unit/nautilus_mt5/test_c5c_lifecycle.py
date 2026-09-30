@@ -71,20 +71,76 @@ def test_reduce_only_blocked_when_local_and_broker_positions_disagree(h, broker)
     assert "LOCAL_BROKER_POSITION_MISMATCH" in h.denial(order)
 
 
-@pytest.mark.parametrize(
-    "state",
-    [
-        ReconciliationState.NOT_RECONCILED,
-        ReconciliationState.RECONCILING,
-        ReconciliationState.MISMATCH,
-    ],
-)
-def test_reduce_only_blocked_unless_reconciled(h, state):
+UNRECONCILED = [
+    ReconciliationState.NOT_RECONCILED,
+    ReconciliationState.RECONCILING,
+    ReconciliationState.MISMATCH,
+]
+
+
+@pytest.mark.parametrize("state", UNRECONCILED)
+@pytest.mark.parametrize("runtime", [RuntimeMode.READY, RuntimeMode.HALTED, RuntimeMode.DEGRADED])
+def test_full_close_of_a_verified_own_position_is_allowed_in_any_reconciliation_state(
+    h, broker, state, runtime
+):
+    """H2: the flatten of last resort must not be blockable by a reconciliation MISMATCH."""
     open_long(h)
+    h.client.recon.state = state
+    h.client.recon.runtime = runtime
+    order = h.market(SELL, "0.25", reduce_only=True)
+    h.submit(order)
+    assert status_of(h, order) is OrderStatus.FILLED
+    assert broker.positions_get() == ()
+
+
+@pytest.mark.parametrize("state", UNRECONCILED)
+def test_unreconciled_close_survives_stale_local_bookkeeping(h, broker, state):
+    open_long(h)
+    h.client.recon.state = state
+    broker.positions_get()[0].volume = 0.5  # local != broker: only legal to close under broker truth
+    order = h.market(SELL, "0.5", reduce_only=True)
+    h.submit(order)
+    assert status_of(h, order) is OrderStatus.FILLED and broker.positions_get() == ()
+
+
+@pytest.mark.parametrize("state", UNRECONCILED)
+def test_unreconciled_reduce_only_never_increases_exposure(h, broker, state):
+    open_long(h)
+    h.client.recon.state = state
+    oversized = h.market(SELL, "0.5", reduce_only=True)
+    wrong_side = h.market(BUY, "0.25", reduce_only=True)
+    for order in (oversized, wrong_side):
+        h.submit(order)
+        assert status_of(h, order) is OrderStatus.DENIED
+    assert "NOT_VENUE_RECONCILED" in h.denial(oversized)
+    assert "NOT_VENUE_RECONCILED" in h.denial(wrong_side)
+    assert broker.positions_get()[0].volume == 0.25 and broker.order_send_calls == 1  # only the entry
+
+
+@pytest.mark.parametrize("state", UNRECONCILED)
+def test_unreconciled_close_of_a_foreign_position_is_denied(h, broker, state):
+    open_long(h)
+    broker.positions_get()[0].magic = 424242  # not ours
     h.client.recon.state = state
     order = h.market(SELL, "0.25", reduce_only=True)
     h.submit(order)
     assert status_of(h, order) is OrderStatus.DENIED and "NOT_VENUE_RECONCILED" in h.denial(order)
+    assert len(broker.positions_get()) == 1
+
+
+@pytest.mark.parametrize("state", UNRECONCILED)
+def test_unreconciled_close_without_a_broker_position_is_denied(h, state):
+    h.client.recon.state = state
+    order = h.market(SELL, "0.25", reduce_only=True)
+    h.submit(order)
+    assert status_of(h, order) is OrderStatus.DENIED and "NOT_VENUE_RECONCILED" in h.denial(order)
+
+
+@pytest.mark.parametrize("state", UNRECONCILED)
+def test_new_exposure_stays_blocked_when_unreconciled(h, state):
+    h.client.recon.state = state
+    entry, _ = h.submit_bracket(BUY, "0.25", 24_900.0)
+    assert status_of(h, entry) is OrderStatus.DENIED and "NOT_VENUE_RECONCILED" in h.denial(entry)
 
 
 def test_reduce_only_allowed_when_halted_but_reconciled_new_exposure_is_not(h):

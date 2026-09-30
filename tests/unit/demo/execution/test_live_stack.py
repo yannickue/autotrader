@@ -665,3 +665,31 @@ def test_rows_that_never_reached_the_broker_do_not_block_their_market_after_a_cr
         assert kinds(second.submit(make_intent(intent_id="fresh")))[-1] == "ProtectionConfirmed"
     finally:
         second.stop()
+
+
+def test_flatten_of_our_unprotected_position_survives_a_reconciliation_mismatch(env):
+    """H2 audit scenario: SL lost, price beyond the structural stop, emergency_protect refused
+    (INVALID_STOPS), reconciliation MISMATCH: the position must still be flattened, not stay open."""
+    broker, stack = env
+    stack.start()
+    stack.submit(make_intent())
+    (position,) = broker.positions_get()
+    position.sl = 0.0
+    broker.set_quote(24940.0, 24941.0)  # beyond the 24950 stop: a stop can no longer be placed
+    from risk.models import ReconciliationState
+
+    recon = stack._adapter.exec_client.recon
+    real_reconcile = stack._adapter.exec_client.reconcile
+
+    def failing_reconcile():
+        recon.state = ReconciliationState.MISMATCH
+        return recon
+
+    stack._adapter.exec_client.reconcile = failing_reconcile
+    recon.state = ReconciliationState.MISMATCH
+    try:
+        events = stack.poll_events()
+    finally:
+        stack._adapter.exec_client.reconcile = real_reconcile
+    assert broker.positions_get() == (), events
+    assert any(isinstance(e, PositionClosed) for e in events)
