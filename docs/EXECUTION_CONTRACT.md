@@ -116,3 +116,10 @@ exposure according to the approved recovery policy.
   ids and position quantities and cannot prove that order/decision accounting is intact after an exception
   interrupted a multi-step mutation, so while latched it refuses to return to RECONCILED (MISMATCH). Only
   restoring from durable state (`import_checkpoint`, i.e. `recover_pipeline`) clears it.
+
+## Amendment 2026-09-30 (audit H2): emergency reduce-only close in any reconciliation state
+The Nautilus/MT5 adapter admits a reduce-only close in ANY reconciliation/runtime state when, in the same lane call, the position
+was read from the broker, its magic is ours, the order side is opposite, volume <= position volume and it is closed by ticket
+(so an own position that lost its stop can always be flattened). It cannot increase exposure. New exposure and loosening/removing
+protection stay blocked unless RECONCILED (+READY for new exposure). The retired paper engine keeps the stricter rule (parity
+scenario `reduce_only_admission_matrix` is EXPECTED_DIFFERENCE).

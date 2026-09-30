@@ -352,6 +352,22 @@ def _matrix(tmp, *, reduce_only: bool, name: str) -> ParityResult:
         finally:
             _done(nau)
     area = "new-exposure / reduce-only admission"
+    if diffs and reduce_only and all(
+        str(d[2]).startswith("BLOCKED") and d[3] == "ACCEPTED" for d in diffs
+    ):
+        return ParityResult(
+            name=name,
+            area=area,
+            category=Category.EXPECTED_DIFFERENCE,
+            detail=(
+                "Lane F / audit H2 (2026-09-30): the adapter admits a reduce-only close of a "
+                "broker-verified OWN position (same lane read, magic ours, opposite side, "
+                "volume <= position, closed by ticket) in ANY reconciliation/runtime state, so an "
+                "unprotected position can always be flattened; new exposure and protection "
+                "loosening stay blocked. The retired legacy engine blocks; recorded, not patched. "
+                f"Cells: {diffs}"
+            ),
+        )
     if diffs:
         return ParityResult(
             name=name, area=area, category=Category.UNRESOLVED, detail=f"DIVERGED: {diffs}"
