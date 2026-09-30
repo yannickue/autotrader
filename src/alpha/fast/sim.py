@@ -53,6 +53,9 @@ SKIP_LABELS = (
     "risk_out_of_range",
     "size_below_min",
     "entry_gap_stop",
+    # Appended (V2 structural targets): finite target not strictly beyond the fill, or its
+    # implied R is not finite / <= 0.  Existing indices 0..8 are unchanged for V1 consumers.
+    "target_crossed_at_fill",
 )
 
 
@@ -258,7 +261,7 @@ def _simulate_kernel(
     out_f = np.empty((15, cap), dtype=np.float64)
     out_b = np.empty((2, cap), dtype=np.bool_)
     reasons = np.empty(cap, dtype=np.int8)
-    skips = np.zeros(9, dtype=np.int64)
+    skips = np.zeros(10, dtype=np.int64)
     n = len(o)
     count = 0
     next_free = 0
@@ -316,6 +319,17 @@ def _simulate_kernel(
         if kind == EXIT_FIXED_R:
             if np.isfinite(candidate_target[ci]):
                 target = candidate_target[ci]
+                # Causal guard (finite/structural targets only; NaN target = V1 path untouched):
+                # the target must lie strictly beyond the actual fill (spread/slippage included)
+                # by more than eps = 1e-9 * max(1, |fill|), and the implied R must be finite > 0.
+                # Otherwise skip without consuming the slot / day cap (next_free, trades_on_day
+                # and last_trade_day are only updated for booked trades).
+                eps = 1e-9 * max(1.0, abs(fill))
+                beyond = target - fill if side > 0 else fill - target
+                implied_r = beyond / risk
+                if not (beyond > eps and np.isfinite(implied_r) and implied_r > 0.0):
+                    skips[9] += 1
+                    continue
             else:
                 target = fill + r_value * risk if side > 0 else fill - r_value * risk
         else:
