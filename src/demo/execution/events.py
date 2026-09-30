@@ -71,7 +71,10 @@ class ProtectionConfirmed:
 class PositionClosed:
     intent_id: str
     broker_position_id: str
-    exit_reason: Literal["STOP", "TARGET", "SESSION_END", "MANUAL", "EXTERNAL"]
+    # SAFETY_FLATTEN: the stack itself flattened the position because broker-side protection could not
+    # be confirmed / restored (protection failure, unprotected-position repair). MANUAL stays for
+    # operator / script closes, EXTERNAL for closes by a human in the terminal.
+    exit_reason: Literal["STOP", "TARGET", "SESSION_END", "MANUAL", "EXTERNAL", "SAFETY_FLATTEN"]
     exit_price: Decimal | None = None
     exit_quantity: Decimal | None = None
     closed_utc: str | None = None

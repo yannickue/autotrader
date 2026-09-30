@@ -308,7 +308,7 @@ def test_missing_broker_stop_flattens_immediately_and_halts_new_exposure(env):
     assert broker.positions_get() == ()  # flattened by a reduce-only order
     assert broker.request_log[-1].get("position") and "sl" not in broker.request_log[-1]
     closed = events[2]
-    assert closed.exit_reason == "MANUAL"
+    assert closed.exit_reason == "SAFETY_FLATTEN"
     assert stack.account_snapshot().kill_switch
     broker.strip_stops_on_entry = False
     again = stack.submit(make_intent(intent_id="next"))
@@ -940,3 +940,71 @@ def test_writes_are_never_retried_by_the_lane_helper(quiet_env):
     with pytest.raises(_Reject):
         stack._on_lane(failing, retry_reads=False)
     assert calls["n"] == 1
+
+
+# -- canary isolation ----------------------------------------------------------------------------------------
+
+CANARY = StackConfig().canary_magic
+
+
+def test_canary_defaults_are_documented_constants():
+    cfg = StackConfig()
+    assert cfg.canary_magic == 740_099 and cfg.canary_comment == "CANARY"
+    assert cfg.canary_magic != cfg.magic
+    assert cfg.stopout_fraction_of_initial_margin == Decimal(1)
+
+
+def test_open_canary_position_blocks_its_symbol_distinctly_but_is_neither_foreign_nor_a_halt(tmp_path):
+    broker = build_broker()
+    broker.external_market_fill(is_buy=True, volume=0.25, comment="CANARY", magic=CANARY, sl=24000.0)
+    stack = make_stack(broker, tmp_path)
+    try:
+        stack.start()
+        events = stack.submit(make_intent())
+        assert reason(events) == "canary_position_open" and broker.order_send_calls == 0
+        rejected = next(e for e in events if isinstance(e, Rejected))
+        assert rejected.reason == "canary_position_open"
+        snap = stack.account_snapshot()
+        assert not snap.kill_switch
+        # another symbol still trades, and the canary position is out of the gross / risk books
+        other = stack.submit(
+            make_intent(intent_id="nas", market="NAS100", broker_symbol="UsaTec",
+                        entry_ref=21002.0, stop=20950.0, target=21150.0)
+        )
+        assert kinds(other)[-1] == "ProtectionConfirmed", other
+        assert other[0].risk_detail["gross_leverage_before"] == 0
+        assert other[0].risk_detail["portfolio_risk_before"] == 0
+    finally:
+        stack.stop()
+
+
+def test_canary_deals_do_not_feed_the_loss_streak_but_their_loss_is_real_daily_loss(tmp_path):
+    broker = build_broker()
+    for _ in range(9):
+        inject_closed_trade(broker, profit=-0.1, magic=CANARY)
+    stack = make_stack(broker, tmp_path)
+    try:
+        stack.start()
+        assert kinds(stack.submit(make_intent()))[-1] == "ProtectionConfirmed"  # 9 canary losses: no streak
+    finally:
+        stack.stop()
+    broker2 = build_broker()
+    inject_closed_trade(broker2, profit=-700.0, magic=CANARY)  # > 6 % of the day's starting equity
+    stack2 = make_stack(broker2, tmp_path / "second")
+    try:
+        stack2.start()
+        assert reason(stack2.submit(make_intent())) == "daily_loss_limit"
+    finally:
+        stack2.stop()
+
+
+def test_safety_flatten_is_the_exit_reason_of_a_runtime_unprotected_flatten(env):
+    broker, stack = env
+    stack.start()
+    stack.submit(make_intent())
+    (position,) = broker.positions_get()
+    position.sl = 0.0
+    broker.set_quote(24940.0, 24941.0)  # beyond the structural stop: repair impossible -> flatten
+    events = stack.poll_events()
+    closed = [e for e in events if isinstance(e, PositionClosed)]
+    assert closed and closed[0].exit_reason == "SAFETY_FLATTEN"

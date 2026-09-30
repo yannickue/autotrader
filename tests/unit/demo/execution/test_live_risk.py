@@ -434,3 +434,21 @@ def test_family_and_tranche_context_survive_a_restart(tmp_path):
         assert d["concentration_before"]["family"] == 1
     finally:
         second.stop()
+
+
+def test_stopout_fraction_config_raises_the_fitted_leverage_and_defaults_to_unchanged(tmp_path):
+    def fitted(sub, fraction):
+        cfg = replace(FAST, stopout_fraction_of_initial_margin=Decimal(fraction))
+        broker = build_broker()
+        stack = make_stack(broker, tmp_path / sub, config=cfg)
+        try:
+            stack.start()
+            events = stack.submit(make_intent(stop=24999.0, target=25150.0))
+            return events[0].risk_detail
+        finally:
+            stack.stop()
+
+    base, half = fitted("a", "1"), fitted("b", "0.5")
+    assert base["liquidation_safe_leverage"] < half["liquidation_safe_leverage"]
+    assert half["portfolio_leverage_after"] >= base["portfolio_leverage_after"]
+    assert half["portfolio_leverage_after"] <= 30
