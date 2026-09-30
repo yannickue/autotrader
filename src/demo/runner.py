@@ -87,6 +87,8 @@ from demo.labeling import Fill as LabelFill
 from demo.store import (
     CANCELLED,
     CLOSED,
+    UNCENSORED_EXITS,
+    AccountMismatch,
     FILLED,
     IN_DOUBT,
     PLANNED,
@@ -108,6 +110,10 @@ EXIT_FAIL_CLOSED = 7
 EXIT_UNAVAILABLE = 8
 
 CHAMPION = "static-demo-policy-v1"
+ACCOUNT_PHASES = ("ALPHA_EXECUTION_DISCOVERY", "SMALL_ACCOUNT_FEASIBILITY")
+DEFAULT_ACCOUNT_PHASE = "ALPHA_EXECUTION_DISCOVERY"
+DISCLAIMER = "DEMO_ALPHA_RESULT != LIVE_EXECUTION_PROOF"
+ACCOUNT_META_FILE = "account_meta.json"
 MODES = ("shadow", "demo-auto")
 SHADOW_DRY_RUN = "shadow_dry_run"  # CANCELLED detail reason of a shadow-approved (would-have-traded) intent
 EXPECTED_DEMO_SERVER = "ActivTradesEU-Server"
@@ -307,6 +313,10 @@ class RunnerConfig:
     catchup_max_bars: int = 300  # evaluate at most this many missed closed bars per market and cycle
     catchup_max_age_s: float = 24 * 3600.0  # bars closed longer ago than this are skipped (counted), not evaluated
     live_max_age_s: float = 300.0  # the newest bar is processed LIVE only while it is at most one M5 bar old
+    # ---- account separation (Lane R2) -----------------------------------------------------------
+    # None = take it from the artifacts dir meta (account_meta.json) or the store, else the default.
+    # Any string is allowed ("custom"); an explicit value that differs from the store's is refused.
+    account_phase: str | None = None
 
     def __post_init__(self) -> None:
         if self.mode not in MODES:
@@ -397,6 +407,7 @@ class DemoRunner:
         self._funnel_at: datetime | None = None
         self._funnel_dirty = True
         self._scan_pending: set[str] = set()  # markets whose newest bar is not fully scanned yet (retry next cycle)
+        self.account_info: dict[str, Any] = {"account_id_hash": None, "account_phase": None}
         self._catchup: dict[str, dict[str, Any]] = {}  # per market catch-up counters (heartbeat / tests)
         self.submit_count = 0
         self.shadow_submit_count = 0  # dry-run submits (shadow mode); never counted as trades
@@ -514,6 +525,8 @@ class DemoRunner:
         except StackFailClosed as exc:
             self._fail_closed(f"stack_start: {exc}", now)
             return
+        if not self._bind_account(snap, now):
+            return
         self.clock_rows = verify_clock_chain(
             self.cfg.markets, now=now, spec_loader=self._spec_loader, production=self._production
         )
@@ -575,6 +588,46 @@ class DemoRunner:
             elif state in (FILLED, PROTECTED):
                 self._advance(iid, CLOSED, now, {"restart": "closed_while_down"})
                 self._warnings.append(f"needs_outcome:{iid}:closed_while_down")
+
+    # ------------------------------------------------------------------------ account separation
+    def _artifact_meta_path(self) -> Path:
+        return self.cfg.artifacts_dir / ACCOUNT_META_FILE
+
+    def _read_artifact_meta(self) -> dict[str, Any]:
+        try:
+            return json.loads(self._artifact_meta_path().read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+
+    def _bind_account(self, snap: AccountSnapshot, now: datetime) -> bool:
+        """Bind store + artifacts dir to ONE account.  A store (or artifacts dir - the stack keeps its peak
+        equity / drawdown state there) that belongs to another account is REFUSED (fail closed at start):
+        the 499 EUR and the 100k data must never mix.  Old DBs without the meta are recorded on first
+        attach (flagged legacy when they already hold intents)."""
+        meta = self._read_artifact_meta()
+        phase = self.cfg.account_phase or meta.get("account_phase") or self.store.get_meta("account_phase") or DEFAULT_ACCOUNT_PHASE
+        try:
+            if meta.get("account_id_hash") and meta["account_id_hash"] != snap.account_id_hash:
+                raise AccountMismatch(
+                    f"artifacts dir belongs to account {meta['account_id_hash']}, attached {snap.account_id_hash}"
+                )
+            info = self.store.bind_account(
+                snap.account_id_hash, phase, phase_explicit=self.cfg.account_phase is not None
+            )
+        except AccountMismatch as exc:
+            self._fail_closed(f"account_mismatch: {exc}", now)
+            return False
+        except (sqlite3.Error, OSError) as exc:
+            self._persistence_failure(exc, now)
+            return False
+        self.account_info = info
+        if info["status"] == "LEGACY_RECORDED":
+            self._warnings.append("account_hash_recorded_on_legacy_db")
+        with contextlib.suppress(OSError):
+            self._artifact_meta_path().write_text(json.dumps({
+                "account_id_hash": snap.account_id_hash, "account_phase": info["account_phase"],
+            }), encoding="utf-8")
+        return True
 
     # ----------------------------------------------------------------------------------- guards
     def _check_account(self, snap: AccountSnapshot, now: datetime, *, strict: bool = False) -> None:
@@ -1237,6 +1290,13 @@ class DemoRunner:
         broker_net = _num(ev.net_pnl_eur)
         if broker_net is not None and abs(broker_net - outcome.pnl_eur) > max(0.05, 0.005 * abs(broker_net)):
             self._warnings.append(f"pnl_mismatch:{iid}:broker={broker_net:.2f}:computed={outcome.pnl_eur:.2f}")
+        hint = getattr(ev, "exit_hint", None)
+        censored = ev.exit_reason not in UNCENSORED_EXITS or bool(hint and hint not in UNCENSORED_EXITS)
+        self.store.record_trade_tag(  # before the outcome: a censored exit never reaches alpha metrics
+            iid, "STRATEGY", censored, exit_class=str(hint or ev.exit_reason), source="runner",
+        )
+        if censored:
+            self._warnings.append(f"censored_exit:{iid}:{hint or ev.exit_reason}")
         self.store.record_tca(iid, {
             "cost_status": "verified" if verified else "provisional",
             "entry_commission_eur": entry_fees, "entry_swap_eur": entry_swap,
@@ -1387,6 +1447,9 @@ class DemoRunner:
             protection = "ALL_PROTECTED" if acct.all_positions_protected else "UNPROTECTED"
         return {
             "mode": "DEMO MODE",
+            "disclaimer": DISCLAIMER,
+            "account_phase": self.account_info.get("account_phase"),
+            "account_id_hash": self.account_info.get("account_id_hash"),
             "runner_mode": self.cfg.mode,
             "phase": self.cfg.phase,
             "updated_utc": _iso(now),
@@ -1543,6 +1606,7 @@ def build_live_runner(
     stack_factory: Callable[..., StackPort] | None = None,
     forced_flat_on_shutdown: bool = False,
     stack_kwargs: Mapping[str, Any] | None = None,
+    account_phase: str | None = None,
 ) -> DemoRunner:
     """Wire the runner to the REAL ``Mt5DemoStack``.
 
@@ -1627,7 +1691,7 @@ def build_live_runner(
         learning = mode == "shadow"
     predictor, trainer, err = load_learning(art / "models", learning)
     cfg = RunnerConfig(mode=mode, phase=phase, markets=names, artifacts_dir=art, learning=learning,
-                       forced_flat_on_shutdown=forced_flat_on_shutdown)
+                       forced_flat_on_shutdown=forced_flat_on_shutdown, account_phase=account_phase)
     return DemoRunner(
         stack, engine, store, config=cfg, predictor=predictor, trainer=trainer,
         learning_error=err, production=production,

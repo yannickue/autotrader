@@ -129,6 +129,17 @@ class SchemaMismatch(DemoStoreError):
     pass
 
 
+class AccountMismatch(DemoStoreError):
+    """The attached account / account phase differs from the one this store belongs to."""
+
+
+TRADE_TYPES: tuple[str, ...] = ("STRATEGY", "EXECUTION_CANARY", "TEST_TRADE")
+# exit reasons of a STRATEGY exit; everything else (MANUAL, EXTERNAL, SAFETY_FLATTEN, emergency flatten,
+# unknown hints) is a CENSORED exit: the strategy's own stop/target/time rule did not decide it.
+UNCENSORED_EXITS: frozenset[str] = frozenset({"STOP", "TARGET", "SESSION_END"})
+OUTCOME_KINDS = ("strategy", "censored", "canary", "all")
+
+
 def client_order_id_for(intent_id: str) -> str:
     """Deterministic broker client order id derived from the intent id (<= 27 chars, stable)."""
     return "dt-" + stable_hash("client-order", intent_id, n=24)
@@ -1129,23 +1140,151 @@ class DemoStore:
         r = self._one("SELECT json FROM outcomes WHERE intent_id=?", (intent_id,))
         return None if r is None else OutcomeRecord.from_dict(json.loads(r["json"]))
 
-    def list_outcomes(self, phase: str | None = None) -> list[tuple[str, str, OutcomeRecord]]:
-        """(intent_id, opportunity_id, outcome) ordered by close time."""
-        _check_phase(phase)
-        sql, args = "SELECT * FROM outcomes WHERE 1=1", []
-        if phase:
-            sql += " AND phase=?"
-            args.append(phase)
-        return [
-            (r["intent_id"], r["opportunity_id"], OutcomeRecord.from_dict(json.loads(r["json"])))
-            for r in self._q(sql + " ORDER BY closed_utc, intent_id", tuple(args))
-        ]
+    def list_outcomes(
+        self, phase: str | None = None, *, kind: str = "strategy"
+    ) -> list[tuple[str, str, OutcomeRecord]]:
+        """(intent_id, opportunity_id, outcome) ordered by close time.
 
-    def count_trades(self, phase: str | None = None) -> int:
+        ``kind`` selects the population (default ``strategy`` = what alpha metrics, cumulative R,
+        winrate and learning labels may use):
+          * ``strategy``  trade type STRATEGY and NOT censored;
+          * ``censored``  STRATEGY trades whose exit was MANUAL / EXTERNAL / SAFETY_FLATTEN / unknown;
+          * ``canary``    EXECUTION_CANARY / TEST_TRADE (never alpha);
+          * ``all``       everything (account P/L reconciliation).
+        An outcome without a ``trade_tags`` row is a legacy STRATEGY trade; its censoring is derived from
+        its exit reason."""
         _check_phase(phase)
+        if kind not in OUTCOME_KINDS:
+            raise ValueError(f"kind must be one of {OUTCOME_KINDS}")
+        sql, args = (
+            "SELECT o.*, t.trade_type AS tt_type, t.censored AS tt_cens FROM outcomes o "
+            "LEFT JOIN trade_tags t ON t.intent_id=o.intent_id WHERE 1=1"
+        ), []
         if phase:
-            return self._q("SELECT COUNT(*) n FROM outcomes WHERE phase=?", (phase,))[0]["n"]
-        return self._q("SELECT COUNT(*) n FROM outcomes")[0]["n"]
+            sql += " AND o.phase=?"
+            args.append(phase)
+        out = []
+        for r in self._q(sql + " ORDER BY o.closed_utc, o.intent_id", tuple(args)):
+            oc = OutcomeRecord.from_dict(json.loads(r["json"]))
+            ttype = r["tt_type"] or "STRATEGY"
+            censored = bool(r["tt_cens"]) or oc.exit_reason not in UNCENSORED_EXITS
+            if kind == "strategy" and (ttype != "STRATEGY" or censored):
+                continue
+            if kind == "censored" and (ttype != "STRATEGY" or not censored):
+                continue
+            if kind == "canary" and ttype == "STRATEGY":
+                continue
+            out.append((r["intent_id"], r["opportunity_id"], oc))
+        return out
+
+    def count_trades(self, phase: str | None = None, *, kind: str = "strategy") -> int:
+        """Number of closed trades of ``kind`` (default: strategy trades only, see ``list_outcomes``)."""
+        _check_phase(phase)
+        if kind != "strategy":
+            return len(self.list_outcomes(phase, kind=kind))
+        sql = (
+            "SELECT COUNT(*) n FROM outcomes o LEFT JOIN trade_tags t ON t.intent_id=o.intent_id "
+            "WHERE (t.trade_type IS NULL OR t.trade_type='STRATEGY') AND COALESCE(t.censored,0)=0 "
+            "AND json_extract(o.json,'$.exit_reason') IN ('STOP','TARGET','SESSION_END')"
+        )
+        if phase:
+            return self._q(sql + " AND o.phase=?", (phase,))[0]["n"]
+        return self._q(sql)[0]["n"]
+
+    # ---- trade type / censoring / outcome analytics (Lane R2) ----------------------------------
+    def record_trade_tag(
+        self,
+        intent_id: str,
+        trade_type: str = "STRATEGY",
+        censored: bool = False,
+        *,
+        exit_class: str | None = None,
+        source: str | None = None,
+        detail: dict[str, Any] | None = None,
+    ) -> bool:
+        """Insert-once (first writer wins). ``trade_type`` in ``TRADE_TYPES``; ``censored`` = the exit was
+        not decided by the strategy's own rule (manual / external / emergency flatten)."""
+        if trade_type not in TRADE_TYPES:
+            raise ValueError(f"trade_type must be one of {TRADE_TYPES}")
+        with self._tx() as c:
+            if c.execute("SELECT 1 FROM intents WHERE intent_id=?", (intent_id,)).fetchone() is None:
+                raise MissingParentError(f"unknown intent {intent_id}")
+            cur = c.execute(
+                "INSERT OR IGNORE INTO trade_tags(intent_id,trade_type,censored,exit_class,source,recorded_utc,json) "
+                "VALUES(?,?,?,?,?,?,?)",
+                (intent_id, trade_type, int(censored), exit_class, source, self._clock(),
+                 json.dumps(detail or {}, sort_keys=True, default=str)),
+            )
+            return cur.rowcount == 1
+
+    def get_trade_tag(self, intent_id: str) -> dict[str, Any] | None:
+        r = self._one("SELECT * FROM trade_tags WHERE intent_id=?", (intent_id,))
+        if r is None:
+            return None
+        return {"intent_id": intent_id, "trade_type": r["trade_type"], "censored": bool(r["censored"]),
+                "exit_class": r["exit_class"], "source": r["source"], **json.loads(r["json"])}
+
+    def record_outcome_extra(self, intent_id: str, extra: dict[str, Any]) -> bool:
+        """Insert-once outcome analytics (time to 0.25R/0.5R/1R, giveback, ...)."""
+        with self._tx() as c:
+            ph = c.execute("SELECT phase FROM intents WHERE intent_id=?", (intent_id,)).fetchone()
+            if ph is None:
+                raise MissingParentError(f"unknown intent {intent_id}")
+            cur = c.execute(
+                "INSERT OR IGNORE INTO outcome_extra(intent_id,phase,recorded_utc,json) VALUES(?,?,?,?)",
+                (intent_id, ph["phase"], self._clock(), json.dumps(extra, sort_keys=True, default=str)),
+            )
+            return cur.rowcount == 1
+
+    def get_outcome_extra(self, intent_id: str) -> dict[str, Any] | None:
+        r = self._one("SELECT json FROM outcome_extra WHERE intent_id=?", (intent_id,))
+        return None if r is None else json.loads(r["json"])
+
+    # ---- account binding (Lane R2) -------------------------------------------------------------
+    def bind_account(
+        self, account_id_hash: str, account_phase: str | None = None, *, phase_explicit: bool = False
+    ) -> dict[str, Any]:
+        """Bind this store to ONE broker account (hash only, never the login) and its account phase.
+
+        First attach records both (``legacy`` = the DB already held intents: recorded, flagged, never
+        silently trusted).  A later attach with a different hash raises ``AccountMismatch`` (prevents
+        mixing e.g. the 499 EUR and the 100k accounts in one store); a different phase is refused only if
+        it was requested explicitly.  Atomic."""
+        if not account_id_hash:
+            raise AccountMismatch("empty account_id_hash: cannot bind the store")
+        with self._tx() as c:
+            def get(k: str) -> str | None:
+                r = c.execute("SELECT value FROM meta WHERE key=?", (k,)).fetchone()
+                return None if r is None else r["value"]
+
+            def put(k: str, v: str) -> None:
+                c.execute("INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)", (k, v))
+
+            stored_hash, stored_phase = get("account_id_hash"), get("account_phase")
+            if stored_hash is not None and stored_hash != account_id_hash:
+                raise AccountMismatch(
+                    f"store belongs to account {stored_hash} but account {account_id_hash} is attached"
+                )
+            if account_phase is not None and stored_phase is not None and account_phase != stored_phase and phase_explicit:
+                raise AccountMismatch(f"store account_phase is {stored_phase}, requested {account_phase}")
+            status = "OK"
+            if stored_hash is None:
+                n_intents = c.execute("SELECT COUNT(*) n FROM intents").fetchone()["n"]
+                put("account_id_hash", account_id_hash)
+                put("account_bound_utc", self._clock())
+                status = "BOUND"
+                if n_intents:
+                    put("account_hash_legacy_backfill", "1")
+                    status = "LEGACY_RECORDED"
+            phase_final = stored_phase if stored_phase is not None else account_phase
+            if stored_phase is None and account_phase is not None:
+                put("account_phase", account_phase)
+            return {"status": status, "account_id_hash": account_id_hash, "account_phase": phase_final,
+                    "legacy": get("account_hash_legacy_backfill") == "1"}
+
+    def account_info(self) -> dict[str, Any]:
+        return {"account_id_hash": self.get_meta("account_id_hash"), "account_phase": self.get_meta("account_phase"),
+                "legacy_backfill": self.get_meta("account_hash_legacy_backfill") == "1"}
 
     # ---- counterfactuals -----------------------------------------------------------------------
     def record_counterfactual(

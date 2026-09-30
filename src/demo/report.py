@@ -113,9 +113,9 @@ def _tercile_labeller(values: list[float | None]) -> Callable[[float | None], st
     return lab
 
 
-def _trade_rows(store: DemoStore, phase: str | None) -> list[dict[str, Any]]:
+def _trade_rows(store: DemoStore, phase: str | None, kind: str = "strategy") -> list[dict[str, Any]]:
     rows = []
-    for intent_id, opp_id, o in store.list_outcomes(phase):
+    for intent_id, opp_id, o in store.list_outcomes(phase, kind=kind):
         snap = store.get_snapshot(opp_id)
         ex = store.get_execution(intent_id)
         fees = (ex.fees or 0.0) if ex else 0.0
@@ -162,6 +162,25 @@ def _group(
     for r in rows:
         buckets[str(key(r))].append(r["net_r"])
     return {k: _stats(v) for k, v in sorted(buckets.items())}
+
+
+def _side_group(store: DemoStore, phase: str | None, kind: str) -> dict[str, Any]:
+    """Censored (manual / external / emergency flatten) or canary trades: shown SEPARATELY, never mixed
+    into the strategy metrics."""
+    rows = _trade_rows(store, phase, kind)
+    rs = [r["net_r"] for r in rows]
+    return {
+        "n": len(rows),
+        "sum_net_r": sum(rs),
+        "mean_net_r": _mean(rs),
+        "pnl_eur": sum(r["pnl_eur"] for r in rows),
+        "avg_mfe_r": _mean([r["mfe_r"] for r in rows]),
+        "avg_mae_r": _mean([r["mae_r"] for r in rows]),
+        "avg_holding_s": _mean([r["holding_s"] for r in rows]),
+        "exit_reasons": dict(sorted({x: sum(1 for r in rows if r["exit_reason"] == x) for x in {r["exit_reason"] for r in rows}}.items())),
+        "note": "excluded from strategy expectancy / winrate / cumulative R / learning labels",
+        "trades": [{k: r.get(k) for k in ("closed_utc", "intent_id", "market", "direction", "net_r", "pnl_eur", "exit_reason")} for r in rows],
+    }
 
 
 def build_report(store: DemoStore, phase: str | None = None) -> dict[str, Any]:
@@ -278,9 +297,23 @@ def build_report(store: DemoStore, phase: str | None = None) -> dict[str, Any]:
     )
     from demo.funnel import funnel as build_funnel
 
+    censored = _side_group(store, phase, "censored")
+    canary = _side_group(store, phase, "canary")
+    account = store.account_info()
     return {
         "phase": phase or "ALL",
+        "disclaimer": "DEMO_ALPHA_RESULT != LIVE_EXECUTION_PROOF",
+        "account": account,
         "generated_utc": datetime.now().astimezone().isoformat(),
+        "censored_exits": censored,
+        "canary_trades": canary,
+        "account_pnl_reconciliation": {
+            "strategy_eur": metrics["pnl_eur"],
+            "censored_eur": censored["pnl_eur"],
+            "canary_eur": canary["pnl_eur"],
+            "total_closed_eur": metrics["pnl_eur"] + censored["pnl_eur"] + canary["pnl_eur"],
+            "note": "closed-trade P/L by population; floating P/L and deposits are not included",
+        },
         "sample_size_statement": statement,
         "rejection_funnel": build_funnel(store, None, phase),
         "metrics": metrics,
@@ -333,8 +366,13 @@ def _fmt(v: Any) -> str:
 
 def render_markdown(report: dict[str, Any]) -> str:
     m = report["metrics"]
+    acct = report.get("account") or {}
     L = [
         f"# DEMO report - phase {report['phase']}",
+        "",
+        f"**{report.get('disclaimer', 'DEMO_ALPHA_RESULT != LIVE_EXECUTION_PROOF')}**"
+        f" | account_phase {acct.get('account_phase') or 'n/a'} | account {acct.get('account_id_hash') or 'n/a'}"
+        + (" (legacy backfill)" if acct.get("legacy_backfill") else ""),
         "",
         f"> {report['sample_size_statement']}",
         "",
@@ -363,6 +401,13 @@ def render_markdown(report: dict[str, Any]) -> str:
         from demo.funnel import render as render_funnel
 
         L += ["", "## Rejection funnel", "", "```", render_funnel(report["rejection_funnel"]), "```"]
+    for title, key in (("Censored exits (manual / external / emergency flatten)", "censored_exits"), ("Canary / test trades", "canary_trades")):
+        g = report.get(key)
+        if g is not None:
+            L += ["", f"## {title}", "", f"- n {g['n']} | sum net R {_fmt(g['sum_net_r'])} | EUR {_fmt(g['pnl_eur'])} | avg MFE R {_fmt(g['avg_mfe_r'])} | avg MAE R {_fmt(g['avg_mae_r'])} | avg duration s {_fmt(g['avg_holding_s'])}", f"- {g['note']}"]
+    rec = report.get("account_pnl_reconciliation")
+    if rec:
+        L += ["", "## Account P/L reconciliation (closed trades)", "", f"- strategy {_fmt(rec['strategy_eur'])} | censored {_fmt(rec['censored_eur'])} | canary {_fmt(rec['canary_eur'])} | total {_fmt(rec['total_closed_eur'])} EUR"]
     avr = report["accepted_vs_rejected"]
     L += [
         "",
