@@ -1,0 +1,24 @@
+{
+ "version": "V2-raw-scan-config-1",
+ "datasets": [
+  {"label": "GER40", "market": "GER40", "source": "v2"},
+  {"label": "GER40_ar1", "market": "GER40", "source": "ar1"},
+  {"label": "NAS100", "market": "NAS100", "source": "v2"},
+  {"label": "SPX500", "market": "SPX500", "source": "v2"},
+  {"label": "XAUUSD", "market": "XAUUSD", "source": "v2"},
+  {"label": "EURUSD", "market": "EURUSD", "source": "v2"}
+ ],
+ "pooled_labels": ["GER40", "NAS100", "SPX500", "XAUUSD", "EURUSD"],
+ "seed": 20260930,
+ "folds": {
+  "n_folds": 4,
+  "embargo_days": 5,
+  "purge_bars": 12,
+  "initial_train_frac": 0.4,
+  "min_test_days": 40,
+  "note": "identical to research/configs/v2_probe.json; statistics use ONLY the TRAIN side of fold 0; fold TEST sides are read only inside alpha.rawscan.gate.persistence_gate (once)"
+ },
+ "scan": {"min_n_days": 40, "min_n_days_dow": 20, "n_null_replicates": 200, "top_k_gate": 20},
+ "spike": {"window_bars": 2016, "quantile": 0.9, "lookback_bars": 20},
+ "v1_cumulative_header": {"trials": 30310, "unique": 29798}
+}
