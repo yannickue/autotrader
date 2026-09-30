@@ -84,6 +84,20 @@ def _parser() -> argparse.ArgumentParser:
         help="flatten open positions on shutdown IF the stack offers a flatten call (default off; the "
              "current StackPort has none: positions stay protected by their broker-side stops)",
     )
+    parser.add_argument(
+        "--shadow-universe", nargs="?", const="all-ready", default=None, metavar="LIST|all-ready",
+        help="Lane U2 (DEFAULT OFF): observe the shadow-only markets of configs/markets_shadow on closed M5 bars INSIDE this "
+             "runner (read-only, bounded per cycle, records REJECTED SHADOW_UNIVERSE snapshots; never trades). LIST = comma "
+             "separated canonicals, or all-ready (every shadow spec; specs whose quote was stale at the Lane-U scan are "
+             "re-validated with a fresh quote at runtime)",
+    )
+    oow = parser.add_mutually_exclusive_group()
+    oow.add_argument(
+        "--out-of-window-shadow", dest="out_of_window_shadow", action="store_true", default=None,
+        help="Lane U2: for the active markets record what the frozen families WOULD have signalled while the broker is "
+             "tradable but the entry window is closed (REJECTED OUT_OF_WINDOW_SHADOW; never trades, no window widened)",
+    )
+    oow.add_argument("--no-out-of-window-shadow", dest="out_of_window_shadow", action="store_false")
     learn = parser.add_mutually_exclusive_group()
     learn.add_argument(
         "--learning", dest="learning", action="store_true", default=None,
@@ -157,6 +171,7 @@ def _run(args: argparse.Namespace, mode: str) -> int:
             markets=markets, learning=args.learning,
             forced_flat_on_shutdown=args.forced_flat_on_shutdown, account_phase=args.account_phase,
             exit_policy=args.exit_policy,
+            out_of_window_shadow=args.out_of_window_shadow, shadow_universe=args.shadow_universe,
             exit_plan=None if args.geometry_source == "family" else ExitPlanConfig(geometry_source=args.geometry_source),
         )
     except rn.LiveStackRefused as exc:

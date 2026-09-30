@@ -136,6 +136,9 @@ def analyze(
     print(render_funnel(fun), file=sys.stderr)
     return {
         "rejection_funnel": fun["summary"],
+        "out_of_window_shadow": fun.get("out_of_window_shadow"),
+        "shadow_universe": fun.get("shadow_universe"),
+        "signal_sequence": fun.get("signal_sequence"),
         "phase": phase or "ALL",
         "n_trades": store.count_trades(phase),
         "n_decisions": len(store.list_decisions(phase)),

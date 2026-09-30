@@ -1045,6 +1045,7 @@ class DemoStore:
             "json_extract(s.json,'$.market_state.clock.local_minute') AS local_minute, "
             "json_extract(s.json,'$.market_state.clock.session_bucket') AS session_bucket, "
             "json_extract(s.json,'$.signal.origin') AS origin, "
+            "json_extract(s.json,'$.signal.cluster') AS cluster, json_extract(s.json,'$.signal.sequence') AS sequence, "
             "json_extract(rd.json,'$.violated_cap') AS violated_cap, "
             "(SELECT json_extract(e.detail,'$.reason') FROM intent_events e WHERE e.intent_id=i.intent_id "
             " AND e.to_state IN ('CANCELLED','SEND_FAILED') ORDER BY e.seq DESC LIMIT 1) AS cancel_reason, "
@@ -1077,6 +1078,7 @@ class DemoStore:
                 "has_outcome": bool(r["has_outcome"]),
                 "signal_ts": r["signal_ts"], "direction": r["direction"], "stop": r["stop"], "atr": r["atr"],
                 "local_minute": r["local_minute"], "session": r["session_bucket"], "origin": r["origin"] or "LIVE",
+                "cluster": r["cluster"], "sequence": None if r["sequence"] is None else json.loads(r["sequence"]),
                 "violated_cap": r["violated_cap"], "cancel_reason": r["cancel_reason"] or r["cancel_restart"],
                 "trade_type": r["trade_type"] or "STRATEGY",
             })
@@ -1392,7 +1394,8 @@ class DemoStore:
             "m.gate_code AS gate_code, m.gate_class AS gate_class, m.gate_codes AS gate_codes, "
             "d.reasons AS reasons, s.market AS market, json_extract(s.json,'$.signal.family') AS family, "
             "json_extract(s.json,'$.market_state.clock.local_minute') AS local_minute, "
-            "json_extract(s.json,'$.market_state.clock.session_bucket') AS session_bucket "
+            "json_extract(s.json,'$.market_state.clock.session_bucket') AS session_bucket, "
+            "json_extract(s.json,'$.signal.origin') AS origin, json_extract(s.json,'$.signal.cluster') AS cluster "
             "FROM counterfactuals cf JOIN snapshots s ON s.opportunity_id=cf.opportunity_id "
             "LEFT JOIN decisions d ON d.opportunity_id=cf.opportunity_id "
             "LEFT JOIN counterfactual_meta m ON m.opportunity_id=cf.opportunity_id"
@@ -1410,6 +1413,7 @@ class DemoStore:
             out.append({
                 "opportunity_id": r["opportunity_id"], "market": r["market"], "family": r["family"],
                 "local_minute": r["local_minute"], "session": r["session_bucket"],
+                "origin": r["origin"] or "LIVE", "cluster": r["cluster"],
                 "source": r["source"] or "ENGINE_REJECTED",
                 "gate_code": r["gate_code"] or (codes[0] if codes else None),
                 "gate_class": r["gate_class"], "gate_codes": codes,
