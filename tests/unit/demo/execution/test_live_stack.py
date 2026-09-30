@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import dataclasses
+import os
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
@@ -16,7 +18,7 @@ from demo.execution.events import (
     ProtectionConfirmed,
     Rejected,
 )
-from demo.execution.live import ShadowGuardClient, ShadowModeViolation, StackConfig
+from demo.execution.live import ShadowGuardClient, ShadowModeViolation, StackConfig, _Reject
 from demo.execution.stack_port import StackFailClosed
 from nautilus_mt5.constants import Retcode
 from tests.unit.demo.execution.stack_harness import (
@@ -317,16 +319,83 @@ def test_broker_reject_leaves_nothing_open(env):
     assert broker.positions_get() == () and stack.open_intents() == ()
 
 
-def test_exposure_changing_request_is_never_retried_when_the_outcome_is_unknown(env):
-    broker, stack = env
+# no sync loop racing the assertions: the unknown-outcome path must not depend on scheduling
+QUIET = dataclasses.replace(FAST, sync_interval_s=3600.0, submit_wait_s=1.0)
+
+
+@pytest.fixture
+def quiet_env(tmp_path):
+    broker = build_broker()
+    stack = make_stack(broker, tmp_path, config=QUIET)
+    yield broker, stack
+    stack.stop()
+
+
+@pytest.mark.parametrize("repeat", range(int(os.environ.get("DEMO_REPEAT", "2"))))
+def test_exposure_changing_request_is_never_retried_when_the_outcome_is_unknown(
+    tmp_path, repeat
+):
+    broker = build_broker()
+    stack = make_stack(broker, tmp_path, config=QUIET)
+    try:
+        stack.start()
+        broker.raise_on_send = [RuntimeError("IPC died")]
+        events = stack.submit(make_intent())
+        assert reason(events) == "order_outcome_unknown"
+        assert events[-1].risk_detail is not None
+        assert broker.order_send_calls == 1  # no automatic retry
+        assert stack.account_snapshot().kill_switch
+        assert stack._registry.get("intent-1").status == "IN_DOUBT"
+        assert reason(stack.submit(make_intent(intent_id="n2"))) == "halted"
+        assert broker.order_send_calls == 1
+    finally:
+        stack.stop()
+
+
+@pytest.mark.parametrize("failure", ["disconnect", "soft_reject", "degraded_session"])
+def test_a_failing_confirmation_never_raises_past_submit_and_stays_in_doubt(quiet_env, failure):
+    """H3: a disconnect / lane error while confirming an unknown send is order_outcome_unknown."""
+    broker, stack = quiet_env
     stack.start()
     broker.raise_on_send = [RuntimeError("IPC died")]
-    events = stack.submit(make_intent())
+    if failure == "disconnect":
+        def boom(*a, **k):
+            raise StackFailClosed("broker_disconnect:positions_get")
+    elif failure == "soft_reject":
+        def boom(*a, **k):
+            raise _Reject("broker_call_failed")
+    else:
+        boom = None
+    real = stack._lane_confirm_entry
+    if boom is not None:
+        stack._lane_confirm_entry = boom
+    try:
+        events = stack.submit(make_intent())
+    finally:
+        stack._lane_confirm_entry = real
+    assert kinds(events) == ["Accepted", "Rejected"], events
     assert reason(events) == "order_outcome_unknown"
-    assert broker.order_send_calls == 1  # no automatic retry
-    assert stack.account_snapshot().kill_switch
-    assert reason(stack.submit(make_intent(intent_id="n2"))) == "halted"
+    assert events[-1].risk_detail["reject_code"] == "order_outcome_unknown"
     assert broker.order_send_calls == 1
+    assert stack._registry.get("intent-1").status == "IN_DOUBT"
+    assert stack.halted_reason == "order_outcome_unknown"
+
+
+def test_unknown_outcome_is_recorded_and_halted_before_the_broker_is_read(quiet_env):
+    broker, stack = quiet_env
+    stack.start()
+    broker.raise_on_send = [RuntimeError("IPC died")]
+    seen = {}
+    real = stack._lane_confirm_entry
+
+    def spy(*args, **kwargs):
+        seen["row"] = stack._registry.get("intent-1").status
+        seen["halt"] = stack.halted_reason
+        return real(*args, **kwargs)
+
+    stack._lane_confirm_entry = spy
+    stack.submit(make_intent())
+    assert seen == {"row": "IN_DOUBT", "halt": "order_outcome_unknown"}
 
 
 def test_partial_fill_reports_the_actual_quantity_and_protects_it(env):

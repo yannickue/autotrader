@@ -1358,9 +1358,34 @@ class Mt5DemoStack:
         if status == "dry_run_ok":
             self._registry.update(intent.intent_id, status=reg.SHADOW, detail=outcome.reason[:200])
             return [accepted]
-        confirm = self._on_lane(
-            self._lane_confirm_entry, info, intent, prepared, sent_at, latency_ms
-        )
+        # Unknown send outcome (no adapter verdict within the bound / strategy failure): record the
+        # doubt and latch the halt BEFORE the broker read, so no disconnect / lane error during the
+        # confirmation can leave the row SENT or new exposure un-halted (H3).
+        unknown_outcome = status not in ("filled", "denied", "rejected", "protection_denied")
+        if unknown_outcome:
+            self._registry.update(intent.intent_id, status=reg.IN_DOUBT, detail=outcome.reason[:200])
+            self._halt(G.R_OUTCOME_UNKNOWN)
+        try:
+            confirm = self._on_lane(
+                self._lane_confirm_entry, info, intent, prepared, sent_at, latency_ms
+            )
+        except (StackFailClosed, _Reject) as exc:
+            if status in ("denied", "rejected"):
+                # the adapter refused before any send: nothing to confirm; the poll loop still
+                # catches any position that could exist later
+                confirm = None
+            else:
+                # the broker read failed (disconnect / degraded session / lane error): the outcome
+                # is UNKNOWN. Never retried, never raised past submit(); reconciliation settles it.
+                self._registry.update(
+                    intent.intent_id, status=reg.IN_DOUBT,
+                    detail=f"confirm_failed:{type(exc).__name__}:{exc}"[:200],
+                )
+                self._halt(G.R_OUTCOME_UNKNOWN)
+                detail["confirm_error"] = str(exc)[:200]
+                return self._reject_after_accept(
+                    intent, accepted, G.R_OUTCOME_UNKNOWN, detail, context
+                )
         if confirm is None:
             if status in ("denied", "rejected"):
                 reason = _machine_refusal(outcome.reason)
