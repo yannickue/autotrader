@@ -1,22 +1,18 @@
 {
- "evaluated_at_probe": "2026-09-30T01:34:43.753136+00:00",
- "probe_mode": "static_snapshot",
+ "evaluated_at_probe": "2026-09-30T21:04:07.655960+00:00",
+ "probe_mode": "probe",
  "verdicts": {
   "BRENT": {
    "market": "BRENT",
    "verdict": "RED",
    "reasons": [
-    "quote_fresh: UNVERIFIED - no quote: symbol not quoting / not in Market Watch (visible=false at last snapshot)",
-    "margin_calc: UNVERIFIED - order_calc_margin result not available (symbol not quoting / not probed)",
-    "protection_path: UNVERIFIED - order_mode / filling_mode not exposed in probe data (older snapshot or symbol not probed)",
-    "session_mapping_verified: UNVERIFIED - no observed M5 bar structure (need >= 1000 bars): sessions not derivable",
-    "cost_model_enabled: UNVERIFIED - no observed spread distribution (M1 recorded spread >= 500 bars or >= 20 live ticks)"
+    "quote_fresh: FAIL - quote age 270s > 30s (market closed or stale)"
    ],
    "checks": [
     {
      "id": "account_demo_bound",
      "status": "PASS",
-     "detail": "DEMO account, currency=EUR, leverage=None"
+     "detail": "DEMO account, currency=EUR, leverage=30"
     },
     {
      "id": "symbol_exact_mapped",
@@ -30,8 +26,8 @@
     },
     {
      "id": "quote_fresh",
-     "status": "UNVERIFIED",
-     "detail": "no quote: symbol not quoting / not in Market Watch (visible=false at last snapshot)"
+     "status": "FAIL",
+     "detail": "quote age 270s > 30s (market closed or stale)"
     },
     {
      "id": "contract_facts",
@@ -40,18 +36,18 @@
     },
     {
      "id": "margin_calc",
-     "status": "UNVERIFIED",
-     "detail": "order_calc_margin result not available (symbol not quoting / not probed)"
+     "status": "PASS",
+     "detail": "min-lot margin 86.32 EUR at 97.78: implied leverage 9.99x >= spec 10.0x, <= 30x"
     },
     {
      "id": "structural_sl_vs_stops_level",
      "status": "PASS",
-     "detail": "stops_level=0.05 freeze_level=0.0 spread=0.0000 leave headroom for a structural stop of 1.0 (no stop is tightened to fit)"
+     "detail": "stops_level=0.05 freeze_level=0.0 spread=0.0700 leave headroom for a structural stop of 1.0 (no stop is tightened to fit)"
     },
     {
      "id": "protection_path",
-     "status": "UNVERIFIED",
-     "detail": "order_mode / filling_mode not exposed in probe data (older snapshot or symbol not probed)"
+     "status": "PASS",
+     "detail": "SL allowed (order_mode=127), filling_mode bitmask=3, exemode=2; no order_check/order_send was performed by the probe (lane rule) - first live order is reconciled by the existing stack"
     },
     {
      "id": "persistence_reconciliation_reports",
@@ -60,13 +56,13 @@
     },
     {
      "id": "session_mapping_verified",
-     "status": "UNVERIFIED",
-     "detail": "no observed M5 bar structure (need >= 1000 bars): sessions not derivable"
+     "status": "PASS",
+     "detail": "every Mon-Fri entry-window hour has observed bars (weekdays with bars: [0, 1, 2, 3, 4]; calendar stays 'provisional' until broker-confirmed; weekend behaviour as observed, never assumed)"
     },
     {
      "id": "cost_model_enabled",
-     "status": "UNVERIFIED",
-     "detail": "no observed spread distribution (M1 recorded spread >= 500 bars or >= 20 live ticks)"
+     "status": "PASS",
+     "detail": "rates_m1_recorded_spread: median 0.0600, p95 0.0600 <= cap 0.1; movement_to_cost 12.5 at the reference stop; commission unverified_assumed_zero, swap not modelled (forced flat)"
     },
     {
      "id": "no_index_specific_hardcoding",
@@ -77,28 +73,54 @@
    "facts": {
     "broker_symbol": "Brent",
     "cluster": "ENERGY",
-    "probe_mode": "static_snapshot",
-    "probe_retrieved_at": "2026-09-30T01:34:43.753136+00:00",
+    "probe_mode": "probe",
+    "probe_retrieved_at": "2026-09-30T21:04:07.655960+00:00",
+    "calc_price": 97.78,
+    "margin_min_lot_eur": 86.32,
+    "notional_min_lot_eur": 862.2438671013205,
+    "implied_leverage": 9.988923390886475,
+    "margin_lot_1_eur": 8631.71,
+    "profit_100_ticks_lot_1_eur": 882.22,
+    "min_lot_margin_fraction_of_free_margin": 0.0008903668740613601,
     "stops_level_price": 0.05,
     "freeze_level_price": 0.0,
-    "reference_structural_stop": 1.0
+    "reference_structural_stop": 1.0,
+    "observed_weekdays_with_bars": [
+     0,
+     1,
+     2,
+     3,
+     4
+    ],
+    "observed_gap_patterns": {
+     "wd2 22:55 -> wd3 02:00 (185min)": 9,
+     "wd3 22:55 -> wd4 02:00 (185min)": 9,
+     "wd4 22:55 -> wd0 00:00 (2945min)": 9,
+     "wd1 22:55 -> wd2 02:00 (185min)": 9,
+     "wd0 22:55 -> wd1 02:00 (185min)": 8,
+     "wd1 22:55 -> wd2 02:05 (190min)": 1,
+     "wd0 19:25 -> wd1 02:00 (395min)": 1
+    },
+    "spread_source": "rates_m1_recorded_spread",
+    "spread_median_price": 0.06,
+    "spread_p95_price": 0.06,
+    "spread_cap_price": 0.1,
+    "slippage_base_price": 0.02,
+    "one_way_cost_price": 0.08,
+    "movement_to_cost_at_reference_stop": 12.5,
+    "min_lot_risk_eur_at_reference_stop": 8.818202772564128,
+    "per_trade_stop_risk_cap_eur": 4847.4400000000005
    }
   },
   "BTCUSD": {
    "market": "BTCUSD",
-   "verdict": "RED",
-   "reasons": [
-    "quote_fresh: UNVERIFIED - no quote: symbol not quoting / not in Market Watch (visible=false at last snapshot)",
-    "margin_calc: UNVERIFIED - order_calc_margin result not available (symbol not quoting / not probed)",
-    "protection_path: UNVERIFIED - order_mode / filling_mode not exposed in probe data (older snapshot or symbol not probed)",
-    "session_mapping_verified: UNVERIFIED - no observed M5 bar structure (need >= 1000 bars): sessions not derivable",
-    "cost_model_enabled: UNVERIFIED - no observed spread distribution (M1 recorded spread >= 500 bars or >= 20 live ticks)"
-   ],
+   "verdict": "GREEN",
+   "reasons": [],
    "checks": [
     {
      "id": "account_demo_bound",
      "status": "PASS",
-     "detail": "DEMO account, currency=EUR, leverage=None"
+     "detail": "DEMO account, currency=EUR, leverage=30"
     },
     {
      "id": "symbol_exact_mapped",
@@ -112,8 +134,8 @@
     },
     {
      "id": "quote_fresh",
-     "status": "UNVERIFIED",
-     "detail": "no quote: symbol not quoting / not in Market Watch (visible=false at last snapshot)"
+     "status": "PASS",
+     "detail": "age -60.0s, bid=83662.78 ask=83746.28, distinct ticks=122"
     },
     {
      "id": "contract_facts",
@@ -122,18 +144,18 @@
     },
     {
      "id": "margin_calc",
-     "status": "UNVERIFIED",
-     "detail": "order_calc_margin result not available (symbol not quoting / not probed)"
+     "status": "PASS",
+     "detail": "min-lot margin 369.69 EUR at 83746.28: implied leverage 2.00x >= spec 2.0x, <= 30x"
     },
     {
      "id": "structural_sl_vs_stops_level",
      "status": "PASS",
-     "detail": "stops_level=0.0 freeze_level=0.0 spread=0.0000 leave headroom for a structural stop of 500.0 (no stop is tightened to fit)"
+     "detail": "stops_level=0.0 freeze_level=0.0 spread=83.5000 leave headroom for a structural stop of 500.0 (no stop is tightened to fit)"
     },
     {
      "id": "protection_path",
-     "status": "UNVERIFIED",
-     "detail": "order_mode / filling_mode not exposed in probe data (older snapshot or symbol not probed)"
+     "status": "PASS",
+     "detail": "SL allowed (order_mode=127), filling_mode bitmask=3, exemode=2; no order_check/order_send was performed by the probe (lane rule) - first live order is reconciled by the existing stack"
     },
     {
      "id": "persistence_reconciliation_reports",
@@ -142,13 +164,13 @@
     },
     {
      "id": "session_mapping_verified",
-     "status": "UNVERIFIED",
-     "detail": "no observed M5 bar structure (need >= 1000 bars): sessions not derivable"
+     "status": "PASS",
+     "detail": "every Mon-Fri entry-window hour has observed bars (weekdays with bars: [0, 1, 2, 3, 4, 5, 6]; calendar stays 'provisional' until broker-confirmed; weekend behaviour as observed, never assumed)"
     },
     {
      "id": "cost_model_enabled",
-     "status": "UNVERIFIED",
-     "detail": "no observed spread distribution (M1 recorded spread >= 500 bars or >= 20 live ticks)"
+     "status": "PASS",
+     "detail": "rates_m1_recorded_spread: median 59.8300, p95 68.7100 <= cap 100.0; movement_to_cost 6.2 at the reference stop; commission unverified_assumed_zero, swap not modelled (forced flat)"
     },
     {
      "id": "no_index_specific_hardcoding",
@@ -159,11 +181,39 @@
    "facts": {
     "broker_symbol": "BTCUSD",
     "cluster": "CRYPTO",
-    "probe_mode": "static_snapshot",
-    "probe_retrieved_at": "2026-09-30T01:34:43.753136+00:00",
+    "probe_mode": "probe",
+    "probe_retrieved_at": "2026-09-30T21:04:07.655960+00:00",
+    "calc_price": 83746.28,
+    "margin_min_lot_eur": 369.69,
+    "notional_min_lot_eur": 738.4916784879317,
+    "implied_leverage": 1.9975971178228562,
+    "margin_lot_1_eur": 36968.85,
+    "profit_100_ticks_lot_1_eur": 0.88,
+    "min_lot_margin_fraction_of_free_margin": 0.0038132498803492153,
     "stops_level_price": 0.0,
     "freeze_level_price": 0.0,
-    "reference_structural_stop": 500.0
+    "reference_structural_stop": 500.0,
+    "observed_weekdays_with_bars": [
+     0,
+     1,
+     2,
+     3,
+     4,
+     5,
+     6
+    ],
+    "observed_gap_patterns": {
+     "wd4 22:55 -> wd5 09:00 (605min)": 6
+    },
+    "spread_source": "rates_m1_recorded_spread",
+    "spread_median_price": 59.83,
+    "spread_p95_price": 68.71000000000001,
+    "spread_cap_price": 100.0,
+    "slippage_base_price": 20.63,
+    "one_way_cost_price": 80.46,
+    "movement_to_cost_at_reference_stop": 6.214267959234403,
+    "min_lot_risk_eur_at_reference_stop": 4.409101386282064,
+    "per_trade_stop_risk_cap_eur": 4847.4400000000005
    }
   }
  }
