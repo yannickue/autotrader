@@ -1,0 +1,98 @@
+# LIVE operating policy (Lane P) - versioned, live-only. Research SimWindows / frozen family windows are NOT touched:
+# the policy is applied as an overlay in the live engine / stack / runner only, and its version + hash is persisted
+# with every opportunity snapshot (versions.operating_policy), next to strategy_hash.
+#
+# USER OPERATING RULES (non-negotiable)
+#   * trades after 21:00 Europe/Berlin are ALLOWED (there is no 21:00 entry cutoff);
+#   * at 22:00 Europe/Berlin there must be 0 open strategy-managed (own-magic) positions;
+#   * all times Europe/Berlin (DST-aware through zoneinfo), never fixed UTC offsets;
+#   * only the final mandatory flatten window blocks new exposure (plus the short entry runway below).
+[policy]
+version = "live-op-1"
+tz = "Europe/Berlin"
+global_flat_deadline = "22:00"   # broker flat confirmed before this instant
+flatten_start = "21:55"          # mandatory flatten phase: entries refused, every own-magic position closed reduce-only
+broker_close_buffer_min = 5      # per-instrument deadline = MIN(global deadline, broker session close - this buffer)
+# Minimum time between a NEW entry signal and the (effective) forced-flat instant of its market. Two full M5 bars:
+# a position opened later than that would be force-closed before it could even be managed (round-trip cost, no
+# edge) and would race the flatten phase. JUSTIFICATION only; change here, it is versioned with the snapshots.
+min_entry_runway_min = 10
+operating_days = ["Mon", "Tue", "Wed", "Thu", "Fri"]   # Berlin calendar date; weekend = not an operating day
+flatten_retry_backoff_s = [5, 10, 20, 30, 60]          # bounded retry backoff of a failed / uncertain close
+
+# ----------------------------------------------------------------------------------------------------------------
+# Per-market live overrides + broker session (known pauses). The broker session is used for feed semantics only
+# (KNOWN_SESSION_PAUSE is not a stale-feed fault) and to bound the per-instrument deadline (broker close - buffer).
+#   pauses: start in `tz`, end in `end_tz` (default tz); the window ends at the first such wall-clock instant
+#   after the start. `days` = local weekday of the window START (Sun included when a window wraps into Monday).
+#   status: "observed" = derived from M5 bar gaps of the checked-in history (data/markets, 2025-05 .. 2026-09,
+#           summer AND winter) ; "provisional" = single observation (probe) or not broker-confirmed.
+# ----------------------------------------------------------------------------------------------------------------
+[markets.NAS100]
+# Research window ends 15:00 New York (= 21:00 Berlin). Live: entries up to the flatten runway (15:55 NY flat).
+entry_end_live = "15:55"
+[markets.NAS100.session]
+status = "observed"
+source = "M5 bar gaps data/markets NAS100 2025-05..2026-09: daily break 23:00-00:00 Europe/Berlin Mon-Fri in summer AND winter; in US/EU DST-mismatch weeks the break may shift by 1h (UNVERIFIED -> provisional for those weeks)"
+[[markets.NAS100.session.pauses]]
+days = ["Mon", "Tue", "Wed", "Thu", "Fri"]
+start = "23:00"
+end = "00:00"
+
+[markets.SPX500]
+entry_end_live = "15:55"
+[markets.SPX500.session]
+status = "observed"
+source = "M5 bar gaps data/markets SPX500 2025-05..2026-09: daily break 23:00-00:00 Europe/Berlin (same as NAS100)"
+[[markets.SPX500.session.pauses]]
+days = ["Mon", "Tue", "Wed", "Thu", "Fri"]
+start = "23:00"
+end = "00:00"
+
+[markets.XAUUSD]
+[markets.XAUUSD.session]
+status = "observed"
+source = "M5 bar gaps data/markets XAUUSD 2025-05..2026-09: daily break 23:00-00:00 Europe/Berlin Mon-Fri, summer and winter"
+[[markets.XAUUSD.session.pauses]]
+days = ["Mon", "Tue", "Wed", "Thu", "Fri"]
+start = "23:00"
+end = "00:00"
+
+[markets.EURUSD]
+[markets.EURUSD.session]
+status = "observed"
+source = "M5 bar gaps data/markets EURUSD 2025-05..2026-09: no daily break; weekly close Fri 23:00 Europe/Berlin (reopens Sun 23:00)"
+[[markets.EURUSD.session.pauses]]
+days = ["Fri"]
+start = "23:00"
+end = "00:00"
+
+[markets.GER40]
+[markets.GER40.session]
+status = "observed"
+source = "M5 bar gaps data/markets GER40 2025-02..2026-09: closes 22:00 Europe/Berlin, reopens 00:15 UTC (= 02:15 Berlin summer / 01:15 Berlin winter); Sunday 22:00 Berlin start covers the Monday reopen"
+[[markets.GER40.session.pauses]]
+days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri"]
+start = "22:00"
+end = "00:15"
+end_tz = "UTC"
+
+[markets.BRENT]
+[markets.BRENT.session]
+status = "provisional"
+source = "docs/evidence/phase2_symbol_probe.json (summer only): daily break 22:55 -> 02:00 server clock = 20:55 -> 00:00 UTC, weekend Fri 20:55 UTC -> Sun 22:00 UTC. Expressed in UTC (the observed server offset was +2h); the winter position of the break (21:55 Berlin if UTC-fixed) is NOT observed. PROVISIONAL."
+[[markets.BRENT.session.pauses]]
+days = ["Mon", "Tue", "Wed", "Thu", "Fri"]
+start = "20:55"
+tz = "UTC"
+end = "00:00"
+
+[markets.BTCUSD]
+[markets.BTCUSD.session]
+status = "provisional"
+source = "docs/evidence/phase2_symbol_probe.json (summer only): only break is Fri 22:55 -> Sat 09:00 server clock (= Fri 20:55 -> Sat 07:00 UTC); trades all other hours incl. weekend (weekend stays not-an-operating-day). PROVISIONAL."
+[[markets.BTCUSD.session.pauses]]
+days = ["Fri"]
+start = "20:55"
+tz = "UTC"
+end = "07:00"

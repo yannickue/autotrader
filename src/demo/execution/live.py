@@ -128,6 +128,13 @@ from demo.execution.tranches import (
     classify_addon,
 )
 from demo.opportunity.bar_source import Quote, validate_frame
+from demo.opportunity.operating_policy import (
+    FLATTEN_CONFIRMED,
+    FLATTEN_IDLE,
+    FLATTEN_OVERDUE,
+    FLATTEN_WINDOW,
+    OperatingPolicy,
+)
 from exits.models import ExitPolicy
 from nautilus_mt5.data_client import Mt5DataClientConfig
 from nautilus_mt5.execution_client import Mt5ExecClientConfig
@@ -238,6 +245,9 @@ class StackConfig:
     staged_exit: ExitPolicy | None = None
     # throttle: a stop modify must improve the stop by at least this many R (and one tick)
     staged_stop_min_step_r: Decimal = Decimal("0.1")
+    # Lane P: live operating policy (global flatten deadline / flatten sweep / entry gate). None (DEFAULT) = behaviour
+    # exactly as before (row-based forced flat only); the runner factory passes the versioned live policy.
+    operating_policy: OperatingPolicy | None = None
 
     def __post_init__(self) -> None:
         if self.exit_policy not in EXIT_POLICIES:
@@ -586,6 +596,14 @@ class Mt5DemoStack:
         self._disconnected_since: float | None = None
         self._last_reconcile_attempt = 0.0
         self._flatten_failures: dict[str, int] = {}
+        # Lane P: end-of-day flatten sweep state (heartbeat: flatten_state / eod_flat_confirmed_utc)
+        self._eod_state = FLATTEN_IDLE
+        self._eod_day: Any = None
+        self._eod_confirmed_utc: str | None = None
+        self._eod_detail: str | None = None
+        self._eod_open_positions = 0
+        self._eod_failures: dict[str, int] = {}
+        self._eod_next_try: dict[str, datetime] = {}
         self._skew_obs: collections.deque[float] = collections.deque(
             maxlen=max(1, self._cfg.clock_skew_sustain_obs)
         )
@@ -1457,6 +1475,14 @@ class Mt5DemoStack:
             return G.R_STALE_SIGNAL
         if intent.forced_flat_utc is not None and now >= parse_utc(intent.forced_flat_utc):
             return G.R_PAST_FORCED_FLAT
+        op = self._cfg.operating_policy
+        if op is not None:
+            if op.flatten_active(now):
+                return G.R_FLATTEN_WINDOW  # mandatory flatten phase: no new exposure at all
+            if intent.forced_flat_utc is not None and (
+                now >= parse_utc(intent.forced_flat_utc) - timedelta(minutes=op.min_entry_runway_min)
+            ):
+                return G.R_ENTRY_RUNWAY
         return None
 
     @staticmethod
@@ -1752,7 +1778,9 @@ class Mt5DemoStack:
 
     # -- flatten (reduce-only, through Nautilus) --------------------------------------------------------
 
-    def _flatten(self, info: _MarketInfo, *, tag: str, hint: str | None = None) -> bool:
+    def _flatten(
+        self, info: _MarketInfo, *, tag: str, hint: str | None = None, escalate: bool = True
+    ) -> bool:
         assert self._strategy is not None and self._registry is not None
         if hint is not None:
             for row in self._registry.open_for_market(info.canonical):
@@ -1770,7 +1798,7 @@ class Mt5DemoStack:
         count = self._flatten_failures.get(info.canonical, 0) + 1
         self._flatten_failures[info.canonical] = count
         self._halt("flatten_failed")
-        if count >= self._cfg.flatten_max_failures:
+        if escalate and count >= self._cfg.flatten_max_failures:
             self._set_fatal(f"flatten_failed:{info.canonical}")
             raise StackFailClosed(self._fatal or "flatten_failed")
         return False
@@ -2458,7 +2486,107 @@ class Mt5DemoStack:
                 closed = self._on_lane(self._lane_build_closed, fresh, strict=True)
                 if closed is not None:
                     events.append(closed)
+            if self._cfg.operating_policy is not None:
+                events.extend(self._eod_sweep(current, self._cfg.operating_policy))
             return events
+
+    # -- end-of-day flatten sweep (Lane P) ---------------------------------------------------------------
+
+    def eod_status(self) -> dict[str, Any]:
+        """Heartbeat view of the flatten sweep: ``flatten_state`` IDLE | WINDOW | OVERDUE | FLAT_CONFIRMED."""
+        return {
+            "flatten_state": self._eod_state,
+            "eod_flat_confirmed_utc": self._eod_confirmed_utc,
+            "eod_detail": self._eod_detail,
+            "eod_own_positions_open": self._eod_open_positions,
+        }
+
+    def _eod_sweep(self, current: datetime, op: OperatingPolicy) -> list[ExecutionEvent]:
+        """Defence in depth behind the row-based forced flat: from the flatten start (Berlin; earlier for an
+        instrument whose broker session closes before it) close EVERY own-magic broker position reduce-only,
+        whether or not the registry has an OPEN row for it (restart / adoption / rows lost), regardless of
+        ``row.forced_flat_utc``.  Broker truth is re-read before every attempt and after it (a failed / uncertain
+        close never flips exposure: the close is reduce-only and only positions still open are retried), a failed
+        close is retried with bounded backoff and NEVER given up: past the deadline the state is OVERDUE and the
+        detail names what is still open.  Entries are refused by ``_pre_reject`` from the same instant."""
+        assert self._registry is not None
+        day = op.day_of(current)
+        if self._eod_day != day:  # a new Berlin day starts clean
+            self._eod_day, self._eod_confirmed_utc, self._eod_detail = day, None, None
+            self._eod_failures.clear()
+            self._eod_next_try.clear()
+        events: list[ExecutionEvent] = []
+        global_window = op.flatten_active(current)
+        positions = self._on_lane(self._lane_positions, strict=True)
+        own = [p for p in positions if int(p.magic) == self._cfg.magic]
+        due: dict[str, list[Any]] = {}
+        unmapped: list[str] = []
+        for position in own:
+            market = self._canonical_of(str(position.symbol))
+            if market is None:
+                unmapped.append(str(position.symbol))
+            elif global_window or current >= op.sweep_start_utc(market, current):
+                due.setdefault(market, []).append(position)
+        self._eod_open_positions = len(own)
+        if not due and not unmapped:
+            self._eod_update(current, op, global_window, remaining=0, problems=[])
+            return events
+        self._eod_state = FLATTEN_OVERDUE if op.deadline_passed(current) else FLATTEN_WINDOW
+        problems: list[str] = [f"unmapped_own_position:{sym}" for sym in unmapped]
+        if unmapped:
+            self._halt("eod_unmapped_own_position")
+        for market in sorted(due):
+            info = self._markets.get(market)
+            if info is None:
+                self._halt(f"eod_market_unregistered:{market}")
+                problems.append(f"unregistered_market:{market}")
+                continue
+            if current < self._eod_next_try.get(market, current):
+                problems.append(f"retry_backoff:{market}")
+                continue
+            if self._flatten(info, tag=f"eod-flat:{market}", hint="SESSION_END", escalate=False):
+                self._eod_failures.pop(market, None)
+                self._eod_next_try.pop(market, None)
+                for row in self._registry.with_status(reg.OPEN):
+                    if row.market != market:
+                        continue
+                    fresh = self._registry.get(row.intent_id) or row
+                    closed = self._on_lane(self._lane_build_closed, fresh, strict=True)
+                    if closed is not None:
+                        events.append(closed)
+            else:
+                count = self._eod_failures.get(market, 0) + 1
+                self._eod_failures[market] = count
+                self._eod_next_try[market] = current + timedelta(seconds=op.backoff_s(count))
+                problems.append(f"close_failed:{market}:x{count}")
+        positions = self._on_lane(self._lane_positions, strict=True)  # broker truth after the attempts
+        remaining = sum(1 for p in positions if int(p.magic) == self._cfg.magic)
+        self._eod_open_positions = remaining
+        self._eod_update(current, op, global_window, remaining=remaining, problems=problems)
+        return events
+
+    def _eod_update(
+        self, current: datetime, op: OperatingPolicy, global_window: bool, *, remaining: int, problems: list[str]
+    ) -> None:
+        assert self._registry is not None
+        unresolved = [r.intent_id for r in self._registry.with_status(reg.OPEN)] if remaining == 0 else []
+        if remaining == 0 and not unresolved:
+            if global_window:
+                self._eod_state = FLATTEN_CONFIRMED
+                if self._eod_confirmed_utc is None:
+                    self._eod_confirmed_utc = _iso(current)
+            else:
+                self._eod_state = FLATTEN_IDLE
+            self._eod_detail = None
+            return
+        overdue = op.deadline_passed(current)
+        self._eod_state = FLATTEN_OVERDUE if overdue else FLATTEN_WINDOW
+        if remaining == 0:  # broker flat, the closed-deal reports are still pending (poll resolves them)
+            self._eod_detail = "broker_flat_registry_rows_unresolved:" + ",".join(unresolved[:5])
+            return
+        self._eod_detail = f"{remaining} own position(s) still open; " + (", ".join(problems) or "closing")
+        if overdue:
+            self._halt("eod_flat_overdue")
 
 
 def _machine_refusal(reason: str) -> str:

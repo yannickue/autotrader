@@ -62,6 +62,11 @@ R_SYMBOL_MISMATCH = "symbol_mismatch"
 R_INVALID_DIRECTION = "invalid_direction"
 R_STALE_SIGNAL = "stale_signal"
 R_PAST_FORCED_FLAT = "past_forced_flat"
+# Lane P (live operating policy): entries are refused from the Berlin flatten start (mandatory flatten phase) and
+# inside the minimum entry runway before the effective forced flat; --daily refuses entries outside the operating day
+R_FLATTEN_WINDOW = "flatten_window_active"
+R_ENTRY_RUNWAY = "entry_runway_too_short"
+R_OUTSIDE_OPERATING_DAY = "outside_operating_day"
 R_DUPLICATE_INTENT = "duplicate_intent"
 R_STALE_FEED = "stale_feed"
 R_INVALID_QUOTE = "invalid_quote"
@@ -148,6 +153,9 @@ _ENTRIES: tuple[Gate, ...] = (
     _G(R_INVALID_DIRECTION, S, True, "direction must be +1 / -1"),
     _G(R_STALE_SIGNAL, S, True, "stale signal: intent validity window elapsed (stale data)"),
     _G(R_PAST_FORCED_FLAT, S, True, "time stop: the intent's forced-flat time has already passed"),
+    _G(R_FLATTEN_WINDOW, S, True, "mandatory flatten phase (from flatten_start Europe/Berlin): no new exposure, every own-magic position is closed reduce-only before the 22:00 Berlin deadline"),
+    _G(R_ENTRY_RUNWAY, S, True, "less than the minimum entry runway (min_entry_runway_min) before the effective forced-flat instant of the market"),
+    _G(R_OUTSIDE_OPERATING_DAY, S, True, "--daily mode: no entries outside the operating day (Mon-Fri Berlin date)"),
     _G(R_DUPLICATE_INTENT, S, True, "duplicate / execution safety: exactly one order per intent_id"),
     _G(R_STALE_FEED, S, True, "stale feed: executable quote older than the freshness bound"),
     _G(R_INVALID_QUOTE, S, True, "non-positive or crossed quote"),
