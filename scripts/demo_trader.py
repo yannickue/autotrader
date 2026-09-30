@@ -14,6 +14,8 @@ not available in this checkout.
 * ``--status``       print the heartbeat + verdict (older than 90 s => NOT RUNNING).
 * ``--analyze``      offline report (+ parquet export) over the recorded DEMO data; ``--phase`` filters.
 * ``--restart-proof`` the proven C7 restart worker.
+* ``--record-canary FILE`` import manual / canary / test trades (broker deal-history fields as JSON) into the
+                     DemoStore as EXECUTION_CANARY (censored, excluded from alpha metrics). Never touches the broker.
 
 This module never logs in and there is no live-account path.
 """
@@ -46,11 +48,17 @@ def _parser() -> argparse.ArgumentParser:
     modes.add_argument("--status", action="store_true")
     modes.add_argument("--analyze", action="store_true")
     modes.add_argument("--restart-proof", action="store_true")
+    modes.add_argument("--record-canary", type=Path, default=None, metavar="FILE")
     parser.add_argument("--confirm-demo-auto")
     parser.add_argument("--heartbeat", type=Path, default=None)
     parser.add_argument("--artifacts", type=Path, default=ARTIFACTS)
     parser.add_argument("--db", type=Path, default=None)
     parser.add_argument("--phase", choices=("DISCOVERY", "FROZEN"), default=None)
+    parser.add_argument(
+        "--account-phase", default=None,
+        help="ALPHA_EXECUTION_DISCOVERY | SMALL_ACCOUNT_FEASIBILITY | custom (default: artifacts dir meta, else "
+             "ALPHA_EXECUTION_DISCOVERY). A store bound to another phase/account is refused.",
+    )
     parser.add_argument("--markets", default=None, help="comma separated subset of markets")
     parser.add_argument(
         "--forced-flat-on-shutdown", action="store_true",
@@ -100,6 +108,25 @@ def _analyze(args: argparse.Namespace) -> int:
     return 0
 
 
+def _record_canary(args: argparse.Namespace) -> int:
+    from demo.external import import_file
+    from demo.store import AccountMismatch, DemoStore
+
+    art: Path = args.artifacts
+    db = args.db or art / "demo.sqlite"
+    if not db.is_file():
+        print(f"no DEMO store at {db}", file=sys.stderr)
+        return 3
+    with DemoStore(db) as store:
+        try:
+            ids = import_file(store, str(args.record_canary))
+        except AccountMismatch as exc:
+            print(f"REFUSED: {exc}", file=sys.stderr)
+            return 2
+    print(json.dumps({"imported": ids}, indent=1))
+    return 0
+
+
 def _run(args: argparse.Namespace, mode: str) -> int:
     from demo import runner as rn
 
@@ -108,7 +135,7 @@ def _run(args: argparse.Namespace, mode: str) -> int:
         r = rn.build_live_runner(
             mode, phase=args.phase or "DISCOVERY", db_path=args.db, artifacts_dir=args.artifacts,
             markets=markets, learning=args.learning,
-            forced_flat_on_shutdown=args.forced_flat_on_shutdown,
+            forced_flat_on_shutdown=args.forced_flat_on_shutdown, account_phase=args.account_phase,
         )
     except rn.LiveStackRefused as exc:
         print(f"REFUSED: {exc}", file=sys.stderr)
@@ -128,6 +155,8 @@ def main(argv: list[str] | None = None) -> int:
         return _status(args.heartbeat or args.artifacts / "heartbeat.json")
     if args.analyze:
         return _analyze(args)
+    if args.record_canary is not None:
+        return _record_canary(args)
     if os.environ.get("MT5_ALLOW_ACCOUNT_LOGIN") == "1":
         print("REFUSED: MT5_ALLOW_ACCOUNT_LOGIN=1 is not permitted; the DEMO trader only attaches.",
               file=sys.stderr)

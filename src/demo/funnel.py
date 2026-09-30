@@ -19,12 +19,56 @@ family score, ...) never appear as reject reasons - they are logged / ranked onl
 
 from __future__ import annotations
 
-from collections import Counter
+from collections import Counter, defaultdict
 from collections.abc import Mapping
 from typing import Any
 
 from demo.execution import gates as G
 from demo.opportunity.policy import GATE_CLASSIFICATION
+
+# ---- sequential stages: an opportunity is stopped at the FIRST stage one of its gate codes belongs to ----
+STAGES: tuple[str, ...] = (
+    "RAW", "STRUCTURAL_VALID", "TRADABLE", "STRATEGY_WINDOW", "COST", "DUPLICATE", "PORTFOLIO", "RISK",
+    "EXECUTABLE", "ACCEPTED", "EXECUTED",
+)
+_SI = {s: i for i, s in enumerate(STAGES)}
+_ENGINE_STAGE: dict[str, str] = {
+    "NO_STRUCTURAL_STOP": "STRUCTURAL_VALID", "TARGET_ALREADY_CROSSED": "STRUCTURAL_VALID",
+    "SPACE_BELOW_MIN_R": "STRUCTURAL_VALID",
+    "CLOCK_ANOMALY": "TRADABLE", "MARKET_CLOSED": "TRADABLE", "STALE_SIGNAL": "TRADABLE",
+    "ENTRY_OVERSHOT": "TRADABLE", "CATCHUP_MISSED": "TRADABLE", "EXPIRED_ENTRY": "TRADABLE",
+    "ALREADY_MOVED": "TRADABLE",
+    "OUTSIDE_ENTRY_WINDOW": "STRATEGY_WINDOW",
+    "SPREAD_TOO_WIDE": "COST",
+    "DUPLICATE_OPPORTUNITY": "DUPLICATE",
+}
+_STACK_STAGE: dict[str, str] = {
+    G.R_TARGET_CROSSED: "STRUCTURAL_VALID", G.R_INVALIDATION_CROSSED: "STRUCTURAL_VALID",
+    G.R_MIN_SPACE_R: "STRUCTURAL_VALID", G.R_NO_STOP: "STRUCTURAL_VALID",
+    G.R_ENTRY_OVERSHOOT: "TRADABLE", G.R_STALE_SIGNAL: "TRADABLE", G.R_SIGNAL_STALE: "TRADABLE",
+    G.R_PAST_FORCED_FLAT: "TRADABLE", G.R_STALE_FEED: "TRADABLE", G.R_DATA_STALE: "TRADABLE",
+    G.R_SPREAD_CAP: "COST", G.R_SPREAD_TOO_WIDE: "COST",
+    G.R_DUPLICATE_INTENT: "DUPLICATE",
+    G.R_ADDON: "PORTFOLIO", G.R_ADDON_SHARED: "PORTFOLIO", G.R_OPPOSITE: "PORTFOLIO",
+    G.R_EXPOSURE_LIMIT: "PORTFOLIO", G.R_UNKNOWN_CLUSTER: "PORTFOLIO", G.R_FOREIGN_POSITION: "PORTFOLIO",
+    "canary_position_open": "PORTFOLIO",
+    G.R_SIZE_BELOW_MIN: "RISK", G.R_DAILY_LOSS: "RISK", G.R_DRAWDOWN: "RISK", G.R_CONSECUTIVE_LOSSES: "RISK",
+    G.R_EQUITY: "RISK", G.R_INVALID_INPUT: "RISK", G.R_INVALID_STOP: "RISK", G.R_INVALID_MARKET_FACTS: "RISK",
+    G.R_RISK_FRACTION_INVALID: "RISK", G.R_MARGIN_LIQUIDATION: "RISK", G.R_MARGIN_BEYOND: "RISK",
+    G.R_RISK_ERROR: "RISK",
+}
+_PORTFOLIO_CAPS = frozenset({
+    "max_aggregate_open_stop_risk_fraction", "max_cluster_stop_risk_fraction", "max_family_share_of_open_risk",
+    "max_portfolio_leverage",
+})
+SPECIAL_BUCKETS: dict[str, tuple[str, ...]] = {
+    "MISSED": ("CATCHUP_MISSED",),
+    "EXPIRED": ("EXPIRED_ENTRY", "CANCELLED:expired", G.R_STALE_SIGNAL, G.R_SIGNAL_STALE),
+    "ALREADY_MOVED": ("ALREADY_MOVED",),
+    "ADDON_NOT_SUPPORTED": (G.R_ADDON, G.R_ADDON_SHARED),
+    "OPPOSITE_NOT_SUPPORTED": (G.R_OPPOSITE,),
+}
+STRUCTURE_ATR_STEP = 0.25  # stops within the same 0.25-ATR zone (same day, market, family, direction) = one structure
 
 CLASSES = ("SAFETY", "STRUCTURAL", "TEMPORARY", "QUALITY", "LEGACY_ARBITRARY")
 NON_HARD_ENGINE = frozenset({"LEGACY_ARBITRARY", "QUALITY", "TEMPORARY"})
@@ -128,13 +172,216 @@ class _Bucket:
         }
 
 
+def stack_stage(base: str, violated_cap: str | None = None) -> str:
+    if base == G.R_SIZE_BELOW_MIN and violated_cap in _PORTFOLIO_CAPS:
+        return "PORTFOLIO"
+    return _STACK_STAGE.get(base, "EXECUTABLE")
+
+
+def _classify_row(row: Mapping[str, Any]) -> dict[str, Any] | None:
+    """{kind, codes, fail_stage (None = not blocked), reached (index of the last stage passed)} per
+    opportunity; None for a snapshot without a decision."""
+    acc = row["accepted"]
+    if acc is None:
+        return None
+    if acc is False:
+        codes = [r for r in row["reasons"] if r != "ACCEPTED"]
+        idx = [_SI[_ENGINE_STAGE.get(c, "TRADABLE")] for c in codes] or [_SI["TRADABLE"]]
+        k = min(idx)
+        kind = "CATCHUP_MISSED" if "CATCHUP_MISSED" in codes else "ENGINE_REJECTED"
+        return {"kind": kind, "codes": codes, "fail_stage": STAGES[k], "reached": k - 1}
+    state, code = row["state"], row["stack_reject_code"]
+    rejected = state == "RISK_REJECTED" or bool(code)
+    if row.get("shadow_dry_run") and not rejected:
+        return {"kind": "SHADOW_WOULD_TRADE", "codes": [], "fail_stage": None, "reached": _SI["ACCEPTED"]}
+    if state in TRADED_STATES and not rejected:
+        return {"kind": "TRADED", "codes": [], "fail_stage": None, "reached": _SI["EXECUTED"]}
+    if rejected:
+        base = _base(code) if code else "unknown"
+        st = stack_stage(base, row.get("violated_cap"))
+        return {"kind": "STACK_REJECTED", "codes": [base], "fail_stage": st, "reached": _SI[st] - 1}
+    if state == "CANCELLED":
+        reason = row.get("cancel_reason") or "cancelled"
+        return {"kind": "CANCELLED", "codes": [f"CANCELLED:{reason}"], "fail_stage": "EXECUTABLE",
+                "reached": _SI["EXECUTABLE"] - 1}
+    if state == "SEND_FAILED":
+        return {"kind": "SEND_FAILED", "codes": ["SEND_FAILED"], "fail_stage": "EXECUTABLE",
+                "reached": _SI["EXECUTABLE"] - 1}
+    if row["approved"] is True:
+        return {"kind": "APPROVED_IN_FLIGHT", "codes": [], "fail_stage": None, "reached": _SI["ACCEPTED"]}
+    return {"kind": "PENDING", "codes": [], "fail_stage": None, "reached": _SI["DUPLICATE"]}
+
+
+def _mean(xs: list[float]) -> float | None:
+    return sum(xs) / len(xs) if xs else None
+
+
+def cf_stats(rows: list[Mapping[str, Any]]) -> dict[str, Any]:
+    """Counterfactual stats of a group of labels (optimistic fill at the intended entry, no costs)."""
+    resolved = [r for r in rows if r["target_before_stop"] is not None]
+    return {
+        "n_labelled": len(rows),
+        "mean_mfe_r": _mean([r["mfe_r"] for r in rows]),
+        "mean_mae_r": _mean([r["mae_r"] for r in rows]),
+        "mean_r": _mean([r["r"] for r in rows]),
+        "n_resolved": len(resolved),
+        "target_before_stop_share": (sum(1 for r in resolved if r["target_before_stop"]) / len(resolved)) if resolved else None,
+    }
+
+
+def _gate_layer(kind: str) -> str:
+    return {"ENGINE_REJECTED": "engine", "CATCHUP_MISSED": "catchup", "STACK_REJECTED": "stack"}.get(kind, "operational")
+
+
+def _gate_class(code: str, kind: str) -> str:
+    if kind in ("ENGINE_REJECTED", "CATCHUP_MISSED"):
+        return "CATCHUP" if code in ("CATCHUP_MISSED", "EXPIRED_ENTRY", "ALREADY_MOVED") else engine_class(code)
+    if kind == "STACK_REJECTED":
+        return stack_class(code)
+    return "OPERATIONAL"
+
+
+def _hour(row: Mapping[str, Any]) -> str:
+    m = row.get("local_minute")
+    return "?" if m is None else f"{int(m) // 60:02d}"
+
+
+def analysis(rows: list[Mapping[str, Any]], cf_rows: list[Mapping[str, Any]]) -> dict[str, Any]:
+    """Stages, special buckets, per-gate slices (market / family / session / local hour) with counterfactual
+    stats, the opportunities-per-market-per-hour table, family / market / cluster shares and the
+    same-structure duplicate indicator (true frequency vs near-duplicates)."""
+    from demo.execution.risk_policy import cluster_of
+
+    cls: list[tuple[Mapping[str, Any], dict[str, Any]]] = []
+    for r in rows:
+        c = _classify_row(r)
+        if c is not None:
+            cls.append((r, c))
+    n = len(cls)
+    stages = []
+    for i, st in enumerate(STAGES):
+        passed = sum(1 for _r, c in cls if c["reached"] >= i)
+        blocked = sum(1 for _r, c in cls if c["fail_stage"] == st)
+        stages.append({"stage": st, "passed": passed, "blocked_here": blocked, "share_of_raw": (passed / n) if n else None})
+    gates: dict[str, dict[str, Any]] = {}
+    for r, c in cls:
+        for code in c["codes"]:
+            g = gates.setdefault(code, {
+                "layer": _gate_layer(c["kind"]), "class": _gate_class(code, c["kind"]), "count": 0, "exclusive_count": 0,
+                "by_market": Counter(), "by_family": Counter(), "by_session": Counter(), "by_hour": Counter(),
+            })
+            g["count"] += 1
+            if len(c["codes"]) == 1:
+                g["exclusive_count"] += 1
+            g["by_market"][r["market"] or "?"] += 1
+            g["by_family"][r["family"] or "?"] += 1
+            g["by_session"][r.get("session") or "?"] += 1
+            g["by_hour"][_hour(r)] += 1
+    by_code_cf: dict[str, list[Mapping[str, Any]]] = defaultdict(list)
+    by_source_cf: dict[str, list[Mapping[str, Any]]] = defaultdict(list)
+    for cf in cf_rows:
+        by_source_cf[cf["source"]].append(cf)
+        for code in cf["gate_codes"] or ([cf["gate_code"]] if cf["gate_code"] else []):
+            by_code_cf[code].append(cf)
+    for code, g in gates.items():
+        g["share_of_opportunities"] = (g["count"] / n) if n else None
+        for k in ("by_market", "by_family", "by_session", "by_hour"):
+            g[k] = dict(sorted(g[k].items()))
+        g["counterfactual"] = cf_stats(by_code_cf.get(code, []))
+    for code, lst in by_code_cf.items():  # labelled gates that no longer appear in the live rows
+        gates.setdefault(code, {"layer": "?", "class": "?", "count": 0, "exclusive_count": 0, "share_of_opportunities": None,
+                                "by_market": {}, "by_family": {}, "by_session": {}, "by_hour": {}, "counterfactual": cf_stats(lst)})
+    special: dict[str, int] = {}
+    for name, codes in SPECIAL_BUCKETS.items():
+        special[name] = sum(1 for _r, c in cls if any(x in codes for x in c["codes"]))
+    per_hour: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    days: dict[str, set[str]] = defaultdict(set)
+    for r, _c in cls:
+        per_hour[r["market"] or "?"][_hour(r)] += 1
+        if r.get("signal_ts"):
+            days[r["market"] or "?"].add(str(r["signal_ts"])[:10])
+    table = {
+        m: {"opportunities_by_local_hour": dict(sorted(h.items())), "active_days": len(days.get(m, ())),
+            "per_active_day_by_local_hour": {k: v / max(1, len(days.get(m, ()))) for k, v in sorted(h.items())}}
+        for m, h in sorted(per_hour.items())
+    }
+
+    def share(key: Any, sub: list[tuple[Mapping[str, Any], dict[str, Any]]]) -> dict[str, Any]:
+        cnt = Counter(key(r) for r, _c in sub)
+        tot = sum(cnt.values())
+        return {k: {"n": v, "share": v / tot} for k, v in sorted(cnt.items(), key=lambda kv: -kv[1])} if tot else {}
+
+    seen_struct: dict[tuple, int] = {}
+    uniq: list[tuple[Mapping[str, Any], dict[str, Any]]] = []
+    for r, c in cls:
+        atr, stop = r.get("atr"), r.get("stop")
+        if atr and stop is not None and atr > 0:
+            zone = round(float(stop) / (STRUCTURE_ATR_STEP * float(atr)))
+        else:
+            zone = None if stop is None else round(float(stop), 2)
+        key = (r["market"], r["family"], r.get("direction"), zone, str(r.get("signal_ts") or "")[:10])
+        if key not in seen_struct:
+            seen_struct[key] = 0
+            uniq.append((r, c))
+        seen_struct[key] += 1
+    dup_by_market: dict[str, dict[str, Any]] = {}
+    for m in sorted({r["market"] or "?" for r, _c in cls}):
+        tot = sum(1 for r, _c in cls if (r["market"] or "?") == m)
+        un = sum(1 for r, _c in uniq if (r["market"] or "?") == m)
+        dup_by_market[m] = {"opportunities": tot, "unique_structures": un, "near_duplicate_ratio": (1 - un / tot) if tot else None}
+    shares = {
+        "raw": {
+            "family": share(lambda r: r["family"] or "?", cls), "market": share(lambda r: r["market"] or "?", cls),
+            "cluster": share(lambda r: cluster_of(r["market"] or "") or "?", cls),
+        },
+        "unique_structures": {
+            "family": share(lambda r: r["family"] or "?", uniq), "market": share(lambda r: r["market"] or "?", uniq),
+            "cluster": share(lambda r: cluster_of(r["market"] or "") or "?", uniq),
+        },
+    }
+    return {
+        "stages": stages,
+        "special_buckets": special,
+        "gates": dict(sorted(gates.items(), key=lambda kv: -kv[1]["count"])),
+        "counterfactual_by_source": {k: cf_stats(v) for k, v in sorted(by_source_cf.items())},
+        "counterfactual_fill_assumption": "intended entry, no slippage/fees/latency (OPTIMISTIC)",
+        "opportunities_per_market_per_hour": table,
+        "shares": shares,
+        "structure_duplicates": {
+            "step_atr": STRUCTURE_ATR_STEP,
+            "key": "market+family+direction+stop zone (0.25 ATR)+UTC day",
+            "opportunities": n, "unique_structures": len(uniq),
+            "near_duplicate_ratio": (1 - len(uniq) / n) if n else None, "by_market": dup_by_market,
+        },
+        "note_outside_entry_window": "OUTSIDE_ENTRY_WINDOW is not observable: out-of-window signals are not generated (family entry_mask)",
+        "origin": dict(Counter(r.get("origin") or "LIVE" for r, _c in cls)),
+    }
+
+
+def compact(full: Mapping[str, Any]) -> dict[str, Any]:
+    """Heartbeat-sized funnel: stage pass counts, special buckets, top blocking gates with counterfactual R."""
+    a = full.get("analysis") or {}
+    gates = a.get("gates", {})
+    return {
+        "stages": {s["stage"]: s["passed"] for s in a.get("stages", [])},
+        "special_buckets": a.get("special_buckets", {}),
+        "top_gates": {
+            k: {"n": g["count"], "cf_n": g["counterfactual"]["n_labelled"], "cf_mean_r": g["counterfactual"]["mean_r"]}
+            for k, g in list(gates.items())[:6]
+        },
+        "near_duplicate_ratio": (a.get("structure_duplicates") or {}).get("near_duplicate_ratio"),
+    }
+
+
 def funnel(store: Any, stack: Any | None = None, phase: str | None = None) -> dict[str, Any]:
     """Rejection funnel over everything recorded in ``store`` (optionally one ``phase``).
 
     ``stack`` (optional) contributes ``stack_live``: the in-process counters of ``rejection_funnel()``
     (cumulative since the stack was constructed, includes rejections whose intent row is not
     persisted). The store part is the durable one."""
-    rows = store.funnel_rows(phase)
+    rows = [r for r in store.funnel_rows(phase) if r.get("trade_type", "STRATEGY") == "STRATEGY"]
+    cf_fn = getattr(store, "counterfactual_rows", None)
+    cf_rows = cf_fn(phase) if cf_fn is not None else []
     total = _Bucket()
     by_market: dict[str, _Bucket] = {}
     by_family: dict[str, _Bucket] = {}
@@ -192,6 +439,7 @@ def funnel(store: Any, stack: Any | None = None, phase: str | None = None) -> di
         "by_market": {m: b.as_dict() for m, b in sorted(by_market.items())},
         "by_family": {f: b.as_dict() for f, b in sorted(by_family.items())},
         "stack_live": live,
+        "analysis": analysis(rows, cf_rows),
     }
 
 
@@ -218,4 +466,27 @@ def render(fun: Mapping[str, Any]) -> str:
                 f"  {label} {name}: opp {b['opportunities']} acc {b['engine_accepted']} rej {b['engine_rejected']}"
                 f" stack_rej {b['stack_rejected']} traded {b['traded']} shadow_would {b['shadow_would_trade']} temp_blocked {b['temporary_otherwise_valid_blocked']}"
             )
+    a = fun.get("analysis")
+    if a:
+        lines.append("  STAGES: " + " -> ".join(f"{s['stage']} {s['passed']}" for s in a["stages"]))
+        lines.append("  SPECIAL: " + ", ".join(f"{k}={v}" for k, v in a["special_buckets"].items()))
+        lines.append("  GATES (count share | counterfactual n meanMFE_R meanMAE_R meanR tbs-share; optimistic fill):")
+
+        def f(v: float | None) -> str:
+            return "-" if v is None else f"{v:.2f}"
+
+        for code, g in a["gates"].items():
+            cf = g["counterfactual"]
+            lines.append(
+                f"    {code} [{g['layer']}/{g['class']}] n={g['count']} ({f(g['share_of_opportunities'])}) excl={g['exclusive_count']}"
+                f" | cf n={cf['n_labelled']} mfe={f(cf['mean_mfe_r'])} mae={f(cf['mean_mae_r'])} r={f(cf['mean_r'])} tbs={f(cf['target_before_stop_share'])}"
+            )
+        sd = a["structure_duplicates"]
+        lines.append(f"  STRUCTURE: {sd['opportunities']} opportunities / {sd['unique_structures']} unique ({sd['key']}); near-duplicate ratio {sd['near_duplicate_ratio']}")
+        for kind in ("raw", "unique_structures"):
+            fam = ", ".join(f"{k}={v['share']:.0%}" for k, v in a["shares"][kind]["family"].items())
+            lines.append(f"  family share [{kind}]: {fam or '-'}")
+        for m, t in a["opportunities_per_market_per_hour"].items():
+            lines.append(f"  {m} per local hour: " + ", ".join(f"{h}h={v}" for h, v in t["opportunities_by_local_hour"].items()) + f" (active days {t['active_days']})")
+        lines.append("  NOTE: " + a["note_outside_entry_window"])
     return "\n".join(lines)

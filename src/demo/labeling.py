@@ -29,6 +29,17 @@ from datetime import datetime, timedelta
 from demo.contracts import CounterfactualLabel, OpportunitySnapshot, OutcomeRecord
 from demo.store import DemoStore, parse_utc
 
+OPERATIONAL = "OPERATIONAL"  # gate class of cancelled / send-failed intents (halted, expired, restart, ...)
+CATCHUP = "CATCHUP"  # gate class of CATCHUP_MISSED / EXPIRED_ENTRY / ALREADY_MOVED
+SRC_ENGINE = "ENGINE_REJECTED"
+SRC_CATCHUP = "CATCHUP_MISSED"
+SRC_STACK = "STACK_REJECTED"
+SRC_CANCELLED = "INTENT_CANCELLED"
+SRC_SEND_FAILED = "SEND_FAILED"
+SRC_SHADOW = "SHADOW_DRY_RUN"  # would-have-traded in shadow: labelled, but kept distinct from real non-trades
+SRC_NO_INTENT = "ACCEPTED_NO_INTENT"
+ACCEPTED_NO_INTENT_MIN_AGE_S = 600.0  # an accepted decision without an intent this old will never get one
+
 
 @dataclass(frozen=True, slots=True)
 class Bar:
@@ -174,6 +185,52 @@ def label_one(
     return label, res
 
 
+@dataclass(frozen=True, slots=True)
+class BlockingGate:
+    """Why an opportunity was not traded: source + the gate that blocked it (primary + all codes)."""
+
+    source: str
+    code: str | None
+    gate_class: str | None
+    codes: tuple[str, ...]
+
+
+def blocking_gate(row: dict) -> BlockingGate | None:
+    """Attribution of one ``DemoStore.non_traded_unlabelled`` row; None = not (yet) a non-trade."""
+    from demo.execution import gates as G
+    from demo.opportunity.engine import CATCHUP_CODES
+    from demo.opportunity.policy import GATE_CLASSIFICATION
+
+    dec = row["decision"]
+    state = row["intent_state"]
+    detail = row.get("terminal_detail") or {}
+    if not dec.accepted:
+        codes = tuple(r for r in dec.reasons if r != "ACCEPTED")
+        primary = codes[0] if codes else None
+        if "CATCHUP_MISSED" in codes:
+            return BlockingGate(SRC_CATCHUP, "CATCHUP_MISSED", CATCHUP, tuple(c for c in codes if c in CATCHUP_CODES))
+        g = GATE_CLASSIFICATION.get(primary) if primary else None
+        return BlockingGate(SRC_ENGINE, primary, g.gate_class if g else None, codes)
+    if state == "RISK_REJECTED":
+        raw = row.get("stack_code") or detail.get("reason") or "unknown"
+        code = G.base_code(raw) if raw != "unknown" else raw
+        gate = G.gate_for(raw) if raw != "unknown" else None
+        cls = row.get("stack_class") or detail.get("gate_class") or (gate.gate_class.value if gate else None)
+        return BlockingGate(SRC_STACK, code, cls, (code,))
+    if state == "SEND_FAILED":
+        code = str(detail.get("reason") or "SEND_FAILED")
+        return BlockingGate(SRC_SEND_FAILED, code, detail.get("gate_class") or OPERATIONAL, (code,))
+    if state == "CANCELLED":
+        reason = str(detail.get("reason") or detail.get("restart") or "cancelled")
+        if reason == "shadow_dry_run":
+            return BlockingGate(SRC_SHADOW, "SHADOW_DRY_RUN", "SHADOW", ("SHADOW_DRY_RUN",))
+        code = f"CANCELLED:{reason}"
+        return BlockingGate(SRC_CANCELLED, code, OPERATIONAL, (code,))
+    if state is None:
+        return BlockingGate(SRC_NO_INTENT, "ACCEPTED_NO_INTENT", OPERATIONAL, ("ACCEPTED_NO_INTENT",))
+    return None
+
+
 def label_counterfactuals(
     store: DemoStore,
     bars_provider: BarsProvider,
@@ -183,7 +240,12 @@ def label_counterfactuals(
     bar_seconds: int = 300,
     incomplete_grace_s: int = 6 * 3600,
 ) -> list[CounterfactualLabel]:
-    """Label every REJECTED decision whose horizon elapsed. Returns the labels newly written.
+    """Label every NON-TRADED opportunity whose horizon elapsed: engine rejects, catch-up misses AND
+    engine-accepted ones the stack rejected / cancelled / failed to send (incl. shadow dry-run, kept
+    distinguishable through ``counterfactual_meta.source``).  Returns the labels newly written.
+
+    Fill assumption (documented, optimistic): a fill AT the intended entry, no slippage / fees, no
+    latency.  The blocking gate code + class are stored with each label for the per-gate funnel.
 
     Skipped (retried on a later call): horizon not elapsed; no bars; trade unresolved and bars do not
     yet cover the horizon and `incomplete_grace_s` has not passed since the horizon end (after the grace period the
@@ -191,7 +253,16 @@ def label_counterfactuals(
     """
     now = parse_utc(now_utc)
     written: list[CounterfactualLabel] = []
-    for _dec, snap in store.rejected_unlabelled(phase):
+    for row in store.non_traded_unlabelled(phase):
+        snap = row["snapshot"]
+        gate = blocking_gate(row)
+        if gate is None:
+            continue
+        if (
+            gate.source == SRC_NO_INTENT
+            and (now - parse_utc(row["decision"].decided_utc)).total_seconds() < ACCEPTED_NO_INTENT_MIN_AGE_S
+        ):
+            continue  # the intent may still be created in this very cycle
         end = horizon_end_utc(snap)
         if now < end:
             continue
@@ -210,7 +281,11 @@ def label_counterfactuals(
             and now < end + timedelta(seconds=incomplete_grace_s)
         ):
             continue
-        if store.record_counterfactual(label):
+        if store.record_counterfactual(
+            label,
+            source=gate.source,
+            gate_code=gate.code, gate_class=gate.gate_class, gate_codes=gate.codes,
+        ):
             written.append(label)
     return written
 
@@ -221,6 +296,55 @@ class Fill:
     price: float
     quantity: float
     ts_utc: str
+
+
+PROGRESS_LEVELS_R: tuple[float, ...] = (0.25, 0.5, 1.0)
+
+
+def path_analytics(
+    *,
+    direction: int,
+    entry_price: float,
+    initial_stop: float,
+    entry_ts: str,
+    exit_price: float,
+    exit_ts: str,
+    path: Iterable[PathPoint],
+) -> dict[str, float | str | None]:
+    """Timing analytics of one realised trade from its bar path (resolution = the bar, 5 min: a bar is
+    dated by its OPEN, clipped to the entry time).  All R are against the initial risk |fill - stop|.
+
+    * ``time_to_<x>R_s``        seconds from entry to the first point whose favourable extreme reached x R;
+    * ``time_without_progress_s`` longest stretch (entry -> first progress -> ... -> exit) without a NEW
+                                   favourable high;
+    * ``mfe_giveback_r``        peak-to-exit: MFE minus the final gross R (>= 0; a trade that never went green and lost 1R has giveback 1)."""
+    risk = abs(entry_price - initial_stop)
+    if not risk > 0:
+        raise ValueError("initial risk distance must be > 0")
+    t0, t1 = parse_utc(entry_ts), parse_utc(exit_ts)
+    pts = [(max(t0, parse_utc(p.ts_utc)), p.high, p.low) for p in path if t0 <= parse_utc(p.ts_utc) <= t1]
+    pts.append((t1, exit_price, exit_price))
+    pts.sort(key=lambda x: x[0])
+    best = 0.0
+    last_progress = t0
+    longest = 0.0
+    reached: dict[float, float | None] = {x: None for x in PROGRESS_LEVELS_R}
+    for t, hi, lo in pts:
+        fav = ((hi - entry_price) if direction > 0 else (entry_price - lo)) / risk
+        if fav > best:
+            for x in PROGRESS_LEVELS_R:
+                if reached[x] is None and fav >= x:
+                    reached[x] = (t - t0).total_seconds()
+            longest = max(longest, (t - last_progress).total_seconds())
+            best, last_progress = fav, t
+    longest = max(longest, (t1 - last_progress).total_seconds())
+    final_r = ((exit_price - entry_price) * direction) / risk
+    out: dict[str, float | str | None] = {f"time_to_{x:g}R_s": reached[x] for x in PROGRESS_LEVELS_R}
+    out.update(
+        time_without_progress_s=longest, mfe_giveback_r=max(0.0, best - final_r), path_mfe_r=best,
+        final_gross_r=final_r, resolution="bar_5m",
+    )
+    return out
 
 
 @dataclass(frozen=True, slots=True)

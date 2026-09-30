@@ -75,3 +75,37 @@ Fail closed on: non-demo, unknown account, stale feed, reconciliation mismatch, 
 - Guards: a shadow runner refuses (fail closed) a stack that is not `shadow`; any Fill/ProtectionConfirmed/PositionClosed event in shadow fails closed.
 - Limitation: the dry-run stack never holds a position, so shadow decisions are stack-independent across same-symbol repeats. `ADDON_*`
   (add-on / opposite-side) rejects can NOT be observed in shadow; only demo-auto exercises them.
+
+## Lane R2: catch-up, non-traded counterfactuals, accounting, idle markets (2026-09-30)
+- **Closed-bar catch-up.** `bar_pointers(market, timeframe=M5)` in the DemoStore holds the CLOSE of the newest fully processed bar
+  (monotonic upsert, survives restarts; no pointer yet = only the newest bar is evaluated, history is never replayed). Every cycle
+  evaluates ALL closed bars after the pointer, oldest first, through `OpportunityEngine.on_m5_close(market, bar_close, catchup=CatchupInfo(live_now, live_quote))`:
+  data truncated at that bar, synthetic quote = bar close + recorded bar spread, snapshot `signal.origin = CATCHUP`. A past bar
+  (age > one M5 bar, `live_max_age_s`) is NEVER traded: an opportunity the policy would accept is recorded as rejected with
+  `CATCHUP_MISSED, EXPIRED_ENTRY[, ALREADY_MOVED]` (ALREADY_MOVED = the live price left the entry tolerance); an engine reject keeps its own
+  gate codes. Bounds: 300 bars / 24 h per market and cycle (`skipped_old` counted); bars inside a calendar-closed period are skipped
+  (`skipped_closed`). The pointer advances only after the bar was processed; an engine exception is retried once, then stored in
+  `scan_errors` (auditable) and the bar is skipped. Bars are scanned and recorded also while halted (`_execute` then cancels with `halted`).
+  The seen id is committed in the same transaction as the snapshot (`StoreSeenAdapter` keeps it in memory until then).
+- **Counterfactuals for every non-traded opportunity**: engine rejects, catch-up misses, stack rejects (size_below_min, margin, ADDON_*, spread,
+  ...), cancelled (halted / expired / restart), send-failed, shadow dry-run (`counterfactual_meta.source` keeps it distinct) and accepted
+  decisions that never got an intent. Causal bars only, fill assumed AT the intended entry with no costs (optimistic), `counterfactual_meta`
+  stores source + blocking gate code/class. The funnel reports per gate: count, share, per market/family/session/hour, n labelled, mean MFE_R /
+  MAE_R / R, target-before-stop share; stages RAW..EXECUTED; MISSED / EXPIRED / ALREADY_MOVED / ADDON / OPPOSITE buckets; opportunities per
+  market per local hour; family/market/cluster shares and the near-duplicate ratio (same market+family+direction+0.25 ATR stop zone+day).
+  `OUTSIDE_ENTRY_WINDOW` stays "not observable" (family entry masks never emit out-of-window signals).
+- **Accounting.** `trade_tags`: STRATEGY (default, also for legacy rows) | EXECUTION_CANARY | TEST_TRADE, plus `censored`. Exits other than
+  STOP/TARGET/SESSION_END (MANUAL, EXTERNAL, SAFETY_FLATTEN, emergency flatten, unknown hints) are censored. `DemoStore.list_outcomes/count_trades`
+  default to `kind="strategy"` (uncensored STRATEGY trades): strategy expectancy, winrate, cumulative R, milestones and learning labels use only
+  those; censored and canary trades are reported separately (n, R, MFE/MAE, duration) plus an account P/L reconciliation. `python scripts/demo_trader.py
+  --record-canary FILE.json` (`demo.external.import_external_trade`) records a trade executed outside the runner from deal-history fields; it never
+  touches the broker. `account_id_hash` and `account_phase` (`--account-phase`, ALPHA_EXECUTION_DISCOVERY | SMALL_ACCOUNT_FEASIBILITY | custom) are
+  stored once in the store meta and in `<artifacts>/account_meta.json`; attaching a different account to that store/artifacts dir fails closed at
+  start (an old DB without the meta is recorded and flagged legacy). Every report/heartbeat states `DEMO_ALPHA_RESULT != LIVE_EXECUTION_PROOF`.
+- **Closed markets.** A stale feed is idle only if the MarketSpec calendar says closed AND there is no fresh broker quote; a market that should be
+  open and is silent is `STALE_FAULT` (all-stale halt/exit). While every enabled market is idle the poll interval is `idle_poll_interval_s` (30 s,
+  heartbeat stays fresh), account snapshots run every `idle_account_check_s` (60 s) and a broker disconnect without exposure is tolerated for up to
+  `idle_transient_grace_s`. On resume the bars since the pointer are caught up (closed hours skipped). Heartbeat: `market_state`, `idle_all_markets_closed`, `catchup`.
+- **TCA / timing.** `tca_records(ENTRY)` carry `decision_price`, `order_arrival_price`, `requested_price` (None: the stack events do not provide it),
+  `actual_fill_price`, `decision_to_arrival_drift`, `implementation_shortfall` (+ `_r`), `movement_to_cost`; `outcome_extra` carries `signal_age_at_fill_s`,
+  `time_to_0.25R/0.5R/1R_s`, `time_without_progress_s`, `mfe_giveback_r` (bar resolution).

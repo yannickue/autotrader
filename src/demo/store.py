@@ -31,7 +31,7 @@ import json
 import os
 import sqlite3
 import threading
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -127,6 +127,17 @@ class LeakageError(DemoStoreError):
 
 class SchemaMismatch(DemoStoreError):
     pass
+
+
+class AccountMismatch(DemoStoreError):
+    """The attached account / account phase differs from the one this store belongs to."""
+
+
+TRADE_TYPES: tuple[str, ...] = ("STRATEGY", "EXECUTION_CANARY", "TEST_TRADE")
+# exit reasons of a STRATEGY exit; everything else (MANUAL, EXTERNAL, SAFETY_FLATTEN, emergency flatten,
+# unknown hints) is a CENSORED exit: the strategy's own stop/target/time rule did not decide it.
+UNCENSORED_EXITS: frozenset[str] = frozenset({"STOP", "TARGET", "SESSION_END"})
+OUTCOME_KINDS = ("strategy", "censored", "canary", "all")
 
 
 def client_order_id_for(intent_id: str) -> str:
@@ -283,6 +294,53 @@ CREATE TABLE IF NOT EXISTS shadow_predictions (
     PRIMARY KEY (opportunity_id, model_name)
 );
 CREATE INDEX IF NOT EXISTS ix_shadow_phase ON shadow_predictions(phase);
+
+-- Lane R2 additions (backward compatible: new tables only; an old DB simply has them created empty).
+-- Closed-bar catch-up pointer: newest closed bar (by its CLOSE) whose evaluation is complete, per
+-- (market, timeframe). Upserted atomically and monotonic; survives restarts.
+CREATE TABLE IF NOT EXISTS bar_pointers (
+    market TEXT NOT NULL,
+    timeframe TEXT NOT NULL,
+    last_bar_close_utc TEXT NOT NULL,
+    updated_utc TEXT NOT NULL,
+    PRIMARY KEY (market, timeframe)
+);
+-- A bar whose evaluation failed twice: auditable, never silent.
+CREATE TABLE IF NOT EXISTS scan_errors (
+    market TEXT NOT NULL,
+    bar_close_utc TEXT NOT NULL,
+    error TEXT NOT NULL,
+    recorded_utc TEXT NOT NULL,
+    PRIMARY KEY (market, bar_close_utc)
+);
+-- Which gate blocked a labelled non-traded opportunity (and why it was labelled). The immutable
+-- ``counterfactuals`` row is unchanged; this side table carries the attribution for the funnel.
+CREATE TABLE IF NOT EXISTS counterfactual_meta (
+    opportunity_id TEXT PRIMARY KEY REFERENCES counterfactuals(opportunity_id),
+    source TEXT NOT NULL,
+    gate_code TEXT,
+    gate_class TEXT,
+    gate_codes TEXT NOT NULL,
+    fill_assumption TEXT NOT NULL,
+    recorded_utc TEXT NOT NULL
+);
+-- Trade type / censoring tag per intent. No row = legacy = STRATEGY, not censored.
+CREATE TABLE IF NOT EXISTS trade_tags (
+    intent_id TEXT PRIMARY KEY REFERENCES intents(intent_id),
+    trade_type TEXT NOT NULL,
+    censored INTEGER NOT NULL,
+    exit_class TEXT,
+    source TEXT,
+    recorded_utc TEXT NOT NULL,
+    json TEXT NOT NULL
+);
+-- Extra outcome analytics (time to 0.25R/0.5R/1R, giveback, ...) without touching OutcomeRecord.
+CREATE TABLE IF NOT EXISTS outcome_extra (
+    intent_id TEXT PRIMARY KEY REFERENCES intents(intent_id),
+    phase TEXT NOT NULL,
+    recorded_utc TEXT NOT NULL,
+    json TEXT NOT NULL
+);
 """
 
 _IMMUTABLE_TABLES = (
@@ -378,6 +436,52 @@ class DemoStore:
     def get_meta(self, key: str) -> str | None:
         row = self._one("SELECT value FROM meta WHERE key=?", (key,))
         return None if row is None else row["value"]
+
+    def set_meta(self, key: str, value: str) -> None:
+        """Upsert a mutable meta value (atomic)."""
+        with self._tx() as c:
+            c.execute(
+                "INSERT INTO meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (key, value),
+            )
+
+    # ---- closed-bar catch-up pointer ----------------------------------------------------------
+    def get_bar_pointer(self, market: str, timeframe: str = "M5") -> str | None:
+        """ISO UTC CLOSE of the newest fully processed closed bar of (market, timeframe), or None."""
+        r = self._one(
+            "SELECT last_bar_close_utc FROM bar_pointers WHERE market=? AND timeframe=?", (market, timeframe)
+        )
+        return None if r is None else r["last_bar_close_utc"]
+
+    def set_bar_pointer(self, market: str, close_utc: str, timeframe: str = "M5") -> bool:
+        """Atomic insert-or-advance; never moves backwards. True if the pointer changed."""
+        new = parse_utc(close_utc)
+        with self._tx() as c:
+            r = c.execute(
+                "SELECT last_bar_close_utc FROM bar_pointers WHERE market=? AND timeframe=?", (market, timeframe)
+            ).fetchone()
+            if r is not None and parse_utc(r["last_bar_close_utc"]) >= new:
+                return False
+            c.execute(
+                "INSERT INTO bar_pointers(market,timeframe,last_bar_close_utc,updated_utc) VALUES(?,?,?,?) "
+                "ON CONFLICT(market,timeframe) DO UPDATE SET last_bar_close_utc=excluded.last_bar_close_utc, "
+                "updated_utc=excluded.updated_utc",
+                (market, timeframe, new.isoformat(), self._clock()),
+            )
+            return True
+
+    def record_scan_error(self, market: str, bar_close_utc: str, error: str) -> None:
+        with self._tx() as c:
+            c.execute(
+                "INSERT OR REPLACE INTO scan_errors(market,bar_close_utc,error,recorded_utc) VALUES(?,?,?,?)",
+                (market, parse_utc(bar_close_utc).isoformat(), error[:500], self._clock()),
+            )
+
+    def scan_errors(self) -> list[dict[str, str]]:
+        return [dict(r) for r in self._q("SELECT * FROM scan_errors ORDER BY bar_close_utc, market")]
+
+    def bar_pointers(self) -> dict[tuple[str, str], str]:
+        return {(r["market"], r["timeframe"]): r["last_bar_close_utc"] for r in self._q("SELECT * FROM bar_pointers")}
 
     def set_meta_once(self, key: str, value: str) -> bool:
         """Insert-once marker (e.g. 'milestone emitted'). Returns True only for the first writer."""
@@ -933,12 +1037,24 @@ class DemoStore:
             "json_extract(rk.json,'$.approved') AS approved, "
             "EXISTS(SELECT 1 FROM intent_events e WHERE e.intent_id=i.intent_id AND e.to_state='CANCELLED' "
             "AND json_extract(e.detail,'$.reason')='shadow_dry_run') AS shadow_dry_run, "
-            "(SELECT COUNT(*) FROM outcomes o WHERE o.intent_id=i.intent_id) AS has_outcome "
+            "(SELECT COUNT(*) FROM outcomes o WHERE o.intent_id=i.intent_id) AS has_outcome, "
+            "s.signal_ts AS signal_ts, json_extract(s.json,'$.direction') AS direction, "
+            "json_extract(s.json,'$.geometry.stop') AS stop, json_extract(s.json,'$.market_state.atr') AS atr, "
+            "json_extract(s.json,'$.market_state.clock.local_minute') AS local_minute, "
+            "json_extract(s.json,'$.market_state.clock.session_bucket') AS session_bucket, "
+            "json_extract(s.json,'$.signal.origin') AS origin, "
+            "json_extract(rd.json,'$.violated_cap') AS violated_cap, "
+            "(SELECT json_extract(e.detail,'$.reason') FROM intent_events e WHERE e.intent_id=i.intent_id "
+            " AND e.to_state IN ('CANCELLED','SEND_FAILED') ORDER BY e.seq DESC LIMIT 1) AS cancel_reason, "
+            "(SELECT json_extract(e.detail,'$.restart') FROM intent_events e WHERE e.intent_id=i.intent_id "
+            " AND e.to_state IN ('CANCELLED','SEND_FAILED') ORDER BY e.seq DESC LIMIT 1) AS cancel_restart, "
+            "tt.trade_type AS trade_type "
             "FROM snapshots s "
             "LEFT JOIN decisions d ON d.opportunity_id=s.opportunity_id "
             "LEFT JOIN intents i ON i.opportunity_id=s.opportunity_id "
             "LEFT JOIN risk_detail rd ON rd.intent_id=i.intent_id AND rd.kind='REJECTED' "
-            "LEFT JOIN risk_records rk ON rk.intent_id=i.intent_id"
+            "LEFT JOIN risk_records rk ON rk.intent_id=i.intent_id "
+            "LEFT JOIN trade_tags tt ON tt.intent_id=i.intent_id"
         )
         args: tuple = ()
         if phase is not None:
@@ -957,6 +1073,10 @@ class DemoStore:
                 "approved": None if r["approved"] is None else bool(r["approved"]),
                 "shadow_dry_run": bool(r["shadow_dry_run"]),
                 "has_outcome": bool(r["has_outcome"]),
+                "signal_ts": r["signal_ts"], "direction": r["direction"], "stop": r["stop"], "atr": r["atr"],
+                "local_minute": r["local_minute"], "session": r["session_bucket"], "origin": r["origin"] or "LIVE",
+                "violated_cap": r["violated_cap"], "cancel_reason": r["cancel_reason"] or r["cancel_restart"],
+                "trade_type": r["trade_type"] or "STRATEGY",
             })
         return out
 
@@ -1020,28 +1140,167 @@ class DemoStore:
         r = self._one("SELECT json FROM outcomes WHERE intent_id=?", (intent_id,))
         return None if r is None else OutcomeRecord.from_dict(json.loads(r["json"]))
 
-    def list_outcomes(self, phase: str | None = None) -> list[tuple[str, str, OutcomeRecord]]:
-        """(intent_id, opportunity_id, outcome) ordered by close time."""
-        _check_phase(phase)
-        sql, args = "SELECT * FROM outcomes WHERE 1=1", []
-        if phase:
-            sql += " AND phase=?"
-            args.append(phase)
-        return [
-            (r["intent_id"], r["opportunity_id"], OutcomeRecord.from_dict(json.loads(r["json"])))
-            for r in self._q(sql + " ORDER BY closed_utc, intent_id", tuple(args))
-        ]
+    def list_outcomes(
+        self, phase: str | None = None, *, kind: str = "strategy"
+    ) -> list[tuple[str, str, OutcomeRecord]]:
+        """(intent_id, opportunity_id, outcome) ordered by close time.
 
-    def count_trades(self, phase: str | None = None) -> int:
+        ``kind`` selects the population (default ``strategy`` = what alpha metrics, cumulative R,
+        winrate and learning labels may use):
+          * ``strategy``  trade type STRATEGY and NOT censored;
+          * ``censored``  STRATEGY trades whose exit was MANUAL / EXTERNAL / SAFETY_FLATTEN / unknown;
+          * ``canary``    EXECUTION_CANARY / TEST_TRADE (never alpha);
+          * ``all``       everything (account P/L reconciliation).
+        An outcome without a ``trade_tags`` row is a legacy STRATEGY trade; its censoring is derived from
+        its exit reason."""
         _check_phase(phase)
+        if kind not in OUTCOME_KINDS:
+            raise ValueError(f"kind must be one of {OUTCOME_KINDS}")
+        sql, args = (
+            "SELECT o.*, t.trade_type AS tt_type, t.censored AS tt_cens FROM outcomes o "
+            "LEFT JOIN trade_tags t ON t.intent_id=o.intent_id WHERE 1=1"
+        ), []
         if phase:
-            return self._q("SELECT COUNT(*) n FROM outcomes WHERE phase=?", (phase,))[0]["n"]
-        return self._q("SELECT COUNT(*) n FROM outcomes")[0]["n"]
+            sql += " AND o.phase=?"
+            args.append(phase)
+        out = []
+        for r in self._q(sql + " ORDER BY o.closed_utc, o.intent_id", tuple(args)):
+            oc = OutcomeRecord.from_dict(json.loads(r["json"]))
+            ttype = r["tt_type"] or "STRATEGY"
+            censored = bool(r["tt_cens"]) or oc.exit_reason not in UNCENSORED_EXITS
+            if kind == "strategy" and (ttype != "STRATEGY" or censored):
+                continue
+            if kind == "censored" and (ttype != "STRATEGY" or not censored):
+                continue
+            if kind == "canary" and ttype == "STRATEGY":
+                continue
+            out.append((r["intent_id"], r["opportunity_id"], oc))
+        return out
+
+    def count_trades(self, phase: str | None = None, *, kind: str = "strategy") -> int:
+        """Number of closed trades of ``kind`` (default: strategy trades only, see ``list_outcomes``)."""
+        _check_phase(phase)
+        if kind != "strategy":
+            return len(self.list_outcomes(phase, kind=kind))
+        sql = (
+            "SELECT COUNT(*) n FROM outcomes o LEFT JOIN trade_tags t ON t.intent_id=o.intent_id "
+            "WHERE (t.trade_type IS NULL OR t.trade_type='STRATEGY') AND COALESCE(t.censored,0)=0 "
+            "AND json_extract(o.json,'$.exit_reason') IN ('STOP','TARGET','SESSION_END')"
+        )
+        if phase:
+            return self._q(sql + " AND o.phase=?", (phase,))[0]["n"]
+        return self._q(sql)[0]["n"]
+
+    # ---- trade type / censoring / outcome analytics (Lane R2) ----------------------------------
+    def record_trade_tag(
+        self,
+        intent_id: str,
+        trade_type: str = "STRATEGY",
+        censored: bool = False,
+        *,
+        exit_class: str | None = None,
+        source: str | None = None,
+        detail: dict[str, Any] | None = None,
+    ) -> bool:
+        """Insert-once (first writer wins). ``trade_type`` in ``TRADE_TYPES``; ``censored`` = the exit was
+        not decided by the strategy's own rule (manual / external / emergency flatten)."""
+        if trade_type not in TRADE_TYPES:
+            raise ValueError(f"trade_type must be one of {TRADE_TYPES}")
+        with self._tx() as c:
+            if c.execute("SELECT 1 FROM intents WHERE intent_id=?", (intent_id,)).fetchone() is None:
+                raise MissingParentError(f"unknown intent {intent_id}")
+            cur = c.execute(
+                "INSERT OR IGNORE INTO trade_tags(intent_id,trade_type,censored,exit_class,source,recorded_utc,json) "
+                "VALUES(?,?,?,?,?,?,?)",
+                (intent_id, trade_type, int(censored), exit_class, source, self._clock(),
+                 json.dumps(detail or {}, sort_keys=True, default=str)),
+            )
+            return cur.rowcount == 1
+
+    def get_trade_tag(self, intent_id: str) -> dict[str, Any] | None:
+        r = self._one("SELECT * FROM trade_tags WHERE intent_id=?", (intent_id,))
+        if r is None:
+            return None
+        return {"intent_id": intent_id, "trade_type": r["trade_type"], "censored": bool(r["censored"]),
+                "exit_class": r["exit_class"], "source": r["source"], **json.loads(r["json"])}
+
+    def record_outcome_extra(self, intent_id: str, extra: dict[str, Any]) -> bool:
+        """Insert-once outcome analytics (time to 0.25R/0.5R/1R, giveback, ...)."""
+        with self._tx() as c:
+            ph = c.execute("SELECT phase FROM intents WHERE intent_id=?", (intent_id,)).fetchone()
+            if ph is None:
+                raise MissingParentError(f"unknown intent {intent_id}")
+            cur = c.execute(
+                "INSERT OR IGNORE INTO outcome_extra(intent_id,phase,recorded_utc,json) VALUES(?,?,?,?)",
+                (intent_id, ph["phase"], self._clock(), json.dumps(extra, sort_keys=True, default=str)),
+            )
+            return cur.rowcount == 1
+
+    def get_outcome_extra(self, intent_id: str) -> dict[str, Any] | None:
+        r = self._one("SELECT json FROM outcome_extra WHERE intent_id=?", (intent_id,))
+        return None if r is None else json.loads(r["json"])
+
+    # ---- account binding (Lane R2) -------------------------------------------------------------
+    def bind_account(
+        self, account_id_hash: str, account_phase: str | None = None, *, phase_explicit: bool = False
+    ) -> dict[str, Any]:
+        """Bind this store to ONE broker account (hash only, never the login) and its account phase.
+
+        First attach records both (``legacy`` = the DB already held intents: recorded, flagged, never
+        silently trusted).  A later attach with a different hash raises ``AccountMismatch`` (prevents
+        mixing e.g. the 499 EUR and the 100k accounts in one store); a different phase is refused only if
+        it was requested explicitly.  Atomic."""
+        if not account_id_hash:
+            raise AccountMismatch("empty account_id_hash: cannot bind the store")
+        with self._tx() as c:
+            def get(k: str) -> str | None:
+                r = c.execute("SELECT value FROM meta WHERE key=?", (k,)).fetchone()
+                return None if r is None else r["value"]
+
+            def put(k: str, v: str) -> None:
+                c.execute("INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)", (k, v))
+
+            stored_hash, stored_phase = get("account_id_hash"), get("account_phase")
+            if stored_hash is not None and stored_hash != account_id_hash:
+                raise AccountMismatch(
+                    f"store belongs to account {stored_hash} but account {account_id_hash} is attached"
+                )
+            if account_phase is not None and stored_phase is not None and account_phase != stored_phase and phase_explicit:
+                raise AccountMismatch(f"store account_phase is {stored_phase}, requested {account_phase}")
+            status = "OK"
+            if stored_hash is None:
+                n_intents = c.execute("SELECT COUNT(*) n FROM intents").fetchone()["n"]
+                put("account_id_hash", account_id_hash)
+                put("account_bound_utc", self._clock())
+                status = "BOUND"
+                if n_intents:
+                    put("account_hash_legacy_backfill", "1")
+                    status = "LEGACY_RECORDED"
+            phase_final = stored_phase if stored_phase is not None else account_phase
+            if stored_phase is None and account_phase is not None:
+                put("account_phase", account_phase)
+            return {"status": status, "account_id_hash": account_id_hash, "account_phase": phase_final,
+                    "legacy": get("account_hash_legacy_backfill") == "1"}
+
+    def account_info(self) -> dict[str, Any]:
+        return {"account_id_hash": self.get_meta("account_id_hash"), "account_phase": self.get_meta("account_phase"),
+                "legacy_backfill": self.get_meta("account_hash_legacy_backfill") == "1"}
 
     # ---- counterfactuals -----------------------------------------------------------------------
-    def record_counterfactual(self, label: CounterfactualLabel) -> bool:
-        """Insert-once for REJECTED decisions. Re-labelling with the same values (labelled_utc aside)
-        is a no-op (False); differing values raise."""
+    def record_counterfactual(
+        self,
+        label: CounterfactualLabel,
+        *,
+        source: str | None = None,
+        gate_code: str | None = None,
+        gate_class: str | None = None,
+        gate_codes: Sequence[str] = (),
+    ) -> bool:
+        """Insert-once for NON-TRADED opportunities: REJECTED decisions (default) or - when ``source`` is
+        given - engine-accepted ones that never became a trade (stack reject, cancelled, send failed,
+        shadow dry-run).  A decision whose intent is in flight or traded is refused.  ``gate_*`` is the
+        attribution stored beside the immutable label.  Re-labelling with the same values
+        (labelled_utc aside) is a no-op (False); differing values raise."""
         new = label.to_dict()
         with self._tx() as c:
             dec = c.execute(
@@ -1051,7 +1310,13 @@ class DemoStore:
             if dec is None:
                 raise MissingParentError("no decision for counterfactual")
             if dec["accepted"]:
-                raise DemoStoreError("counterfactuals are for REJECTED decisions only")
+                if source is None:
+                    raise DemoStoreError("counterfactuals are for REJECTED decisions only")
+                it = c.execute(
+                    "SELECT state FROM intents WHERE opportunity_id=?", (label.opportunity_id,)
+                ).fetchone()
+                if it is not None and it["state"] not in ("RISK_REJECTED", "SEND_FAILED", "CANCELLED"):
+                    raise DemoStoreError(f"intent is {it['state']}: traded / in flight, not a counterfactual")
             if dec["phase"] != label.phase:
                 raise DemoStoreError("counterfactual phase differs from decision phase")
             row = c.execute(
@@ -1068,7 +1333,87 @@ class DemoStore:
                 "INSERT INTO counterfactuals(opportunity_id,phase,labelled_utc,json) VALUES(?,?,?,?)",
                 (label.opportunity_id, label.phase, label.labelled_utc, label.to_json()),
             )
+            c.execute(
+                "INSERT OR IGNORE INTO counterfactual_meta(opportunity_id,source,gate_code,gate_class,gate_codes,"
+                "fill_assumption,recorded_utc) VALUES(?,?,?,?,?,?,?)",
+                (
+                    label.opportunity_id, source or "ENGINE_REJECTED", gate_code, gate_class,
+                    json.dumps(list(gate_codes)), "INTENDED_ENTRY_OPTIMISTIC", self._clock(),
+                ),
+            )
             return True
+
+    def non_traded_unlabelled(self, phase: str | None = None) -> list[dict[str, Any]]:
+        """Every opportunity that did NOT become a trade and has no counterfactual label yet:
+        engine rejects, catch-up misses, and engine-ACCEPTED ones that ended RISK_REJECTED / SEND_FAILED /
+        CANCELLED (incl. shadow dry-run) or never got an intent.  Raw facts only; the attribution
+        (source, gate) is derived by ``demo.labeling``.  In-flight and traded intents are excluded."""
+        _check_phase(phase)
+        sql = (
+            "SELECT d.opportunity_id AS opportunity_id, d.phase AS phase, d.decided_utc AS decided_utc, "
+            "d.accepted AS accepted, d.reasons AS reasons, d.policy_id AS policy_id, d.shadow AS shadow, "
+            "s.json AS sjson, i.intent_id AS intent_id, i.state AS istate, "
+            "rd.reject_code AS rd_code, rd.gate_class AS rd_class, "
+            "json_extract(rk.json,'$.reject_reason') AS rk_reason, "
+            "(SELECT e.detail FROM intent_events e WHERE e.intent_id=i.intent_id "
+            " AND e.to_state IN ('CANCELLED','SEND_FAILED','RISK_REJECTED') ORDER BY e.seq DESC LIMIT 1) AS term_detail "
+            "FROM decisions d JOIN snapshots s ON s.opportunity_id=d.opportunity_id "
+            "LEFT JOIN counterfactuals c ON c.opportunity_id=d.opportunity_id "
+            "LEFT JOIN intents i ON i.opportunity_id=d.opportunity_id "
+            "LEFT JOIN risk_detail rd ON rd.intent_id=i.intent_id AND rd.kind='REJECTED' "
+            "LEFT JOIN risk_records rk ON rk.intent_id=i.intent_id "
+            "WHERE c.opportunity_id IS NULL AND (d.accepted=0 OR i.intent_id IS NULL "
+            "OR i.state IN ('RISK_REJECTED','SEND_FAILED','CANCELLED'))"
+        )
+        args: tuple = ()
+        if phase:
+            sql += " AND d.phase=?"
+            args = (phase,)
+        out = []
+        for r in self._q(sql + " ORDER BY d.decided_utc, d.opportunity_id", args):
+            out.append({
+                "decision": self._decision_from_row(r),
+                "snapshot": snapshot_from_dict(json.loads(r["sjson"])),
+                "intent_id": r["intent_id"], "intent_state": r["istate"],
+                "stack_code": r["rd_code"] or r["rk_reason"], "stack_class": r["rd_class"],
+                "terminal_detail": {} if r["term_detail"] is None else json.loads(r["term_detail"]),
+            })
+        return out
+
+    def counterfactual_rows(self, phase: str | None = None) -> list[dict[str, Any]]:
+        """Every label with its attribution and the snapshot facts the funnel slices on (one query).
+        Legacy labels without a ``counterfactual_meta`` row are ENGINE_REJECTED with the decision's reasons."""
+        _check_phase(phase)
+        sql = (
+            "SELECT cf.opportunity_id AS opportunity_id, cf.json AS cjson, m.source AS source, "
+            "m.gate_code AS gate_code, m.gate_class AS gate_class, m.gate_codes AS gate_codes, "
+            "d.reasons AS reasons, s.market AS market, json_extract(s.json,'$.signal.family') AS family, "
+            "json_extract(s.json,'$.market_state.clock.local_minute') AS local_minute, "
+            "json_extract(s.json,'$.market_state.clock.session_bucket') AS session_bucket "
+            "FROM counterfactuals cf JOIN snapshots s ON s.opportunity_id=cf.opportunity_id "
+            "LEFT JOIN decisions d ON d.opportunity_id=cf.opportunity_id "
+            "LEFT JOIN counterfactual_meta m ON m.opportunity_id=cf.opportunity_id"
+        )
+        args: tuple = ()
+        if phase:
+            sql += " WHERE cf.phase=?"
+            args = (phase,)
+        out = []
+        for r in self._q(sql, args):
+            lab = json.loads(r["cjson"])
+            codes = json.loads(r["gate_codes"]) if r["gate_codes"] else [
+                x for x in (json.loads(r["reasons"]) if r["reasons"] else []) if x != "ACCEPTED"
+            ]
+            out.append({
+                "opportunity_id": r["opportunity_id"], "market": r["market"], "family": r["family"],
+                "local_minute": r["local_minute"], "session": r["session_bucket"],
+                "source": r["source"] or "ENGINE_REJECTED",
+                "gate_code": r["gate_code"] or (codes[0] if codes else None),
+                "gate_class": r["gate_class"], "gate_codes": codes,
+                "r": lab["hypothetical_r"], "mfe_r": lab["hypothetical_mfe_r"],
+                "mae_r": lab["hypothetical_mae_r"], "target_before_stop": lab["target_before_stop"],
+            })
+        return out
 
     def get_counterfactual(self, opportunity_id: str) -> CounterfactualLabel | None:
         r = self._one("SELECT json FROM counterfactuals WHERE opportunity_id=?", (opportunity_id,))

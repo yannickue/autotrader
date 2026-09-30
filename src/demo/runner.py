@@ -82,7 +82,7 @@ from demo.execution.events import (
     Rejected,
 )
 from demo.execution.stack_port import AccountSnapshot, StackFailClosed, StackPort
-from demo.labeling import Bar, PathPoint, label_counterfactuals, outcome_from_fills
+from demo.labeling import Bar, PathPoint, label_counterfactuals, outcome_from_fills, path_analytics
 from demo.labeling import Fill as LabelFill
 from demo.store import (
     CANCELLED,
@@ -95,6 +95,8 @@ from demo.store import (
     RISK_REJECTED,
     SEND_FAILED,
     SENT,
+    UNCENSORED_EXITS,
+    AccountMismatch,
     DemoStore,
     DemoStoreError,
     parse_utc,
@@ -108,6 +110,10 @@ EXIT_FAIL_CLOSED = 7
 EXIT_UNAVAILABLE = 8
 
 CHAMPION = "static-demo-policy-v1"
+ACCOUNT_PHASES = ("ALPHA_EXECUTION_DISCOVERY", "SMALL_ACCOUNT_FEASIBILITY")
+DEFAULT_ACCOUNT_PHASE = "ALPHA_EXECUTION_DISCOVERY"
+DISCLAIMER = "DEMO_ALPHA_RESULT != LIVE_EXECUTION_PROOF"
+ACCOUNT_META_FILE = "account_meta.json"
 MODES = ("shadow", "demo-auto")
 SHADOW_DRY_RUN = "shadow_dry_run"  # CANCELLED detail reason of a shadow-approved (would-have-traded) intent
 EXPECTED_DEMO_SERVER = "ActivTradesEU-Server"
@@ -148,15 +154,25 @@ def floor_m5(dt: datetime) -> datetime:
 
 
 class StoreSeenAdapter:
-    """Engine ``SeenStore`` protocol (``add_if_new``) on top of the persistent ``DemoStore`` seen-set."""
+    """Engine ``SeenStore`` protocol (``add_if_new``) on top of the persistent ``DemoStore`` seen-set.
+
+    The id is NOT committed here: ``DemoStore.record_snapshot`` inserts it into ``seen`` in the SAME
+    transaction as the snapshot.  Until then it is only remembered in memory (``_pending``), so an
+    exception between build and persist can never leave a seen id without a snapshot (the opportunity
+    would be lost forever).  ``release_all`` drops the in-flight ids after a bar was processed."""
 
     def __init__(self, store: DemoStore) -> None:
         self._store = store
+        self._pending: set[str] = set()
 
     def add_if_new(self, opportunity_id: str) -> bool:
-        if self._store.seen(opportunity_id):
+        if opportunity_id in self._pending or self._store.seen(opportunity_id):
             return False
-        return self._store.mark_seen(opportunity_id)
+        self._pending.add(opportunity_id)
+        return True
+
+    def release_all(self) -> None:
+        self._pending.clear()
 
 
 def load_learning(model_dir: str | Path | None, enabled: bool | None) -> tuple[Any, Any, str | None]:
@@ -293,6 +309,19 @@ class RunnerConfig:
     learning: bool | None = None
     model_dir: Path | None = None
     value_per_unit_eur: dict[str, float] = field(default_factory=dict)
+    # ---- closed-bar catch-up (Lane R2) ---------------------------------------------------------
+    catchup_max_bars: int = 300  # evaluate at most this many missed closed bars per market and cycle
+    catchup_max_age_s: float = 24 * 3600.0  # bars closed longer ago than this are skipped (counted), not evaluated
+    live_max_age_s: float = 300.0  # the newest bar is processed LIVE only while it is at most one M5 bar old
+    # ---- account separation (Lane R2) -----------------------------------------------------------
+    # None = take it from the artifacts dir meta (account_meta.json) or the store, else the default.
+    # Any string is allowed ("custom"); an explicit value that differs from the store's is refused.
+    account_phase: str | None = None
+    # ---- closed markets / weekend idling (Lane R2) ----------------------------------------------
+    quote_fresh_s: float = 120.0  # a broker quote this young proves the market is trading whatever the calendar says
+    idle_poll_interval_s: float = 30.0  # poll cadence while EVERY enabled market is closed (heartbeat stays < 90 s)
+    idle_account_check_s: float = 60.0  # account snapshot / reconcile cadence while idle
+    idle_transient_grace_s: float = 12 * 3600.0  # a broker disconnect with all markets closed and no exposure is tolerated this long
 
     def __post_init__(self) -> None:
         if self.mode not in MODES:
@@ -382,6 +411,12 @@ class DemoRunner:
         self._funnel: dict[str, Any] | None = None
         self._funnel_at: datetime | None = None
         self._funnel_dirty = True
+        self._market_state: dict[str, str] = {}  # FRESH | OPEN_OUT_OF_SESSION | CLOSED_IDLE | STALE_FAULT | DISABLED
+        self._idle_all = False  # every enabled market is closed per calendar AND quote-stale (idle, not a fault)
+        self._last_account_at: datetime | None = None
+        self._scan_pending: set[str] = set()  # markets whose newest bar is not fully scanned yet (retry next cycle)
+        self.account_info: dict[str, Any] = {"account_id_hash": None, "account_phase": None}
+        self._catchup: dict[str, dict[str, Any]] = {}  # per market catch-up counters (heartbeat / tests)
         self.submit_count = 0
         self.shadow_submit_count = 0  # dry-run submits (shadow mode); never counted as trades
         self.milestones: list[int] = []
@@ -468,7 +503,10 @@ class DemoRunner:
         """Register a transient condition (first-seen time kept); exceeding the grace fails closed."""
         since, _old = self._transient.get(key, (now, reason))
         self._transient[key] = (since, reason)
-        if (now - since).total_seconds() >= self.cfg.transient_grace_s:
+        grace = self.cfg.transient_grace_s
+        if self._idle_all and not self._has_open_exposure():
+            grace = max(grace, self.cfg.idle_transient_grace_s)  # weekend: nothing to protect, nothing to trade
+        if (now - since).total_seconds() >= grace:
             self._fail_closed(f"{reason} (persisted {(now - since).total_seconds():.0f}s)", now)
 
     def _clear_transient(self, keys: Sequence[str]) -> None:
@@ -497,6 +535,8 @@ class DemoRunner:
             self._check_account(snap, now, strict=True)
         except StackFailClosed as exc:
             self._fail_closed(f"stack_start: {exc}", now)
+            return
+        if not self._bind_account(snap, now):
             return
         self.clock_rows = verify_clock_chain(
             self.cfg.markets, now=now, spec_loader=self._spec_loader, production=self._production
@@ -560,6 +600,46 @@ class DemoRunner:
                 self._advance(iid, CLOSED, now, {"restart": "closed_while_down"})
                 self._warnings.append(f"needs_outcome:{iid}:closed_while_down")
 
+    # ------------------------------------------------------------------------ account separation
+    def _artifact_meta_path(self) -> Path:
+        return self.cfg.artifacts_dir / ACCOUNT_META_FILE
+
+    def _read_artifact_meta(self) -> dict[str, Any]:
+        try:
+            return json.loads(self._artifact_meta_path().read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+
+    def _bind_account(self, snap: AccountSnapshot, now: datetime) -> bool:
+        """Bind store + artifacts dir to ONE account.  A store (or artifacts dir - the stack keeps its peak
+        equity / drawdown state there) that belongs to another account is REFUSED (fail closed at start):
+        the 499 EUR and the 100k data must never mix.  Old DBs without the meta are recorded on first
+        attach (flagged legacy when they already hold intents)."""
+        meta = self._read_artifact_meta()
+        phase = self.cfg.account_phase or meta.get("account_phase") or self.store.get_meta("account_phase") or DEFAULT_ACCOUNT_PHASE
+        try:
+            if meta.get("account_id_hash") and meta["account_id_hash"] != snap.account_id_hash:
+                raise AccountMismatch(
+                    f"artifacts dir belongs to account {meta['account_id_hash']}, attached {snap.account_id_hash}"
+                )
+            info = self.store.bind_account(
+                snap.account_id_hash, phase, phase_explicit=self.cfg.account_phase is not None
+            )
+        except AccountMismatch as exc:
+            self._fail_closed(f"account_mismatch: {exc}", now)
+            return False
+        except (sqlite3.Error, OSError) as exc:
+            self._persistence_failure(exc, now)
+            return False
+        self.account_info = info
+        if info["status"] == "LEGACY_RECORDED":
+            self._warnings.append("account_hash_recorded_on_legacy_db")
+        with contextlib.suppress(OSError):
+            self._artifact_meta_path().write_text(json.dumps({
+                "account_id_hash": snap.account_id_hash, "account_phase": info["account_phase"],
+            }), encoding="utf-8")
+        return True
+
     # ----------------------------------------------------------------------------------- guards
     def _check_account(self, snap: AccountSnapshot, now: datetime, *, strict: bool = False) -> None:
         """Permanent problems fail closed at once.  Transient ones (reconciliation != RECONCILED, a
@@ -602,8 +682,15 @@ class DemoRunner:
         free = self._disk_free()
         if free < self.cfg.min_disk_free_bytes:
             self._fail_closed(f"disk_low: {free} bytes free", now)
+        if (
+            self._idle_all and self._last_account is not None and self._last_account_at is not None
+            and (now - self._last_account_at).total_seconds() < self.cfg.idle_account_check_s
+            and not self._has_open_exposure()
+        ):
+            return  # idle cadence: account / reconcile checks are lowered (not stopped) while every market is closed
         snap = self.stack.account_snapshot()
         self._last_account = snap
+        self._last_account_at = now
         self._clear_transient(["stack:guards"])
         self._check_account(snap, now)
 
@@ -627,9 +714,11 @@ class DemoRunner:
     def _refresh_feeds(self, now: datetime) -> list[str]:
         """Update freshness; return markets whose latest CLOSED M5 bar is new since last cycle.
 
-        Uses the stack's ``LiveBarSource`` surface: ``last_closed_bar_close_utc`` (refreshes its own
-        cache when a new bar should exist) and ``latest_quote``.  A stale feed of a market that is
-        CLOSED per its calendar is idle, not an alarm."""
+        CLOSED is not BROKEN.  A stale feed is IDLE only if the MarketSpec calendar (local weekday + cash
+        session) says the market is closed AND the broker shows no fresh quote (``quote_fresh_s``); a market
+        that should be open and is stale is the fault (``STALE_FAULT``: counts towards the all-stale
+        halt / exit).  A fresh quote proves the market trades whatever the calendar says.  Per-market state
+        (FRESH | OPEN_OUT_OF_SESSION | CLOSED_IDLE | STALE_FAULT) goes to the heartbeat."""
         new: list[str] = []
         self._stale = set()
         idle: set[str] = set()
@@ -637,6 +726,7 @@ class DemoRunner:
         enabled = [m for m in self.cfg.markets if m not in self.disabled]
         for m in enabled:
             info: dict[str, Any] = {"bar_age_s": None, "quote_age_s": None, "stale": True}
+            should_open = self._market_should_be_open(m, now)
             try:
                 close = src.last_closed_bar_close_utc(m)
             except StackFailClosed:
@@ -644,34 +734,56 @@ class DemoRunner:
             except Exception as exc:
                 self._feed[m] = {**info, "error": f"{type(exc).__name__}: {exc}"}
                 self._stale.add(m)
+                if not should_open:
+                    idle.add(m)
+                    self._feed[m]["idle_market_closed"] = True
+                    self._market_state[m] = "CLOSED_IDLE"
+                else:
+                    self._market_state[m] = "STALE_FAULT"
                 continue
-            if close is None:
-                self._feed[m] = info
-                self._stale.add(m)
-                continue
-            close = close.astimezone(UTC)
-            age = (now - close).total_seconds()
-            info["bar_age_s"] = age
+            q = None
             try:
                 q = src.latest_quote(m)
             except StackFailClosed:
                 raise
             except Exception:
                 q = None
+            quote_fresh = False
             if q is not None:
                 info["quote_age_s"] = (now - q.ts_utc.astimezone(UTC)).total_seconds()
+                quote_fresh = -self.cfg.clock_backward_tolerance_s <= info["quote_age_s"] <= self.cfg.quote_fresh_s
+            if close is None:
+                self._feed[m] = info
+                self._stale.add(m)
+                if not should_open and not quote_fresh:
+                    idle.add(m)
+                    info["idle_market_closed"] = True
+                    self._market_state[m] = "CLOSED_IDLE"
+                else:
+                    self._market_state[m] = "STALE_FAULT"
+                continue
+            close = close.astimezone(UTC)
+            age = (now - close).total_seconds()
+            info["bar_age_s"] = age
             stale = age > self.cfg.stale_feed_s or age < -self.cfg.clock_backward_tolerance_s
             info["stale"] = stale
             self._feed[m] = info
             if stale:
                 self._stale.add(m)
-                if not self._market_should_be_open(m, now):
+                if not should_open and not quote_fresh:
                     idle.add(m)
                     info["idle_market_closed"] = True
+                    self._market_state[m] = "CLOSED_IDLE"
+                else:
+                    self._market_state[m] = "STALE_FAULT"
+                    if not should_open and quote_fresh:
+                        info["calendar_closed_but_quotes_live"] = True
                 continue
-            if self._last_close.get(m) != close:
+            self._market_state[m] = "FRESH" if should_open else "OPEN_OUT_OF_SESSION"
+            if self._last_close.get(m) != close or m in self._scan_pending:
                 self._last_close[m] = close
                 new.append(m)
+        self._idle_all = bool(enabled) and len(idle) == len(enabled)
         expected = [m for m in enabled if m not in idle]
         if expected and all(m in self._stale for m in expected):
             self._all_stale_since = self._all_stale_since or now
@@ -705,9 +817,12 @@ class DemoRunner:
             self._stack_failure(exc, now, "feeds")
         except Exception as exc:
             self._note_error(now, f"feed_error: {type(exc).__name__}: {exc}")
-        if self.can_trade():
+        # Record-everything: bars are scanned (snapshot + decision persisted) whenever the runner has not
+        # failed closed - also during a halt / transient condition.  ``_execute`` then cancels an accepted
+        # intent with reason 'halted' (recorded, counterfactually labelled); nothing is lost silently.
+        if self.fail_reason is None and not self._stopping:
             for m in new_bars:
-                if not self.can_trade():
+                if self.fail_reason is not None:
                     break
                 self._section(now, f"scan:{m}", lambda n, m=m: self._scan_market(m, n), event_critical=False)
         self._section(now, "periodic", self._periodic, event_critical=False)
@@ -734,13 +849,105 @@ class DemoRunner:
         self._handle_events(events, now)
 
     # ---------------------------------------------------------------------------- opportunities
+    def _catchup_stats(self, market: str) -> dict[str, Any]:
+        return self._catchup.setdefault(market, {
+            "evaluated": 0, "live": 0, "skipped_closed": 0, "skipped_old": 0, "missed_found": 0, "last_catchup_utc": None,
+        })
+
+    def _pending_closes(self, market: str, newest: datetime) -> tuple[list[datetime], int]:
+        """Closes (UTC) of the closed M5 bars to evaluate now, chronological, newest last, plus the number
+        of bars skipped because they are older than the catch-up bound.  No pointer yet (first ever run on
+        this store, or a legacy DB) -> only the newest bar: history is never replayed blindly."""
+        ptr_s = self.store.get_bar_pointer(market)
+        if ptr_s is None:
+            return [newest], 0
+        ptr = parse_utc(ptr_s)
+        if newest <= ptr:
+            return [], 0
+        try:
+            closes = sorted({t.astimezone(UTC) + _M5 for t, *_ in self._frame_rows(market)})
+        except StackFailClosed:
+            raise
+        except Exception as exc:
+            self._warnings.append(f"catchup_frame_unavailable:{market}:{type(exc).__name__}")
+            closes = []
+        pending = [c for c in closes if ptr < c <= newest]
+        if not pending or pending[-1] != newest:
+            pending.append(newest)
+        floor = newest - timedelta(seconds=self.cfg.catchup_max_age_s)
+        kept = [c for c in pending if c >= floor or c == newest]
+        skipped = len(pending) - len(kept)
+        if len(kept) > self.cfg.catchup_max_bars:
+            skipped += len(kept) - self.cfg.catchup_max_bars
+            kept = kept[-self.cfg.catchup_max_bars:]
+        return kept, skipped
+
     def _scan_market(self, market: str, now: datetime) -> None:
-        pairs = self.engine.on_m5_close(market, now)
-        if not pairs:
+        """Evaluate EVERY closed M5 bar since the persisted pointer, oldest first.  The newest bar is
+        processed live (tradable) while it is at most one bar old; every older bar is a CATCH-UP bar:
+        evaluated causally at its own close, recorded, counterfactually labelled, NEVER traded."""
+        from demo.opportunity.engine import CatchupInfo
+
+        newest = self._last_close.get(market)
+        if newest is None:
             return
-        intents = {i.opportunity_id: i for i in self.engine.intents_for(list(pairs))}
-        for snap, dec in pairs:
-            self._process_pair(snap, dec, intents.get(snap.opportunity_id), now)
+        st = self._catchup_stats(market)
+        self._scan_pending.add(market)
+        closes, skipped_old = self._pending_closes(market, newest)
+        st["skipped_old"] += skipped_old
+        for close in closes:
+            live = close == newest and (now - close).total_seconds() <= self.cfg.live_max_age_s
+            if close != newest and not self._market_should_be_open(market, close):
+                st["skipped_closed"] += 1  # closed-market period: nothing to evaluate
+                self.store.set_bar_pointer(market, _iso(close))
+                continue
+            if live:
+                call: Callable[[], Any] = lambda: self.engine.on_m5_close(market, now)  # noqa: E731
+                st["live"] += 1
+            else:
+                quote = None
+                with contextlib.suppress(StackFailClosed, Exception):
+                    quote = self.stack.bar_source.latest_quote(market)
+                info = CatchupInfo(now, quote)
+                call = lambda close=close, info=info: self.engine.on_m5_close(market, close, catchup=info)  # noqa: E731
+                st["evaluated"] += 1
+                st["last_catchup_utc"] = _iso(now)
+            pairs = self._engine_bar(market, close, call, now)
+            try:
+                if pairs:
+                    intents = {i.opportunity_id: i for i in self.engine.intents_for(list(pairs))}
+                    for snap, dec in pairs:
+                        if not live and not dec.accepted and "CATCHUP_MISSED" in dec.reasons:
+                            st["missed_found"] += 1
+                        self._process_pair(snap, dec, intents.get(snap.opportunity_id), now, catchup=not live)
+            finally:
+                self._release_seen()
+            self.store.set_bar_pointer(market, _iso(close))  # only after the bar is fully processed
+        self._scan_pending.discard(market)
+
+    def _release_seen(self) -> None:
+        fn = getattr(self.engine, "release_seen", None)
+        if fn is not None:
+            fn()
+
+    def _engine_bar(self, market: str, close: datetime, call: Callable[[], Any], now: datetime) -> Any:
+        """One engine evaluation with ONE retry.  A second failure is recorded in the store
+        (``scan_errors``, status SCAN_ERROR) and the bar is skipped: auditable, never silent, and it cannot
+        wedge the market.  Stack / persistence failures are not scan errors: they propagate."""
+        last: Exception | None = None
+        for _attempt in (1, 2):
+            try:
+                return call()
+            except (StackFailClosed, sqlite3.Error, OSError):
+                raise
+            except Exception as exc:
+                last = exc
+                self._note_error(now, f"scan_error:{market}:{_iso(close)}: {type(exc).__name__}: {exc}")
+                self._release_seen()
+        assert last is not None
+        self.store.record_scan_error(market, _iso(close), f"{type(last).__name__}: {last}")
+        self._warnings.append(f"SCAN_ERROR:{market}:{_iso(close)}")
+        return None
 
     def _with_shadow(self, snap: OpportunitySnapshot, dec: Decision, now: datetime) -> Decision:
         """Predictions are persisted BEFORE the decision row (created_utc = decision time, never later)."""
@@ -763,7 +970,10 @@ class DemoRunner:
         self._pred_status = {n: str(p.get("status")) for n, p in preds.items()}
         return dataclasses.replace(dec, shadow=stored) if stored and not dec.shadow else dec
 
-    def _process_pair(self, snap: OpportunitySnapshot, dec: Decision, intent: TradeIntent | None, now: datetime) -> None:
+    def _process_pair(
+        self, snap: OpportunitySnapshot, dec: Decision, intent: TradeIntent | None, now: datetime,
+        *, catchup: bool = False,
+    ) -> None:
         if snap.phase != self.cfg.phase:  # DISCOVERY and FROZEN data must never be mixed by one runner
             self._fail_closed(f"phase_mismatch: engine={snap.phase} runner={self.cfg.phase}", now)
             return
@@ -789,6 +999,9 @@ class DemoRunner:
             }
         if not dec.accepted or self.cfg.mode not in ("demo-auto", "shadow"):
             return  # rejected -> counterfactual later (shadow-approved ones go through the DRY-RUN stack)
+        if catchup:  # defence in depth: a catch-up bar is NEVER submitted, whatever the engine returned
+            self._note_error(now, f"catchup_accepted_not_submitted: {snap.opportunity_id}")
+            return
         if intent is None:
             self._note_error(now, f"accepted_without_intent: {snap.opportunity_id}")
             return
@@ -962,7 +1175,7 @@ class DemoRunner:
             self._advance(iid, SENT, now)
             ex = self._execution_from_fill(intent, ev)
             self.store.record_execution(iid, ex)
-            self.store.record_tca(iid, self._tca_entry(ev), "ENTRY")
+            self.store.record_tca(iid, self._tca_entry(ev, intent), "ENTRY")
             self._advance(iid, FILLED, now)
             self._last_fill = {"ts": ts, "market": intent.market, "intent_id": iid, "price": float(ev.price), "quantity": float(ev.quantity)}
         elif isinstance(ev, ProtectionConfirmed):
@@ -983,8 +1196,35 @@ class DemoRunner:
             self._note_error(now, f"risk_detail_{kind.lower()}:{iid}: {exc}")
 
     @staticmethod
-    def _tca_entry(ev: Fill) -> dict[str, Any]:
-        """Entry-side transaction-cost analysis of one fill (floats; price units unless noted)."""
+    def _tca_entry(ev: Fill, intent: TradeIntent | None = None) -> dict[str, Any]:
+        """Entry-side transaction-cost analysis of one fill (floats; price units unless noted).
+
+        Decision-to-fill chain (``intent`` given): ``decision_price`` (engine ``entry_ref`` at decision) ->
+        ``order_arrival_price`` (the executable quote the stack used at submit: ``Fill.reference_price``,
+        else the ask/bid at send) -> ``requested_price`` (market order: NOT provided by the stack events -> None) ->
+        ``actual_fill_price``.  Drift / shortfall are adverse-positive (long: higher is worse).  A field the
+        stack events do not carry is None and listed in ``tca_missing_fields``."""
+        d = intent.direction if intent is not None else None
+        decision = None if intent is None else _num(intent.entry_ref)
+        arrival = _num(ev.reference_price)
+        if arrival is None and d is not None:
+            arrival = _num(ev.ask_at_send if d > 0 else ev.bid_at_send)
+        fill = _num(ev.price)
+        risk = None if intent is None else abs(intent.entry_ref - intent.stop)
+        drift = None if (d is None or decision is None or arrival is None) else d * (arrival - decision)
+        shortfall = None if (d is None or decision is None or fill is None) else d * (fill - decision)
+        chain = {
+            "decision_price": decision, "order_arrival_price": arrival, "requested_price": None,
+            "actual_fill_price": fill, "decision_to_arrival_drift": drift, "implementation_shortfall": shortfall,
+            "implementation_shortfall_r": None if (shortfall is None or not risk) else shortfall / risk,
+            "decision_to_arrival_drift_r": None if (drift is None or not risk) else drift / risk,
+        }
+        chain["tca_missing_fields"] = sorted(k for k, v in chain.items() if v is None and k in (
+            "decision_price", "order_arrival_price", "requested_price", "actual_fill_price"))
+        return {**chain, **DemoRunner._tca_entry_raw(ev)}
+
+    @staticmethod
+    def _tca_entry_raw(ev: Fill) -> dict[str, Any]:
         return {
             "fill_price": _num(ev.price), "quantity": _num(ev.quantity),
             "intended_price": _num(ev.intended_price), "reference_price": _num(ev.reference_price),
@@ -1096,6 +1336,7 @@ class DemoRunner:
         swap = entry_swap + _f(ev.swap)
         verified = ev.commission is not None and ev.swap is not None  # the broker's closing deals told us
         value = self._value_per_unit(intent.market, intent.direction, ex.fill_price, exit_px, qty, ev.profit_eur)
+        path = self._path(intent.market, intent.direction, entry_at, closed_at)
         try:
             outcome = outcome_from_fills(
                 direction=intent.direction,
@@ -1106,7 +1347,7 @@ class DemoRunner:
                 value_per_unit_eur=value,
                 fees_eur=commission,
                 swap_eur=swap,
-                path=self._path(intent.market, intent.direction, entry_at, closed_at),
+                path=path,
             )
         except ValueError as exc:
             self._warnings.append(f"needs_outcome:{iid}:{exc}")
@@ -1120,6 +1361,13 @@ class DemoRunner:
         broker_net = _num(ev.net_pnl_eur)
         if broker_net is not None and abs(broker_net - outcome.pnl_eur) > max(0.05, 0.005 * abs(broker_net)):
             self._warnings.append(f"pnl_mismatch:{iid}:broker={broker_net:.2f}:computed={outcome.pnl_eur:.2f}")
+        hint = getattr(ev, "exit_hint", None)
+        censored = ev.exit_reason not in UNCENSORED_EXITS or bool(hint and hint not in UNCENSORED_EXITS)
+        self.store.record_trade_tag(  # before the outcome: a censored exit never reaches alpha metrics
+            iid, "STRATEGY", censored, exit_class=str(hint or ev.exit_reason), source="runner",
+        )
+        if censored:
+            self._warnings.append(f"censored_exit:{iid}:{hint or ev.exit_reason}")
         self.store.record_tca(iid, {
             "cost_status": "verified" if verified else "provisional",
             "entry_commission_eur": entry_fees, "entry_swap_eur": entry_swap,
@@ -1131,9 +1379,31 @@ class DemoRunner:
             "exit_reason": ev.exit_reason,
         }, "EXIT")
         self.store.record_outcome(iid, outcome)  # only AFTER the intent is CLOSED
+        self._record_outcome_extra(intent, ex.fill_price, exit_px, entry_at, closed_at, path, now)
         self._last_persist = ts
         self._refresh_cum_r()
         self._check_milestones()
+
+    def _record_outcome_extra(
+        self, intent: TradeIntent, fill_price: float, exit_px: float, entry_at: datetime, closed_at: datetime,
+        path: list[PathPoint], now: datetime,
+    ) -> None:
+        """Timing analytics (signal age at fill, time to 0.25R / 0.5R / 1R, time without progress, MFE
+        giveback).  Diagnostics only: a failure here never affects the outcome or trading."""
+        try:
+            extra = path_analytics(
+                direction=intent.direction, entry_price=fill_price, initial_stop=intent.stop, entry_ts=_iso(entry_at),
+                exit_price=exit_px, exit_ts=_iso(closed_at), path=path,
+            )
+            snap = self.store.get_snapshot(intent.opportunity_id)
+            if snap is not None:
+                extra["signal_age_at_fill_s"] = (entry_at - parse_utc(snap.signal_ts_utc)).total_seconds()
+                extra["signal_age_note"] = "runner-observed fill time minus signal (bar close) time"
+            self.store.record_outcome_extra(intent.intent_id, extra)
+        except (sqlite3.Error, OSError):
+            raise
+        except Exception as exc:
+            self._note_error(now, f"outcome_extra:{intent.intent_id}: {type(exc).__name__}: {exc}")
 
     # ------------------------------------------------------------------------------- periodic
     def _check_milestones(self) -> None:
@@ -1238,11 +1508,13 @@ class DemoRunner:
             return self._funnel
         self._funnel_dirty = False
         try:
+            from demo.funnel import compact as compact_funnel
             from demo.funnel import funnel
 
             full = funnel(self.store, self.stack, self.cfg.phase)
             self._funnel = {**full["summary"], "by_market": {m: {k: b[k] for k in ("opportunities", "engine_accepted", "stack_rejected", "traded", "shadow_would_trade", "temporary_otherwise_valid_blocked")} for m, b in full["by_market"].items()},
-                            "stack_by_class": full["stack"]["by_class"], "engine_by_class": full["engine"]["by_class"]}
+                            "stack_by_class": full["stack"]["by_class"], "engine_by_class": full["engine"]["by_class"],
+                            "compact": compact_funnel(full)}
             self._funnel_at = now
         except Exception as exc:  # a diagnostics read never stops trading
             self._funnel = {"error": f"{type(exc).__name__}: {exc}"}
@@ -1268,6 +1540,9 @@ class DemoRunner:
             protection = "ALL_PROTECTED" if acct.all_positions_protected else "UNPROTECTED"
         return {
             "mode": "DEMO MODE",
+            "disclaimer": DISCLAIMER,
+            "account_phase": self.account_info.get("account_phase"),
+            "account_id_hash": self.account_info.get("account_id_hash"),
             "runner_mode": self.cfg.mode,
             "phase": self.cfg.phase,
             "updated_utc": _iso(now),
@@ -1295,6 +1570,9 @@ class DemoRunner:
             "challengers": self._pred_status or {"status": self.learning_error or ("not_loaded" if self.predictor is None else "no_predictions_yet")},
             "mt5_connected": bool(acct.connected) if acct is not None else False,
             "feed": self._feed,
+            "market_state": dict(self._market_state),
+            "idle_all_markets_closed": self._idle_all,
+            "catchup": {m: dict(v) for m, v in self._catchup.items()},
             "stale_markets": sorted(self._stale),
             "disabled_markets": dict(self.disabled),
             "last_persistence_write": self._last_persist,
@@ -1362,6 +1640,9 @@ class DemoRunner:
     def _sleep_s(self) -> float:
         """Poll interval; exponential backoff (bounded) while a transient condition is being re-checked."""
         base = min(self.cfg.poll_interval_s, 30.0)
+        if self._idle_all and not self._transient and self._stale_halt_since is None:
+            self._transient_cycles = 0
+            return max(base, min(self.cfg.idle_poll_interval_s, 60.0))  # heartbeat must stay fresher than 90 s
         if self._transient or self._stale_halt_since is not None:
             self._transient_cycles += 1
             return min(base * (2 ** min(self._transient_cycles, 8)), max(base, self.cfg.transient_backoff_max_s))
@@ -1424,6 +1705,7 @@ def build_live_runner(
     stack_factory: Callable[..., StackPort] | None = None,
     forced_flat_on_shutdown: bool = False,
     stack_kwargs: Mapping[str, Any] | None = None,
+    account_phase: str | None = None,
 ) -> DemoRunner:
     """Wire the runner to the REAL ``Mt5DemoStack``.
 
@@ -1508,7 +1790,7 @@ def build_live_runner(
         learning = mode == "shadow"
     predictor, trainer, err = load_learning(art / "models", learning)
     cfg = RunnerConfig(mode=mode, phase=phase, markets=names, artifacts_dir=art, learning=learning,
-                       forced_flat_on_shutdown=forced_flat_on_shutdown)
+                       forced_flat_on_shutdown=forced_flat_on_shutdown, account_phase=account_phase)
     return DemoRunner(
         stack, engine, store, config=cfg, predictor=predictor, trainer=trainer,
         learning_error=err, production=production,
