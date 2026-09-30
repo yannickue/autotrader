@@ -8,7 +8,8 @@ Failed validation raises (`DatasetRejected`) -- nothing is persisted.
 
 from __future__ import annotations
 
-from datetime import datetime
+from dataclasses import replace
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -30,6 +31,17 @@ from data.historical_quality import (
     validate_ticks,
 )
 
+# Timeframes whose bar-open grid is aligned to the SERVER wall clock (00:00/04:00 server time),
+# not to UTC: validate them on the server-clock grid (validation only; stored ts stay true UTC).
+_SERVER_GRID_MIN_SECONDS = 14400
+
+
+def _to_server_grid(bars: list, policy: ServerTimePolicy) -> list:
+    zone = policy.zone
+    return [
+        replace(b, timestamp=b.timestamp.astimezone(zone).replace(tzinfo=UTC)) for b in bars
+    ]
+
 
 def download_bars(
     client: Any,
@@ -43,9 +55,13 @@ def download_bars(
     broker_account_kind: str,
     policy: ServerTimePolicy | None = None,
     quality: HistoricalQualityConfig | None = None,
+    broker_symbol: str | None = None,
+    path_prefix: str | None = None,
 ) -> tuple[Path, DatasetProvenance, HistoricalQualityReport]:
     policy = policy or ServerTimePolicy()
-    broker_symbol = resolve_broker_symbol(client, canonical)
+    broker_symbol = resolve_broker_symbol(
+        client, canonical, broker_symbol=broker_symbol, path_prefix=path_prefix
+    )
     rates = fetch_rates_range(
         client,
         broker_symbol=broker_symbol,
@@ -65,9 +81,10 @@ def download_bars(
     )
     # Range is [start, end): drop anything the server epoch shift let in below start.
     bars = [b for b in bars if b.timestamp >= start_utc]
+    tf_seconds = TIMEFRAME_SECONDS[TIMEFRAME_LABELS[mt5_timeframe]]
     report = validate_bars(
-        bars,
-        timeframe_seconds=TIMEFRAME_SECONDS[TIMEFRAME_LABELS[mt5_timeframe]],
+        _to_server_grid(bars, policy) if tf_seconds >= _SERVER_GRID_MIN_SECONDS else bars,
+        timeframe_seconds=tf_seconds,
         config=quality,
     )
     path, prov = write_bar_dataset(

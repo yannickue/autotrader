@@ -1,0 +1,647 @@
+{
+ "canonical": "EURUSD",
+ "broker_symbol": "EURUSD",
+ "retrieved_at": "2026-09-30T01:14:11.634604+00:00",
+ "timezone_policy": {
+  "zone": "Europe/Berlin",
+  "basis": "INFERRED_FROM_LIVE_OFFSET_+7199s_2026-09-29_NOT_BROKER_CONFIRMED"
+ },
+ "timeframes": {
+  "M5": {
+   "files": 17,
+   "bytes": 1434444,
+   "rejected_or_error": [],
+   "no_data_months": [
+    "2025-01",
+    "2025-02",
+    "2025-03",
+    "2025-04"
+   ],
+   "validator_status": {
+    "PASSED_WITH_WARNINGS": 17
+   },
+   "validator_warning_kinds": {
+    "SPREAD_ANOMALY": 1066,
+    "SUSPICIOUS_GAP": 66
+   },
+   "file_sha256": {
+    "ACTIVTRADES_MT5_CFD\\EURUSD\\bars_5m\\2025-05-26T220000__2025-05-30T205500.parquet": "d7573967845ca188934be20c3f9ec09c44b0d9c600382a8fdce00e00dadb0a2f",
+    "ACTIVTRADES_MT5_CFD\\EURUSD\\bars_5m\\2025-06-01T210000__2025-06-30T235500.parquet": "b3e887cac07990b1fdbcea504e8cb099c793e345221a830e2c988d00647a752b",
+    "ACTIVTRADES_MT5_CFD\\EURUSD\\bars_5m\\2025-07-01T000000__2025-07-31T235500.parquet": "bb055c613c8d088f13e16b32c9e643d3de6b9299b6b77c160a88400bea8b9e3b",
+    "ACTIVTRADES_MT5_CFD\\EURUSD\\bars_5m\\2025-08-01T000000__2025-08-31T235500.parquet": "bee9081a79b8319f316aef0767cf99b1dadb5a2f81d2f02fa8c0d9def16b6567",
+    "ACTIVTRADES_MT5_CFD\\EURUSD\\bars_5m\\2025-09-01T000000__2025-09-30T235500.parquet": "c473548cfc434f65d9fd116882e10e1d5ece8bf528895025dc22bfaf43e10271",
+    "ACTIVTRADES_MT5_CFD\\EURUSD\\bars_5m\\2025-10-01T000000__2025-10-31T205500.parquet": "6ac09ef467380aa701468f7fb75cb03e9a71a59b0058efa58aae7927098b24fb",
+    "ACTIVTRADES_MT5_CFD\\EURUSD\\bars_5m\\2025-11-02T220000__2025-11-30T235500.parquet": "6a1e10eb7db39118688ba0b08a0ed73c7e03d385c7655c67fc8f6df5aca862b9",
+    "ACTIVTRADES_MT5_CFD\\EURUSD\\bars_5m\\2025-12-01T000000__2025-12-31T215500.parquet": "84e8f4869b9022be8f7b9c1347be18792f2a351ccc9313046bce8568d1dad363",
+    "ACTIVTRADES_MT5_CFD\\EURUSD\\bars_5m\\2026-01-01T220000__2026-01-30T215500.parquet": "dc4bad8e8197b3685ec73db2c764f8d84fe6a268c75a8f41e909d0a8c52a606e",
+    "ACTIVTRADES_MT5_CFD\\EURUSD\\bars_5m\\2026-02-01T220000__2026-02-27T215500.parquet": "641a148c34d1d50367c120ded6ab147b65b477fda97455f5c354bb66f09d3dce",
+    "ACTIVTRADES_MT5_CFD\\EURUSD\\bars_5m\\2026-03-01T220000__2026-03-31T235500.parquet": "d5c54e46db5dd64b310e9e10cc737fd5d47747e04995eeda6299a3ae0bf5589e",
+    "ACTIVTRADES_MT5_CFD\\EURUSD\\bars_5m\\2026-04-01T000000__2026-04-30T235500.parquet": "fb27b5501cadf04fd0d288e71b75ef278d7a915f63d3e2b3b545856efd4bdafa",
+    "ACTIVTRADES_MT5_CFD\\EURUSD\\bars_5m\\2026-05-01T000000__2026-05-31T235500.parquet": "84b10dc9e9779c090f44dd201825e97482ba847090a4ef5416b7f45d714d1b1f",
+    "ACTIVTRADES_MT5_CFD\\EURUSD\\bars_5m\\2026-06-01T000000__2026-06-30T235500.parquet": "b59fbe8bfc630c40e4fbdff61a6f7700b003d767dc323a46d0867dafb2b8d404",
+    "ACTIVTRADES_MT5_CFD\\EURUSD\\bars_5m\\2026-07-01T000000__2026-07-31T205500.parquet": "01fc54f76c3bf3e55680589a3705fa3f1dd5131244947a0f6416218c5e2c12f5",
+    "ACTIVTRADES_MT5_CFD\\EURUSD\\bars_5m\\2026-08-02T210000__2026-08-31T235500.parquet": "fbb82ae51a7fa530ad9076704137ac74e9451a0c54b637a4734bce55fe6b67b8",
+    "ACTIVTRADES_MT5_CFD\\EURUSD\\bars_5m\\2026-09-01T000000__2026-09-30T011500.parquet": "464640ef39b55c889c2570128bdcb6f3bedc7ab22e760e7f27ecbc1b263db12e"
+   },
+   "analysis": {
+    "rows": 100541,
+    "first_ts": "2025-05-26T22:00:00+00:00",
+    "last_ts": "2026-09-30T01:15:00+00:00",
+    "monotonic_strict": true,
+    "duplicate_ts": 0,
+    "future_ts": 0,
+    "tick_volume_peak_utc_by_season": {
+     "dst_summer": [
+      "14:55",
+      "15:00",
+      "14:00"
+     ],
+     "std_winter": [
+      "15:55",
+      "15:00",
+      "16:00"
+     ]
+    },
+    "off_grid_ts": 0,
+    "bad_ohlc_rows": 0,
+    "flat_bars": 8,
+    "flat_bar_ratio": 8e-05,
+    "zero_tick_volume": 0,
+    "spread_pts": {
+     "n": 100541,
+     "zero_or_neg": 0,
+     "median": 5.0,
+     "p95": 10.0,
+     "p99": 53.0,
+     "max": 130.0
+    },
+    "expected_bars_by_weekday_and_server_dst": {
+     "wd0_std": 288,
+     "wd0_dst": 288,
+     "wd1_std": 288,
+     "wd1_dst": 288,
+     "wd2_std": 288,
+     "wd2_dst": 288,
+     "wd3_std": 288,
+     "wd3_dst": 288,
+     "wd4_std": 276,
+     "wd4_dst": 276,
+     "wd6_std": 12,
+     "wd6_dst": 12
+    },
+    "months": {
+     "2025-05": {
+      "bars": 1140,
+      "expected_on_present_days": 1140,
+      "ratio": 1.0,
+      "days": 4
+     },
+     "2025-06": {
+      "bars": 6060,
+      "expected_on_present_days": 6060,
+      "ratio": 1.0,
+      "days": 26
+     },
+     "2025-07": {
+      "bars": 6624,
+      "expected_on_present_days": 6624,
+      "ratio": 1.0,
+      "days": 27
+     },
+     "2025-08": {
+      "bars": 6048,
+      "expected_on_present_days": 6048,
+      "ratio": 1.0,
+      "days": 26
+     },
+     "2025-09": {
+      "bars": 6336,
+      "expected_on_present_days": 6336,
+      "ratio": 1.0,
+      "days": 26
+     },
+     "2025-10": {
+      "bars": 6612,
+      "expected_on_present_days": 6612,
+      "ratio": 1.0,
+      "days": 27
+     },
+     "2025-11": {
+      "bars": 5772,
+      "expected_on_present_days": 5772,
+      "ratio": 1.0,
+      "days": 25
+     },
+     "2025-12": {
+      "bars": 6324,
+      "expected_on_present_days": 6624,
+      "ratio": 0.9547,
+      "days": 27
+     },
+     "2026-01": {
+      "bars": 6048,
+      "expected_on_present_days": 6324,
+      "ratio": 0.9564,
+      "days": 26
+     },
+     "2026-02": {
+      "bars": 5759,
+      "expected_on_present_days": 5760,
+      "ratio": 0.9998,
+      "days": 24
+     },
+     "2026-03": {
+      "bars": 6348,
+      "expected_on_present_days": 6348,
+      "ratio": 1.0,
+      "days": 27
+     },
+     "2026-04": {
+      "bars": 6336,
+      "expected_on_present_days": 6336,
+      "ratio": 1.0,
+      "days": 26
+     },
+     "2026-05": {
+      "bars": 6048,
+      "expected_on_present_days": 6048,
+      "ratio": 1.0,
+      "days": 26
+     },
+     "2026-06": {
+      "bars": 6336,
+      "expected_on_present_days": 6336,
+      "ratio": 1.0,
+      "days": 26
+     },
+     "2026-07": {
+      "bars": 6612,
+      "expected_on_present_days": 6612,
+      "ratio": 1.0,
+      "days": 27
+     },
+     "2026-08": {
+      "bars": 6055,
+      "expected_on_present_days": 6060,
+      "ratio": 0.9992,
+      "days": 26
+     },
+     "2026-09": {
+      "bars": 6083,
+      "expected_on_present_days": 6336,
+      "ratio": 0.9601,
+      "days": 26
+     }
+    },
+    "short_days": [
+     {
+      "day": "2025-12-25",
+      "bars": 12,
+      "expected": 288
+     },
+     {
+      "day": "2026-01-01",
+      "bars": 12,
+      "expected": 288
+     },
+     {
+      "day": "2026-09-30",
+      "bars": 40,
+      "expected": 288
+     }
+    ],
+    "n_short_days": 3,
+    "missing_weekdays": [],
+    "n_missing_weekdays": 0,
+    "intraday_gaps_gt3bars": [
+     {
+      "start": "2026-09-16T21:30:00+00:00",
+      "end": "2026-09-16T21:50:00+00:00",
+      "minutes": 20.0
+     }
+    ],
+    "n_intraday_gaps_gt3bars": 1,
+    "dst_weeks": [
+     {
+      "kind": "EU_autumn",
+      "date": "2025-10-26",
+      "days": {
+       "2025-10-24": {
+        "bars": 276,
+        "expected": 276
+       },
+       "2025-10-25": {
+        "bars": 0,
+        "expected": 0
+       },
+       "2025-10-26": {
+        "bars": 24,
+        "expected": 12
+       },
+       "2025-10-27": {
+        "bars": 288,
+        "expected": 288
+       }
+      },
+      "worst_ratio": 1.0,
+      "ok": true
+     },
+     {
+      "kind": "US_autumn",
+      "date": "2025-11-02",
+      "days": {
+       "2025-10-31": {
+        "bars": 264,
+        "expected": 276
+       },
+       "2025-11-01": {
+        "bars": 0,
+        "expected": 0
+       },
+       "2025-11-02": {
+        "bars": 12,
+        "expected": 12
+       },
+       "2025-11-03": {
+        "bars": 288,
+        "expected": 288
+       }
+      },
+      "worst_ratio": 0.957,
+      "ok": true
+     },
+     {
+      "kind": "US_spring",
+      "date": "2026-03-08",
+      "days": {
+       "2026-03-06": {
+        "bars": 276,
+        "expected": 276
+       },
+       "2026-03-07": {
+        "bars": 0,
+        "expected": 0
+       },
+       "2026-03-08": {
+        "bars": 24,
+        "expected": 12
+       },
+       "2026-03-09": {
+        "bars": 288,
+        "expected": 288
+       }
+      },
+      "worst_ratio": 1.0,
+      "ok": true
+     },
+     {
+      "kind": "EU_spring",
+      "date": "2026-03-29",
+      "days": {
+       "2026-03-27": {
+        "bars": 264,
+        "expected": 276
+       },
+       "2026-03-28": {
+        "bars": 0,
+        "expected": 0
+       },
+       "2026-03-29": {
+        "bars": 12,
+        "expected": 12
+       },
+       "2026-03-30": {
+        "bars": 288,
+        "expected": 288
+       }
+      },
+      "worst_ratio": 0.957,
+      "ok": true
+     }
+    ],
+    "weekly_open_utc_hhmm_top": {
+     "21:00": 52,
+     "22:00": 18,
+     "22:05": 1
+    }
+   }
+  },
+  "M1": {
+   "files": 4,
+   "bytes": 1217405,
+   "rejected_or_error": [],
+   "no_data_months": [
+    "2026-01",
+    "2026-02",
+    "2026-03",
+    "2026-04",
+    "2026-05"
+   ],
+   "validator_status": {
+    "PASSED_WITH_WARNINGS": 4
+   },
+   "validator_warning_kinds": {
+    "SPREAD_ANOMALY": 1211,
+    "SUSPICIOUS_GAP": 21
+   },
+   "file_sha256": {
+    "ACTIVTRADES_MT5_CFD\\EURUSD\\bars_1m\\2026-06-24T061900__2026-06-30T235900.parquet": "2ba77191b018eae210f99c800d5c52e34b5d656770aa1432018b2cc0716daf95",
+    "ACTIVTRADES_MT5_CFD\\EURUSD\\bars_1m\\2026-07-01T000000__2026-07-31T205900.parquet": "add0d8de535390ac73557c8b058e01b6895fb9efc7f1ef613c2e7c376404624d",
+    "ACTIVTRADES_MT5_CFD\\EURUSD\\bars_1m\\2026-08-02T210100__2026-08-31T235900.parquet": "769b9139882d57b79db2c77632d88e3851cfd82bbfbeaf174e65e41d1165d183",
+    "ACTIVTRADES_MT5_CFD\\EURUSD\\bars_1m\\2026-09-01T000000__2026-09-30T011800.parquet": "1cbdc269e4fc8b010c4b771333870124ec2b5de5ca5faa7f149d10d9f1ff4986"
+   },
+   "analysis": {
+    "rows": 100000,
+    "first_ts": "2026-06-24T06:19:00+00:00",
+    "last_ts": "2026-09-30T01:18:00+00:00",
+    "monotonic_strict": true,
+    "duplicate_ts": 0,
+    "future_ts": 0,
+    "tick_volume_peak_utc_by_season": {
+     "dst_summer": [
+      "14:57",
+      "15:02",
+      "13:30"
+     ]
+    },
+    "off_grid_ts": 0,
+    "bad_ohlc_rows": 0,
+    "flat_bars": 745,
+    "flat_bar_ratio": 0.00745,
+    "zero_tick_volume": 0,
+    "spread_pts": {
+     "n": 100000,
+     "zero_or_neg": 0,
+     "median": 6.0,
+     "p95": 10.0,
+     "p99": 66.0,
+     "max": 130.0
+    },
+    "expected_bars_by_weekday_and_server_dst": {
+     "wd0_dst": 1421,
+     "wd1_dst": 1434,
+     "wd2_dst": 1418,
+     "wd3_dst": 1427,
+     "wd4_dst": 1380,
+     "wd6_dst": 49
+    },
+    "months": {
+     "2026-06": {
+      "bars": 6681,
+      "expected_on_present_days": 7129,
+      "ratio": 0.9372,
+      "days": 6
+     },
+     "2026-07": {
+      "bars": 32965,
+      "expected_on_present_days": 32741,
+      "ratio": 1.0068,
+      "days": 27
+     },
+     "2026-08": {
+      "bars": 30113,
+      "expected_on_present_days": 29986,
+      "ratio": 1.0042,
+      "days": 26
+     },
+     "2026-09": {
+      "bars": 30241,
+      "expected_on_present_days": 31368,
+      "ratio": 0.9641,
+      "days": 26
+     }
+    },
+    "short_days": [
+     {
+      "day": "2026-09-30",
+      "bars": 199,
+      "expected": 1418
+     }
+    ],
+    "n_short_days": 1,
+    "missing_weekdays": [],
+    "n_missing_weekdays": 0,
+    "intraday_gaps_gt3bars": [
+     {
+      "start": "2026-07-21T21:52:00+00:00",
+      "end": "2026-07-21T21:56:00+00:00",
+      "minutes": 4.0
+     },
+     {
+      "start": "2026-08-13T21:16:00+00:00",
+      "end": "2026-08-13T21:20:00+00:00",
+      "minutes": 4.0
+     },
+     {
+      "start": "2026-08-18T21:01:00+00:00",
+      "end": "2026-08-18T21:05:00+00:00",
+      "minutes": 4.0
+     },
+     {
+      "start": "2026-08-19T21:05:00+00:00",
+      "end": "2026-08-19T21:09:00+00:00",
+      "minutes": 4.0
+     },
+     {
+      "start": "2026-08-19T21:16:00+00:00",
+      "end": "2026-08-19T21:21:00+00:00",
+      "minutes": 5.0
+     },
+     {
+      "start": "2026-08-19T21:22:00+00:00",
+      "end": "2026-08-19T21:35:00+00:00",
+      "minutes": 13.0
+     },
+     {
+      "start": "2026-08-20T21:21:00+00:00",
+      "end": "2026-08-20T21:26:00+00:00",
+      "minutes": 5.0
+     },
+     {
+      "start": "2026-08-20T21:36:00+00:00",
+      "end": "2026-08-20T21:40:00+00:00",
+      "minutes": 4.0
+     },
+     {
+      "start": "2026-08-23T21:11:00+00:00",
+      "end": "2026-08-23T21:15:00+00:00",
+      "minutes": 4.0
+     },
+     {
+      "start": "2026-08-24T21:24:00+00:00",
+      "end": "2026-08-24T21:34:00+00:00",
+      "minutes": 10.0
+     },
+     {
+      "start": "2026-08-24T21:54:00+00:00",
+      "end": "2026-08-24T21:58:00+00:00",
+      "minutes": 4.0
+     },
+     {
+      "start": "2026-08-26T21:19:00+00:00",
+      "end": "2026-08-26T21:25:00+00:00",
+      "minutes": 6.0
+     },
+     {
+      "start": "2026-08-30T21:40:00+00:00",
+      "end": "2026-08-30T21:44:00+00:00",
+      "minutes": 4.0
+     },
+     {
+      "start": "2026-08-31T21:08:00+00:00",
+      "end": "2026-08-31T21:12:00+00:00",
+      "minutes": 4.0
+     },
+     {
+      "start": "2026-08-31T21:40:00+00:00",
+      "end": "2026-08-31T21:44:00+00:00",
+      "minutes": 4.0
+     },
+     {
+      "start": "2026-09-02T21:11:00+00:00",
+      "end": "2026-09-02T21:20:00+00:00",
+      "minutes": 9.0
+     },
+     {
+      "start": "2026-09-02T21:41:00+00:00",
+      "end": "2026-09-02T21:45:00+00:00",
+      "minutes": 4.0
+     },
+     {
+      "start": "2026-09-02T21:52:00+00:00",
+      "end": "2026-09-02T21:58:00+00:00",
+      "minutes": 6.0
+     },
+     {
+      "start": "2026-09-03T21:40:00+00:00",
+      "end": "2026-09-03T21:44:00+00:00",
+      "minutes": 4.0
+     },
+     {
+      "start": "2026-09-07T21:38:00+00:00",
+      "end": "2026-09-07T21:45:00+00:00",
+      "minutes": 7.0
+     },
+     {
+      "start": "2026-09-07T21:51:00+00:00",
+      "end": "2026-09-07T21:55:00+00:00",
+      "minutes": 4.0
+     },
+     {
+      "start": "2026-09-10T21:30:00+00:00",
+      "end": "2026-09-10T21:36:00+00:00",
+      "minutes": 6.0
+     },
+     {
+      "start": "2026-09-10T21:46:00+00:00",
+      "end": "2026-09-10T21:50:00+00:00",
+      "minutes": 4.0
+     },
+     {
+      "start": "2026-09-14T21:21:00+00:00",
+      "end": "2026-09-14T21:26:00+00:00",
+      "minutes": 5.0
+     },
+     {
+      "start": "2026-09-16T21:30:00+00:00",
+      "end": "2026-09-16T21:53:00+00:00",
+      "minutes": 23.0
+     },
+     {
+      "start": "2026-09-27T21:46:00+00:00",
+      "end": "2026-09-27T21:51:00+00:00",
+      "minutes": 5.0
+     },
+     {
+      "start": "2026-09-28T21:40:00+00:00",
+      "end": "2026-09-28T21:45:00+00:00",
+      "minutes": 5.0
+     },
+     {
+      "start": "2026-09-28T21:48:00+00:00",
+      "end": "2026-09-28T21:53:00+00:00",
+      "minutes": 5.0
+     }
+    ],
+    "n_intraday_gaps_gt3bars": 28,
+    "dst_weeks": [],
+    "weekly_open_utc_hhmm_top": {
+     "21:01": 7,
+     "21:02": 4,
+     "21:03": 3,
+     "06:19": 1
+    }
+   }
+  },
+  "H4": {
+   "files": 1,
+   "bytes": 342403,
+   "rejected_or_error": [],
+   "no_data_months": [],
+   "validator_status": {
+    "PASSED_WITH_WARNINGS": 1
+   },
+   "validator_warning_kinds": {
+    "SPREAD_ANOMALY": 2,
+    "SUSPICIOUS_GAP": 620
+   },
+   "file_sha256": {
+    "ACTIVTRADES_MT5_CFD\\EURUSD\\bars_4h\\2015-01-01T190000__2026-09-29T220000.parquet": "1ae8744bbafe0d50926b30f18b7a5870f6862bcd4159ac4eeabc22ab22b06038"
+   },
+   "analysis": {
+    "rows": 18886,
+    "first_ts": "2015-01-01T19:00:00+00:00",
+    "last_ts": "2026-09-29T22:00:00+00:00",
+    "monotonic_strict": true,
+    "duplicate_ts": 0,
+    "future_ts": 0,
+    "off_server_grid_ts": 0,
+    "bad_ohlc_rows": 0,
+    "spread_pts": {
+     "n": 18886,
+     "zero_or_neg": 0,
+     "median": 5.0,
+     "p95": 7.0,
+     "p99": 13.0,
+     "max": 90.0
+    },
+    "zero_tick_volume": 0
+   }
+  },
+  "D1": {
+   "files": 1,
+   "bytes": 149244,
+   "rejected_or_error": [],
+   "no_data_months": [],
+   "validator_status": {
+    "PASSED_WITH_WARNINGS": 1
+   },
+   "validator_warning_kinds": {
+    "SPREAD_ANOMALY": 2,
+    "SUSPICIOUS_GAP": 1142
+   },
+   "file_sha256": {
+    "ACTIVTRADES_MT5_CFD\\EURUSD\\bars_1d\\2005-01-01T230000__2026-09-29T220000.parquet": "2e4e31d593bb3ba9649001e7c29369e18b4e52f714672238e016007204ecd08d"
+   },
+   "analysis": {
+    "rows": 6779,
+    "first_ts": "2005-01-01T23:00:00+00:00",
+    "last_ts": "2026-09-29T22:00:00+00:00",
+    "monotonic_strict": true,
+    "duplicate_ts": 0,
+    "future_ts": 0,
+    "off_server_grid_ts": 0,
+    "bad_ohlc_rows": 0,
+    "spread_pts": {
+     "n": 6779,
+     "zero_or_neg": 0,
+     "median": 5.0,
+     "p95": 30.0,
+     "p99": 30.0,
+     "max": 90.0
+    },
+    "zero_tick_volume": 0
+   }
+  }
+ }
+}

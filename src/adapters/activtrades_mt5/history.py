@@ -48,6 +48,7 @@ TIMEFRAME_LABELS: dict[int, str] = {
     15: "15m",
     30: "30m",
     16385: "1h",
+    16388: "4h",
     16408: "1d",
 }
 TIMEFRAME_SECONDS: dict[str, int] = {
@@ -56,6 +57,7 @@ TIMEFRAME_SECONDS: dict[str, int] = {
     "15m": 900,
     "30m": 1800,
     "1h": 3600,
+    "4h": 14400,
     "1d": 86400,
 }
 COPY_TICKS_ALL = -1
@@ -155,9 +157,26 @@ def validate_ticks_schema(arr: Any) -> None:
     _check_fields(arr, TICKS_FIELDS, TICKS_DTYPES, "copy_ticks")
 
 
-def resolve_broker_symbol(client: Any, canonical: str) -> str:
-    """Resolve canonical instrument to exactly one broker symbol (exact name, cash-index path)."""
-    candidates = CANONICAL_BROKER_SYMBOLS.get(canonical.upper())
+def resolve_broker_symbol(
+    client: Any,
+    canonical: str,
+    *,
+    broker_symbol: str | None = None,
+    path_prefix: str | None = None,
+) -> str:
+    """Resolve canonical instrument to exactly one broker symbol.
+
+    Default (GER40 legacy): exact name from `CANONICAL_BROKER_SYMBOLS`, path under
+    `CASH_INDEX_PATH_PREFIX`. V2 markets pass the OBSERVED `broker_symbol` (from the market
+    spec / discovery snapshot) and the expected `path_prefix`; the name must match exactly and
+    the path must start with the prefix. Never guesses.
+    """
+    if broker_symbol is not None:
+        candidates: tuple[str, ...] = (broker_symbol,)
+        prefix = path_prefix if path_prefix is not None else ""
+    else:
+        candidates = CANONICAL_BROKER_SYMBOLS.get(canonical.upper(), ())
+        prefix = path_prefix if path_prefix is not None else CASH_INDEX_PATH_PREFIX
     if not candidates:
         raise MT5SymbolResolutionError(f"no broker-symbol mapping for {canonical!r}")
     matches = []
@@ -168,10 +187,8 @@ def resolve_broker_symbol(client: Any, canonical: str) -> str:
         if getattr(info, "name", None) != name:
             continue
         path = str(getattr(info, "path", ""))
-        if not path.startswith(CASH_INDEX_PATH_PREFIX):
-            raise MT5SymbolResolutionError(
-                f"{name!r} path {path!r} is not under {CASH_INDEX_PATH_PREFIX!r}"
-            )
+        if not path.startswith(prefix):
+            raise MT5SymbolResolutionError(f"{name!r} path {path!r} is not under {prefix!r}")
         matches.append(name)
     if len(matches) != 1:
         raise MT5SymbolResolutionError(

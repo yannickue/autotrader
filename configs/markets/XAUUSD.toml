@@ -1,0 +1,78 @@
+# XAUUSD: MarketSpec (research-only). Values OBSERVED on the ActivTrades DEMO terminal, snapshot 2026-09-30.
+# Verify/regenerate with scripts/v2_discover_symbols.py + scripts/v2_download_market.py.
+
+[market]
+canonical = "XAUUSD"
+broker_symbol = "GOLD"
+broker_path = 'Metals\GOLD'
+asset_class = "metal_cfd"
+timezone = "Europe/London"
+research_only = true
+trading_enabled = false
+
+[instrument]
+point_size = 0.01
+digits = 2
+contract_size = 100.0
+tick_size = 0.01
+volume_min = 0.01
+volume_step = 0.01
+volume_max = 50.0
+currency_profit = "USD"
+currency_margin = "USD"
+
+[calendar]
+tz = "Europe/London"
+cash_open = "08:00"
+cash_close = "17:00"
+entry_start = "08:00"
+entry_end = "15:00"
+forced_flat = "16:55"
+status = "provisional"
+weekend_policy = "No bars Sat/Sun (Berlin server date); weekly open 22:00 UTC (summer) / 23:00 UTC (winter)."
+holiday_policy = "No bars on 25 Dec, 1 Jan, Good Friday."
+dst_notes = "Near-24h spot CFD with a ~1h daily break. US-anchored hours shift with US DST: NY-open volume peak 13:30 UTC (EDT) / 14:30 UTC (EST). The London reference session used for buckets is provisional."
+
+[[calendar.buckets]]
+name = "ASIA_PRE"
+start = "00:00"
+end = "08:00"
+
+[[calendar.buckets]]
+name = "LONDON_0800_1000"
+start = "08:00"
+end = "10:00"
+
+[[calendar.buckets]]
+name = "LONDON_MID_1000_1300"
+start = "10:00"
+end = "13:00"
+
+[[calendar.buckets]]
+name = "NY_OVERLAP_1300_1700"
+start = "13:00"
+end = "17:00"
+
+[[calendar.buckets]]
+name = "LATE_1700_2400"
+start = "17:00"
+end = "24:00"
+
+[risk]
+max_entry_spread_price = 0.47
+spread_model_notes = "PROVISIONAL cap = observed M5 p99 (47 pts) in PRICE units. BID OHLC + recorded per-bar spread. Observed M5 median 30, p95 35, p99 47, max 500 pts. Cost model must use the recorded spread, not this cap."
+max_leverage = 10.0  # observed broker margin; the hard permitted ceiling is 30x and is NOT a target
+margin_notes = "Observed via order_calc_margin: 1 lot (100 oz) @4169.6 USD = 36768.6 EUR -> about 10x (10%)."
+
+[history]  # OBSERVED first/last bar-open (UTC); the MT5 terminal serves at most 100000 bars per timeframe
+M5 = ["2025-05-05T02:25:00+00:00", "2026-09-30T01:15:00+00:00"]
+M1 = ["2026-06-19T03:07:00+00:00", "2026-09-30T01:17:00+00:00"]
+H4 = ["2015-01-02T03:00:00+00:00", "2026-09-29T22:00:00+00:00"]
+D1 = ["2013-08-07T22:00:00+00:00", "2026-09-29T22:00:00+00:00"]
+
+[data_quality]
+flags = ["M5_missing_weekdays=3", "M5_intraday_gaps_gt3bars=16", "bar_cap_100000_per_timeframe", "volume_is_broker_tick_activity", "bid_only_ohlc", "daily_break_about_1h"]
+
+[provenance]
+snapshot_date = "2026-09-30"
+server_tz_policy = "MT5 server clock = Europe/Berlin (UTC+2 CEST / UTC+1 CET); bar time = server wall clock encoded as epoch -> true UTC via ServerTimePolicy. Inferred from a live +7199s offset and cross-checked by DST-shifting cash-open volume peaks; not broker-confirmed."

@@ -14,6 +14,7 @@ class SymbolMapping:
     canonical: str  # e.g. "GER40" (Nautilus symbol)
     broker_symbol: str  # e.g. "Ger40" (MT5 name, case-sensitive)
     expected_path_prefix: str  # broker category guard, e.g. "Cash Indices"
+    research_only: bool = False  # True: history/research data only, never traded
 
     @property
     def instrument_id(self) -> InstrumentId:
@@ -48,10 +49,44 @@ class SymbolRegistry:
         return list(self._by_canonical.values())
 
 
-# Only broker-verified symbols are registered. NASDAQ100 is intentionally absent until its
-# real ActivTrades symbol name has been observed (symbols_get) -- never guessed.
+# Only broker-verified symbols are registered. Names below were OBSERVED via symbols_get on the
+# ActivTrades DEMO terminal (2026-09-30, research/reports/v2_markets/symbol_snapshot.json) and
+# unique-matched by path + description -- never guessed.
 GER40 = SymbolMapping(canonical="GER40", broker_symbol="Ger40", expected_path_prefix="Cash Indices")
+
+# V2 research-only markets: DATA ONLY. Not part of `default_registry()` (the live/paper registry),
+# so no execution or data client picks them up; use `research_registry()` for research tooling.
+NAS100 = SymbolMapping(
+    canonical="NAS100",
+    broker_symbol="UsaTec",  # "US Tech 100 Cash Index"
+    expected_path_prefix="Cash Indices",
+    research_only=True,
+)
+SPX500 = SymbolMapping(
+    canonical="SPX500",
+    broker_symbol="Usa500",  # "SP 500 Cash Index"
+    expected_path_prefix="Cash Indices",
+    research_only=True,
+)
+XAUUSD = SymbolMapping(
+    canonical="XAUUSD",
+    broker_symbol="GOLD",  # "Gold" spot
+    expected_path_prefix="Metals",
+    research_only=True,
+)
+EURUSD = SymbolMapping(
+    canonical="EURUSD",
+    broker_symbol="EURUSD",  # "Euro vs US Dollar"
+    expected_path_prefix="Forex",
+    research_only=True,
+)
+RESEARCH_ONLY_MAPPINGS = (NAS100, SPX500, XAUUSD, EURUSD)
 
 
 def default_registry() -> SymbolRegistry:
     return SymbolRegistry([GER40])
+
+
+def research_registry() -> SymbolRegistry:
+    """GER40 + the V2 research-only markets (never handed to execution/data clients)."""
+    return SymbolRegistry([GER40, *RESEARCH_ONLY_MAPPINGS])

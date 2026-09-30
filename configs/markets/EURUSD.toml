@@ -1,0 +1,78 @@
+# EURUSD: MarketSpec (research-only). Values OBSERVED on the ActivTrades DEMO terminal, snapshot 2026-09-30.
+# Verify/regenerate with scripts/v2_discover_symbols.py + scripts/v2_download_market.py.
+
+[market]
+canonical = "EURUSD"
+broker_symbol = "EURUSD"
+broker_path = 'Forex\Majors\EURUSD'
+asset_class = "fx_cfd"
+timezone = "Europe/London"
+research_only = true
+trading_enabled = false
+
+[instrument]
+point_size = 1e-05
+digits = 5
+contract_size = 100000.0
+tick_size = 1e-05
+volume_min = 0.01
+volume_step = 0.01
+volume_max = 50.0
+currency_profit = "USD"
+currency_margin = "EUR"
+
+[calendar]
+tz = "Europe/London"
+cash_open = "08:00"
+cash_close = "17:00"
+entry_start = "08:00"
+entry_end = "15:00"
+forced_flat = "16:55"
+status = "provisional"
+weekend_policy = "Weekly open Sunday 21:00 UTC (summer) / 22:00 UTC (winter) = 17:00 New York; Friday has 276 M5 bars vs 288 on other weekdays (early Friday close)."
+holiday_policy = "25 Dec and 1 Jan short/empty; otherwise continuous 24h Mon-Fri."
+dst_notes = "24h FX; weekly open tracks US DST (21:00 UTC summer / 22:00 UTC winter over 70 weeks). Volume peak 14:55/15:00 UTC (summer) moves +1h in winter."
+
+[[calendar.buckets]]
+name = "ASIA_PRE"
+start = "00:00"
+end = "08:00"
+
+[[calendar.buckets]]
+name = "LONDON_0800_1000"
+start = "08:00"
+end = "10:00"
+
+[[calendar.buckets]]
+name = "LONDON_MID_1000_1300"
+start = "10:00"
+end = "13:00"
+
+[[calendar.buckets]]
+name = "NY_OVERLAP_1300_1700"
+start = "13:00"
+end = "17:00"
+
+[[calendar.buckets]]
+name = "LATE_1700_2400"
+start = "17:00"
+end = "24:00"
+
+[risk]
+max_entry_spread_price = 0.00053
+spread_model_notes = "PROVISIONAL cap = observed M5 p99 (53 pts) in PRICE units. BID OHLC + recorded per-bar spread. Observed M5 median 5, p95 10, p99 53, max 130 pts. Cost model must use the recorded spread, not this cap."
+max_leverage = 30.0  # observed broker margin; the hard permitted ceiling is 30x and is NOT a target
+margin_notes = "Observed via order_calc_margin: 1 lot (100000 EUR) = 3333.33 EUR -> 30x (3.33%)."
+
+[history]  # OBSERVED first/last bar-open (UTC); the MT5 terminal serves at most 100000 bars per timeframe
+M5 = ["2025-05-26T22:00:00+00:00", "2026-09-30T01:15:00+00:00"]
+M1 = ["2026-06-24T06:19:00+00:00", "2026-09-30T01:18:00+00:00"]
+H4 = ["2015-01-01T19:00:00+00:00", "2026-09-29T22:00:00+00:00"]
+D1 = ["2005-01-01T23:00:00+00:00", "2026-09-29T22:00:00+00:00"]
+
+[data_quality]
+flags = ["M5_intraday_gaps_gt3bars=1", "M1_intraday_gaps_gt3bars=28", "bar_cap_100000_per_timeframe", "volume_is_broker_tick_activity", "bid_only_ohlc"]
+
+[provenance]
+snapshot_date = "2026-09-30"
+server_tz_policy = "MT5 server clock = Europe/Berlin (UTC+2 CEST / UTC+1 CET); bar time = server wall clock encoded as epoch -> true UTC via ServerTimePolicy. Inferred from a live +7199s offset and cross-checked by DST-shifting cash-open volume peaks; not broker-confirmed."

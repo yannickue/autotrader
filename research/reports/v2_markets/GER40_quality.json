@@ -1,0 +1,585 @@
+{
+ "canonical": "GER40",
+ "broker_symbol": "Ger40",
+ "retrieved_at": "2026-09-30T01:14:11.634604+00:00",
+ "timezone_policy": {
+  "zone": "Europe/Berlin",
+  "basis": "INFERRED_FROM_LIVE_OFFSET_+7199s_2026-09-29_NOT_BROKER_CONFIRMED"
+ },
+ "timeframes": {
+  "M5": {
+   "files": 20,
+   "bytes": 1874454,
+   "rejected_or_error": [],
+   "no_data_months": [
+    "2025-01"
+   ],
+   "validator_status": {
+    "PASSED_WITH_WARNINGS": 16,
+    "PASSED": 4
+   },
+   "validator_warning_kinds": {
+    "SUSPICIOUS_GAP": 4,
+    "SPREAD_ANOMALY": 166
+   },
+   "file_sha256": {
+    "ACTIVTRADES_MT5_CFD\\GER40\\bars_5m\\2025-02-10T175500__2025-02-28T205500.parquet": "d34a167324001ea4860d5037d88fe717bbebba10bc534f8c29433fec37cfdc52",
+    "ACTIVTRADES_MT5_CFD\\GER40\\bars_5m\\2025-03-03T001500__2025-03-31T195500.parquet": "f7529ba7a79d13a4b28d03ec425102acf387d7f90895e0a068825c4f3239336c",
+    "ACTIVTRADES_MT5_CFD\\GER40\\bars_5m\\2025-04-01T001500__2025-04-30T195500.parquet": "c471172cc3d6d9cdb6ffc42cd800e2f564000a7523809149c3b03028041cdb51",
+    "ACTIVTRADES_MT5_CFD\\GER40\\bars_5m\\2025-05-02T001500__2025-05-30T195500.parquet": "7e7de9cbeafb3b61d0b8ff462e3d3ef82987867d0cb70a1c9bf46983c4f11547",
+    "ACTIVTRADES_MT5_CFD\\GER40\\bars_5m\\2025-06-02T001500__2025-06-30T195500.parquet": "5dfeaeefe47fd5b5ef8f2abe3e6046de39555565a185a8638c65850cde8626d5",
+    "ACTIVTRADES_MT5_CFD\\GER40\\bars_5m\\2025-07-01T001500__2025-07-31T195500.parquet": "63d1bc2ad4d9ceda11a0f1aa0231d70a1083e4807792a7914a163d82c529652a",
+    "ACTIVTRADES_MT5_CFD\\GER40\\bars_5m\\2025-08-01T001500__2025-08-29T195500.parquet": "0835256328a69c594db155dee59ae31ff7a2f498c05a70556873e1576d599070",
+    "ACTIVTRADES_MT5_CFD\\GER40\\bars_5m\\2025-09-01T001500__2025-09-30T195500.parquet": "527a6094c54a9f451f94935075b3a0751eb3fb62d297f37933219a245cfc8d9c",
+    "ACTIVTRADES_MT5_CFD\\GER40\\bars_5m\\2025-10-01T001500__2025-10-31T205500.parquet": "f10072d79fb8734fd1dc05b12a12a083b66e7bc1e1f4594531560bbd821b11d2",
+    "ACTIVTRADES_MT5_CFD\\GER40\\bars_5m\\2025-11-03T011500__2025-11-28T205500.parquet": "06cb36ebd1a79fd85f135e67a515aa261e8f0afef4490ece9e7afb1cc9eedc46",
+    "ACTIVTRADES_MT5_CFD\\GER40\\bars_5m\\2025-12-01T001500__2025-12-30T205500.parquet": "7e248adbc78572bcf065c3755d62422bb13cffe2c06d01b9f0da20f894c4ac1a",
+    "ACTIVTRADES_MT5_CFD\\GER40\\bars_5m\\2026-01-02T001500__2026-01-30T205500.parquet": "60a8ebd85c3b57058335a464ce9c63407163c3a20dfff917b5a3682b396ecdfd",
+    "ACTIVTRADES_MT5_CFD\\GER40\\bars_5m\\2026-02-02T001500__2026-02-27T205500.parquet": "5a8941b8752064d781b94af0d6443341c44ff2adb3f456a33af5e97050421b31",
+    "ACTIVTRADES_MT5_CFD\\GER40\\bars_5m\\2026-03-02T001500__2026-03-31T195500.parquet": "c6f194971227849daf53807c4b27a9649793a267588ce7ee14404a2e5f925e95",
+    "ACTIVTRADES_MT5_CFD\\GER40\\bars_5m\\2026-04-01T001500__2026-04-30T195500.parquet": "67a044e7b387c2e7715423f5e5c9a982d97068cf8bf0e02327d99ed9eab0c891",
+    "ACTIVTRADES_MT5_CFD\\GER40\\bars_5m\\2026-05-04T001500__2026-05-29T195500.parquet": "913017a2367f7c0334cbc12bd28c1e83e8f006c7b8070a8709a293385692bef6",
+    "ACTIVTRADES_MT5_CFD\\GER40\\bars_5m\\2026-06-01T001500__2026-06-30T195500.parquet": "a55dcd4ff626d03f4d9d789aea8d634f4e6361e70a72a229937b89a6dbc7e404",
+    "ACTIVTRADES_MT5_CFD\\GER40\\bars_5m\\2026-07-01T001500__2026-07-31T195500.parquet": "581d7df7651363cd01d63876fca89ec3a74660f86c59e491b8d5e1a864a169b4",
+    "ACTIVTRADES_MT5_CFD\\GER40\\bars_5m\\2026-08-03T001500__2026-08-31T195500.parquet": "d6c99f5a56f08a9d8df882d04921f7c761530497cae1318755d23b1c6d4d7bfd",
+    "ACTIVTRADES_MT5_CFD\\GER40\\bars_5m\\2026-09-01T001500__2026-09-30T011000.parquet": "80d2d149ffd9a67b04b9c76ea2ebd073311437e5dbb6f47c46ddcdd4f1ec2c89"
+   },
+   "analysis": {
+    "rows": 100000,
+    "first_ts": "2025-02-10T17:55:00+00:00",
+    "last_ts": "2026-09-30T01:10:00+00:00",
+    "monotonic_strict": true,
+    "duplicate_ts": 0,
+    "future_ts": 0,
+    "tick_volume_peak_utc_by_season": {
+     "dst_summer": [
+      "07:00",
+      "13:30",
+      "07:05"
+     ],
+     "std_winter": [
+      "08:00",
+      "14:30",
+      "14:35"
+     ]
+    },
+    "off_grid_ts": 0,
+    "bad_ohlc_rows": 0,
+    "flat_bars": 1,
+    "flat_bar_ratio": 1e-05,
+    "zero_tick_volume": 0,
+    "spread_pts": {
+     "n": 100000,
+     "zero_or_neg": 0,
+     "median": 145.0,
+     "p95": 562.0,
+     "p99": 771.0,
+     "max": 2177.0
+    },
+    "expected_bars_by_weekday_and_server_dst": {
+     "wd0_std": 249,
+     "wd0_dst": 237,
+     "wd1_std": 249,
+     "wd1_dst": 237,
+     "wd2_std": 249,
+     "wd2_dst": 237,
+     "wd3_std": 249,
+     "wd3_dst": 237,
+     "wd4_std": 249,
+     "wd4_dst": 237
+    },
+    "months": {
+     "2025-02": {
+      "bars": 3523,
+      "expected_on_present_days": 3735,
+      "ratio": 0.9432,
+      "days": 15
+     },
+     "2025-03": {
+      "bars": 5209,
+      "expected_on_present_days": 5217,
+      "ratio": 0.9985,
+      "days": 21
+     },
+     "2025-04": {
+      "bars": 4739,
+      "expected_on_present_days": 4740,
+      "ratio": 0.9998,
+      "days": 20
+     },
+     "2025-05": {
+      "bars": 4977,
+      "expected_on_present_days": 4977,
+      "ratio": 1.0,
+      "days": 21
+     },
+     "2025-06": {
+      "bars": 4977,
+      "expected_on_present_days": 4977,
+      "ratio": 1.0,
+      "days": 21
+     },
+     "2025-07": {
+      "bars": 5451,
+      "expected_on_present_days": 5451,
+      "ratio": 1.0,
+      "days": 23
+     },
+     "2025-08": {
+      "bars": 4977,
+      "expected_on_present_days": 4977,
+      "ratio": 1.0,
+      "days": 21
+     },
+     "2025-09": {
+      "bars": 5214,
+      "expected_on_present_days": 5214,
+      "ratio": 1.0,
+      "days": 22
+     },
+     "2025-10": {
+      "bars": 5511,
+      "expected_on_present_days": 5511,
+      "ratio": 1.0,
+      "days": 23
+     },
+     "2025-11": {
+      "bars": 4919,
+      "expected_on_present_days": 4980,
+      "ratio": 0.9878,
+      "days": 20
+     },
+     "2025-12": {
+      "bars": 4731,
+      "expected_on_present_days": 4731,
+      "ratio": 1.0,
+      "days": 19
+     },
+     "2026-01": {
+      "bars": 5229,
+      "expected_on_present_days": 5229,
+      "ratio": 1.0,
+      "days": 21
+     },
+     "2026-02": {
+      "bars": 4979,
+      "expected_on_present_days": 4980,
+      "ratio": 0.9998,
+      "days": 20
+     },
+     "2026-03": {
+      "bars": 5453,
+      "expected_on_present_days": 5454,
+      "ratio": 0.9998,
+      "days": 22
+     },
+     "2026-04": {
+      "bars": 4740,
+      "expected_on_present_days": 4740,
+      "ratio": 1.0,
+      "days": 20
+     },
+     "2026-05": {
+      "bars": 4740,
+      "expected_on_present_days": 4740,
+      "ratio": 1.0,
+      "days": 20
+     },
+     "2026-06": {
+      "bars": 5214,
+      "expected_on_present_days": 5214,
+      "ratio": 1.0,
+      "days": 22
+     },
+     "2026-07": {
+      "bars": 5451,
+      "expected_on_present_days": 5451,
+      "ratio": 1.0,
+      "days": 23
+     },
+     "2026-08": {
+      "bars": 4977,
+      "expected_on_present_days": 4977,
+      "ratio": 1.0,
+      "days": 21
+     },
+     "2026-09": {
+      "bars": 4989,
+      "expected_on_present_days": 5214,
+      "ratio": 0.9568,
+      "days": 22
+     }
+    },
+    "short_days": [
+     {
+      "day": "2025-02-10",
+      "bars": 37,
+      "expected": 249
+     },
+     {
+      "day": "2026-09-30",
+      "bars": 12,
+      "expected": 237
+     }
+    ],
+    "n_short_days": 2,
+    "missing_weekdays": [
+     "2025-04-18",
+     "2025-04-21",
+     "2025-05-01",
+     "2025-12-24",
+     "2025-12-25",
+     "2025-12-26",
+     "2025-12-31",
+     "2026-01-01",
+     "2026-04-03",
+     "2026-04-06",
+     "2026-05-01"
+    ],
+    "n_missing_weekdays": 11,
+    "intraday_gaps_gt3bars": [
+     {
+      "start": "2025-03-03T20:05:00+00:00",
+      "end": "2025-03-03T20:50:00+00:00",
+      "minutes": 45.0
+     }
+    ],
+    "n_intraday_gaps_gt3bars": 1,
+    "dst_weeks": [
+     {
+      "kind": "US_spring",
+      "date": "2025-03-09",
+      "days": {
+       "2025-03-07": {
+        "bars": 249,
+        "expected": 249
+       },
+       "2025-03-08": {
+        "bars": 0,
+        "expected": 0
+       },
+       "2025-03-09": {
+        "bars": 0,
+        "expected": 0
+       },
+       "2025-03-10": {
+        "bars": 249,
+        "expected": 249
+       }
+      },
+      "worst_ratio": 1.0,
+      "ok": true
+     },
+     {
+      "kind": "EU_spring",
+      "date": "2025-03-30",
+      "days": {
+       "2025-03-28": {
+        "bars": 249,
+        "expected": 249
+       },
+       "2025-03-29": {
+        "bars": 0,
+        "expected": 0
+       },
+       "2025-03-30": {
+        "bars": 0,
+        "expected": 0
+       },
+       "2025-03-31": {
+        "bars": 237,
+        "expected": 237
+       }
+      },
+      "worst_ratio": 1.0,
+      "ok": true
+     },
+     {
+      "kind": "EU_autumn",
+      "date": "2025-10-26",
+      "days": {
+       "2025-10-24": {
+        "bars": 237,
+        "expected": 237
+       },
+       "2025-10-25": {
+        "bars": 0,
+        "expected": 0
+       },
+       "2025-10-26": {
+        "bars": 0,
+        "expected": 0
+       },
+       "2025-10-27": {
+        "bars": 249,
+        "expected": 249
+       }
+      },
+      "worst_ratio": 1.0,
+      "ok": true
+     },
+     {
+      "kind": "US_autumn",
+      "date": "2025-11-02",
+      "days": {
+       "2025-10-31": {
+        "bars": 249,
+        "expected": 249
+       },
+       "2025-11-01": {
+        "bars": 0,
+        "expected": 0
+       },
+       "2025-11-02": {
+        "bars": 0,
+        "expected": 0
+       },
+       "2025-11-03": {
+        "bars": 237,
+        "expected": 249
+       }
+      },
+      "worst_ratio": 0.952,
+      "ok": true
+     },
+     {
+      "kind": "US_spring",
+      "date": "2026-03-08",
+      "days": {
+       "2026-03-06": {
+        "bars": 249,
+        "expected": 249
+       },
+       "2026-03-07": {
+        "bars": 0,
+        "expected": 0
+       },
+       "2026-03-08": {
+        "bars": 0,
+        "expected": 0
+       },
+       "2026-03-09": {
+        "bars": 249,
+        "expected": 249
+       }
+      },
+      "worst_ratio": 1.0,
+      "ok": true
+     },
+     {
+      "kind": "EU_spring",
+      "date": "2026-03-29",
+      "days": {
+       "2026-03-27": {
+        "bars": 249,
+        "expected": 249
+       },
+       "2026-03-28": {
+        "bars": 0,
+        "expected": 0
+       },
+       "2026-03-29": {
+        "bars": 0,
+        "expected": 0
+       },
+       "2026-03-30": {
+        "bars": 237,
+        "expected": 237
+       }
+      },
+      "worst_ratio": 1.0,
+      "ok": true
+     }
+    ],
+    "weekly_open_utc_hhmm_top": {
+     "00:15": 82,
+     "00:20": 2,
+     "17:55": 1,
+     "01:15": 1
+    }
+   }
+  },
+  "M1": {
+   "files": 4,
+   "bytes": 1653723,
+   "rejected_or_error": [],
+   "no_data_months": [
+    "2026-01",
+    "2026-02",
+    "2026-03",
+    "2026-04",
+    "2026-05"
+   ],
+   "validator_status": {
+    "PASSED_WITH_WARNINGS": 3,
+    "PASSED": 1
+   },
+   "validator_warning_kinds": {
+    "SPREAD_ANOMALY": 423
+   },
+   "file_sha256": {
+    "ACTIVTRADES_MT5_CFD\\GER40\\bars_1m\\2026-06-03T130400__2026-06-30T195900.parquet": "c36b3dac875c65aa90a885ad883778a8339aab1c6ed75ccad3e0fd8ed47cedb6",
+    "ACTIVTRADES_MT5_CFD\\GER40\\bars_1m\\2026-07-01T001500__2026-07-31T195900.parquet": "088dc105c6eb56aa60220db039ab0dbe2da359ff3078bd0dfc56fb5a3e794660",
+    "ACTIVTRADES_MT5_CFD\\GER40\\bars_1m\\2026-08-03T001500__2026-08-31T195900.parquet": "cf37d716c41a4bd677855aa0a9b45ecd549a018371c6b6831d946eb755e255a1",
+    "ACTIVTRADES_MT5_CFD\\GER40\\bars_1m\\2026-09-01T001500__2026-09-30T011400.parquet": "533760b5888ace817a91df8c278f990f67b86ae502cabb2e6ab51c3cee33cda0"
+   },
+   "analysis": {
+    "rows": 100000,
+    "first_ts": "2026-06-03T13:04:00+00:00",
+    "last_ts": "2026-09-30T01:14:00+00:00",
+    "monotonic_strict": true,
+    "duplicate_ts": 0,
+    "future_ts": 0,
+    "tick_volume_peak_utc_by_season": {
+     "dst_summer": [
+      "07:00",
+      "13:30",
+      "07:01"
+     ]
+    },
+    "off_grid_ts": 0,
+    "bad_ohlc_rows": 0,
+    "flat_bars": 197,
+    "flat_bar_ratio": 0.00197,
+    "zero_tick_volume": 0,
+    "spread_pts": {
+     "n": 100000,
+     "zero_or_neg": 0,
+     "median": 145.0,
+     "p95": 775.0,
+     "p99": 1163.0,
+     "max": 2548.0
+    },
+    "expected_bars_by_weekday_and_server_dst": {
+     "wd0_dst": 1185,
+     "wd1_dst": 1185,
+     "wd2_dst": 1185,
+     "wd3_dst": 1185,
+     "wd4_dst": 1185
+    },
+    "months": {
+     "2026-06": {
+      "bars": 22928,
+      "expected_on_present_days": 23700,
+      "ratio": 0.9674,
+      "days": 20
+     },
+     "2026-07": {
+      "bars": 27249,
+      "expected_on_present_days": 27255,
+      "ratio": 0.9998,
+      "days": 23
+     },
+     "2026-08": {
+      "bars": 24879,
+      "expected_on_present_days": 24885,
+      "ratio": 0.9998,
+      "days": 21
+     },
+     "2026-09": {
+      "bars": 24944,
+      "expected_on_present_days": 26070,
+      "ratio": 0.9568,
+      "days": 22
+     }
+    },
+    "short_days": [
+     {
+      "day": "2026-06-03",
+      "bars": 416,
+      "expected": 1185
+     },
+     {
+      "day": "2026-09-30",
+      "bars": 60,
+      "expected": 1185
+     }
+    ],
+    "n_short_days": 2,
+    "missing_weekdays": [],
+    "n_missing_weekdays": 0,
+    "intraday_gaps_gt3bars": [
+     {
+      "start": "2026-07-14T08:51:00+00:00",
+      "end": "2026-07-14T08:56:00+00:00",
+      "minutes": 5.0
+     }
+    ],
+    "n_intraday_gaps_gt3bars": 1,
+    "dst_weeks": [],
+    "weekly_open_utc_hhmm_top": {
+     "00:15": 17,
+     "13:04": 1
+    }
+   }
+  },
+  "H4": {
+   "files": 1,
+   "bytes": 289170,
+   "rejected_or_error": [],
+   "no_data_months": [],
+   "validator_status": {
+    "PASSED_WITH_WARNINGS": 1
+   },
+   "validator_warning_kinds": {
+    "SUSPICIOUS_GAP": 515
+   },
+   "file_sha256": {
+    "ACTIVTRADES_MT5_CFD\\GER40\\bars_4h\\2017-02-13T070000__2026-09-29T220000.parquet": "229a188636c36e6d7f1238fd17a78044144ddd9c74449a9c6368c56e288c0337"
+   },
+   "analysis": {
+    "rows": 13702,
+    "first_ts": "2017-02-13T07:00:00+00:00",
+    "last_ts": "2026-09-29T22:00:00+00:00",
+    "monotonic_strict": true,
+    "duplicate_ts": 0,
+    "future_ts": 0,
+    "off_server_grid_ts": 0,
+    "bad_ohlc_rows": 0,
+    "spread_pts": {
+     "n": 13702,
+     "zero_or_neg": 3,
+     "median": 75.0,
+     "p95": 185.0,
+     "p99": 360.0,
+     "max": 571.0
+    },
+    "zero_tick_volume": 0
+   }
+  },
+  "D1": {
+   "files": 1,
+   "bytes": 62338,
+   "rejected_or_error": [],
+   "no_data_months": [],
+   "validator_status": {
+    "PASSED_WITH_WARNINGS": 1
+   },
+   "validator_warning_kinds": {
+    "SUSPICIOUS_GAP": 514
+   },
+   "file_sha256": {
+    "ACTIVTRADES_MT5_CFD\\GER40\\bars_1d\\2017-02-12T230000__2026-09-29T220000.parquet": "180892a2a290897206927674ff0b55f1df686746f868172d36e420ea7462504d"
+   },
+   "analysis": {
+    "rows": 2447,
+    "first_ts": "2017-02-12T23:00:00+00:00",
+    "last_ts": "2026-09-29T22:00:00+00:00",
+    "monotonic_strict": true,
+    "duplicate_ts": 0,
+    "future_ts": 0,
+    "off_server_grid_ts": 0,
+    "bad_ohlc_rows": 0,
+    "spread_pts": {
+     "n": 2447,
+     "zero_or_neg": 2,
+     "median": 75.0,
+     "p95": 84.59999999999945,
+     "p99": 100.0,
+     "max": 500.0
+    },
+    "zero_tick_volume": 0
+   }
+  }
+ }
+}

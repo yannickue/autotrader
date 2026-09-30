@@ -1,0 +1,83 @@
+# GER40: MarketSpec (research-only). Values OBSERVED on the ActivTrades DEMO terminal, snapshot 2026-09-30.
+# Verify/regenerate with scripts/v2_discover_symbols.py + scripts/v2_download_market.py.
+
+[market]
+canonical = "GER40"
+broker_symbol = "Ger40"
+broker_path = 'Cash Indices\Ger40'
+asset_class = "index_cfd"
+timezone = "Europe/Berlin"
+research_only = true
+trading_enabled = false
+
+[instrument]
+point_size = 0.01
+digits = 2
+contract_size = 1.0
+tick_size = 0.01
+volume_min = 0.25
+volume_step = 0.25
+volume_max = 250.0
+currency_profit = "EUR"
+currency_margin = "EUR"
+
+[calendar]
+tz = "Europe/Berlin"
+cash_open = "09:00"
+cash_close = "17:30"
+entry_start = "09:00"
+entry_end = "20:00"
+forced_flat = "21:30"
+status = "verified_current_constants"
+weekend_policy = "No bars Sat/Sun (Berlin local). Weekly open Monday 00:15 UTC (constant across DST)."
+holiday_policy = "No bars on Good Friday, Easter Monday, 1 May, 24-26 Dec, 31 Dec, 1 Jan (11 weekdays observed 2025-02..2026-09)."
+dst_notes = "Broker session: open fixed 00:15 UTC, close fixed 22:00 Berlin (20:00 UTC summer / 21:00 UTC winter) -> 237 M5 bars/day in summer, 249 in winter. Tick-volume peak at the Xetra open verified: 07:00 UTC (CEST) / 08:00 UTC (CET) = 09:00 Berlin."
+
+[[calendar.buckets]]
+name = "PRE"
+start = "00:00"
+end = "09:00"
+
+[[calendar.buckets]]
+name = "OPEN_09_10"
+start = "09:00"
+end = "10:00"
+
+[[calendar.buckets]]
+name = "MORNING_10_12"
+start = "10:00"
+end = "12:00"
+
+[[calendar.buckets]]
+name = "MIDDAY_12_1530"
+start = "12:00"
+end = "15:30"
+
+[[calendar.buckets]]
+name = "US_OVERLAP_1530_1730"
+start = "15:30"
+end = "17:30"
+
+[[calendar.buckets]]
+name = "LATE_1730_2130"
+start = "17:30"
+end = "24:00"
+
+[risk]
+max_entry_spread_price = 8.0
+spread_model_notes = "BID OHLC + recorded per-bar spread (points, 1 pt = 0.01). Observed M5 median 145 pts, p95 562, p99 771, max 2177 (1.45/5.6/7.7/21.8 index points). Cap 8.0 is in PRICE units (= 800 pts, ~p99.5): reproduces the current sim constant."
+max_leverage = 20.0  # observed broker margin; the hard permitted ceiling is 30x and is NOT a target
+margin_notes = "Observed via order_calc_margin (read-only calculation) 2026-09-30: 1 lot @25474 = 1273.7 EUR -> about 20x (5%)."
+
+[history]  # OBSERVED first/last bar-open (UTC); the MT5 terminal serves at most 100000 bars per timeframe
+M5 = ["2025-02-10T17:55:00+00:00", "2026-09-30T01:10:00+00:00"]
+M1 = ["2026-06-03T13:04:00+00:00", "2026-09-30T01:14:00+00:00"]
+H4 = ["2017-02-13T07:00:00+00:00", "2026-09-29T22:00:00+00:00"]
+D1 = ["2017-02-12T23:00:00+00:00", "2026-09-29T22:00:00+00:00"]
+
+[data_quality]
+flags = ["M5_missing_weekdays=11", "M5_intraday_gaps_gt3bars=1", "M1_intraday_gaps_gt3bars=1", "bar_cap_100000_per_timeframe", "volume_is_broker_tick_activity", "bid_only_ohlc", "daily_break_about_2h_utc_2000_or_2100_to_0015"]
+
+[provenance]
+snapshot_date = "2026-09-30"
+server_tz_policy = "MT5 server clock = Europe/Berlin (UTC+2 CEST / UTC+1 CET); bar time = server wall clock encoded as epoch -> true UTC via ServerTimePolicy. Inferred from a live +7199s offset and cross-checked by DST-shifting cash-open volume peaks; not broker-confirmed."

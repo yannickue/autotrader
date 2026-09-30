@@ -1,0 +1,83 @@
+# NAS100: MarketSpec (research-only). Values OBSERVED on the ActivTrades DEMO terminal, snapshot 2026-09-30.
+# Verify/regenerate with scripts/v2_discover_symbols.py + scripts/v2_download_market.py.
+
+[market]
+canonical = "NAS100"
+broker_symbol = "UsaTec"
+broker_path = 'Cash Indices\UsaTec'
+asset_class = "index_cfd"
+timezone = "America/New_York"
+research_only = true
+trading_enabled = false
+
+[instrument]
+point_size = 0.01
+digits = 2
+contract_size = 1.0
+tick_size = 0.01
+volume_min = 0.2
+volume_step = 0.2
+volume_max = 200.0
+currency_profit = "USD"
+currency_margin = "USD"
+
+[calendar]
+tz = "America/New_York"
+cash_open = "09:30"
+cash_close = "16:00"
+entry_start = "09:30"
+entry_end = "15:00"
+forced_flat = "15:55"
+status = "provisional"
+weekend_policy = "No bars Sat/Sun (Berlin server date); weekly open 22:00 UTC (summer) / 23:00 UTC (winter) = 18:00 New York."
+holiday_policy = "No bars on 25 Dec and 1 Jan; short days on US half-days (day after Thanksgiving, Good Friday)."
+dst_notes = "Near-24h CFD with a ~1h break at 21:00-22:00 UTC. Cash-open volume peak verified 13:30 UTC (EDT) / 14:30 UTC (EST) = 09:30 New York. In US/EU DST mismatch weeks (2-3 weeks in March, 1 in Oct/Nov) Berlin-local times shift by 1h."
+
+[[calendar.buckets]]
+name = "PRE"
+start = "00:00"
+end = "09:30"
+
+[[calendar.buckets]]
+name = "OPEN_0930_1030"
+start = "09:30"
+end = "10:30"
+
+[[calendar.buckets]]
+name = "MORNING_1030_1200"
+start = "10:30"
+end = "12:00"
+
+[[calendar.buckets]]
+name = "MIDDAY_1200_1400"
+start = "12:00"
+end = "14:00"
+
+[[calendar.buckets]]
+name = "CLOSE_1400_1600"
+start = "14:00"
+end = "16:00"
+
+[[calendar.buckets]]
+name = "AFTER_1600_2400"
+start = "16:00"
+end = "24:00"
+
+[risk]
+max_entry_spread_price = 1.88
+spread_model_notes = "PROVISIONAL cap = observed M5 p99 (188 pts) in PRICE units. BID OHLC + recorded per-bar spread. Observed M5 median 75, p95 134, p99 188, max 446 pts. Cost model must use the recorded spread, not this cap."
+max_leverage = 20.0  # observed broker margin; the hard permitted ceiling is 30x and is NOT a target
+margin_notes = "Observed via order_calc_margin: 1 lot @30369 USD = 1339.0 EUR -> about 20x (5%; account currency EUR)."
+
+[history]  # OBSERVED first/last bar-open (UTC); the MT5 terminal serves at most 100000 bars per timeframe
+M5 = ["2025-05-02T09:35:00+00:00", "2026-09-30T01:10:00+00:00"]
+M1 = ["2026-06-19T01:31:00+00:00", "2026-09-30T01:14:00+00:00"]
+H4 = ["2015-01-01T23:00:00+00:00", "2026-09-29T22:00:00+00:00"]
+D1 = ["2013-04-08T22:00:00+00:00", "2026-09-29T22:00:00+00:00"]
+
+[data_quality]
+flags = ["M5_missing_weekdays=2", "M5_intraday_gaps_gt3bars=17", "M1_intraday_gaps_gt3bars=1", "bar_cap_100000_per_timeframe", "volume_is_broker_tick_activity", "bid_only_ohlc", "daily_break_about_1h"]
+
+[provenance]
+snapshot_date = "2026-09-30"
+server_tz_policy = "MT5 server clock = Europe/Berlin (UTC+2 CEST / UTC+1 CET); bar time = server wall clock encoded as epoch -> true UTC via ServerTimePolicy. Inferred from a live +7199s offset and cross-checked by DST-shifting cash-open volume peaks; not broker-confirmed."
