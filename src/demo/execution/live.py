@@ -95,12 +95,14 @@ from demo.execution.exit_manager import (
     StagedExitManager,
     broker_target_for_staged,
 )
-from demo.execution.market_config import DemoMarketSpec, load_demo_market_specs
+from demo.execution.market_config import DemoMarketSpec, load_demo_market_specs_for
 from demo.execution.parity import executable_price, parity_reject, parse_utc
 from demo.execution.registry import StackRegistry
 from demo.execution.risk_policy import (
+    ALL_CLUSTERS,
     BROKER_LEVERAGE_CEILING,
     CLUSTERS,
+    PHASE2_CLUSTERS,
     POLICY_ID,
     DemoRiskGate,
     GateAccount,
@@ -514,7 +516,10 @@ class Mt5DemoStack:
                        runner passes ``get_real_client()``. Never obtained here.
       ``connection``   ``MT5ConnectionConfig`` (expected login/server; ``allow_account_login`` must be False).
       ``state_dir``    directory for the adapter state DB and the intent registry (restart safety).
-      ``market_specs`` per-market checked-in facts (default: ``configs/markets/*.toml``).
+      ``market_specs`` per-market checked-in facts (default: ``configs/markets/*.toml`` + the ``extra_markets``).
+      ``extra_markets`` Phase-2 opt-ins (``markets.phase2.flag_enabled_markets``): registered in the DEMO registry, each
+                       verified by its OWN start-up preflight; a failing one is DISABLED (``disabled_markets``), the
+                       stack and the five core markets keep running. Default empty = the five live markets, unchanged.
       ``dry_run``      shadow mode: NO code path may reach ``order_send`` (hard guard); ``order_check`` only.
       ``lock_path``    single-owner terminal lock file (default: repository default lock).
       ``now``          injectable UTC clock (default ``datetime.now(UTC)``).
@@ -534,16 +539,23 @@ class Mt5DemoStack:
         now: Callable[[], datetime] | None = None,
         config: StackConfig | None = None,
         registry: SymbolRegistry | None = None,
+        extra_markets: tuple[str, ...] = (),
     ) -> None:
         self._client_raw = client
         self._connection = connection
         self._state_dir = Path(state_dir)
-        self._toml_specs = market_specs or load_demo_market_specs()
+        self._toml_specs = market_specs or load_demo_market_specs_for(tuple(extra_markets))
         self._dry_run = bool(dry_run)
         self._lock_path = lock_path
         self._now: Callable[[], datetime] = now or (lambda: datetime.now(UTC))
         self._cfg = config or StackConfig()
-        self._symbols = registry or demo_registry()
+        self._symbols = registry or demo_registry(extra_markets=tuple(extra_markets))
+        # OPTIONAL markets = the Phase-2 opt-ins present in the registry: their failures disable only themselves.
+        self._optional = frozenset(m.canonical for m in self._symbols.all() if m.canonical in PHASE2_CLUSTERS)
+        self.disabled_markets: dict[str, str] = {}
+        # Phase-2 markets with open exposure (live intent-registry rows) that are kept registered in MANAGE-ONLY mode
+        # although not enabled this run: exits / forced-flat / protection / reconciliation stay active, entries rejected.
+        self._exposed_optional: set[str] = set()
         self.bar_source = LiveBarSource(self)
 
         self._registry: StackRegistry | None = None
@@ -687,6 +699,7 @@ class Mt5DemoStack:
             raise StackFailClosed("account_login_enabled: the demo stack is attach-only")
         self._state_dir.mkdir(parents=True, exist_ok=True)
         self._registry = StackRegistry(self._state_dir / "demo_stack.db")
+        self._adopt_exposed_phase2_markets()
         self._kernel = _KernelThread()
         self._kernel.start()
         try:
@@ -710,6 +723,36 @@ class Mt5DemoStack:
         self._hb_thread = threading.Thread(target=self._heartbeat, name="demo-lock-hb", daemon=True)
         self._hb_thread.start()
         return self.account_snapshot()
+
+    def _adopt_exposed_phase2_markets(self) -> None:
+        """Never drop a Phase-2 market that still has open exposure (open intent-registry rows).
+
+        A market that is switched off (flag off / not opted in) but whose position is still open is registered in
+        MANAGE-ONLY mode: entries are rejected (``market_disabled``), exits / forced-flat / protection repair /
+        reconciliation keep running and the position is NOT foreign (no halt of the core markets). A market
+        with no open exposure is simply not registered, as before."""
+        assert self._registry is not None
+        registered = {m.canonical for m in self._symbols.all()}
+        exposed = {
+            r.market for r in self._registry.with_status(*reg.LIVE_STATUSES) if r.market in PHASE2_CLUSTERS
+        }
+        self._exposed_optional = set(exposed)
+        missing = sorted(exposed - registered)
+        if not missing:
+            return
+        from nautilus_mt5.symbols import demo_registry
+
+        mappings = {m.canonical: m for m in demo_registry(extra_markets=tuple(missing)).all()}
+        for canonical in missing:
+            self._symbols.register(mappings[canonical])
+            if canonical not in self._toml_specs:
+                self._toml_specs = {**self._toml_specs, **load_demo_market_specs_for((canonical,))}
+            self.disabled_markets[canonical] = (
+                "manage_only: market not enabled this run but has open exposure; entries rejected, "
+                "exits/forced-flat/protection stay active"
+            )
+        self._optional = frozenset(self._optional | set(missing))
+        self._start_notes["manage_only_markets"] = list(missing)
 
     async def _async_start(self) -> None:
         loop = asyncio.get_running_loop()
@@ -754,6 +797,7 @@ class Mt5DemoStack:
             ),
             data_config=Mt5DataClientConfig(autostart_poller=False),
             allow_multiplier_and_cross_currency=True,
+            optional_canonicals=self._optional,
         )
         self._adapter = adapter
         self._lane = adapter.lane
@@ -838,44 +882,134 @@ class Mt5DemoStack:
         markets: dict[str, _MarketInfo] = {}
         for mapping in self._symbols.all():
             canonical = mapping.canonical
-            toml = self._toml_specs.get(canonical)
-            if toml is None:
-                raise StackFailClosed(f"missing_market_config:{canonical}")
-            if toml.broker_symbol != mapping.broker_symbol:
-                raise StackFailClosed(f"symbol_mapping_mismatch:{canonical}")
-            broker = adapter.provider.spec(mapping.instrument_id)
-            if broker.trade_contract_size != toml.contract_size:
-                raise StackFailClosed(f"spec_mismatch:{canonical}:contract_size")
-            if broker.trade_tick_size != toml.tick_size:
-                raise StackFailClosed(f"spec_mismatch:{canonical}:tick_size")
-            diffs = tuple(
-                f"{name}:{getattr(toml, name)}->{getattr(broker, name)}"
-                for name in ("volume_min", "volume_step", "volume_max")
-                if getattr(toml, name) != getattr(broker, name)
-            )
-            effective = replace(
-                toml,
-                volume_min=broker.volume_min,
-                volume_step=broker.volume_step,
-                volume_max=broker.volume_max,
-            )
-            if broker.currency_profit not in ("EUR", "USD"):
-                raise StackFailClosed(f"unsupported_profit_currency:{canonical}")
-            markets[canonical] = _MarketInfo(
-                canonical=canonical,
-                broker_symbol=mapping.broker_symbol,
-                instrument_id=mapping.instrument_id,
-                spec=effective,
-                profit_currency=broker.currency_profit,
-                digits=int(broker.digits),
-            )
-            if diffs:
-                markets[canonical] = replace(markets[canonical], diffs=diffs)
+            try:
+                markets[canonical] = self._verify_market(adapter, mapping)
+            except StackFailClosed as exc:
+                if canonical not in self._optional:
+                    raise
+                if canonical in self._exposed_optional:
+                    raise StackFailClosed(f"open_exposure_on_unverifiable_market:{canonical}:{exc}") from exc
+                # Phase-2 opt-in that does not match its checked-in facts: disabled, the stack keeps running.
+                self.disabled_markets[canonical] = f"start_check_failed: {exc}"
+                self._symbols.unregister(canonical)
+        for canonical, why in adapter.provider.load_failures.items():
+            if canonical in self._exposed_optional:
+                raise StackFailClosed(f"open_exposure_on_unverifiable_market:{canonical}:{why}")
+            self.disabled_markets.setdefault(canonical, why)
         for canonical in CLUSTERS:
             if canonical not in markets:
                 raise StackFailClosed(f"market_not_registered:{canonical}")
         self._markets = markets
+        self._lane_preflight_optional(session, account)
         self._check_server_time_offset(session)
+
+    def _verify_market(self, adapter: Mt5Adapter, mapping: Any) -> _MarketInfo:
+        """Checked-in facts vs broker facts for one registered market (raises ``StackFailClosed``)."""
+        canonical = mapping.canonical
+        toml = self._toml_specs.get(canonical)
+        if toml is None:
+            raise StackFailClosed(f"missing_market_config:{canonical}")
+        if toml.broker_symbol != mapping.broker_symbol:
+            raise StackFailClosed(f"symbol_mapping_mismatch:{canonical}")
+        broker = adapter.provider.spec(mapping.instrument_id)
+        if broker.trade_contract_size != toml.contract_size:
+            raise StackFailClosed(f"spec_mismatch:{canonical}:contract_size")
+        if broker.trade_tick_size != toml.tick_size:
+            raise StackFailClosed(f"spec_mismatch:{canonical}:tick_size")
+        diffs = tuple(
+            f"{name}:{getattr(toml, name)}->{getattr(broker, name)}"
+            for name in ("volume_min", "volume_step", "volume_max")
+            if getattr(toml, name) != getattr(broker, name)
+        )
+        effective = replace(
+            toml,
+            volume_min=broker.volume_min,
+            volume_step=broker.volume_step,
+            volume_max=broker.volume_max,
+        )
+        if broker.currency_profit not in ("EUR", "USD"):
+            raise StackFailClosed(f"unsupported_profit_currency:{canonical}")
+        info = _MarketInfo(
+            canonical=canonical,
+            broker_symbol=mapping.broker_symbol,
+            instrument_id=mapping.instrument_id,
+            spec=effective,
+            profit_currency=broker.currency_profit,
+            digits=int(broker.digits),
+        )
+        return replace(info, diffs=diffs) if diffs else info
+
+    def _lane_preflight_optional(self, session: Any, account: Any) -> None:
+        """Per-market start-up preflight of every loaded OPTIONAL (Phase-2) market, from live broker facts.
+
+        A RED verdict disables that market only (``disabled_markets``; the runner copies it to the heartbeat); it never
+        raises. A market whose calendar says closed with a stale quote is IDLE, not a fault (``markets.preflight``)."""
+        from markets.preflight import info_to_dict, run_live_preflight
+
+        now = self._now().astimezone(UTC)
+        acct = {
+            "is_demo": int(account.trade_mode) == 0,
+            "currency": str(account.currency),
+            "leverage": float(account.leverage),
+            "margin_free": float(getattr(account, "margin_free", 0.0) or 0.0) or None,
+        }
+        try:
+            eur_per_usd: float | None = float(self._fx("USD", now))
+        except (_Reject, StackFailClosed, KeyError):
+            eur_per_usd = None
+        notes: dict[str, Any] = {}
+        client = session.client
+        for canonical in sorted(self._optional):
+            info = self._markets.get(canonical)
+            if info is None:
+                continue  # already disabled (mismatch / load failure)
+            symbol = info.broker_symbol
+            try:
+                session.call("symbol_select", client.symbol_select, symbol, True, none_ok=True)
+                raw = session.call("symbol_info", client.symbol_info, symbol)
+                tick = session.call("symbol_info_tick", client.symbol_info_tick, symbol, none_ok=True)
+                bid = ask = age = None
+                if tick is not None:
+                    bid, ask = float(tick.bid), float(tick.ask)
+                    quoted = session.time_policy.server_epoch_to_utc(
+                        float(getattr(tick, "time_msc", 0) or tick.time * 1000) / 1000.0
+                    )
+                    age = (now - quoted).total_seconds()
+                vmin = float(info.spec.volume_min)
+                m_buy = m_sell = None
+                if ask:
+                    m_buy = session.call(
+                        "order_calc_margin", client.order_calc_margin, 0, symbol, vmin, ask, none_ok=True
+                    )
+                if bid:
+                    m_sell = session.call(
+                        "order_calc_margin", client.order_calc_margin, 1, symbol, vmin, bid, none_ok=True
+                    )
+                verdict = run_live_preflight(
+                    canonical, account=acct, info=info_to_dict(raw) if raw is not None else None, bid=bid, ask=ask,
+                    quote_age_s=age, margin_min_buy=None if m_buy is None else float(m_buy),
+                    margin_min_sell=None if m_sell is None else float(m_sell), now=now, eur_per_usd=eur_per_usd,
+                )
+            except (Mt5CallError, AmbiguousServerTime, ValueError, KeyError, AttributeError, TypeError) as exc:
+                self.disabled_markets[canonical] = f"preflight_error: {type(exc).__name__}: {exc}"[:400]
+                continue
+            notes[canonical] = {
+                "verdict": verdict.verdict,
+                "calendar_open": verdict.facts.get("calendar_open"),
+                "implied_leverage": verdict.facts.get("implied_leverage"),
+                "margin_min_lot_eur": verdict.facts.get("margin_min_lot_eur"),
+            }
+            # INFORMATION ONLY (no gate): an open min lot of this market ties up margin that core-market entries then
+            # cannot use (sizing caps a new entry at max_margin_fraction_of_free_margin of the free margin).
+            m_lot, free = notes[canonical]["margin_min_lot_eur"], acct["margin_free"]
+            if isinstance(m_lot, (int, float)) and free:
+                notes[canonical]["free_margin_eur"] = round(float(free), 2)
+                notes[canonical]["min_lot_margin_pct_of_free_margin"] = round(100.0 * float(m_lot) / float(free), 1)
+            if verdict.verdict != "GREEN":
+                self.disabled_markets[canonical] = ("preflight_red: " + " | ".join(verdict.reasons))[:600]
+        self._start_notes["phase2_preflight"] = notes
+        if self.disabled_markets:
+            self._start_notes["disabled_markets"] = dict(self.disabled_markets)
 
     def _check_server_time_offset(self, session: Any) -> None:
         """Start-up self-check of the INFERRED server timezone (M5).
@@ -1122,6 +1256,7 @@ class Mt5DemoStack:
                 "runtime": recon.runtime.value,
                 "foreign_positions": list(self._foreign),
                 "spec_diffs": {m: list(i.diffs) for m, i in self._markets.items() if i.diffs},
+                "disabled_markets": dict(self.disabled_markets),
                 "start_notes": dict(self._start_notes),
                 "server_vs_local_offset_s": self.server_vs_local_offset_s,
                 "lane_max_concurrent": self._lane.stats.max_concurrent,
@@ -1142,16 +1277,19 @@ class Mt5DemoStack:
             float(p.sl or 0.0) > 0.0 for p in positions if int(p.magic) == self._cfg.magic
         )
         server_time = None
-        try:
-            # Freshest tick over ALL configured markets, never the first one as a global clock: a tick time is a
-            # market-event time and a single paused market leaves it arbitrarily old.
-            for info in self._markets.values():
+        # Freshest tick over ALL enabled markets, never the first one as a global clock: a tick time is a
+        # market-event time and a single paused market leaves it arbitrarily old. Per-market try/continue: one failing
+        # symbol must not blank the reference; disabled (RED / manage-only) markets are not polled.
+        for market, info in self._markets.items():
+            if market in self.disabled_markets:
+                continue
+            try:
                 tick = session.call("symbol_info_tick", client.symbol_info_tick, info.broker_symbol)
                 tick_time = session.time_policy.server_epoch_to_utc(float(tick.time_msc) / 1000)
-                if server_time is None or tick_time > server_time:
-                    server_time = tick_time
-        except (Mt5CallError, AmbiguousServerTime):
-            server_time = None
+            except (Mt5CallError, AmbiguousServerTime):
+                continue
+            if server_time is None or tick_time > server_time:
+                server_time = tick_time
         snap = _Snap(
             equity=float(account.equity),
             balance=float(account.balance),
@@ -1309,6 +1447,8 @@ class Mt5DemoStack:
         info = self._markets.get(intent.market)
         if info is None:
             return G.R_UNKNOWN_MARKET
+        if intent.market in self.disabled_markets:
+            return G.R_MARKET_DISABLED
         if intent.broker_symbol != info.broker_symbol:
             return G.R_SYMBOL_MISMATCH
         if intent.direction not in (1, -1):
@@ -1789,7 +1929,7 @@ class Mt5DemoStack:
                     Tranche(
                         intent_id=row.intent_id if row is not None else f"broker-position:{int(p.ticket)}",
                         market=market,
-                        cluster=CLUSTERS[market],
+                        cluster=ALL_CLUSTERS[market],
                         family=self._family_of(row),
                         direction=side,
                         quantity=_dec(p.volume),
@@ -2305,7 +2445,10 @@ class Mt5DemoStack:
             for row in self._registry.with_status(reg.OPEN):
                 if row.forced_flat_utc is None or current < parse_utc(row.forced_flat_utc):
                     continue
-                info = self._markets[row.market]
+                info = self._markets.get(row.market)
+                if info is None:  # must not happen (exposed markets are kept registered); never a silent KeyError
+                    self._halt(f"forced_flat_market_unregistered:{row.market}")
+                    continue
                 still_open = self._on_lane(self._lane_symbol_positions, info.broker_symbol, strict=True)
                 if still_open and not self._flatten(
                     info, tag=f"forced-flat:{row.intent_id}", hint="SESSION_END"

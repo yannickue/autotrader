@@ -28,6 +28,17 @@ class DemoMarketSpec:
     max_leverage: Decimal
 
 
+def load_demo_market_specs_for(extra_markets: tuple[str, ...] = ()) -> dict[str, DemoMarketSpec]:
+    """The five live DEMO markets plus the named Phase-2 opt-ins (``configs/markets_phase2``).
+    ``extra_markets=()`` is exactly ``load_demo_market_specs()``."""
+    specs = load_demo_market_specs()
+    if extra_markets:
+        from markets.phase2 import demo_market_specs
+
+        specs.update(demo_market_specs(tuple(extra_markets)))
+    return specs
+
+
 def load_demo_market_specs(
     config_root: Path | None = None, markets: tuple[str, ...] = MARKETS
 ) -> dict[str, DemoMarketSpec]:

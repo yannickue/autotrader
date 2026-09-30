@@ -1033,6 +1033,7 @@ def test_lane_snapshot_server_time_is_the_freshest_tick_not_the_first_market():
         _adapter=SimpleNamespace(session=session),
         _markets={m: SimpleNamespace(broker_symbol=s) for m, s in (("A", "STALE.SYM"), ("B", "LIVE.SYM"), ("C", "OTHER.SYM"))},
         _cfg=SimpleNamespace(magic=1),
+        disabled_markets={},
         _login_hash=lambda: "h",
     )
     snap, is_demo, _ = Mt5DemoStack._lane_snapshot(stub)

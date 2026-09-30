@@ -35,6 +35,10 @@ ROUND_TICKS: dict[str, tuple[int, int]] = {
     "index_cfd": (5000, 10000),  # tick 0.01 -> 50 / 100
     "metal_cfd": (500, 1000),  # tick 0.01 -> 5 / 10
     "fx_cfd": (500, 1000),  # tick 1e-5 -> 0.005 / 0.01
+    # Phase-2 asset classes (Lane M2). PROVISIONAL, NOT researched: the scale only lets ``_assemble`` build the
+    # (context-only) round-number features; the ROUND family is deliberately NOT in any Phase-2 frozen spec.
+    "energy_cfd": (50, 100),  # tick 0.01 -> 0.5 / 1.0 USD per bbl
+    "crypto_cfd": (50000, 100000),  # tick 0.01 -> 500 / 1000 USD per BTC
 }
 
 

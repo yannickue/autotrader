@@ -52,6 +52,7 @@ def build_mt5_adapter(
     exec_config: Mt5ExecClientConfig | None = None,
     use_lane: bool = True,
     allow_multiplier_and_cross_currency: bool = False,
+    optional_canonicals: frozenset[str] = frozenset(),
 ) -> Mt5Adapter:
     # ONE dedicated thread carries all MT5 IPC; the session refuses calls from anywhere else.
     lane = Mt5Executor() if use_lane else None
@@ -66,6 +67,7 @@ def build_mt5_adapter(
         assumptions=assumptions,
         registry=registry,
         allow_multiplier_and_cross_currency=allow_multiplier_and_cross_currency,
+        optional_canonicals=optional_canonicals,
     )
     store = Mt5StateStore(state_path)
     data_client = Mt5LiveMarketDataClient(

@@ -36,6 +36,13 @@ class SymbolRegistry:
         self._by_canonical[mapping.canonical] = mapping
         self._by_broker[mapping.broker_symbol] = mapping
 
+    def unregister(self, canonical: str) -> SymbolMapping | None:
+        """Drop a mapping (an OPTIONAL market that could not be loaded); None if unknown."""
+        mapping = self._by_canonical.pop(canonical, None)
+        if mapping is not None:
+            self._by_broker.pop(mapping.broker_symbol, None)
+        return mapping
+
     def by_instrument_id(self, instrument_id: InstrumentId) -> SymbolMapping:
         try:
             return self._by_canonical[instrument_id.symbol.value]

@@ -56,11 +56,22 @@ from alpha.families.registry import (
 )
 from alpha.families.registry import spec_from_dict as family_spec_from_dict
 from alpha.families.spec import FamilySpec, MarketCalendar
-from markets.spec import CANONICALS, MarketSpec, load_market_spec
+from markets.spec import CANONICALS, PHASE2_CANONICALS, MarketSpec, load_market_spec
 
 SCHEMA = "demo-production-spec-1"
 DEFAULT_FIT_END = "2026-06-30"
 DEFAULT_PATH = Path(__file__).with_name("production_spec_v1.json")
+# v1.1 (Lane M2): a STRICT SUPERSET of v1 (the five v1 markets are copied verbatim) that adds the Phase-2 markets.
+# v1 (file, schema, hash, behaviour) is untouched and stays the default; v1.1 is selected only when a Phase-2
+# market is enabled (``load_production_spec_for``).
+SCHEMA_V1_1 = "demo-production-spec-1.1"
+DEFAULT_PATH_V1_1 = Path(__file__).with_name("production_spec_v1_1.json")
+PHASE2_SELECTION_RULE = (
+    "Phase-2 markets: ONLY the fit-free families the mechanism supports without history (ORB breakout + its fade "
+    "complement, class-default parameters, thresholds = empty). GAP/OVERNIGHT/VOLREV/EOD need Train-fitted quantiles "
+    "(no Phase-2 history exists at or before fit_end), ROUND needs an unresearched round-number scale and LEADLAG has no "
+    "leader pairs for energy/crypto: all documented gaps, nothing invented or tuned."
+)
 SELECTION_RULE = (
     "per family: class-default spec + mode complement (LEADLAG: one default spec per leader); "
     "thresholds fitted once on dev frames with Berlin date <= fit_end; no performance-based selection"
@@ -151,6 +162,47 @@ def select_specs(market: str) -> list[FamilySpec]:
     return canon
 
 
+def select_specs_phase2(market: str) -> list[FamilySpec]:
+    """Fit-free selection for a Phase-2 market (see ``PHASE2_SELECTION_RULE``); no parameter is chosen here."""
+    from alpha.families import orb
+
+    if market not in PHASE2_CANONICALS:
+        raise ProductionSpecError(f"{market!r} is not a Phase-2 market")
+    out: list[FamilySpec] = [orb.ORBSpec(), dataclasses.replace(orb.ORBSpec(), mode="fade")]
+    canon = [s.canonical() for s in out]
+    assert len({s.canonical_hash() for s in canon}) == len(canon)
+    assert all(len(orb.fit(None, s).values) == 0 for s in canon)  # type: ignore[arg-type]  # ORB.fit ignores the data: fit-free
+    return canon
+
+
+def build_v1_1_payload(base_path: str | Path | None = None) -> dict[str, Any]:
+    """v1.1 payload = the v1 file's markets/provenance VERBATIM + the fit-free Phase-2 entries, sealed with the
+    v1.1 hash. Deterministic: same v1 file -> same v1.1 hash."""
+    base = json.loads(Path(base_path or DEFAULT_PATH).read_text(encoding="utf-8"))
+    from_payload(base)  # the base must verify as v1 first
+    body = {k: v for k, v in base.items() if k not in ("strategy_hash", "schema", "selection_rule")}
+    markets = dict(body["markets"])
+    prov = dict(body["provenance"])
+    for m in PHASE2_CANONICALS:
+        markets[m] = [{"spec": s.to_dict(), "thr": []} for s in select_specs_phase2(m)]
+        prov[m] = {
+            "n_fit_bars": 0, "first_bar_utc": None, "last_bar_utc": None, "last_berlin_date": "",
+            "excluded_unfitted": [], "fit_free_families_only": True,
+            "note": "no history fitted; thresholds empty by construction (ORB)",
+        }
+    new_body = {
+        **body, "markets": markets, "provenance": prov, "schema": SCHEMA_V1_1,
+        "selection_rule": SELECTION_RULE + " || " + PHASE2_SELECTION_RULE,
+        "base_strategy_hash_v1": base["strategy_hash"],
+    }
+    return {**new_body, "strategy_hash": _hash_body(new_body)}
+
+
+def load_production_spec_for(phase2_markets: tuple[str, ...] = ()) -> ProductionSpecSet:
+    """v1 (bit-identical to today) unless a Phase-2 market is enabled, then the v1.1 superset."""
+    return load_production_spec(DEFAULT_PATH_V1_1 if phase2_markets else None)
+
+
 # ------------------------------------------------------------------------------ fit
 def _berlin_last_date(frame: pd.DataFrame) -> str:
     ts = pd.DatetimeIndex(frame["ts"]).tz_convert("Europe/Berlin")
@@ -213,14 +265,16 @@ def fit_production_specs(
 
 
 def _hash_body(body: Mapping[str, Any]) -> str:
-    return hashlib.sha256(("demo-production-spec-1:" + _canon(dict(body))).encode()).hexdigest()[:16]
+    prefix = "demo-production-spec-1.1:" if body.get("schema") == SCHEMA_V1_1 else "demo-production-spec-1:"
+    return hashlib.sha256((prefix + _canon(dict(body))).encode()).hexdigest()[:16]
 
 
 # ------------------------------------------------------------------------------ load / verify
 def from_payload(payload: Mapping[str, Any]) -> ProductionSpecSet:
     body = {k: v for k, v in payload.items() if k != "strategy_hash"}
-    if body.get("schema") != SCHEMA:
+    if body.get("schema") not in (SCHEMA, SCHEMA_V1_1):
         raise ProductionSpecError(f"unknown schema {body.get('schema')!r}")
+    allowed = CANONICALS + (PHASE2_CANONICALS if body.get("schema") == SCHEMA_V1_1 else ())
     if payload.get("strategy_hash") != _hash_body(body):
         raise ProductionSpecError("strategy_hash mismatch: production spec file was modified")
     fit_end = str(body["fit_end"])
@@ -231,7 +285,7 @@ def from_payload(payload: Mapping[str, Any]) -> ProductionSpecSet:
             raise ProductionSpecError(f"{m}: fit bars after fit_end")
     markets: list[tuple[str, tuple[FrozenSpec, ...]]] = []
     for m, entries in body["markets"].items():
-        if m not in CANONICALS:
+        if m not in allowed:
             raise ProductionSpecError(f"unknown market {m}")
         specs: list[FrozenSpec] = []
         for e in entries:

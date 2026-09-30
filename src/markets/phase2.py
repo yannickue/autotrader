@@ -91,7 +91,22 @@ def load_enablement(config_dir: Path | str | None = None) -> dict[str, bool]:
     base = Path(config_dir) if config_dir is not None else PHASE2_CONFIG_DIR
     path = base / ENABLEMENT_FILE
     raw = tomllib.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
-    return {c: bool(raw.get(c, {}).get("enabled", False)) is True for c in PHASE2_MARKETS}
+    out: dict[str, bool] = {}
+    for c in PHASE2_MARKETS:
+        value = raw.get(c, {}).get("enabled", False)
+        if not isinstance(value, bool):
+            raise MarketSpecError(
+                f"{ENABLEMENT_FILE}: [{c}] enabled must be a TOML boolean (true/false), got {value!r}"
+            )
+        out[c] = value is True
+    return out
+
+
+def flag_enabled_markets(config_dir: Path | str | None = None) -> tuple[str, ...]:
+    """Markets whose ``enablement.toml`` switch is on (first gate only; the live stack start-up runs the
+    per-market preflight as the second gate and disables a failing market on its own)."""
+    flags = load_enablement(config_dir)
+    return tuple(m for m in PHASE2_MARKETS if flags.get(m, False))
 
 
 def enabled_market_names(

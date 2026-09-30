@@ -1,7 +1,9 @@
 # BTCUSD (Phase 2, Lane M): MarketSpec for the ActivTrades DEMO "BTCUSD" crypto CFD (Bitcoin vs US Dollar; BCHUSD = Bitcoin Cash is a DIFFERENT symbol).
 # Instrument facts OBSERVED via symbols_get, snapshot 2026-09-30 (research/reports/v2_markets/symbol_snapshot.json; docs/evidence/phase2_symbol_probe.json).
-# The symbol was NOT in Market Watch (visible=false) at that snapshot: no quote, no margin, no rates, no session data yet.
-# No 24/7 assumption is made: the calendar below is a PROVISIONAL liquid-hours window, weekend behaviour is UNVERIFIED and must come from the probe.
+# Lane M2: the live probe (docs/evidence/phase2_symbol_probe.json, 2026-09-30 21:04 UTC) OBSERVED quote, margin, spreads and bar sessions;
+# the former placeholders (spread cap, reference median spread) are replaced by those numbers below.
+# BOOTSTRAP / SAFETY SCHEDULE — not alpha-validated; must not become an undocumented permanent rule: the Mon-Fri / entry cutoff ~19:30 UTC / forced flat 20:30 UTC schedule below.
+# No 24/7 assumption is made: the calendar below is a PROVISIONAL Mon-Fri liquid-hours window (entries only inside it, weekends are never traded).
 
 [market]
 canonical = "BTCUSD"
@@ -26,14 +28,14 @@ currency_margin = "USD"
 [calendar]
 tz = "UTC"
 cash_open = "08:00"
-cash_close = "22:00"
+cash_close = "20:30"
 entry_start = "08:00"
-entry_end = "20:00"
-forced_flat = "21:55"
+entry_end = "19:30"
+forced_flat = "20:30"
 status = "provisional"
-weekend_policy = "UNVERIFIED: the broker's weekend/maintenance behaviour for BTCUSD was not observed. No Sat/Sun entries until the probe shows live tick updates and bars on the weekend."
+weekend_policy = "No Sat/Sun entries (calendar is Mon-Fri). OBSERVED (M5 bars, server clock = UTC+2 at the probe): bars on all 7 weekdays; the only break is Fri 22:55 -> Sat 09:00 server (= Fri 20:55 -> Sat 07:00 UTC), 6 of 6 weeks. The automatic 24/7 assumption is NOT made: weekend trading stays UNVERIFIED/off; forced-flat 20:30 UTC stays before the Friday 20:55 UTC break. PROVISIONAL until broker-confirmed."
 holiday_policy = "UNVERIFIED: crypto CFD holiday behaviour not observed."
-dst_notes = "Reference window is a provisional EU+US liquid-hours proposal in UTC (no DST in the reference tz); it is NOT a statement that the market closes outside it. Server clock = Europe/Berlin (inferred)."
+dst_notes = "Reference window 08:00-19:30 UTC (entries) / forced flat 20:30 UTC is a provisional EU+US liquid-hours proposal in UTC (no DST in the reference tz); it is NOT a statement that the market closes outside it. The server Friday break (22:55 server) is 20:55 UTC in summer and 21:55 UTC in winter, so 20:30 UTC stays before it all year. Server clock = Europe/Berlin (observed +2 h at the probe; not broker-confirmed)."
 
 [[calendar.buckets]]
 name = "ASIA_0000_0800"
@@ -57,20 +59,20 @@ end = "24:00"
 
 [risk]
 max_entry_spread_price = 100.0
-spread_model_notes = "PLACEHOLDER_UNVERIFIED cap in PRICE units (10000 points = USD 100): no spread observed yet (symbol was not quoting at the snapshot). Replaced by the probe's observed distribution; preflight requires cap >= observed p95 and <= 10x median."
-max_leverage = 2.0   # ASSUMPTION (conservative, ESMA-retail-style crypto leverage); broker margin NOT yet observed. Hard ceiling 30x, never a target.
-margin_notes = "UNVERIFIED: order_calc_margin not yet run (symbol not selected). trade_calc_mode=2 (CFD): margin = lots x contract x price x margin rate (margin_initial reported 0.0, rate not exposed). Preflight requires spec max_leverage <= observed implied leverage."
+spread_model_notes = "OBSERVED (probe 2026-09-30), points (1 pt = 0.01 USD): M1 n=5000 median 5983 (59.83 USD), p95 6871, p99 7165, max 10468; M5 n=12000 median 4725, p95 6036, p99 6604, max 13481; live tick sample (21:05 UTC, outside the entry window) median ~10285, max 11421. Cap 100 USD (10000 pts: > M1 p99 71.65, <= 10x median) is kept from the placeholder and now validated; tick-time spreads can exceed it outside the entry window (the gate then rejects). Cost model uses the recorded M1 median, not this cap."
+max_leverage = 2.0   # OBSERVED broker margin: min-lot order_calc_margin 369.69 EUR at 83746.28 => implied 2.00x (probe 2026-09-30). Hard ceiling 30x, never a target.
+margin_notes = "OBSERVED: order_calc_margin(0.01 lot, 83746.28) = 369.69 EUR buy / 369.42 sell (1 lot 36968.85 EUR); implied leverage 2.00x (trade_calc_mode=2 CFD). Account leverage 1:30 is NOT the instrument leverage. Preflight requires spec max_leverage <= observed implied leverage."
 
 [data_quality]
-flags = ["symbol_not_in_market_watch_at_snapshot", "no_quote_observed", "no_margin_observed", "sessions_not_observed", "weekend_behaviour_unobserved", "spread_cap_placeholder", "no_history_downloaded"]
+flags = ["quote_observed_2026-09-30", "margin_observed", "sessions_observed_from_bar_gaps", "weekend_trading_not_enabled", "calendar_provisional", "commission_unverified", "no_history_downloaded", "no_fitted_thresholds"]
 
 [provenance]
 snapshot_date = "2026-09-30"
-server_tz_policy = "MT5 server clock = Europe/Berlin (UTC+2 CEST / UTC+1 CET); inferred from a live +7199s offset on the existing markets; not broker-confirmed. Not yet checked on BTCUSD itself."
+server_tz_policy = "MT5 server clock = Europe/Berlin (UTC+2 CEST / UTC+1 CET); inferred from a live +7199s offset on the existing markets; not broker-confirmed. Observed on BTCUSD itself: tick_time_minus_utc_s 7260 (2026-09-30, probe)."
 
 [cost]
-reference_median_spread_price = 40.0          # PLACEHOLDER_UNVERIFIED (4000 points); replaced by the probe's observed median
-spread_source = "placeholder_unverified"
+reference_median_spread_price = 59.83         # OBSERVED: M1 recorded-spread median 5983 pts (probe 2026-09-30); replaced the 40.0 placeholder
+spread_source = "observed_rates_m1_recorded_spread_probe_2026-09-30"
 commission_eur_per_lot = 0.0
 commission_source = "unverified_assumed_zero"
 swap_mode = 5                                   # observed enum value (MT5 docs: interest on current price, annual percent)
