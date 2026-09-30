@@ -24,6 +24,14 @@ from risk.models import RiskSide
 
 ZERO = Decimal("0")
 
+# Documented marker for a stage list that deliberately has NO second target (TP1 + runner): a second
+# target is only ever created from a structurally justified level (Lane E2). Absent such a
+# level the remainder runs as a runner behind the tighten-only stop -- a TP2 is never invented.
+SECOND_TARGET_NOT_STRUCTURALLY_JUSTIFIED = "SECOND_TARGET_NOT_STRUCTURALLY_JUSTIFIED"
+
+STAGE_SOURCE_R = "R"
+STAGE_SOURCE_STRUCTURE_PREFIX = "STRUCTURE:"
+
 
 class PositionSide(StrEnum):
     """Directional side of the open position the exit engine is managing."""
@@ -93,23 +101,53 @@ def _require_utc_aware(name: str, value: datetime) -> None:
 class TakeProfitStage:
     """One ordered stage of a multi-stage take-profit ladder.
 
-    `r_multiple` is the trigger, using the exact same "offset from entry =
-    initial_risk * r_multiple" convention as `ExitPolicy.target_r_multiple`.
-    `close_fraction` is a fraction of the position's ORIGINAL quantity (the
-    quantity when the position first opened, i.e. `ExitPosition.quantity +
-    ExitPosition.realized_partial_quantity` at any later tick) to close when
-    this stage triggers -- not a fraction of whatever remains open at that
-    point. This keeps each stage's size independent of how earlier stages
-    happened to round, and lets `ExitPolicy.__post_init__` validate that a
-    ladder can never be configured to close more than the original position.
+    The trigger is EXACTLY ONE of
+      * `r_multiple` -- "offset from entry = initial_risk * r_multiple" (the legacy convention of
+        `ExitPolicy.target_r_multiple`; `source` must be "R"), or
+      * `target_price` -- an absolute chart price, e.g. a structural level
+        (`source` must be "STRUCTURE:<id>"). R is computed from chart prices afterwards.
+
+    `close_fraction` is a fraction of the position's ORIGINAL quantity (the quantity when the
+    position first opened, i.e. `ExitPosition.quantity + realized_partial_quantity` at any
+    later tick) to close when this stage triggers -- not a fraction of whatever remains open. It is
+    family-configurable and never hardcoded. `stage_id` is an optional stable label for audit.
     """
 
-    r_multiple: Decimal
     close_fraction: Decimal
+    r_multiple: Decimal | None = None
+    target_price: Decimal | None = None
+    stage_id: str = ""
+    source: str = STAGE_SOURCE_R
 
     def __post_init__(self) -> None:
-        _require_finite_positive("r_multiple", self.r_multiple)
+        if (self.r_multiple is None) == (self.target_price is None):
+            raise ValueError("a stage needs exactly one of r_multiple or target_price")
+        if self.r_multiple is not None:
+            _require_finite_positive("r_multiple", self.r_multiple)
+            if self.source != STAGE_SOURCE_R:
+                raise ValueError('an r_multiple stage must have source "R"')
+        if self.target_price is not None:
+            _require_finite_positive("target_price", self.target_price)
+            tag = self.source[len(STAGE_SOURCE_STRUCTURE_PREFIX):]
+            if not self.source.startswith(STAGE_SOURCE_STRUCTURE_PREFIX) or not tag:
+                raise ValueError('a target_price stage needs source "STRUCTURE:<id>"')
         _require_fraction("close_fraction", self.close_fraction)
+
+
+def stage_target_price(
+    stage: TakeProfitStage, *, side: PositionSide, entry_price: Decimal, initial_risk: Decimal
+) -> Decimal:
+    """Absolute chart price at which `stage` triggers (R stages are converted from entry/risk)."""
+    if stage.target_price is not None:
+        return stage.target_price
+    assert stage.r_multiple is not None
+    offset = initial_risk * stage.r_multiple
+    return entry_price + offset if side == PositionSide.LONG else entry_price - offset
+
+
+def stop_is_unchanged_or_tighter(side: PositionSide, *, old: Decimal, new: Decimal) -> bool:
+    """After entry a stop may only stay or move TOWARDS/past entry, never further away from it."""
+    return new >= old if side == PositionSide.LONG else new <= old
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -208,6 +246,11 @@ class ExitPolicy:
                     raise ValueError(
                         "take_profit_stages must contain only TakeProfitStage instances"
                     )
+                if stage.r_multiple is None:
+                    raise ValueError(
+                        "ExitPolicy.take_profit_stages must use r_multiple stages; absolute "
+                        "target_price stages are per position (ExitPosition.target_stages)"
+                    )
                 if stage.r_multiple <= previous_r_multiple:
                     raise ValueError(
                         "take_profit_stages must be given in strictly increasing "
@@ -258,6 +301,10 @@ class ExitPosition:
     # (docs/OPEN_QUESTIONS.md #24 -- reduce-only reservations are per
     # decision_id and must not be double-submitted).
     pending_close_request_id: str | None = None
+    # Per-position target ladder (Lane E). When non-empty it is used INSTEAD of
+    # `ExitPolicy.take_profit_stages` for this position; stages may be R- or price-based and are
+    # validated to be strictly ordered in the favourable direction beyond entry.
+    target_stages: tuple[TakeProfitStage, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.position_id:
@@ -281,6 +328,42 @@ class ExitPosition:
                 raise ValueError("a long position's initial_stop_price must be below entry_price")
         elif self.initial_stop_price <= self.entry_price:
             raise ValueError("a short position's initial_stop_price must be above entry_price")
+        if not stop_is_unchanged_or_tighter(
+            self.side, old=self.initial_stop_price, new=self.current_stop_price
+        ):
+            raise ValueError(
+                "current_stop_price must be unchanged or tighter than initial_stop_price"
+            )
+        self._validate_target_stages()
+
+    def _validate_target_stages(self) -> None:
+        if not self.target_stages:
+            return
+        is_long = self.side == PositionSide.LONG
+        previous: Decimal | None = None
+        cumulative = ZERO
+        for stage in self.target_stages:
+            if not isinstance(stage, TakeProfitStage):
+                raise ValueError("target_stages must contain only TakeProfitStage instances")
+            price = stage_target_price(
+                stage, side=self.side, entry_price=self.entry_price, initial_risk=self.initial_risk
+            )
+            if price <= 0 or (price <= self.entry_price if is_long else price >= self.entry_price):
+                raise ValueError(
+                    f"target stage {stage.stage_id or price} must lie in the favourable "
+                    "direction beyond entry"
+                )
+            if previous is not None and (price <= previous if is_long else price >= previous):
+                raise ValueError(
+                    "target_stages must be strictly ordered in the favourable direction"
+                )
+            previous = price
+            cumulative += stage.close_fraction
+            if cumulative > Decimal("1"):
+                raise ValueError(
+                    "target_stages close_fraction values must not sum to more than 1 "
+                    "(fractions of the ORIGINAL quantity)"
+                )
 
     @property
     def effective_high_water_mark(self) -> Decimal:
@@ -313,6 +396,12 @@ class ExitMarketState:
     signal_reversal: bool = False
     risk_halt: bool = False
     available_liquidity_notional: Decimal | None = None
+    # Cheap per-position context the caller may supply (informational for decisions/logging; no rule
+    # thresholds them yet): best favourable excursion so far in R, how much of it was given back in
+    # R, and how long the position has been held.
+    mfe_r: Decimal | None = None
+    giveback_r: Decimal | None = None
+    holding_seconds: Decimal | None = None
 
     def __post_init__(self) -> None:
         if not self.instrument:

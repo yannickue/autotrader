@@ -109,3 +109,54 @@ Fail closed on: non-demo, unknown account, stale feed, reconciliation mismatch, 
 - **TCA / timing.** `tca_records(ENTRY)` carry `decision_price`, `order_arrival_price`, `requested_price` (None: the stack events do not provide it),
   `actual_fill_price`, `decision_to_arrival_drift`, `implementation_shortfall` (+ `_r`), `movement_to_cost`; `outcome_extra` carries `signal_age_at_fill_s`,
   `time_to_0.25R/0.5R/1R_s`, `time_without_progress_s`, `mfe_giveback_r` (bar resolution).
+
+## Lane E (stage E1): ExitEngine wired into the DEMO stack
+
+Scope: the existing deterministic `exits.ExitEngine` (no second engine) now manages open DEMO positions when
+`StackConfig.exit_policy == "staged"`. The broker-side stop stays the safety backstop throughout. Chart-structure target
+derivation (which produces the `target_price` stages) is NOT part of E1 (lane E2); E1 accepts stages via the contract.
+
+- **Activation.** `StackConfig.exit_policy`: `fixed_1_5r` (DEFAULT, today's behaviour, byte-identical: broker SL + the intent's one
+  fixed-R broker TP + forced flat at flat_min; `manage_exits` returns `[]` and does nothing) or `staged` (requires
+  `StackConfig.staged_exit`, an `ExitPolicy`). `staged` is NOT the default.
+- **Runner hook.** `DemoRunner._manage`: `poll_events()` -> `stack.manage_exits(now)` (optional port method, skipped for stacks
+  without it) -> `on_clock(now)`. Deterministic, no LLM, repeated every cycle.
+- **Contract.** `TakeProfitStage(close_fraction, r_multiple | target_price (exactly one), stage_id, source)`; `source` is `"R"` or
+  `"STRUCTURE:<id>"`. `close_fraction` is a share of the ORIGINAL quantity and family-configurable (never hardcoded thirds).
+  `ExitPosition.target_stages` carries a per-position ladder that replaces the policy ladder and is validated: strictly
+  ordered in the favourable direction beyond entry (LONG `stop < entry < TP1 < TP2`, SHORT mirrored), fractions sum <= 1.
+  A stage list may be TP1 + runner; a second target is never invented (`SECOND_TARGET_NOT_STRUCTURALLY_JUSTIFIED`). R is
+  computed from chart prices afterwards; the legacy `r_multiple` ladder is unchanged (baseline/shadow comparison).
+  After entry a stop may only stay or tighten (`ExitPosition` rejects a current stop looser than the initial one; the engine
+  only ratchets forward; `ModifyStopJob` and the adapter re-check).
+- **Plan input.** `submit(intent, context)` reads `context["exit_plan"] = {"stages": [...]}` (persisted in the registry row
+  context with the original quantity, atr, family). No plan => the policy ladder, or nothing (broker SL only).
+- **Broker TP under `staged`: ABSENT, or the FINAL stage only.** The intent's fixed-R target is NOT sent. A broker TP is placed only
+  when the final stage is an absolute price beyond entry and the fractions sum to 1 (no runner). An R-based final stage has no
+  known price before the fill, so the engine closes it at market; with a runner there is no TP to cap it.
+- **Jobs.** `ReduceJob` (reduce-only MARKET of a given quantity, tagged with the decision id) and `ModifyStopJob` (tighten only)
+  in `DemoTraderStrategy`; full closes reuse `FlattenJob`.
+- **Admission (thin, reduce-only).** Fresh broker read: exactly one own-magic position, side = registry direction, ticket match,
+  `quantity < broker volume`, lot step and broker min lot (below min => skipped and counted, never sent), quote present and
+  younger than `min(max_quote_age_s, policy.max_market_data_age)` (a missing/stale quote means NO decision; the broker stop remains,
+  the engine's "stale data => emergency close" fail-safe is deliberately not triggered from a feed hiccup). The adapter then
+  re-applies its own reduce-only checks (own magic, opposite side, quantity <= position, local == broker signed quantity).
+- **Adapter invariant.** After a partial `KIND_EXIT` fill the Nautilus SL/TP child orders are resized to the remaining broker
+  volume (`OrderUpdated`, never enlarged; failures are retried from broker truth on the next sync), so
+  `broker_open_quantity == local_remaining_quantity == stop-protected quantity`. MT5 has ONE position-wide SL/TP (unchanged by a
+  partial close), so there is no unprotected window. `PROTECTIVE_QUANTITY_MUST_EQUAL_POSITION` for NEW protective submissions is
+  unchanged. A stop move is one atomic SLTP request (no cancel/replace window); if it is rejected the previous stop stays in force
+  and is retried next cycle; a missing local stop child (restart adoption) falls back to the broker-verified `emergency_protect`
+  (tighten-only); if the broker stop disappeared during a modification the existing protection repair (restore or flatten) runs.
+- **State persistence.** `stages_completed`, high-water mark, stop stage and the partial-exit records live in the registry row
+  context (`exit_state`), written only AFTER the reduce is verified at the broker. `stages_completed` is also lower-bounded by the
+  realized volume (`original - broker volume`), so a crash between fill and persist cannot re-fire a stage. An under-filled stage
+  counts as done (no chasing; the remainder runs with the runner).
+- **Tranche record per partial** (`stack.exit_log()`): `intent_id`, `tranche_id`, `strategy_family`, `quantity_before`,
+  `quantity_reduced`, `quantity_remaining`, `realized_r_of_position`, `remaining_risk_r`, stage id/source.
+- **Risk reservation.** `DemoRiskGate` only sizes ENTRIES and keeps no reduce-only reservation; `ExitEngine.notify_terminal` is
+  called on every terminal outcome with a recording no-op gate (N/A for the DEMO risk book).
+- **Known limitations (explicit, not improvised).** MT5 nets per symbol: with more than one live tranche on a market the engine is
+  NOT run for it (`EXIT_PLAN_MULTI_TRANCHE_NOT_SUPPORTED`, TEMPORARY; add-ons stay rejected). Engine-driven FULL closes carry
+  `exit_reason` `MANUAL` (the recorder's exit-reason set is owned outside this lane); the engine reason is in the registry row
+  `detail` (`exit_engine:<REASON>`) and `exit_log()`.

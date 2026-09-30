@@ -845,6 +845,11 @@ class DemoRunner:
 
     def _manage(self, now: datetime) -> None:
         events = list(self.stack.poll_events())
+        # Lane E1: deterministic exit-engine cycle (partials / tighten-only stops). Optional port method:
+        # the real stack returns [] unless exit_policy == "staged"; stacks without it are untouched.
+        manage_exits = getattr(self.stack, "manage_exits", None)
+        if manage_exits is not None:
+            events += list(manage_exits(now))
         events += list(self.stack.on_clock(now))
         self._handle_events(events, now)
 

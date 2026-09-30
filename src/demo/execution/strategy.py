@@ -10,7 +10,9 @@ thread-safe queue; the strategy
   (+ broker-side take-profit when the intent carries a target), exactly once per client order id;
 * resolves the job's future when protection is confirmed (stop child ACCEPTED, which the adapter
   only does after the entry exists at the broker) or when the entry is denied/rejected;
-* closes positions with reduce-only market orders on request (forced flat, protection failure).
+* closes positions with reduce-only market orders on request (forced flat, protection failure);
+* Lane E (exit engine): "ReduceJob" = reduce-only MARKET order of a given (partial) quantity,
+  "ModifyStopJob" = tighten-only move of the broker-side stop through the adapter's modify path.
 
 The strategy never touches MT5. Everything money-related that needs broker truth (fills, costs,
 exit reasons) is read by the stack from the broker's deals.
@@ -28,7 +30,7 @@ from decimal import Decimal
 from typing import Any
 
 from nautilus_trader.config import StrategyConfig
-from nautilus_trader.model.enums import OrderSide, TimeInForce
+from nautilus_trader.model.enums import OrderSide, OrderType, PositionSide, TimeInForce
 from nautilus_trader.model.identifiers import ClientOrderId, InstrumentId
 from nautilus_trader.model.objects import Price
 from nautilus_trader.model.orders import OrderList
@@ -68,9 +70,32 @@ class FlattenJob:
     future: concurrent.futures.Future = field(default_factory=concurrent.futures.Future)
 
 
+@dataclass(slots=True)
+class ReduceJob:
+    """Reduce-only MARKET close of ``quantity`` lots (a PARTIAL exit). ``tag`` = decision id."""
+
+    instrument_id: InstrumentId
+    quantity: Decimal
+    tag: str
+    future: concurrent.futures.Future = field(default_factory=concurrent.futures.Future)
+    fills: list[tuple[Decimal, Decimal]] = field(default_factory=list)  # (qty, price)
+
+
+@dataclass(slots=True)
+class ModifyStopJob:
+    """Tighten-only stop move to ``new_stop`` (never loosens; the adapter re-validates)."""
+
+    instrument_id: InstrumentId
+    new_stop: Decimal
+    tag: str
+    future: concurrent.futures.Future = field(default_factory=concurrent.futures.Future)
+    client_order_id: str | None = None
+
+
 @dataclass(frozen=True, slots=True)
 class JobOutcome:
-    """``status``: filled | denied | rejected | dry_run_ok | protection_denied | flat | failed."""
+    """``status``: filled | denied | rejected | dry_run_ok | protection_denied | flat | failed |
+    reduced | modified | unchanged | modify_rejected."""
 
     status: str
     reason: str = ""
@@ -94,16 +119,22 @@ class DemoTraderStrategy(Strategy):
         self._loop = loop
         self._now = now or (lambda: datetime.now(UTC))
         self._halt_reason = halt_reason or (lambda: None)
-        self._inbox: queue.SimpleQueue[EntryJob | FlattenJob] = queue.SimpleQueue()
+        self._inbox: queue.SimpleQueue[
+            EntryJob | FlattenJob | ReduceJob | ModifyStopJob
+        ] = queue.SimpleQueue()
         self._entries: dict[str, EntryJob] = {}  # by entry client order id
         self._children: dict[str, EntryJob] = {}  # SL/TP client order id -> job
         self._flattens: dict[InstrumentId, FlattenJob] = {}
+        self._reduces: dict[str, ReduceJob] = {}  # reduce-only client order id -> job
+        self._modifies: dict[str, ModifyStopJob] = {}  # stop client order id -> job
         self._seen: set[str] = set()
         self.submitted: list[str] = []  # client order ids handed to the exec engine (audit)
 
     # -- thread-safe entry point --------------------------------------------------------------
 
-    def enqueue(self, job: EntryJob | FlattenJob) -> concurrent.futures.Future:
+    def enqueue(
+        self, job: EntryJob | FlattenJob | ReduceJob | ModifyStopJob
+    ) -> concurrent.futures.Future:
         """Callable from ANY thread; the job runs on the Nautilus loop thread."""
         self._inbox.put(job)
         self._loop.call_soon_threadsafe(self._drain)
@@ -118,13 +149,19 @@ class DemoTraderStrategy(Strategy):
             try:
                 if isinstance(job, EntryJob):
                     self._start_entry(job)
+                elif isinstance(job, ReduceJob):
+                    self._start_reduce(job)
+                elif isinstance(job, ModifyStopJob):
+                    self._start_modify_stop(job)
                 else:
                     self._start_flatten(job)
             except Exception as exc:  # never leave a caller waiting on a swallowed error
                 self._resolve(job, JobOutcome("failed", f"strategy_error:{type(exc).__name__}"))
 
     @staticmethod
-    def _resolve(job: EntryJob | FlattenJob, outcome: JobOutcome) -> None:
+    def _resolve(
+        job: EntryJob | FlattenJob | ReduceJob | ModifyStopJob, outcome: JobOutcome
+    ) -> None:
         if not job.future.done():
             job.future.set_result(outcome)
 
@@ -205,6 +242,77 @@ class DemoTraderStrategy(Strategy):
         for position in positions:
             self.close_position(position, tags=[job.tag])
 
+    # -- partial reduce (reduce-only market) ------------------------------------------------------
+
+    def _start_reduce(self, job: ReduceJob) -> None:
+        positions = self.cache.positions_open(instrument_id=job.instrument_id)
+        if not positions:
+            return self._resolve(job, JobOutcome("flat", "no_open_position"))
+        if len(positions) != 1:
+            return self._resolve(job, JobOutcome("denied", f"positions_{len(positions)}"))
+        position = positions[0]
+        if job.quantity <= 0 or Decimal(str(position.quantity)) < job.quantity:
+            return self._resolve(job, JobOutcome("denied", "reduce_exceeds_position"))
+        instrument = self.cache.instrument(job.instrument_id)
+        if instrument is None:
+            return self._resolve(job, JobOutcome("denied", "instrument_not_in_cache"))
+        quantity = instrument.make_qty(float(job.quantity))
+        if Decimal(str(quantity)) != job.quantity:
+            return self._resolve(job, JobOutcome("denied", "quantity_precision"))
+        side = OrderSide.SELL if position.side == PositionSide.LONG else OrderSide.BUY
+        order = self.order_factory.market(
+            instrument_id=job.instrument_id,
+            order_side=side,
+            quantity=quantity,
+            time_in_force=TimeInForce.IOC,
+            reduce_only=True,
+            tags=[job.tag],
+        )
+        self._reduces[str(order.client_order_id)] = job
+        self.submit_order(order)
+
+    # -- stop modification (tighten only) -----------------------------------------------------
+
+    def _start_modify_stop(self, job: ModifyStopJob) -> None:
+        positions = self.cache.positions_open(instrument_id=job.instrument_id)
+        if len(positions) != 1:
+            return self._resolve(job, JobOutcome("denied", f"positions_{len(positions)}"))
+        is_long = positions[0].side == PositionSide.LONG
+        stops = [
+            o
+            for o in self.cache.orders_open(instrument_id=job.instrument_id)
+            if o.order_type == OrderType.STOP_MARKET and o.is_reduce_only
+        ]
+        if len(stops) != 1:
+            return self._resolve(job, JobOutcome("denied", f"stop_orders_{len(stops)}"))
+        order = stops[0]
+        current = Decimal(str(order.trigger_price))
+        if job.new_stop == current:
+            return self._resolve(job, JobOutcome("unchanged", "already_at_level"))
+        if (job.new_stop < current) if is_long else (job.new_stop > current):
+            return self._resolve(job, JobOutcome("denied", "stop_not_tighter"))
+        instrument = self.cache.instrument(job.instrument_id)
+        if instrument is None:
+            return self._resolve(job, JobOutcome("denied", "instrument_not_in_cache"))
+        job.client_order_id = str(order.client_order_id)
+        self._modifies[job.client_order_id] = job
+        trigger = Price(float(job.new_stop), instrument.price_precision)
+        self.modify_order(order, trigger_price=trigger)
+
+    def on_order_updated(self, event: Any) -> None:
+        job = self._modifies.get(str(event.client_order_id))
+        if job is None or job.future.done():
+            return
+        trigger = getattr(event, "trigger_price", None)
+        if trigger is not None and Decimal(str(trigger)) == job.new_stop:
+            self._modifies.pop(str(event.client_order_id), None)
+            self._resolve(job, JobOutcome("modified", "stop_updated"))
+
+    def on_order_modify_rejected(self, event: Any) -> None:
+        job = self._modifies.pop(str(event.client_order_id), None)
+        if job is not None:
+            self._resolve(job, JobOutcome("modify_rejected", str(getattr(event, "reason", ""))))
+
     # -- lifecycle events ------------------------------------------------------------------------
 
     def on_order_accepted(self, event: Any) -> None:
@@ -218,6 +326,19 @@ class DemoTraderStrategy(Strategy):
         job = self._entries.get(str(event.client_order_id))
         if job is not None:
             job.entry_fills.append((Decimal(str(event.last_qty)), Decimal(str(event.last_px))))
+        reduce = self._reduces.get(str(event.client_order_id))
+        if reduce is not None:
+            reduce.fills.append((Decimal(str(event.last_qty)), Decimal(str(event.last_px))))
+            if sum((q for q, _ in reduce.fills), Decimal(0)) >= reduce.quantity:
+                self._reduces.pop(str(event.client_order_id), None)
+                self._resolve(reduce, JobOutcome("reduced", "filled", tuple(reduce.fills)))
+
+    def on_order_canceled(self, event: Any) -> None:
+        """An IOC reduce order ended without filling its whole quantity (partial / none)."""
+        reduce = self._reduces.pop(str(event.client_order_id), None)
+        if reduce is not None and not reduce.future.done():
+            status = "reduced" if reduce.fills else "failed"
+            self._resolve(reduce, JobOutcome(status, "canceled_remainder", tuple(reduce.fills)))
 
     def on_order_denied(self, event: Any) -> None:
         self._on_refused("denied", event)
@@ -233,6 +354,9 @@ class DemoTraderStrategy(Strategy):
             if DRY_RUN_MARK in reason:
                 return self._resolve(job, JobOutcome("dry_run_ok", reason))
             return self._resolve(job, JobOutcome(kind, reason))
+        reduce = self._reduces.pop(cid, None)
+        if reduce is not None:
+            return self._resolve(reduce, JobOutcome(kind, reason, tuple(reduce.fills)))
         child = self._children.get(cid)
         if child is not None:
             if child.future.done():

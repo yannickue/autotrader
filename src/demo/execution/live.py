@@ -88,6 +88,13 @@ from demo.execution.events import (
     ProtectionConfirmed,
     Rejected,
 )
+from demo.execution.exit_manager import (
+    EXIT_POLICIES,
+    EXIT_POLICY_FIXED,
+    EXIT_POLICY_STAGED,
+    StagedExitManager,
+    broker_target_for_staged,
+)
 from demo.execution.market_config import DemoMarketSpec, load_demo_market_specs
 from demo.execution.parity import executable_price, parity_reject, parse_utc
 from demo.execution.registry import StackRegistry
@@ -119,6 +126,7 @@ from demo.execution.tranches import (
     classify_addon,
 )
 from demo.opportunity.bar_source import Quote, validate_frame
+from exits.models import ExitPolicy
 from nautilus_mt5.data_client import Mt5DataClientConfig
 from nautilus_mt5.execution_client import Mt5ExecClientConfig
 from nautilus_mt5.executor import LaneTimeout
@@ -219,6 +227,21 @@ class StackConfig:
     # account_info.margin_so_so = 50 % (observed read-only on the DEMO account), which would justify 0.5.
     # The default is deliberately NOT changed: lowering it is a risk decision for the operator.
     stopout_fraction_of_initial_margin: Decimal = Decimal(1)
+    # Lane E1 exit policy. ``fixed_1_5r`` (DEFAULT) = today's behaviour, bit-identical: broker SL + the
+    # intent's one fixed-R broker TP, forced flat at flat_min, NO manage_exits activity. ``staged`` = the
+    # deterministic ExitEngine manages partials / tighten-only stop moves each runner cycle
+    # (``manage_exits``); needs ``staged_exit`` (the ExitPolicy). Broker TP under ``staged``: ABSENT, or
+    # the FINAL stage only (see exit_manager.broker_target_for_staged).
+    exit_policy: str = EXIT_POLICY_FIXED
+    staged_exit: ExitPolicy | None = None
+    # throttle: a stop modify must improve the stop by at least this many R (and one tick)
+    staged_stop_min_step_r: Decimal = Decimal("0.1")
+
+    def __post_init__(self) -> None:
+        if self.exit_policy not in EXIT_POLICIES:
+            raise ValueError(f"exit_policy must be one of {EXIT_POLICIES}, got {self.exit_policy!r}")
+        if self.exit_policy == EXIT_POLICY_STAGED and self.staged_exit is None:
+            raise ValueError("exit_policy='staged' requires staged_exit (an ExitPolicy)")
 
 
 # ---------------------------------------------------------------------------------------------
@@ -560,6 +583,11 @@ class Mt5DemoStack:
         self._closing_seen: dict[str, float] = {}
         self._foreign: tuple[str, ...] = ()
         self._start_notes: dict[str, Any] = {}
+        self._exit_manager: StagedExitManager | None = (
+            StagedExitManager(self, self._cfg.staged_exit)
+            if self._cfg.exit_policy == EXIT_POLICY_STAGED and self._cfg.staged_exit is not None
+            else None
+        )
 
     # ------------------------------------------------------------------------------- properties
 
@@ -1397,13 +1425,25 @@ class Mt5DemoStack:
             "stop_risk_eur": approval.stop_risk_money,
             "cluster": detail.get("cluster"),
         }
+        broker_target = None if intent.target is None else Decimal(str(intent.target))
+        if self._exit_manager is not None:
+            # staged: the ExitEngine owns the exit plan. Broker TP = ABSENT or the FINAL stage only.
+            plan = context.get("exit_plan")
+            ctx_summary["exit_plan"] = plan
+            broker_target = broker_target_for_staged(
+                plan, direction=intent.direction, entry_ref=Decimal(str(intent.entry_ref))
+            )
         inserted = self._registry.insert(
             intent_id=intent.intent_id,
             client_order_id=coid,
             market=intent.market,
             direction=intent.direction,
             stop=str(intent.stop),
-            target=None if intent.target is None else str(intent.target),
+            target=(
+                (None if intent.target is None else str(intent.target))
+                if self._exit_manager is None  # fixed_1_5r: byte-identical to before Lane E
+                else (None if broker_target is None else str(broker_target))
+            ),
             forced_flat_utc=intent.forced_flat_utc,
             status=reg.ACCEPTED,
             created_utc=_iso(now),
@@ -1428,7 +1468,7 @@ class Mt5DemoStack:
             instrument_id=info.instrument_id,
             quantity=approval.quantity,
             stop=Decimal(str(intent.stop)),  # the STRUCTURAL stop, exactly as given
-            target=None if intent.target is None else Decimal(str(intent.target)),
+            target=broker_target,
             client_order_id=coid,
         )
         self._registry.update(intent.intent_id, status=reg.SENT)
@@ -2236,6 +2276,21 @@ class Mt5DemoStack:
         ]
 
     # -- forced flat ------------------------------------------------------------------------------------
+
+    def manage_exits(self, now: datetime) -> list[ExecutionEvent]:
+        """Lane E1: one deterministic ExitEngine cycle over the open positions (partials, tighten-only
+        stop moves, engine-driven full closes). A no-op returning [] unless ``exit_policy == "staged"``
+        (the default ``fixed_1_5r`` behaviour is unchanged). Called by the runner before ``on_clock``."""
+        if self._exit_manager is None:
+            return []
+        assert self._registry is not None
+        with self._submit_lock:
+            self._check_fatal()
+            return self._exit_manager.run(now.astimezone(UTC))
+
+    def exit_log(self) -> list[dict[str, Any]]:
+        """Audit trail of the staged exit manager (empty under fixed_1_5r)."""
+        return [] if self._exit_manager is None else list(self._exit_manager.log)
 
     def on_clock(self, now: datetime) -> list[ExecutionEvent]:
         """Reduce-only close of every open intent whose ``forced_flat_utc`` has arrived."""
