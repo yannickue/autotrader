@@ -41,10 +41,12 @@ Safety properties (all tested against the fake broker, zero real MT5):
 from __future__ import annotations
 
 import asyncio
+import collections
 import concurrent.futures
 import contextlib
 import hashlib
 import json
+import logging
 import os
 import threading
 import time
@@ -127,6 +129,7 @@ from nautilus_mt5.symbols import SymbolRegistry, demo_registry
 from risk.models import ReconciliationState
 
 ZERO = Decimal(0)
+_LOG = logging.getLogger(__name__)
 M5_SECONDS = 300
 MT5_TIMEFRAME_M5 = 5
 DEAL_TYPES_TRADE = (0, 1)
@@ -177,7 +180,9 @@ class StackConfig:
     deviation_points: int = 20
     max_quote_age_s: float = 30.0  # older => intent Rejected("stale_feed")
     feed_fatal_age_s: float = 180.0  # older => StackFailClosed("stale_feed")
-    clock_skew_s: float = 5.0  # quote timestamped this far in the FUTURE => clock anomaly
+    clock_skew_s: float = 5.0  # quote this far in the FUTURE => warning + reject that market (M4)
+    clock_fatal_skew_s: float = 60.0  # SUSTAINED skew above this => fatal clock_anomaly
+    clock_skew_sustain_obs: int = 3  # consecutive entry-time observations that make it "sustained"
     submit_wait_s: float = 35.0  # caller-side bound for one entry (adapter bound is 30 s)
     exposure_timeout_s: float = 30.0  # adapter lane timeout for exposure-changing operations
     flatten_wait_s: float = 35.0
@@ -526,6 +531,10 @@ class Mt5DemoStack:
         self._disconnected_since: float | None = None
         self._last_reconcile_attempt = 0.0
         self._flatten_failures: dict[str, int] = {}
+        self._skew_obs: collections.deque[float] = collections.deque(
+            maxlen=max(1, self._cfg.clock_skew_sustain_obs)
+        )
+        self.max_clock_skew_s: float = 0.0  # logged metric: largest future skew seen (seconds)
         self._last_snap = _Snap()
         self._closing_seen: dict[str, float] = {}
         self._foreign: tuple[str, ...] = ()
@@ -1689,9 +1698,7 @@ class Mt5DemoStack:
         except AmbiguousServerTime:
             raise StackFailClosed("ambiguous_server_time") from None
         age = (now - quote_utc).total_seconds()
-        if age < -self._cfg.clock_skew_s:
-            self._set_fatal("clock_anomaly")
-            raise StackFailClosed("clock_anomaly")
+        self._check_clock_skew(-age, intent.market)
         if age > self._cfg.feed_fatal_age_s:
             raise StackFailClosed("stale_feed")
         if age > self._cfg.max_quote_age_s:
@@ -1736,6 +1743,29 @@ class Mt5DemoStack:
             bid=bid, ask=ask, quote_utc=quote_utc, account=gate_account, facts=facts,
             positions_seen=len(positions), existing=existing, existing_family=family,
         )
+
+    def _check_clock_skew(self, skew_s: float, market: str) -> None:
+        """Server quote AHEAD of the local clock by ``skew_s`` seconds (M4).
+
+        The quote time is the broker-derived UTC (session time policy). A small skew (a PC clock a
+        few seconds slow) is a logged warning + metric and a TEMPORARY reject of this market only;
+        the stack keeps running and the market recovers when the clocks agree again. Only a
+        SUSTAINED skew above ``clock_fatal_skew_s`` (the last ``clock_skew_sustain_obs``
+        observations ALL above it) means the local clock cannot be trusted: fatal."""
+        self._skew_obs.append(skew_s)
+        if skew_s > self.max_clock_skew_s:
+            self.max_clock_skew_s = skew_s
+        if skew_s <= self._cfg.clock_skew_s:
+            return
+        _LOG.warning("clock skew: %s quote is %.1fs ahead of the local clock", market, skew_s)
+        sustained = (
+            len(self._skew_obs) == self._skew_obs.maxlen
+            and min(self._skew_obs) > self._cfg.clock_fatal_skew_s
+        )
+        if sustained:
+            self._set_fatal("clock_anomaly")
+            raise StackFailClosed("clock_anomaly")
+        raise _Reject(G.R_CLOCK_SKEW)
 
     def _lane_margin_per_lot(
         self, intent: TradeIntent, info: _MarketInfo, price: Decimal

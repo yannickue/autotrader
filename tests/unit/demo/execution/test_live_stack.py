@@ -595,12 +595,57 @@ def test_stale_feed_and_clock_anomaly(env):
     broker.live_offset_s -= 300  # 6 minutes old: the feed is dead
     with pytest.raises(StackFailClosed, match="stale_feed"):
         stack.submit(make_intent(intent_id="dead"))
-    broker.live_offset_s += 345 + 30  # quote 30 s in the future: clock anomaly
-    with pytest.raises(StackFailClosed, match="clock_anomaly"):
-        stack.submit(make_intent(intent_id="future"))
-    with pytest.raises(StackFailClosed):
-        stack.poll_events()  # the anomaly latched the stack
-    assert broker.order_send_calls == 0
+    broker.live_offset_s += 345  # back to a live feed
+    assert kinds(stack.submit(make_intent(intent_id="ok")))[-1] == "ProtectionConfirmed"
+
+
+def test_small_clock_skew_rejects_that_market_temporarily_and_recovers(tmp_path):
+    """M4: a PC clock 6-30 s slow used to kill the whole stack; now it is a metric + a reject."""
+    broker = build_broker()
+    stack = make_stack(broker, tmp_path)
+    try:
+        stack.start()
+        broker.live_offset_s += 20  # quote 20 s in the future
+        assert reason(stack.submit(make_intent(intent_id="skewed"))) == "clock_skew"
+        assert broker.order_send_calls == 0 and stack.max_clock_skew_s >= 19
+        stack.poll_events()  # the stack is NOT latched
+        broker.live_offset_s -= 20
+        assert kinds(stack.submit(make_intent(intent_id="fine")))[-1] == "ProtectionConfirmed"
+    finally:
+        stack.stop()
+
+
+def test_only_a_sustained_large_clock_skew_is_fatal(tmp_path):
+    broker = build_broker()
+    stack = make_stack(broker, tmp_path)
+    try:
+        stack.start()
+        broker.live_offset_s += 120  # two minutes ahead
+        n = FAST.clock_skew_sustain_obs
+        for i in range(n - 1):  # not yet sustained: temporary rejects
+            assert reason(stack.submit(make_intent(intent_id=f"s{i}"))) == "clock_skew"
+        with pytest.raises(StackFailClosed, match="clock_anomaly"):
+            stack.submit(make_intent(intent_id="sustained"))
+        with pytest.raises(StackFailClosed):
+            stack.poll_events()  # the anomaly latched the stack
+        assert broker.order_send_calls == 0
+    finally:
+        stack.stop()
+
+
+def test_a_single_large_skew_observation_is_not_fatal(tmp_path):
+    broker = build_broker()
+    stack = make_stack(broker, tmp_path)
+    try:
+        stack.start()
+        broker.live_offset_s += 120
+        assert reason(stack.submit(make_intent(intent_id="blip"))) == "clock_skew"
+        broker.live_offset_s -= 120
+        assert kinds(stack.submit(make_intent(intent_id="ok")))[-1] == "ProtectionConfirmed"
+        broker.live_offset_s += 120  # a blip again: the window was reset by the healthy observation
+        assert reason(stack.submit(make_intent(intent_id="blip2"))) == "clock_skew"
+    finally:
+        stack.stop()
 
 
 # -- shadow mode ---------------------------------------------------------------------------------------------------
