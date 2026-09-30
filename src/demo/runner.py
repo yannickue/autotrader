@@ -1355,11 +1355,13 @@ class DemoRunner:
             return self._funnel
         self._funnel_dirty = False
         try:
+            from demo.funnel import compact as compact_funnel
             from demo.funnel import funnel
 
             full = funnel(self.store, self.stack, self.cfg.phase)
             self._funnel = {**full["summary"], "by_market": {m: {k: b[k] for k in ("opportunities", "engine_accepted", "stack_rejected", "traded", "shadow_would_trade", "temporary_otherwise_valid_blocked")} for m, b in full["by_market"].items()},
-                            "stack_by_class": full["stack"]["by_class"], "engine_by_class": full["engine"]["by_class"]}
+                            "stack_by_class": full["stack"]["by_class"], "engine_by_class": full["engine"]["by_class"],
+                            "compact": compact_funnel(full)}
             self._funnel_at = now
         except Exception as exc:  # a diagnostics read never stops trading
             self._funnel = {"error": f"{type(exc).__name__}: {exc}"}

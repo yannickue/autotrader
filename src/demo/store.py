@@ -1026,12 +1026,24 @@ class DemoStore:
             "json_extract(rk.json,'$.approved') AS approved, "
             "EXISTS(SELECT 1 FROM intent_events e WHERE e.intent_id=i.intent_id AND e.to_state='CANCELLED' "
             "AND json_extract(e.detail,'$.reason')='shadow_dry_run') AS shadow_dry_run, "
-            "(SELECT COUNT(*) FROM outcomes o WHERE o.intent_id=i.intent_id) AS has_outcome "
+            "(SELECT COUNT(*) FROM outcomes o WHERE o.intent_id=i.intent_id) AS has_outcome, "
+            "s.signal_ts AS signal_ts, json_extract(s.json,'$.direction') AS direction, "
+            "json_extract(s.json,'$.geometry.stop') AS stop, json_extract(s.json,'$.market_state.atr') AS atr, "
+            "json_extract(s.json,'$.market_state.clock.local_minute') AS local_minute, "
+            "json_extract(s.json,'$.market_state.clock.session_bucket') AS session_bucket, "
+            "json_extract(s.json,'$.signal.origin') AS origin, "
+            "json_extract(rd.json,'$.violated_cap') AS violated_cap, "
+            "(SELECT json_extract(e.detail,'$.reason') FROM intent_events e WHERE e.intent_id=i.intent_id "
+            " AND e.to_state IN ('CANCELLED','SEND_FAILED') ORDER BY e.seq DESC LIMIT 1) AS cancel_reason, "
+            "(SELECT json_extract(e.detail,'$.restart') FROM intent_events e WHERE e.intent_id=i.intent_id "
+            " AND e.to_state IN ('CANCELLED','SEND_FAILED') ORDER BY e.seq DESC LIMIT 1) AS cancel_restart, "
+            "tt.trade_type AS trade_type "
             "FROM snapshots s "
             "LEFT JOIN decisions d ON d.opportunity_id=s.opportunity_id "
             "LEFT JOIN intents i ON i.opportunity_id=s.opportunity_id "
             "LEFT JOIN risk_detail rd ON rd.intent_id=i.intent_id AND rd.kind='REJECTED' "
-            "LEFT JOIN risk_records rk ON rk.intent_id=i.intent_id"
+            "LEFT JOIN risk_records rk ON rk.intent_id=i.intent_id "
+            "LEFT JOIN trade_tags tt ON tt.intent_id=i.intent_id"
         )
         args: tuple = ()
         if phase is not None:
@@ -1050,6 +1062,10 @@ class DemoStore:
                 "approved": None if r["approved"] is None else bool(r["approved"]),
                 "shadow_dry_run": bool(r["shadow_dry_run"]),
                 "has_outcome": bool(r["has_outcome"]),
+                "signal_ts": r["signal_ts"], "direction": r["direction"], "stop": r["stop"], "atr": r["atr"],
+                "local_minute": r["local_minute"], "session": r["session_bucket"], "origin": r["origin"] or "LIVE",
+                "violated_cap": r["violated_cap"], "cancel_reason": r["cancel_reason"] or r["cancel_restart"],
+                "trade_type": r["trade_type"] or "STRATEGY",
             })
         return out
 
