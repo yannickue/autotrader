@@ -118,6 +118,13 @@ R_CLOCK_SKEW = "clock_skew"
 
 # entry-drift tolerance default (parity.entry_tolerance): max(2 x current spread, 2 x tick)
 ENTRY_TOLERANCE_SPREAD_MULTIPLE = 2
+# Spread/cost gate (user decision 2026-09-30): the PRIMARY gate is relative cost - the spread may take at
+# most SPREAD_MAX_FRACTION_OF_RISK of 1R. The per-market absolute bound (historical p99 bar spread) is
+# only a SAFETY cap against feed glitches / news gaps at SPREAD_EXTREME_MULTIPLE x that bound. Live
+# spreads at the bar-close instant run ~2x the recorded bar-spread median, so the absolute p99 alone
+# would suppress most NAS100 setups.
+SPREAD_MAX_FRACTION_OF_RISK = 0.20
+SPREAD_EXTREME_MULTIPLE = 4
 ENTRY_TOLERANCE_TICK_MULTIPLE = 2
 
 _G = Gate
@@ -145,7 +152,7 @@ _ENTRIES: tuple[Gate, ...] = (
     _G(R_UNSUPPORTED_PROFIT_CCY, S, True, "profit currency other than EUR/USD cannot be converted safely"),
     _G(R_FOREIGN_POSITION, S, True, "a position we did not open exists at the broker: account state not ours to size against"),
     _G(R_BROKER_CALL_FAILED, S, True, "broker read failed while the terminal is still attached"),
-    _G(R_SPREAD_CAP, S, True, "execution-cost / liquidity protection at send time; threshold is the PROVISIONAL observed M5 p99 per market (calibrate)"),
+    _G(R_SPREAD_CAP, S, True, "execution-cost protection at send time: PRIMARY = spread > 20% of 1R (relative cost); SAFETY cap = spread > 4x the PROVISIONAL per-market M5 p99 bound (feed glitch / news gap)"),
     _G(R_INVALIDATION_CROSSED, S, True, "structural stop already crossed by the executable price: a protective stop cannot be placed"),
     _G(R_SIZE_BELOW_MIN, S, True, "the broker MINIMUM lot would violate a configured hard safety cap (violated_cap + numbers in risk_detail)"),
     _G(R_DAILY_LOSS, S, True, "daily loss halt (fraction of start-of-day equity, UTC day)"),

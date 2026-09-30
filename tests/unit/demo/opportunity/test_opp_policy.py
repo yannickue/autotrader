@@ -86,13 +86,20 @@ def test_outside_entry_window(ger):
 
 
 def test_spread_too_wide(ger):
-    wide = ger.max_entry_spread_price + 0.01
-    a = _assess(ger, synth_candidate(ger, bar_spread=wide), quote=_q(ask=100.0 + 0.1))
-    assert a.reasons == (SPREAD_TOO_WIDE,)
-    b = _assess(ger, synth_candidate(ger), quote=_q(bid=100.0, ask=100.0 + wide))
-    assert SPREAD_TOO_WIDE in b.reasons
-    ok = _assess(ger, synth_candidate(ger, bar_spread=ger.max_entry_spread_price), quote=_q())
-    assert SPREAD_TOO_WIDE not in ok.reasons  # cap is inclusive like the simulator (> cap skips)
+    # PRIMARY gate = relative cost (spread > 20% of 1R); absolute bound only as a 4x SAFETY cap.
+    extreme = ger.max_entry_spread_price * 4 + 0.01
+    a = _assess(ger, synth_candidate(ger, bar_spread=extreme), quote=_q(ask=100.0 + 0.1))
+    assert a.reasons == (SPREAD_TOO_WIDE,)  # safety cap
+    b = _assess(ger, synth_candidate(ger), quote=_q(bid=100.0, ask=100.0 + 0.5))
+    assert SPREAD_TOO_WIDE in b.reasons  # 0.5 > 20% of the ~1.1 risk distance
+    ok = _assess(ger, synth_candidate(ger, bar_spread=0.1), quote=_q())
+    assert SPREAD_TOO_WIDE not in ok.reasons
+    # above the old absolute p99 bound but cheap relative to a wide structural stop -> allowed
+    wide_stop = _assess(
+        ger, synth_candidate(ger, stop=50.0, bar_spread=ger.max_entry_spread_price + 1.0),
+        quote=_q(bid=100.0, ask=100.1),
+    )
+    assert SPREAD_TOO_WIDE not in wide_stop.reasons
 
 
 def test_entry_overshot_stop_crossed_and_drift(ger):
@@ -123,7 +130,7 @@ def test_space_below_min_r_is_evaluated_at_the_ask_for_longs(ger):
     at_bid = _assess(ger, cand, quote=_q(bid=100.0, ask=100.0), policy=pol)  # zero spread
     assert at_bid.reasons == (ACCEPTED,)  # 0.9 / 1.0 = 0.9 >= 0.55
     at_ask = _assess(ger, cand, quote=_q(bid=100.0, ask=100.4), policy=pol)
-    assert at_ask.reasons == (SPACE_BELOW_MIN_R,)  # 0.5 / 1.4 = 0.357 < 0.55
+    assert SPACE_BELOW_MIN_R in at_ask.reasons  # 0.5 / 1.4 = 0.357 < 0.55 (the 0.4 spread is also >20% of 1R)
     assert at_ask.implied_r == pytest.approx(0.5 / 1.4)
 
 

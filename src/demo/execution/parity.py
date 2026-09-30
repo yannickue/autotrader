@@ -64,8 +64,10 @@ def parity_reject(
     stop = Decimal(str(intent.stop))
     target = Decimal(str(intent.target)) if intent.target is not None else None
     entry_ref = Decimal(str(intent.entry_ref))
-    if ask - bid > max_spread:
-        return G.R_SPREAD_CAP
+    spread = ask - bid
+    risk_now = abs(executable - stop)
+    if spread > max_spread * G.SPREAD_EXTREME_MULTIPLE:
+        return G.R_SPREAD_CAP  # SAFETY cap: feed glitch / news gap
     adverse_drift = (
         executable - entry_ref if intent.direction == 1 else entry_ref - executable
     )
@@ -75,6 +77,8 @@ def parity_reject(
         intent.direction == -1 and executable >= stop
     ):
         return G.R_INVALIDATION_CROSSED
+    if risk_now > 0 and spread / risk_now > Decimal(str(G.SPREAD_MAX_FRACTION_OF_RISK)):
+        return G.R_SPREAD_CAP  # PRIMARY: the spread eats more than 20% of 1R
     if target is not None:
         if (intent.direction == 1 and executable >= target) or (
             intent.direction == -1 and executable <= target

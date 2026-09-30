@@ -66,6 +66,10 @@ POLICY_ID = "static-demo-policy-v1"
 STALE_SIGNAL = "STALE_SIGNAL"
 OUTSIDE_ENTRY_WINDOW = "OUTSIDE_ENTRY_WINDOW"
 SPREAD_TOO_WIDE = "SPREAD_TOO_WIDE"
+# PRIMARY cost gate = spread <= 20% of 1R; absolute per-market p99 bound only as a 4x SAFETY cap
+# (user decision 2026-09-30; mirrors demo.execution.gates, which this layer must not import).
+SPREAD_MAX_FRACTION_OF_RISK = 0.20
+SPREAD_EXTREME_MULTIPLE = 4
 ENTRY_OVERSHOT = "ENTRY_OVERSHOT"
 TARGET_ALREADY_CROSSED = "TARGET_ALREADY_CROSSED"
 SPACE_BELOW_MIN_R = "SPACE_BELOW_MIN_R"
@@ -101,7 +105,7 @@ GATE_CLASSIFICATION: dict[str, PolicyGate] = {
         _PG(DUPLICATE_OPPORTUNITY, "SAFETY", True, "duplicate safety: the same causal opportunity is decided exactly once"),
         _PG(OUTSIDE_ENTRY_WINDOW, "STRUCTURAL", True, "the entry bar lies outside the frozen spec's entry window (simulator: outside_window / gap_before_entry)"),
         _PG(NO_STRUCTURAL_STOP, "STRUCTURAL", True, "no finite structural stop on the correct side of the close (or trailing exit): a mandatory broker stop cannot be placed"),
-        _PG(SPREAD_TOO_WIDE, "SAFETY", True, "execution-cost protection: bar/quote spread above the per-market bound from the market spec"),
+        _PG(SPREAD_TOO_WIDE, "SAFETY", True, "execution-cost protection: PRIMARY spread > 20% of 1R; SAFETY cap spread > 4x the per-market p99 bound"),
         _PG(ENTRY_OVERSHOT, "STRUCTURAL", True, "entry already crossed: executable price drifted beyond entry_tolerance_atr adverse to the decision close, or the structural stop is already crossed at the fill (simulator: entry_gap)"),
         _PG(TARGET_ALREADY_CROSSED, "STRUCTURAL", True, "the finite structural target is already crossed at the executable price (simulator: target_crossed_at_fill)"),
         _PG(SPACE_BELOW_MIN_R, "LEGACY_ARBITRARY", True, "candidate-carried minimum reward space (simulator: space_below_min_at_fill); policy default is 0.0 so it only fires for specs carrying their own min_space_r; review before FROZEN"),
@@ -239,7 +243,10 @@ class StaticDemoPolicy:
             reasons.add(NO_STRUCTURAL_STOP)
         risk = d * (exec_price - cand.stop) if _fin(cand.stop) else float("nan")
         spread_now = (ask - bid) if have_quote else 0.0
-        if max(cand.bar_spread, spread_now) > mspec.max_entry_spread_price:
+        spread_seen = max(cand.bar_spread, spread_now)
+        if spread_seen > mspec.max_entry_spread_price * SPREAD_EXTREME_MULTIPLE or (
+            risk > 0.0 and spread_seen / risk > SPREAD_MAX_FRACTION_OF_RISK
+        ):
             reasons.add(SPREAD_TOO_WIDE)
 
         atr = cand.atr if _fin(cand.atr) and cand.atr > 0 else float("nan")

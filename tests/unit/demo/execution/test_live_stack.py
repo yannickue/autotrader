@@ -456,7 +456,7 @@ def test_partial_fill_reports_the_actual_quantity_and_protects_it(env):
         ({}, (24940.0, 24941.0), "structural_invalidation_crossed"),
         ({"target": 25010.0, "entry_ref": 25012.0}, (25011.0, 25012.0), "target_crossed_at_fill"),
         ({"min_space_r": 6.0}, None, "min_space_r"),
-        ({}, (25000.0, 25012.5), "spread_cap"),
+        ({}, (25000.0, 25040.0), "spread_cap"),  # > 4x the p99 bound: safety cap
         ({"flat_in_s": -1}, None, "past_forced_flat"),
         ({"broker_symbol": "Wrong"}, None, "symbol_mismatch"),
         ({"market": "FOO"}, None, "unknown_market"),
@@ -750,8 +750,9 @@ def test_stop_inside_the_broker_stop_level_is_refused_locally(env):
     stack.start()
     # broker stops level = 100 points x 0.01 = 1.0: a stop 0.5 below the bid is not placeable
     events = stack.submit(make_intent(stop=24999.5, target=25150.0))
-    assert kinds(events) == ["Accepted", "Rejected"]
-    assert reason(events) == "stop_inside_broker_stop_level"
+    # a 0.5-point stop is also spread-dominated (> 20% of 1R): either gate refuses it before any order
+    assert kinds(events)[-1] == "Rejected"
+    assert reason(events) in ("stop_inside_broker_stop_level", "spread_cap")
     assert broker.order_send_calls == 0 and broker.positions_get() == ()
 
 

@@ -67,3 +67,27 @@ def test_other_rules_still_use_the_actual_fill_price():
     assert check(intent(stop=23501.0), 23500.0, 23501.0) == G.R_INVALIDATION_CROSSED
     # min_space_r evaluated at the real fill (reward 148.7 / risk 51.3 < 3)
     assert check(intent(min_space_r=3.0), 23500.5, 23501.3) == G.R_MIN_SPACE_R
+
+
+def test_relative_cost_is_the_primary_spread_gate_and_absolute_bound_only_a_safety_cap():
+    from decimal import Decimal as D
+
+    from demo.contracts import TradeIntent
+    from demo.execution import gates as G
+    from demo.execution.parity import parity_reject
+
+    intent = TradeIntent(
+        opportunity_id="o", phase="DISCOVERY", intent_id="i", market="NAS100",
+        broker_symbol="UsaTec", direction=1, entry_ref=30000.0, stop=29944.34, target=None,
+        min_space_r=0.0, valid_until_utc="2099-01-01T00:00:00+00:00", forced_flat_utc=None,
+        risk_fraction=0.01,
+    )
+    common = {"max_spread": D("1.88"), "tick_size": D("0.01")}
+    # audit scenario: spread 2.1 is above the old p99 bound 1.88 but only ~3.8% of a 55.7-pt stop
+    assert parity_reject(intent, bid=D("29999.9"), ask=D("30002.0"), **common) is None
+    # spread taking more than 20% of 1R is rejected even below the absolute bound
+    tight = intent.__class__(**{**intent.to_dict(), "stop": 29999.0})
+    assert parity_reject(tight, bid=D("29999.5"), ask=D("30000.0"), **common) == G.R_SPREAD_CAP
+    # absolute safety cap: > 4x the bound is always rejected
+    assert parity_reject(intent, bid=D("29990.0"), ask=D("30000.0"), **common) == G.R_SPREAD_CAP
+    assert G.SPREAD_MAX_FRACTION_OF_RISK == 0.20 and G.SPREAD_EXTREME_MULTIPLE == 4
