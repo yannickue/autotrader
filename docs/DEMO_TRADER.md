@@ -21,7 +21,8 @@ CounterfactualLabel, TradeLearningRecord, ClockCheck. Snapshot has no outcome fi
 ## Simulator parity (addendum 4) — executor + opportunity policy MUST implement
 target_crossed_at_fill (skip if actual fill already beyond target), min_space_r evaluated on ACTUAL fill/ask-bid, stale/already-crossed
 entry (price ran through entry beyond tolerance -> reject), structural invalidation (price beyond invalidation before fill -> cancel),
-entry only inside SimWindow, forced flat at `flat_min` (reduce-only close), one position per instrument.
+entry only inside SimWindow, forced flat at `flat_min` (reduce-only close). There is NO one-position rule in the opportunity policy or the runner: broker netting (one
+net position per symbol) is only the broker representation; same-symbol add-on / opposite-side handling belongs to the stack (temporary `ADDON_*` codes).
 
 ## Clock verification (addendum 3) — per market before DEMO AUTO
 UTC -> market tz (MarketSpec.calendar.tz) -> DST -> local trading minute -> broker session/calendar -> SimWindow.
@@ -43,3 +44,22 @@ Always record spread at send, slippage (fill vs intended), commission (deal.comm
 ## Runner modes (scripts/demo_trader.py)
 `--shadow` (zero order_send), `--demo-auto --confirm-demo-auto=I-AUTHORIZE-ACTIVTRADES-DEMO-TRADING-ONLY`, `--status`, `--analyze`.
 Fail closed on: non-demo, unknown account, stale feed, reconciliation mismatch, persistence failure, unprotected exposure, broker disconnect, clock anomaly.
+
+
+## Lane I: runner <-> stack wiring (2026-09-30)
+- `build_live_runner(mode)`: `shadow` -> `Mt5DemoStack(dry_run=True)`, `demo-auto` -> `dry_run=False`; the real client and attach-only config are
+  obtained lazily inside the factory only; `MT5_ALLOW_ACCOUNT_LOGIN=1` is refused; stack state under `artifacts/demo_trader/stack`.
+  Learning defaults ON in shadow, OFF in demo-auto (`--learning` opts in); the trainer runs in its own thread on its own DB connection, only while flat.
+- ONE bar-source interface for engine, runner and stack: `m5_frame / latest_quote / last_closed_bar_close_utc` (`LiveBarSource`).
+- `submit(intent, context=...)` carries family (concentration cap), atr and LOGGED-ONLY quality inputs (confidence, confluence, quality components,
+  independent clusters, win probability / expected payoff from shadow predictions, `None` when absent). They never size or gate a trade.
+- Persisted per intent: `risk_detail` (ACCEPTED and REJECTED, exact reject code + gate class), `tca_records` (ENTRY at the fill, EXIT at the close).
+  Cost semantics (signed broker amounts, negative = cost): `Fill.commission/swap` = entry deal, `PositionClosed.commission/swap` = closing deal(s);
+  total = entry + closing, computed once from the immutable first execution record; `cost_status=verified` only if the broker's closing deals supplied both.
+- Rejection funnel (`demo.funnel.funnel(store, stack)`): engine reasons by class (`GATE_CLASSIFICATION`), stack rejections by class
+  (`GATE_CATALOG`), TEMPORARY `otherwise_valid_blocked`, per market / family, "trades that would have existed"; in the heartbeat
+  (`rejection_funnel`), `--analyze` (stderr + `funnel-<phase>.json`) and every report.
+- Resilience: `IN_DOUBT` (order outcome unknown) is non-terminal; transient conditions (reconciliation != RECONCILED, disconnect, stack halt, all
+  expected-open feeds stale) halt new exposure without latching the stack, keep managing, back off, resume by themselves and exit 7 only after
+  `transient_grace_s` (stale feeds: `all_stale_exit_s`). Closed markets (MarketSpec calendar) are idle, not stale.
+  `--forced-flat-on-shutdown` (default off) only acts if the stack offers `flatten_all`; `StackPort` has none, so positions stay broker-protected.
