@@ -1,0 +1,1134 @@
+{
+ "fit_end": "2026-06-30",
+ "holdout_start": "2026-09-01",
+ "markets": {
+  "EURUSD": [
+   {
+    "spec": {
+     "buffer_atr": 0.0,
+     "family": "ORB",
+     "mode": "breakout",
+     "range_min": 15,
+     "side": "both",
+     "stop_frac": 1.0,
+     "target": 1.5,
+     "target_kind": "r",
+     "window_min": 240
+    },
+    "thr": []
+   },
+   {
+    "spec": {
+     "buffer_atr": 0.0,
+     "family": "ORB",
+     "mode": "fade",
+     "range_min": 15,
+     "side": "both",
+     "stop_frac": 0.0,
+     "target": 1.5,
+     "target_kind": "r",
+     "window_min": 240
+    },
+    "thr": []
+   },
+   {
+    "spec": {
+     "bucket_hi_q": 1.0,
+     "bucket_lo_q": 0.5,
+     "confirm": true,
+     "confirm_bars": 3,
+     "family": "GAP",
+     "mode": "fade",
+     "side": "both",
+     "stop_atr": 1.5,
+     "target": 1.5,
+     "target_kind": "r"
+    },
+    "thr": [
+     3.5934718100891754,
+     "inf"
+    ]
+   },
+   {
+    "spec": {
+     "bucket_hi_q": 1.0,
+     "bucket_lo_q": 0.5,
+     "confirm": true,
+     "confirm_bars": 3,
+     "family": "GAP",
+     "mode": "go",
+     "side": "both",
+     "stop_atr": 1.5,
+     "target": 1.5,
+     "target_kind": "r"
+    },
+    "thr": [
+     3.5934718100891754,
+     "inf"
+    ]
+   },
+   {
+    "spec": {
+     "drift_q": 0.75,
+     "entry_min": 15,
+     "family": "OVERNIGHT",
+     "mode": "continue",
+     "pos_filter": "none",
+     "side": "both",
+     "stop_atr": 1.5,
+     "target_r": 1.5
+    },
+    "thr": [
+     6.461589719181275
+    ]
+   },
+   {
+    "spec": {
+     "drift_q": 0.75,
+     "entry_min": 15,
+     "family": "OVERNIGHT",
+     "mode": "reverse",
+     "pos_filter": "none",
+     "side": "both",
+     "stop_atr": 1.5,
+     "target_r": 1.5
+    },
+    "thr": [
+     6.461589719181275
+    ]
+   },
+   {
+    "spec": {
+     "anchor": "open",
+     "exit_clock": "flat",
+     "family": "VOLREV",
+     "k": 2.0,
+     "mode": "fade",
+     "n_range": 0,
+     "pct": 0.75,
+     "side": "both",
+     "stop_atr": 1.5,
+     "target": 1.5,
+     "target_kind": "r",
+     "tod": "all"
+    },
+    "thr": [
+     0.0004441601745537552
+    ]
+   },
+   {
+    "spec": {
+     "anchor": "none",
+     "exit_clock": "flat",
+     "family": "VOLREV",
+     "k": 0.0,
+     "mode": "expand",
+     "n_range": 24,
+     "pct": 0.75,
+     "side": "both",
+     "stop_atr": 1.5,
+     "target": 1.5,
+     "target_kind": "r",
+     "tod": "all"
+    },
+    "thr": [
+     0.0004441601745537552
+    ]
+   },
+   {
+    "spec": {
+     "family": "ROUND",
+     "hold": 0,
+     "level": "major",
+     "mode": "reject",
+     "prox_atr": 0.3,
+     "rej_atr": 0.3,
+     "side": "both",
+     "stop_atr": 1.5,
+     "target_r": 1.5,
+     "tod": "all"
+    },
+    "thr": []
+   },
+   {
+    "spec": {
+     "family": "ROUND",
+     "hold": 3,
+     "level": "major",
+     "mode": "break",
+     "prox_atr": 0.3,
+     "rej_atr": 0.0,
+     "side": "both",
+     "stop_atr": 1.5,
+     "target_r": 1.5,
+     "tod": "all"
+    },
+    "thr": []
+   },
+   {
+    "spec": {
+     "exit_clock": "T",
+     "family": "EOD",
+     "mode": "continue",
+     "q": 0.75,
+     "side": "both",
+     "stop_atr": 2.0,
+     "target_r": 1.5,
+     "trend_ref": "open",
+     "window_min": 60
+    },
+    "thr": [
+     5.245362290737782
+    ]
+   },
+   {
+    "spec": {
+     "exit_clock": "T",
+     "family": "EOD",
+     "mode": "reverse",
+     "q": 0.75,
+     "side": "both",
+     "stop_atr": 2.0,
+     "target_r": 1.5,
+     "trend_ref": "open",
+     "window_min": 60
+    },
+    "thr": [
+     5.245362290737782
+    ]
+   }
+  ],
+  "GER40": [
+   {
+    "spec": {
+     "buffer_atr": 0.0,
+     "family": "ORB",
+     "mode": "breakout",
+     "range_min": 15,
+     "side": "both",
+     "stop_frac": 1.0,
+     "target": 1.5,
+     "target_kind": "r",
+     "window_min": 240
+    },
+    "thr": []
+   },
+   {
+    "spec": {
+     "buffer_atr": 0.0,
+     "family": "ORB",
+     "mode": "fade",
+     "range_min": 15,
+     "side": "both",
+     "stop_frac": 0.0,
+     "target": 1.5,
+     "target_kind": "r",
+     "window_min": 240
+    },
+    "thr": []
+   },
+   {
+    "spec": {
+     "bucket_hi_q": 1.0,
+     "bucket_lo_q": 0.5,
+     "confirm": true,
+     "confirm_bars": 3,
+     "family": "GAP",
+     "mode": "fade",
+     "side": "both",
+     "stop_atr": 1.5,
+     "target": 1.5,
+     "target_kind": "r"
+    },
+    "thr": [
+     4.5117914679443665,
+     "inf"
+    ]
+   },
+   {
+    "spec": {
+     "bucket_hi_q": 1.0,
+     "bucket_lo_q": 0.5,
+     "confirm": true,
+     "confirm_bars": 3,
+     "family": "GAP",
+     "mode": "go",
+     "side": "both",
+     "stop_atr": 1.5,
+     "target": 1.5,
+     "target_kind": "r"
+    },
+    "thr": [
+     4.5117914679443665,
+     "inf"
+    ]
+   },
+   {
+    "spec": {
+     "drift_q": 0.75,
+     "entry_min": 15,
+     "family": "OVERNIGHT",
+     "mode": "continue",
+     "pos_filter": "none",
+     "side": "both",
+     "stop_atr": 1.5,
+     "target_r": 1.5
+    },
+    "thr": [
+     8.021842680070556
+    ]
+   },
+   {
+    "spec": {
+     "drift_q": 0.75,
+     "entry_min": 15,
+     "family": "OVERNIGHT",
+     "mode": "reverse",
+     "pos_filter": "none",
+     "side": "both",
+     "stop_atr": 1.5,
+     "target_r": 1.5
+    },
+    "thr": [
+     8.021842680070556
+    ]
+   },
+   {
+    "spec": {
+     "anchor": "open",
+     "exit_clock": "flat",
+     "family": "VOLREV",
+     "k": 2.0,
+     "mode": "fade",
+     "n_range": 0,
+     "pct": 0.75,
+     "side": "both",
+     "stop_atr": 1.5,
+     "target": 1.5,
+     "target_kind": "r",
+     "tod": "all"
+    },
+    "thr": [
+     0.0012578508727302375
+    ]
+   },
+   {
+    "spec": {
+     "anchor": "none",
+     "exit_clock": "flat",
+     "family": "VOLREV",
+     "k": 0.0,
+     "mode": "expand",
+     "n_range": 24,
+     "pct": 0.75,
+     "side": "both",
+     "stop_atr": 1.5,
+     "target": 1.5,
+     "target_kind": "r",
+     "tod": "all"
+    },
+    "thr": [
+     0.0012578508727302375
+    ]
+   },
+   {
+    "spec": {
+     "family": "ROUND",
+     "hold": 0,
+     "level": "major",
+     "mode": "reject",
+     "prox_atr": 0.3,
+     "rej_atr": 0.3,
+     "side": "both",
+     "stop_atr": 1.5,
+     "target_r": 1.5,
+     "tod": "all"
+    },
+    "thr": []
+   },
+   {
+    "spec": {
+     "family": "ROUND",
+     "hold": 3,
+     "level": "major",
+     "mode": "break",
+     "prox_atr": 0.3,
+     "rej_atr": 0.0,
+     "side": "both",
+     "stop_atr": 1.5,
+     "target_r": 1.5,
+     "tod": "all"
+    },
+    "thr": []
+   },
+   {
+    "spec": {
+     "exit_clock": "T",
+     "family": "EOD",
+     "mode": "continue",
+     "q": 0.75,
+     "side": "both",
+     "stop_atr": 2.0,
+     "target_r": 1.5,
+     "trend_ref": "open",
+     "window_min": 60
+    },
+    "thr": [
+     6.373564712306052
+    ]
+   },
+   {
+    "spec": {
+     "exit_clock": "T",
+     "family": "EOD",
+     "mode": "reverse",
+     "q": 0.75,
+     "side": "both",
+     "stop_atr": 2.0,
+     "target_r": 1.5,
+     "trend_ref": "open",
+     "window_min": 60
+    },
+    "thr": [
+     6.373564712306052
+    ]
+   },
+   {
+    "spec": {
+     "catchup": true,
+     "exit_clock": "flat",
+     "family": "LEADLAG",
+     "leader": "NAS100",
+     "n_bars": 3,
+     "q": 0.95,
+     "side": "both",
+     "sign": 1,
+     "stop_atr": 1.5,
+     "target_r": 1.5,
+     "tod": "all"
+    },
+    "thr": [
+     2.3453747724703
+    ]
+   },
+   {
+    "spec": {
+     "catchup": true,
+     "exit_clock": "flat",
+     "family": "LEADLAG",
+     "leader": "SPX500",
+     "n_bars": 3,
+     "q": 0.95,
+     "side": "both",
+     "sign": 1,
+     "stop_atr": 1.5,
+     "target_r": 1.5,
+     "tod": "all"
+    },
+    "thr": [
+     2.3063691228382455
+    ]
+   }
+  ],
+  "NAS100": [
+   {
+    "spec": {
+     "buffer_atr": 0.0,
+     "family": "ORB",
+     "mode": "breakout",
+     "range_min": 15,
+     "side": "both",
+     "stop_frac": 1.0,
+     "target": 1.5,
+     "target_kind": "r",
+     "window_min": 240
+    },
+    "thr": []
+   },
+   {
+    "spec": {
+     "buffer_atr": 0.0,
+     "family": "ORB",
+     "mode": "fade",
+     "range_min": 15,
+     "side": "both",
+     "stop_frac": 0.0,
+     "target": 1.5,
+     "target_kind": "r",
+     "window_min": 240
+    },
+    "thr": []
+   },
+   {
+    "spec": {
+     "bucket_hi_q": 1.0,
+     "bucket_lo_q": 0.5,
+     "confirm": true,
+     "confirm_bars": 3,
+     "family": "GAP",
+     "mode": "fade",
+     "side": "both",
+     "stop_atr": 1.5,
+     "target": 1.5,
+     "target_kind": "r"
+    },
+    "thr": [
+     4.166924027177235,
+     "inf"
+    ]
+   },
+   {
+    "spec": {
+     "bucket_hi_q": 1.0,
+     "bucket_lo_q": 0.5,
+     "confirm": true,
+     "confirm_bars": 3,
+     "family": "GAP",
+     "mode": "go",
+     "side": "both",
+     "stop_atr": 1.5,
+     "target": 1.5,
+     "target_kind": "r"
+    },
+    "thr": [
+     4.166924027177235,
+     "inf"
+    ]
+   },
+   {
+    "spec": {
+     "drift_q": 0.75,
+     "entry_min": 15,
+     "family": "OVERNIGHT",
+     "mode": "continue",
+     "pos_filter": "none",
+     "side": "both",
+     "stop_atr": 1.5,
+     "target_r": 1.5
+    },
+    "thr": [
+     8.879387145718916
+    ]
+   },
+   {
+    "spec": {
+     "drift_q": 0.75,
+     "entry_min": 15,
+     "family": "OVERNIGHT",
+     "mode": "reverse",
+     "pos_filter": "none",
+     "side": "both",
+     "stop_atr": 1.5,
+     "target_r": 1.5
+    },
+    "thr": [
+     8.879387145718916
+    ]
+   },
+   {
+    "spec": {
+     "anchor": "open",
+     "exit_clock": "flat",
+     "family": "VOLREV",
+     "k": 2.0,
+     "mode": "fade",
+     "n_range": 0,
+     "pct": 0.75,
+     "side": "both",
+     "stop_atr": 1.5,
+     "target": 1.5,
+     "target_kind": "r",
+     "tod": "all"
+    },
+    "thr": [
+     0.0017365137749001875
+    ]
+   },
+   {
+    "spec": {
+     "anchor": "none",
+     "exit_clock": "flat",
+     "family": "VOLREV",
+     "k": 0.0,
+     "mode": "expand",
+     "n_range": 24,
+     "pct": 0.75,
+     "side": "both",
+     "stop_atr": 1.5,
+     "target": 1.5,
+     "target_kind": "r",
+     "tod": "all"
+    },
+    "thr": [
+     0.0017365137749001875
+    ]
+   },
+   {
+    "spec": {
+     "family": "ROUND",
+     "hold": 0,
+     "level": "major",
+     "mode": "reject",
+     "prox_atr": 0.3,
+     "rej_atr": 0.3,
+     "side": "both",
+     "stop_atr": 1.5,
+     "target_r": 1.5,
+     "tod": "all"
+    },
+    "thr": []
+   },
+   {
+    "spec": {
+     "family": "ROUND",
+     "hold": 3,
+     "level": "major",
+     "mode": "break",
+     "prox_atr": 0.3,
+     "rej_atr": 0.0,
+     "side": "both",
+     "stop_atr": 1.5,
+     "target_r": 1.5,
+     "tod": "all"
+    },
+    "thr": []
+   },
+   {
+    "spec": {
+     "exit_clock": "T",
+     "family": "EOD",
+     "mode": "continue",
+     "q": 0.75,
+     "side": "both",
+     "stop_atr": 2.0,
+     "target_r": 1.5,
+     "trend_ref": "open",
+     "window_min": 60
+    },
+    "thr": [
+     8.963549700646311
+    ]
+   },
+   {
+    "spec": {
+     "exit_clock": "T",
+     "family": "EOD",
+     "mode": "reverse",
+     "q": 0.75,
+     "side": "both",
+     "stop_atr": 2.0,
+     "target_r": 1.5,
+     "trend_ref": "open",
+     "window_min": 60
+    },
+    "thr": [
+     8.963549700646311
+    ]
+   },
+   {
+    "spec": {
+     "catchup": true,
+     "exit_clock": "flat",
+     "family": "LEADLAG",
+     "leader": "SPX500",
+     "n_bars": 3,
+     "q": 0.95,
+     "side": "both",
+     "sign": 1,
+     "stop_atr": 1.5,
+     "target_r": 1.5,
+     "tod": "all"
+    },
+    "thr": [
+     2.2676668819745545
+    ]
+   },
+   {
+    "spec": {
+     "catchup": true,
+     "exit_clock": "flat",
+     "family": "LEADLAG",
+     "leader": "GER40",
+     "n_bars": 3,
+     "q": 0.95,
+     "side": "both",
+     "sign": 1,
+     "stop_atr": 1.5,
+     "target_r": 1.5,
+     "tod": "all"
+    },
+    "thr": [
+     2.2359448428627537
+    ]
+   }
+  ],
+  "SPX500": [
+   {
+    "spec": {
+     "buffer_atr": 0.0,
+     "family": "ORB",
+     "mode": "breakout",
+     "range_min": 15,
+     "side": "both",
+     "stop_frac": 1.0,
+     "target": 1.5,
+     "target_kind": "r",
+     "window_min": 240
+    },
+    "thr": []
+   },
+   {
+    "spec": {
+     "buffer_atr": 0.0,
+     "family": "ORB",
+     "mode": "fade",
+     "range_min": 15,
+     "side": "both",
+     "stop_frac": 0.0,
+     "target": 1.5,
+     "target_kind": "r",
+     "window_min": 240
+    },
+    "thr": []
+   },
+   {
+    "spec": {
+     "bucket_hi_q": 1.0,
+     "bucket_lo_q": 0.5,
+     "confirm": true,
+     "confirm_bars": 3,
+     "family": "GAP",
+     "mode": "fade",
+     "side": "both",
+     "stop_atr": 1.5,
+     "target": 1.5,
+     "target_kind": "r"
+    },
+    "thr": [
+     4.20287305775434,
+     "inf"
+    ]
+   },
+   {
+    "spec": {
+     "bucket_hi_q": 1.0,
+     "bucket_lo_q": 0.5,
+     "confirm": true,
+     "confirm_bars": 3,
+     "family": "GAP",
+     "mode": "go",
+     "side": "both",
+     "stop_atr": 1.5,
+     "target": 1.5,
+     "target_kind": "r"
+    },
+    "thr": [
+     4.20287305775434,
+     "inf"
+    ]
+   },
+   {
+    "spec": {
+     "drift_q": 0.75,
+     "entry_min": 15,
+     "family": "OVERNIGHT",
+     "mode": "continue",
+     "pos_filter": "none",
+     "side": "both",
+     "stop_atr": 1.5,
+     "target_r": 1.5
+    },
+    "thr": [
+     7.982926627805934
+    ]
+   },
+   {
+    "spec": {
+     "drift_q": 0.75,
+     "entry_min": 15,
+     "family": "OVERNIGHT",
+     "mode": "reverse",
+     "pos_filter": "none",
+     "side": "both",
+     "stop_atr": 1.5,
+     "target_r": 1.5
+    },
+    "thr": [
+     7.982926627805934
+    ]
+   },
+   {
+    "spec": {
+     "anchor": "open",
+     "exit_clock": "flat",
+     "family": "VOLREV",
+     "k": 2.0,
+     "mode": "fade",
+     "n_range": 0,
+     "pct": 0.75,
+     "side": "both",
+     "stop_atr": 1.5,
+     "target": 1.5,
+     "target_kind": "r",
+     "tod": "all"
+    },
+    "thr": [
+     0.0012619931864660042
+    ]
+   },
+   {
+    "spec": {
+     "anchor": "none",
+     "exit_clock": "flat",
+     "family": "VOLREV",
+     "k": 0.0,
+     "mode": "expand",
+     "n_range": 24,
+     "pct": 0.75,
+     "side": "both",
+     "stop_atr": 1.5,
+     "target": 1.5,
+     "target_kind": "r",
+     "tod": "all"
+    },
+    "thr": [
+     0.0012619931864660042
+    ]
+   },
+   {
+    "spec": {
+     "family": "ROUND",
+     "hold": 0,
+     "level": "major",
+     "mode": "reject",
+     "prox_atr": 0.3,
+     "rej_atr": 0.3,
+     "side": "both",
+     "stop_atr": 1.5,
+     "target_r": 1.5,
+     "tod": "all"
+    },
+    "thr": []
+   },
+   {
+    "spec": {
+     "family": "ROUND",
+     "hold": 3,
+     "level": "major",
+     "mode": "break",
+     "prox_atr": 0.3,
+     "rej_atr": 0.0,
+     "side": "both",
+     "stop_atr": 1.5,
+     "target_r": 1.5,
+     "tod": "all"
+    },
+    "thr": []
+   },
+   {
+    "spec": {
+     "exit_clock": "T",
+     "family": "EOD",
+     "mode": "continue",
+     "q": 0.75,
+     "side": "both",
+     "stop_atr": 2.0,
+     "target_r": 1.5,
+     "trend_ref": "open",
+     "window_min": 60
+    },
+    "thr": [
+     8.023927655585851
+    ]
+   },
+   {
+    "spec": {
+     "exit_clock": "T",
+     "family": "EOD",
+     "mode": "reverse",
+     "q": 0.75,
+     "side": "both",
+     "stop_atr": 2.0,
+     "target_r": 1.5,
+     "trend_ref": "open",
+     "window_min": 60
+    },
+    "thr": [
+     8.023927655585851
+    ]
+   },
+   {
+    "spec": {
+     "catchup": true,
+     "exit_clock": "flat",
+     "family": "LEADLAG",
+     "leader": "NAS100",
+     "n_bars": 3,
+     "q": 0.95,
+     "side": "both",
+     "sign": 1,
+     "stop_atr": 1.5,
+     "target_r": 1.5,
+     "tod": "all"
+    },
+    "thr": [
+     2.2894412603548866
+    ]
+   },
+   {
+    "spec": {
+     "catchup": true,
+     "exit_clock": "flat",
+     "family": "LEADLAG",
+     "leader": "GER40",
+     "n_bars": 3,
+     "q": 0.95,
+     "side": "both",
+     "sign": 1,
+     "stop_atr": 1.5,
+     "target_r": 1.5,
+     "tod": "all"
+    },
+    "thr": [
+     2.2359448428627537
+    ]
+   }
+  ],
+  "XAUUSD": [
+   {
+    "spec": {
+     "buffer_atr": 0.0,
+     "family": "ORB",
+     "mode": "breakout",
+     "range_min": 15,
+     "side": "both",
+     "stop_frac": 1.0,
+     "target": 1.5,
+     "target_kind": "r",
+     "window_min": 240
+    },
+    "thr": []
+   },
+   {
+    "spec": {
+     "buffer_atr": 0.0,
+     "family": "ORB",
+     "mode": "fade",
+     "range_min": 15,
+     "side": "both",
+     "stop_frac": 0.0,
+     "target": 1.5,
+     "target_kind": "r",
+     "window_min": 240
+    },
+    "thr": []
+   },
+   {
+    "spec": {
+     "bucket_hi_q": 1.0,
+     "bucket_lo_q": 0.5,
+     "confirm": true,
+     "confirm_bars": 3,
+     "family": "GAP",
+     "mode": "fade",
+     "side": "both",
+     "stop_atr": 1.5,
+     "target": 1.5,
+     "target_kind": "r"
+    },
+    "thr": [
+     5.709955592275055,
+     "inf"
+    ]
+   },
+   {
+    "spec": {
+     "bucket_hi_q": 1.0,
+     "bucket_lo_q": 0.5,
+     "confirm": true,
+     "confirm_bars": 3,
+     "family": "GAP",
+     "mode": "go",
+     "side": "both",
+     "stop_atr": 1.5,
+     "target": 1.5,
+     "target_kind": "r"
+    },
+    "thr": [
+     5.709955592275055,
+     "inf"
+    ]
+   },
+   {
+    "spec": {
+     "drift_q": 0.75,
+     "entry_min": 15,
+     "family": "OVERNIGHT",
+     "mode": "continue",
+     "pos_filter": "none",
+     "side": "both",
+     "stop_atr": 1.5,
+     "target_r": 1.5
+    },
+    "thr": [
+     9.491918323501574
+    ]
+   },
+   {
+    "spec": {
+     "drift_q": 0.75,
+     "entry_min": 15,
+     "family": "OVERNIGHT",
+     "mode": "reverse",
+     "pos_filter": "none",
+     "side": "both",
+     "stop_atr": 1.5,
+     "target_r": 1.5
+    },
+    "thr": [
+     9.491918323501574
+    ]
+   },
+   {
+    "spec": {
+     "anchor": "open",
+     "exit_clock": "flat",
+     "family": "VOLREV",
+     "k": 2.0,
+     "mode": "fade",
+     "n_range": 0,
+     "pct": 0.75,
+     "side": "both",
+     "stop_atr": 1.5,
+     "target": 1.5,
+     "target_kind": "r",
+     "tod": "all"
+    },
+    "thr": [
+     0.0013725314717595396
+    ]
+   },
+   {
+    "spec": {
+     "anchor": "none",
+     "exit_clock": "flat",
+     "family": "VOLREV",
+     "k": 0.0,
+     "mode": "expand",
+     "n_range": 24,
+     "pct": 0.75,
+     "side": "both",
+     "stop_atr": 1.5,
+     "target": 1.5,
+     "target_kind": "r",
+     "tod": "all"
+    },
+    "thr": [
+     0.0013725314717595396
+    ]
+   },
+   {
+    "spec": {
+     "family": "ROUND",
+     "hold": 0,
+     "level": "major",
+     "mode": "reject",
+     "prox_atr": 0.3,
+     "rej_atr": 0.3,
+     "side": "both",
+     "stop_atr": 1.5,
+     "target_r": 1.5,
+     "tod": "all"
+    },
+    "thr": []
+   },
+   {
+    "spec": {
+     "family": "ROUND",
+     "hold": 3,
+     "level": "major",
+     "mode": "break",
+     "prox_atr": 0.3,
+     "rej_atr": 0.0,
+     "side": "both",
+     "stop_atr": 1.5,
+     "target_r": 1.5,
+     "tod": "all"
+    },
+    "thr": []
+   },
+   {
+    "spec": {
+     "exit_clock": "T",
+     "family": "EOD",
+     "mode": "continue",
+     "q": 0.75,
+     "side": "both",
+     "stop_atr": 2.0,
+     "target_r": 1.5,
+     "trend_ref": "open",
+     "window_min": 60
+    },
+    "thr": [
+     4.62379895627327
+    ]
+   },
+   {
+    "spec": {
+     "exit_clock": "T",
+     "family": "EOD",
+     "mode": "reverse",
+     "q": 0.75,
+     "side": "both",
+     "stop_atr": 2.0,
+     "target_r": 1.5,
+     "trend_ref": "open",
+     "window_min": 60
+    },
+    "thr": [
+     4.62379895627327
+    ]
+   }
+  ]
+ },
+ "provenance": {
+  "EURUSD": {
+   "excluded_unfitted": [],
+   "first_bar_utc": "2025-05-26T22:00:00+00:00",
+   "last_bar_utc": "2026-06-30T21:55:00+00:00",
+   "last_berlin_date": "2026-06-30",
+   "n_fit_bars": 81791
+  },
+  "GER40": {
+   "excluded_unfitted": [],
+   "first_bar_utc": "2025-02-10T17:55:00+00:00",
+   "last_bar_utc": "2026-06-30T19:55:00+00:00",
+   "last_berlin_date": "2026-06-30",
+   "n_fit_bars": 84583
+  },
+  "NAS100": {
+   "excluded_unfitted": [],
+   "first_bar_utc": "2025-05-02T09:35:00+00:00",
+   "last_bar_utc": "2026-06-30T20:55:00+00:00",
+   "last_berlin_date": "2026-06-30",
+   "n_fit_bars": 82117
+  },
+  "SPX500": {
+   "excluded_unfitted": [],
+   "first_bar_utc": "2025-05-02T09:40:00+00:00",
+   "last_bar_utc": "2026-06-30T20:55:00+00:00",
+   "last_berlin_date": "2026-06-30",
+   "n_fit_bars": 82116
+  },
+  "XAUUSD": {
+   "excluded_unfitted": [],
+   "first_bar_utc": "2025-05-05T02:25:00+00:00",
+   "last_bar_utc": "2026-06-30T20:55:00+00:00",
+   "last_berlin_date": "2026-06-30",
+   "n_fit_bars": 82098
+  }
+ },
+ "schema": "demo-production-spec-1",
+ "selection_rule": "per family: class-default spec + mode complement (LEADLAG: one default spec per leader); thresholds fitted once on dev frames with Berlin date <= fit_end; no performance-based selection",
+ "strategy_hash": "c3eae99e782888ac"
+}
