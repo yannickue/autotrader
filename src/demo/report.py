@@ -276,10 +276,13 @@ def build_report(store: DemoStore, phase: str | None = None) -> dict[str, Any]:
     statement += " This report makes no claim of profitability or edge." + (
         " DISCOVERY-phase data is not a clean holdout." if phase in (None, "DISCOVERY") else ""
     )
+    from demo.funnel import funnel as build_funnel
+
     return {
         "phase": phase or "ALL",
         "generated_utc": datetime.now().astimezone().isoformat(),
         "sample_size_statement": statement,
+        "rejection_funnel": build_funnel(store, None, phase),
         "metrics": metrics,
         "breakdowns": breakdowns,
         "accepted_vs_rejected": accepted_vs_rejected,
@@ -356,6 +359,10 @@ def render_markdown(report: dict[str, Any]) -> str:
                 f"| {g} | {s['n']} | {_fmt(s['winrate'])} | {_fmt(s['expected_r'])} | {_fmt(s['sum_r'])} | "
                 f"{'low n' if s['low_n'] else ''} |"
             )
+    if "rejection_funnel" in report:
+        from demo.funnel import render as render_funnel
+
+        L += ["", "## Rejection funnel", "", "```", render_funnel(report["rejection_funnel"]), "```"]
     avr = report["accepted_vs_rejected"]
     L += [
         "",

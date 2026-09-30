@@ -2,7 +2,8 @@
 """Deterministic in-memory test doubles for the DEMO runner (zero MT5, zero network).
 
 * ``FakeClock``       injectable clock.
-* ``FakeBarSource``   execution-side ``BarSource`` (frame/quote/last_bar_close_utc) with synthetic,
+* ``FakeBarSource``   the LiveBarSource surface (``m5_frame`` with ts/open/high/low/close/tick_volume/
+                      spread_pts, ``latest_quote``, ``last_closed_bar_close_utc``) with synthetic,
                       overridable M5 bars generated from the clock.
 * ``FakeStack``       ``StackPort`` implementation: exactly-once submit per intent_id, scripted fills,
                       broker-side closes, shadow-mode hard guard (``AssertionError`` on any submit).
@@ -30,6 +31,7 @@ from demo.contracts import (
     opportunity_id_for,
     stable_hash,
 )
+from demo.execution import gates as G
 from demo.execution.events import (
     Accepted,
     ExecutionEvent,
@@ -39,6 +41,7 @@ from demo.execution.events import (
     Rejected,
 )
 from demo.execution.stack_port import AccountSnapshot, StackFailClosed
+from demo.opportunity.bar_source import Quote
 
 T0 = datetime(2026, 10, 1, 9, 0, tzinfo=UTC)  # a Thursday
 M5 = timedelta(minutes=5)
@@ -75,24 +78,29 @@ class FakeBarSource:
         ref = self.frozen.get(market, self.clock())
         return floor5(ref) - M5  # newest fully closed bar's OPEN
 
-    def frame(self, market: str) -> pd.DataFrame:
+    def m5_frame(self, market: str, n: int | None = None) -> pd.DataFrame:
         self.frame_calls += 1
         if market in self.fail:
             raise RuntimeError("feed failure")
         last = self._last_open(market)
-        idx = pd.DatetimeIndex([last - M5 * k for k in range(self.n - 1, -1, -1)], name="ts_utc")
+        ts = [last - M5 * k for k in range(self.n - 1, -1, -1)]
         rows = []
-        for t in idx:
+        for t in ts:
             o, h, low, c = self.overrides.get(
-                (market, t.to_pydatetime()), (self.base, self.base + 0.5, self.base - 0.5, self.base)
+                (market, t), (self.base, self.base + 0.5, self.base - 0.5, self.base)
             )
-            rows.append({"open": o, "high": h, "low": low, "close": c, "tick_activity": 10, "spread_points": 2})
-        return pd.DataFrame(rows, index=idx)
+            rows.append({"ts": t, "open": o, "high": h, "low": low, "close": c, "tick_volume": 10, "spread_pts": 2})
+        fr = pd.DataFrame(rows)
+        fr["ts"] = pd.to_datetime(fr["ts"], utc=True).astype("datetime64[ns, UTC]")
+        return fr.iloc[-n:].reset_index(drop=True) if n else fr
 
-    def quote(self, market: str) -> tuple[float, float, datetime]:
-        return (self.base, self.base + 0.1, self.frozen.get(market, self.clock()))
+    def latest_quote(self, market: str) -> Quote | None:
+        return Quote(ts_utc=self.frozen.get(market, self.clock()), bid=self.base, ask=self.base + 0.1)
 
-    def last_bar_close_utc(self, market: str) -> datetime | None:
+    def tick_activity(self, market: str) -> float | None:
+        return None
+
+    def last_closed_bar_close_utc(self, market: str) -> datetime | None:
         if market in self.fail:
             raise RuntimeError("feed failure")
         return self._last_open(market) + M5
@@ -115,6 +123,9 @@ class FakeStack:
     stopped: bool = False
     clock_calls: int = 0
     known: set[str] = field(default_factory=set)
+    contexts: dict[str, dict[str, Any]] = field(default_factory=dict)
+    reject_reasons: list[str] = field(default_factory=list)
+    script: dict[str, list[ExecutionEvent]] = field(default_factory=dict)  # intent_id -> events to return
 
     def __post_init__(self) -> None:
         self.bar_source = FakeBarSource(self.clock, self.markets)
@@ -161,19 +172,29 @@ class FakeStack:
     def has_position(self, market: str) -> bool:
         return any(i.market == market for i in self.positions.values())
 
-    def submit(self, intent: TradeIntent) -> list[ExecutionEvent]:
+    def submit(self, intent: TradeIntent, context: Any = None) -> list[ExecutionEvent]:
         if self.shadow:
             raise AssertionError("submit() called in shadow mode")
         if intent.intent_id in self.known:  # exactly-once per intent_id
             return []
         self.known.add(intent.intent_id)
         self.submits.append(intent)
+        self.contexts[intent.intent_id] = dict(context or {})
         iid = intent.intent_id
+        if iid in self.script:
+            evs = self.script[iid]
+            for e in evs:
+                if isinstance(e, Rejected):
+                    self.reject_reasons.append(e.reason)
+                if isinstance(e, Fill):
+                    self.positions[iid] = intent
+            return list(evs)
         if self.mode == "fail_closed":
             raise StackFailClosed("scripted fail closed")
         if self.mode == "unknown_error":
             raise RuntimeError("scripted unknown error")
         if self.mode == "reject":
+            self.reject_reasons.append("risk: scripted rejection")
             return [Rejected(iid, "risk: scripted rejection")]
         acc = Accepted(iid, Decimal("1"), Decimal("10000"), Decimal("0.01"), Decimal("100"), Decimal("2"))
         if self.mode == "accept_only":
@@ -198,6 +219,9 @@ class FakeStack:
 
     def open_intents(self) -> Sequence[str]:
         return list(self.positions)
+
+    def rejection_funnel(self) -> dict[str, dict[str, object]]:
+        return G.funnel(self.reject_reasons)
 
     def halt_new_exposure(self, reason: str) -> None:
         self.halts.append(reason)

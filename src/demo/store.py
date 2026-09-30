@@ -231,11 +231,13 @@ CREATE TABLE IF NOT EXISTS risk_detail (
 CREATE INDEX IF NOT EXISTS ix_risk_detail_phase ON risk_detail(phase, kind);
 
 CREATE TABLE IF NOT EXISTS tca_records (
-    intent_id TEXT PRIMARY KEY REFERENCES intents(intent_id),
+    intent_id TEXT NOT NULL REFERENCES intents(intent_id),
+    stage TEXT NOT NULL,
     opportunity_id TEXT NOT NULL,
     phase TEXT NOT NULL,
     recorded_utc TEXT NOT NULL,
-    json TEXT NOT NULL
+    json TEXT NOT NULL,
+    PRIMARY KEY (intent_id, stage)
 );
 CREATE INDEX IF NOT EXISTS ix_tca_phase ON tca_records(phase);
 
@@ -282,6 +284,7 @@ _IMMUTABLE_TABLES = (
     "risk_detail", "tca_records",
 )
 RISK_DETAIL_KINDS = ("ACCEPTED", "REJECTED")
+TCA_STAGES = ("ENTRY", "EXIT")
 
 
 def _triggers() -> str:
@@ -859,8 +862,14 @@ class DemoStore:
             for r in self._q(sql + " ORDER BY recorded_utc, intent_id, kind", tuple(args))
         ]
 
-    def record_tca(self, intent_id: str, tca: dict[str, Any] | None) -> bool:
-        """Insert-once per-fill transaction-cost analysis (price units unless noted)."""
+    def record_tca(self, intent_id: str, tca: dict[str, Any] | None, stage: str = "ENTRY") -> bool:
+        """Insert-once per-fill transaction-cost analysis (price units unless noted).
+
+        ``ENTRY`` is written at the fill (slippage, fill vs mid, fees in price units, cost, movement to
+        cost, latencies), ``EXIT`` at the close (closing costs, exit slippage vs level, broker vs computed
+        P&L). Identical re-insert is a no-op; a differing payload raises ``ImmutableRecordError``."""
+        if stage not in TCA_STAGES:
+            raise ValueError(f"bad tca stage {stage!r}")
         if not tca:
             return False
         payload = json.dumps(tca, sort_keys=True, default=str)
@@ -869,34 +878,78 @@ class DemoStore:
             opp = c.execute(
                 "SELECT opportunity_id FROM intents WHERE intent_id=?", (intent_id,)
             ).fetchone()["opportunity_id"]
-            row = c.execute("SELECT json FROM tca_records WHERE intent_id=?", (intent_id,)).fetchone()
+            row = c.execute(
+                "SELECT json FROM tca_records WHERE intent_id=? AND stage=?", (intent_id, stage)
+            ).fetchone()
             if row is not None:
                 if row["json"] == payload:
                     return False
                 raise ImmutableRecordError("tca record is immutable")
             c.execute(
-                "INSERT INTO tca_records(intent_id,opportunity_id,phase,recorded_utc,json) "
-                "VALUES(?,?,?,?,?)",
-                (intent_id, opp, phase, self._clock(), payload),
+                "INSERT INTO tca_records(intent_id,stage,opportunity_id,phase,recorded_utc,json) "
+                "VALUES(?,?,?,?,?,?)",
+                (intent_id, stage, opp, phase, self._clock(), payload),
             )
             return True
 
-    def get_tca(self, intent_id: str) -> dict[str, Any] | None:
-        r = self._one("SELECT json FROM tca_records WHERE intent_id=?", (intent_id,))
+    def get_tca(self, intent_id: str, stage: str = "ENTRY") -> dict[str, Any] | None:
+        r = self._one(
+            "SELECT json FROM tca_records WHERE intent_id=? AND stage=?", (intent_id, stage)
+        )
         return None if r is None else json.loads(r["json"])
 
     def list_tca(self, phase: str | None = None) -> list[dict[str, Any]]:
         _check_phase(phase)
         rows = (
-            self._q("SELECT * FROM tca_records WHERE phase=? ORDER BY recorded_utc", (phase,))
+            self._q("SELECT * FROM tca_records WHERE phase=? ORDER BY recorded_utc, stage", (phase,))
             if phase is not None
-            else self._q("SELECT * FROM tca_records ORDER BY recorded_utc")
+            else self._q("SELECT * FROM tca_records ORDER BY recorded_utc, stage")
         )
         return [
-            {"intent_id": r["intent_id"], "opportunity_id": r["opportunity_id"], "phase": r["phase"],
-             **json.loads(r["json"])}
+            {"intent_id": r["intent_id"], "opportunity_id": r["opportunity_id"],
+             "phase": r["phase"], "stage": r["stage"], **json.loads(r["json"])}
             for r in rows
         ]
+
+    def funnel_rows(self, phase: str | None = None) -> list[dict[str, Any]]:
+        """One row per recorded opportunity with everything the rejection funnel needs, in ONE query:
+        market, family, engine decision (accepted, reasons), intent state, stack reject code / gate class
+        (from ``risk_detail`` REJECTED, falling back to ``risk_records.reject_reason``), the
+        ``otherwise_valid`` flag of the stack decision and whether a risk approval exists."""
+        _check_phase(phase)
+        sql = (
+            "SELECT s.opportunity_id AS opportunity_id, s.market AS market, "
+            "json_extract(s.json,'$.signal.family') AS family, d.accepted AS accepted, "
+            "d.reasons AS reasons, i.intent_id AS intent_id, i.state AS state, "
+            "rd.reject_code AS rd_code, rd.gate_class AS rd_class, "
+            "json_extract(rd.json,'$.otherwise_valid') AS otherwise_valid, "
+            "json_extract(rk.json,'$.reject_reason') AS rk_reason, "
+            "json_extract(rk.json,'$.approved') AS approved, "
+            "(SELECT COUNT(*) FROM outcomes o WHERE o.intent_id=i.intent_id) AS has_outcome "
+            "FROM snapshots s "
+            "LEFT JOIN decisions d ON d.opportunity_id=s.opportunity_id "
+            "LEFT JOIN intents i ON i.opportunity_id=s.opportunity_id "
+            "LEFT JOIN risk_detail rd ON rd.intent_id=i.intent_id AND rd.kind='REJECTED' "
+            "LEFT JOIN risk_records rk ON rk.intent_id=i.intent_id"
+        )
+        args: tuple = ()
+        if phase is not None:
+            sql += " WHERE s.phase=?"
+            args = (phase,)
+        out = []
+        for r in self._q(sql, args):
+            out.append({
+                "opportunity_id": r["opportunity_id"], "market": r["market"], "family": r["family"],
+                "accepted": None if r["accepted"] is None else bool(r["accepted"]),
+                "reasons": [] if r["reasons"] is None else list(json.loads(r["reasons"])),
+                "intent_id": r["intent_id"], "state": r["state"],
+                "stack_reject_code": r["rd_code"] or r["rk_reason"],
+                "stack_gate_class": r["rd_class"],
+                "otherwise_valid": None if r["otherwise_valid"] is None else bool(r["otherwise_valid"]),
+                "approved": None if r["approved"] is None else bool(r["approved"]),
+                "has_outcome": bool(r["has_outcome"]),
+            })
+        return out
 
     def record_execution(self, intent_id: str, ex: ExecutionRecord) -> bool:
         """Append-only log; the latest row is the current record (fill, then verified fees/swap, ...).

@@ -73,3 +73,8 @@ def test_tca_roundtrip_immutable_and_backward_compatible_reopen(tmp_path):
         rows = s.list_tca("DISCOVERY")
         assert len(rows) == 1 and rows[0]["slippage_vs_intended"] == "0.2"
         assert s.get_tca(rows[0]["intent_id"])["latency_total_ms"] == 12.5
+        assert rows[0]["stage"] == "ENTRY" and s.get_tca(rows[0]["intent_id"], "EXIT") is None
+        assert s.record_tca(rows[0]["intent_id"], {"exit_slippage_vs_level": "0.1"}, "EXIT") is True
+        assert len(s.list_tca()) == 2
+        with pytest.raises(ValueError):
+            s.record_tca(rows[0]["intent_id"], {"x": 1}, "MID")

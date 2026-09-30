@@ -12,10 +12,10 @@ The stack never retries an exposure-changing request on its own.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Protocol
+from typing import Any, Protocol
 
 from demo.contracts import TradeIntent
 from demo.execution.events import ExecutionEvent
@@ -43,8 +43,17 @@ class AccountSnapshot:
     extra: dict[str, object] = field(default_factory=dict)
 
 
+class FeedSource(BarSource, Protocol):
+    """The stack's bar source = the engine's ``BarSource`` (``m5_frame`` / ``latest_quote``: closed M5
+    bars with columns ts, open, high, low, close, tick_volume, spread_pts; executable quote) plus the
+    freshness accessor the runner needs (``LiveBarSource`` implements exactly this)."""
+
+    def last_closed_bar_close_utc(self, market: str) -> datetime | None:
+        """UTC close of the newest closed M5 bar - changes exactly when a new bar closed."""
+
+
 class StackPort(Protocol):
-    bar_source: BarSource
+    bar_source: FeedSource
 
     def start(self) -> AccountSnapshot:
         """Attach (never log in), verify DEMO, reconcile from the venue snapshot -> RECONCILED."""
@@ -54,9 +63,14 @@ class StackPort(Protocol):
     def has_position(self, market: str) -> bool:
         """True if the venue (broker truth) holds or is opening a position on ``market``."""
 
-    def submit(self, intent: TradeIntent) -> list[ExecutionEvent]:
+    def submit(
+        self, intent: TradeIntent, context: Mapping[str, Any] | None = None
+    ) -> list[ExecutionEvent]:
         """Risk-size and send one ACCEPTED intent (entry + mandatory broker stop [+TP]).
-        Exactly-once per ``intent_id``. In shadow mode it must never reach order_send."""
+        Exactly-once per ``intent_id``. In shadow mode it must never reach order_send.
+
+        ``context`` carries what the runner knows about the opportunity (family for concentration
+        caps, atr, QUALITY inputs that are logged only). It never changes sizing or acceptance."""
 
     def poll_events(self) -> list[ExecutionEvent]:
         """Broker-side events since the last call (stop/target exits, late fills, external closes)."""
@@ -66,6 +80,9 @@ class StackPort(Protocol):
 
     def open_intents(self) -> Sequence[str]:
         """intent_ids the stack believes are open (for restart adoption / reconciliation)."""
+
+    def rejection_funnel(self) -> dict[str, dict[str, object]]:
+        """In-process rejection counters by gate class (diagnostics only)."""
 
     def halt_new_exposure(self, reason: str) -> None: ...
 

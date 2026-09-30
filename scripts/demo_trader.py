@@ -101,6 +101,9 @@ def _run(args: argparse.Namespace, mode: str) -> int:
             mode, phase=args.phase or "DISCOVERY", db_path=args.db, artifacts_dir=args.artifacts,
             markets=markets, learning=args.learning,
         )
+    except rn.LiveStackRefused as exc:
+        print(f"REFUSED: {exc}", file=sys.stderr)
+        return 2
     except rn.LiveStackUnavailable as exc:
         print(f"UNAVAILABLE: {exc}", file=sys.stderr)
         return rn.EXIT_UNAVAILABLE

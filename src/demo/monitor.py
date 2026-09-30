@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+import sys
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -111,7 +112,17 @@ def analyze(
     rep = build_report(store, phase)
     md, js = write_report(store, reports_dir, phase, tag="analyze")
     exported = export_all(store, export_dir, phase)
+    from demo.funnel import funnel as build_funnel
+    from demo.funnel import render as render_funnel
+
+    fun = build_funnel(store, None, phase)
+    Path(reports_dir).mkdir(parents=True, exist_ok=True)
+    (Path(reports_dir) / f"funnel-{phase or 'ALL'}.json").write_text(
+        json.dumps(fun, indent=1, sort_keys=True, default=str), encoding="utf-8"
+    )
+    print(render_funnel(fun), file=sys.stderr)
     return {
+        "rejection_funnel": fun["summary"],
         "phase": phase or "ALL",
         "n_trades": store.count_trades(phase),
         "n_decisions": len(store.list_decisions(phase)),
