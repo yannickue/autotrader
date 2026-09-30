@@ -235,14 +235,9 @@ def verify_clock_chain(
                 raise ValueError("forced-flat instant inconsistent with local clock")
             win_txt = f"entry {cal.entry_start_min}-{cal.entry_end_min} flat {cal.forced_flat_min}"
             if production is not None:
-                from alpha.families.spec import MarketCalendar
+                from demo.opportunity.production_spec import validate_sim_windows
 
-                mcal = MarketCalendar.from_market_spec(spec)
-                for fs in production.specs_for(m):
-                    w = fs.spec.effective_window(mcal)
-                    if not (0 <= w.entry_start_min < w.entry_end_min <= w.exit_min <= 1440):
-                        raise ValueError(f"SimWindow invalid for {fs.strategy_id}")
-                win_txt += f" +{len(production.specs_for(m))} SimWindow ok"
+                win_txt += f" +{validate_sim_windows(production, m, spec)} SimWindow ok"
             now_local = local_of(spec, now)
             rows.append(ClockChainRow(
                 m, True, status, tz_name, int(now_local.utcoffset().total_seconds() // 60),  # type: ignore[union-attr]

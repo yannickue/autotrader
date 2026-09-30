@@ -280,3 +280,18 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+
+def validate_sim_windows(production: ProductionSpecSet, market: str, mspec: object) -> int:
+    """Every frozen spec of ``market`` must have a well-ordered effective SimWindow on ``mspec``'s
+    calendar (used by the runner's clock-chain verification; keeps ``alpha`` imports inside the signal
+    layer). Returns the number of specs checked; raises ``ValueError`` otherwise."""
+    from alpha.families.spec import MarketCalendar
+
+    mcal = MarketCalendar.from_market_spec(mspec)  # type: ignore[arg-type]
+    specs = production.specs_for(market)
+    for fs in specs:
+        w = fs.spec.effective_window(mcal)
+        if not (0 <= w.entry_start_min < w.entry_end_min <= w.exit_min <= 1440):
+            raise ValueError(f"SimWindow invalid for {fs.strategy_id}")
+    return len(specs)

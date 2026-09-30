@@ -1,11 +1,14 @@
+# ruff: noqa: E501
 """Frozen production spec: sealed hash, immutability, holdout rule, determinism, no MT5."""
 
 from __future__ import annotations
 
 import copy
 import json
+import os
 import sys
 from dataclasses import FrozenInstanceError
+from pathlib import Path
 
 import pytest
 
@@ -102,11 +105,18 @@ def test_refit_reproduces_the_shipped_thresholds():
 
 
 def test_no_mt5_and_no_search_dependencies_are_imported():
-    import demo.opportunity.engine
-    import demo.opportunity.replay  # noqa: F401
+    """Fresh interpreter: an in-process check is polluted by whatever earlier tests imported (optuna, deap)."""
+    import subprocess
 
-    for banned in ("MetaTrader5", "optuna", "deap"):
-        assert banned not in sys.modules, banned
+    code = (
+        "import sys; import demo.opportunity.engine, demo.opportunity.replay;"
+        "bad = [b for b in ('MetaTrader5', 'optuna', 'deap') if b in sys.modules];"
+        "assert not bad, bad"
+    )
+    root = Path(__file__).resolve().parents[4]
+    env = {**os.environ, "PYTHONPATH": str(root / "src")}
+    res = subprocess.run([sys.executable, "-c", code], cwd=root, env=env, capture_output=True, text=True, check=False)
+    assert res.returncode == 0, res.stderr
 
 
 def test_load_default_twice_is_identical():
