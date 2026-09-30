@@ -1,0 +1,549 @@
+{
+ "account_feasibility": {
+  "approved_risk_eur": 2.5,
+  "candidates_annotated": 100,
+  "candidates_fully_feasible": 0,
+  "candidates_majority_skipped": 98,
+  "influences_fitness_or_selection": false,
+  "leverage_cap_research": 10.0,
+  "leverage_ceiling_permitted": 30.0,
+  "lot_step": 0.2,
+  "min_lot": 0.2,
+  "min_lot_feasible_at_min_stop": true,
+  "min_lot_leverage": 10.712,
+  "min_lot_leverage_within_research_cap": false,
+  "min_lot_risk_at_min_stop_eur": 0.456783,
+  "note": "annotation only; discovery/fitness/selection use the research account (see market_sim_params)",
+  "real_account_eur": 500.0,
+  "research_account_eur": 10000.0,
+  "risk_fraction": 0.005,
+  "share_size_below_min_of_train_entries": {
+   "max": 1.0,
+   "mean": 0.887155,
+   "min": 0.443114,
+   "n": 100,
+   "p25": 0.84568,
+   "p50": 0.911331,
+   "p75": 0.98049
+  }
+ },
+ "confluence_cofire": {
+  "bars_with_ge2_same_direction": 24009,
+  "jaccard": {
+   "max": 1.0,
+   "mean": 0.15945,
+   "min": 0.0,
+   "n": 1225,
+   "p50": 0.092883,
+   "p90": 0.365252,
+   "p99": 0.936774
+  },
+  "max_concurrent_same_direction": 41,
+  "n_strategies": 50,
+  "note": "Jaccard on (decision bar, direction) sets of the top-K by Train trade count; Train bars only",
+  "pairs": 1225,
+  "share_bars_with_ge2_same_direction": 0.6776,
+  "share_pairs_jaccard_gt_0.1": 0.471,
+  "union_decision_bars": 35433
+ },
+ "counts": {
+  "behavioral_twins": 24,
+  "cache_hits": 0,
+  "duplicate_rejects": 0,
+  "evaluations_total": 1500,
+  "invalid_rejects": 0,
+  "n_candidates_target": 1500,
+  "param_trials": 0,
+  "passed_min_trades": 193,
+  "reject_reasons": {
+   "pass": 193,
+   "too_few_trades": 659,
+   "zero_candidates": 648
+  },
+  "sims_run": 337,
+  "structural_trials": 1500,
+  "unique_behaviors": 1495,
+  "unique_specs": 1500,
+  "unique_twin_streams": 828,
+  "valid_evaluated": 1500
+ },
+ "cumulative": {
+  "cumulative_trials": 31810,
+  "cumulative_unique_specs": 31298,
+  "prior_label": "v1 cumulative",
+  "prior_trials": 30310,
+  "prior_unique_specs": 29798
+ },
+ "data": {
+  "build_s": 26.7,
+  "clock": {
+   "clock_fix": "2026-09-30 local-clock fix",
+   "minute_basis": "market-local (MarketArrays.minute and MarketFrame.berlin_minute); day id = Berlin day",
+   "tz": "America/New_York"
+  },
+  "cost_note": "alpha.common.market_costs.cost_scenarios_for / sizing_for (research account 10000 EUR)",
+  "cost_scenarios": {
+   "BASE": {
+    "commission_eur_per_lot": 0.0,
+    "name": "BASE",
+    "slippage_pts": 0.26,
+    "spread_mult": 1.0,
+    "target_penetration_pts": 0.0
+   },
+   "COMBINED_ADVERSE": {
+    "commission_eur_per_lot": 0.0,
+    "name": "COMBINED_ADVERSE",
+    "slippage_pts": 0.78,
+    "spread_mult": 2.0,
+    "target_penetration_pts": 1.0
+   }
+  },
+  "event_cache_mb": 201.1,
+  "events_cache_key": "f1861ef8bc9ea14d10fceeaa6165d435b20d3da03e3a79c525eedfaee99d305e",
+  "features_cache_key": "2a0cdacb1ccce962647381269455ba38887c20d3ef0dbe8d4c6125f5c239a123",
+  "median_atr14_price_train": 13.147142857142171,
+  "sanity": {
+   "bars_per_day": {
+    "max": 276,
+    "median": 276.0,
+    "min": 57
+   },
+   "calendar_provisional": true,
+   "calendar_status": "provisional",
+   "first_bar_utc": "2025-05-02T09:35:00+00:00",
+   "gaps": {
+    "intraday_gap_starts": [
+     "2025-05-05T20:55:00+00:00",
+     "2025-05-06T20:55:00+00:00",
+     "2025-05-07T20:55:00+00:00",
+     "2025-05-08T20:55:00+00:00",
+     "2025-05-12T20:55:00+00:00"
+    ],
+    "largest_gap_hours": 56.83,
+    "n_gaps": 346,
+    "n_intraday_gaps_gt3bars": 272
+   },
+   "last_bar_utc": "2026-08-31T20:55:00+00:00",
+   "n_bars": 94213,
+   "n_cash_session_days": 344,
+   "n_local_days": 417,
+   "share_bars_in_entry_window": 0.2378,
+   "share_entry_window_bars_over_cap": 0.0026
+  },
+  "sim_window": {
+   "entry_end_min": 900,
+   "entry_start_min": 570,
+   "flat_min": 955
+  },
+  "sim_window_note": "SimWindow.from_spec(spec): entry/flat minutes in the market's LOCAL calendar tz",
+  "source": "v2"
+ },
+ "drift_baselines_train": {
+  "always_long": {
+   "expectancy_r": -0.06688,
+   "n_trades": 830,
+   "trades_per_day": 5.9286
+  },
+  "always_short": {
+   "expectancy_r": -0.1432,
+   "n_trades": 833,
+   "trades_per_day": 5.95
+  },
+  "cost": "COMBINED_ADVERSE",
+  "eligible_train_bars": 9057,
+  "random_long_short": {
+   "draws": 20,
+   "expectancy_r_mean": -0.11123,
+   "expectancy_r_sd": 0.03497,
+   "trades_mean": 831.1
+  },
+  "same_session_random": {
+   "decisions_per_day": 1,
+   "draws": 20,
+   "expectancy_r_mean": -0.07309,
+   "expectancy_r_sd": 0.11145,
+   "trades_mean": 137.2
+  },
+  "stop_atr_mult": 1.0,
+  "target_r": 1.5,
+  "train_days": 140
+ },
+ "event_signatures_top": {
+  "FEAT>PATTERN": 30,
+  "PATTERN>BOS": 37,
+  "PATTERN>BOS>RETEST": 72,
+  "PULLBACK+SWING>BOS>RETEST": 39,
+  "PULLBACK>PULLBACK>MOMENTUM": 33,
+  "PULLBACK>TLBREAK>RETEST": 42,
+  "SWING>BOS>RETEST": 45,
+  "SWING>BREAK>RETEST>MOMENTUM": 34,
+  "TREND>PULLBACK>MOMENTUM": 38,
+  "TREND>TLTOUCH>MOMENTUM": 34,
+  "ZONE>BREAKDN>RECLAIM": 39,
+  "ZONE>BREAKDN>RECLAIM>BOS": 31,
+  "ZONE>SWEEP>CHOCH": 36,
+  "ZONE>SWEEP>CHOCH>RETEST": 75,
+  "ZONE>SWEEP>RECLAIM>BOS>RETEST": 35
+ },
+ "families": {
+  "BREAK_RETEST_MOMENTUM": {
+   "n": 231,
+   "passed_min_trades": 74,
+   "train_expectancy_r_adverse": {
+    "max": 0.172388,
+    "mean": -0.068699,
+    "min": -0.340216,
+    "n": 74,
+    "p25": -0.12962,
+    "p50": -0.04567,
+    "p75": 0.004788
+   },
+   "zero_train_decision_share": 0.2251
+  },
+  "COMPRESSION_EXPANSION": {
+   "n": 139,
+   "passed_min_trades": 8,
+   "train_expectancy_r_adverse": {
+    "max": 0.22206,
+    "mean": 0.069405,
+    "min": -0.170581,
+    "n": 8,
+    "p25": -0.025108,
+    "p50": 0.123221,
+    "p75": 0.185233
+   },
+   "zero_train_decision_share": 0.4101
+  },
+  "FAILED_BREAKOUT": {
+   "n": 233,
+   "passed_min_trades": 53,
+   "train_expectancy_r_adverse": {
+    "max": 0.431416,
+    "mean": -0.066116,
+    "min": -0.565942,
+    "n": 53,
+    "p25": -0.139747,
+    "p50": -0.065661,
+    "p75": -0.007588
+   },
+   "zero_train_decision_share": 0.5064
+  },
+  "PATTERN_CONFIRM_RETEST": {
+   "n": 130,
+   "passed_min_trades": 0,
+   "train_expectancy_r_adverse": null,
+   "zero_train_decision_share": 0.5462
+  },
+  "RANGE_SWEEP_CHOCH_RETEST": {
+   "n": 156,
+   "passed_min_trades": 9,
+   "train_expectancy_r_adverse": {
+    "max": 0.075534,
+    "mean": -0.134123,
+    "min": -0.470037,
+    "n": 9,
+    "p25": -0.231023,
+    "p50": -0.109327,
+    "p75": 0.053798
+   },
+   "zero_train_decision_share": 0.6667
+  },
+  "SWING_BOS_RETEST": {
+   "n": 139,
+   "passed_min_trades": 9,
+   "train_expectancy_r_adverse": {
+    "max": -0.070606,
+    "mean": -0.289724,
+    "min": -1.00352,
+    "n": 9,
+    "p25": -0.305273,
+    "p50": -0.231943,
+    "p75": -0.141106
+   },
+   "zero_train_decision_share": 0.2806
+  },
+  "TRENDLINE_BOUNCE_BREAK": {
+   "n": 179,
+   "passed_min_trades": 22,
+   "train_expectancy_r_adverse": {
+    "max": 0.08673,
+    "mean": -0.136999,
+    "min": -0.654306,
+    "n": 22,
+    "p25": -0.220066,
+    "p50": -0.101222,
+    "p75": -0.046903
+   },
+   "zero_train_decision_share": 0.2682
+  },
+  "TREND_PULLBACK_RESUME": {
+   "n": 164,
+   "passed_min_trades": 18,
+   "train_expectancy_r_adverse": {
+    "max": 0.158705,
+    "mean": -0.107742,
+    "min": -0.266804,
+    "n": 18,
+    "p25": -0.203707,
+    "p50": -0.098557,
+    "p75": -0.04405
+   },
+   "zero_train_decision_share": 0.2866
+  },
+  "ZONE_SWEEP_RECLAIM_BOS_RETEST": {
+   "n": 129,
+   "passed_min_trades": 0,
+   "train_expectancy_r_adverse": null,
+   "zero_train_decision_share": 0.8682
+  }
+ },
+ "family_counts": {
+  "BREAK_RETEST_MOMENTUM": 231,
+  "COMPRESSION_EXPANSION": 139,
+  "FAILED_BREAKOUT": 233,
+  "PATTERN_CONFIRM_RETEST": 130,
+  "RANGE_SWEEP_CHOCH_RETEST": 156,
+  "SWING_BOS_RETEST": 139,
+  "TRENDLINE_BOUNCE_BREAK": 179,
+  "TREND_PULLBACK_RESUME": 164,
+  "ZONE_SWEEP_RECLAIM_BOS_RETEST": 129
+ },
+ "folds": {
+  "checks": {
+   "embargo_respected": true,
+   "no_train_test_overlap": true,
+   "nothing_after_dev_end": true,
+   "tests_chronological_disjoint": true
+  },
+  "dev_end": "2026-08-31",
+  "digest": "9dcffd12eb2f2fcbd74bd9e610028d894ef5e0781e7ec89e6540cf3b1918b351",
+  "first_date": "2025-05-02",
+  "folds": [
+   {
+    "embargo_trading_days": 5,
+    "fold": 0,
+    "purged_bars": 12,
+    "test": [
+     "2025-11-20",
+     "2026-02-02"
+    ],
+    "test_bars": 13761,
+    "test_days": 51,
+    "train": [
+     "2025-05-02",
+     "2025-11-12"
+    ],
+    "train_bars": 37974,
+    "train_days": 140,
+    "train_test_bar_overlap": 0
+   },
+   {
+    "embargo_trading_days": 5,
+    "fold": 1,
+    "purged_bars": 12,
+    "test": [
+     "2026-02-03",
+     "2026-04-09"
+    ],
+    "test_bars": 13078,
+    "test_days": 51,
+    "train": [
+     "2025-05-02",
+     "2026-01-26"
+    ],
+    "train_bars": 51735,
+    "train_days": 191,
+    "train_test_bar_overlap": 0
+   },
+   {
+    "embargo_trading_days": 5,
+    "fold": 2,
+    "purged_bars": 12,
+    "test": [
+     "2026-04-10",
+     "2026-06-19"
+    ],
+    "test_bars": 13980,
+    "test_days": 51,
+    "train": [
+     "2025-05-02",
+     "2026-04-02"
+    ],
+    "train_bars": 64934,
+    "train_days": 242,
+    "train_test_bar_overlap": 0
+   },
+   {
+    "embargo_trading_days": 5,
+    "fold": 3,
+    "purged_bars": 12,
+    "test": [
+     "2026-06-22",
+     "2026-08-31"
+    ],
+    "test_bars": 14028,
+    "test_days": 51,
+    "train": [
+     "2025-05-02",
+     "2026-06-12"
+    ],
+    "train_bars": 78841,
+    "train_days": 293,
+    "train_test_bar_overlap": 0
+   }
+  ],
+  "last_date": "2026-08-31",
+  "min_embargo_days": 5,
+  "n_folds": 4,
+  "n_trading_days": 349
+ },
+ "ledger_carried_in": {
+  "trials": 0,
+  "unique_specs": 0
+ },
+ "market": "NAS100",
+ "min_train_trades": 40,
+ "n_event_signatures": 239,
+ "n_tf_sets": 9,
+ "niches": {
+  "best": -0.14812217251629814,
+  "elites": 106,
+  "n_passer_niches": 106,
+  "niches": 106,
+  "twins_rejected": 4,
+  "twins_replaced": 2,
+  "visited_niches": 106
+ },
+ "peak_rss_mb": 890.6,
+ "rules": {
+  "max_entry_spread_pts": 1.88,
+  "max_trades_per_day": 6
+ },
+ "runtime_s": {
+  "account_feasibility_s": 3.7,
+  "baselines_s": 0.06,
+  "cofire_s": 3.01,
+  "search_deap_s": 8.36,
+  "search_random_s": 18.82,
+  "search_total_s": 27.19,
+  "stats_s": 0.27,
+  "total_s": 34.26
+ },
+ "scope": "TRAIN side of search fold 0 only; no Validation/fold-test number anywhere",
+ "search": {
+  "deap": {
+   "budget": 420,
+   "budget_exhausted": false,
+   "generations_run": 6,
+   "niches_at_end": 87,
+   "twins_rejected": 4,
+   "unique_evaluations": 416
+  },
+  "random": {
+   "archetypes": [
+    "ZONE_SWEEP_RECLAIM_BOS_RETEST",
+    "TREND_PULLBACK_RESUME",
+    "RANGE_SWEEP_CHOCH_RETEST",
+    "BREAK_RETEST_MOMENTUM",
+    "FAILED_BREAKOUT",
+    "COMPRESSION_EXPANSION",
+    "PATTERN_CONFIRM_RETEST",
+    "TRENDLINE_BOUNCE_BREAK",
+    "SWING_BOS_RETEST"
+   ],
+   "attempts": 1084
+  }
+ },
+ "search_train_days": 140,
+ "sim_skips": {
+  "day_cap": 9304,
+  "entry_gap_stop": 2,
+  "gap_before_entry": 2991,
+  "no_next_bar": 0,
+  "outside_window": 509466,
+  "risk_out_of_range": 1180,
+  "size_below_min": 0,
+  "space_below_min_at_fill": 1647,
+  "spread_filter": 202,
+  "stop_invalid": 0,
+  "target_crossed_at_fill": 3
+ },
+ "sim_skips_note": "summed over the simulations actually run this campaign (cache hits excluded)",
+ "sizing": {
+  "contract_size": 0.8818202772564128,
+  "equity_eur": 10000.0,
+  "lot_step": 0.2,
+  "max_leverage": 10.0,
+  "max_risk_pts": 206.9,
+  "min_lot": 0.2,
+  "min_risk_pts": 2.59,
+  "risk_fraction": 0.005
+ },
+ "stats_file": {
+  "cost_exit_shock": "BASE + one extra median Train spread on every market fill",
+  "rows": 1500,
+  "version": "v2-probe-stats-v1",
+  "with_trades": 758
+ },
+ "summary_version": "v2-probe-summary-v1",
+ "tf_sets": {
+  "M15+H1": 2,
+  "M5": 90,
+  "M5+D1": 72,
+  "M5+H1": 235,
+  "M5+H1+D1": 73,
+  "M5+M15": 294,
+  "M5+M15+D1": 188,
+  "M5+M15+H1": 333,
+  "M5+M15+H1+D1": 213
+ },
+ "train_decisions": {
+  "max": 11572.0,
+  "mean": 212.456667,
+  "min": 0.0,
+  "n": 1500,
+  "p05": 0.0,
+  "p25": 0.0,
+  "p50": 2.0,
+  "p75": 28.25,
+  "p95": 626.05
+ },
+ "train_expectancy_r_adverse_passers_informational": {
+  "max": 0.431416,
+  "mean": -0.08705,
+  "min": -1.00352,
+  "n": 193,
+  "p05": -0.308091,
+  "p25": -0.170581,
+  "p50": -0.068107,
+  "p75": 0.005523,
+  "p95": 0.121856
+ },
+ "train_trades_passers": {
+  "max": 550.0,
+  "mean": 134.880829,
+  "min": 40.0,
+  "n": 193,
+  "p05": 43.0,
+  "p25": 58.0,
+  "p50": 86.0,
+  "p75": 173.0,
+  "p95": 370.6
+ },
+ "train_trades_per_day_passers": {
+  "max": 3.928571,
+  "mean": 0.963434,
+  "min": 0.285714,
+  "n": 193,
+  "p05": 0.307143,
+  "p25": 0.414286,
+  "p50": 0.614286,
+  "p75": 1.235714,
+  "p95": 2.647143
+ },
+ "zero_trade": {
+  "n_zero": 648,
+  "share_zero_candidates_reject": 0.432,
+  "share_zero_train_decisions": 0.432
+ }
+}

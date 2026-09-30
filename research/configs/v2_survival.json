@@ -1,0 +1,32 @@
+{
+ "version": "V2-survival-config-1",
+ "label": "survival stage - not for selection",
+ "markets": ["GER40", "NAS100", "SPX500", "XAUUSD", "EURUSD"],
+ "probe_config": "research/configs/v2_probe.json",
+ "probe_reports": "research/reports/v2_probe_r1",
+ "frozen_finalists": "research/reports/v2_probe_r1/finalists_frozen.json",
+ "ledger": "research/reports/v2_survival/survival_call_ledger.json",
+ "out_dir": "research/reports/v2_survival",
+ "cache_dir": "data/feature_store/v2s",
+ "selection": {
+  "k": 30,
+  "tpd_cap": 1.5,
+  "corr_threshold": 0.8,
+  "min_trades": 40,
+  "note": "PRE-REGISTERED (v2-select-v1): Pareto over (Train E adverse, day-clustered t, payoff asymmetry, trades/day capped, E at EXIT_SHOCK, novelty), then daily-return correlation de-dup; Train numbers only; no binary sign/volatility gate"
+ },
+ "test_fold_indices": [1, 2, 3],
+ "test_fold_note": "folds whose TEST side is read; fold 0 test is excluded by default (set [0,1,2,3] to include it)",
+ "entry_delay_bars": 1,
+ "neighbours": {"max_per_finalist": 24, "note": "+-1 grid step of each numeric gene of the fixed structure (event variants excluded)"},
+ "baselines": {"draws": 30, "stop_atr_mult": 1.0, "target_r": 1.5},
+ "cross_market": true,
+ "checks": {
+  "min_pooled_t": 2.0,
+  "min_fold_positive_share": 0.66,
+  "min_neighbour_positive_share": 0.5,
+  "min_baseline_z": 1.645,
+  "note": "INFORMATIONAL checks per finalist; the orchestrator decides, nothing here re-selects"
+ },
+ "prior": {"trials": 30310, "unique_specs": 29798, "label": "v1 cumulative"}
+}

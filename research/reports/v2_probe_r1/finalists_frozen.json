@@ -1,0 +1,2469 @@
+{
+ "config": {
+  "corr_threshold": 0.8,
+  "k": 30,
+  "min_trades": 40,
+  "objectives": [
+   "e_adv",
+   "t_day",
+   "payoff",
+   "tpd",
+   "e_shock",
+   "novelty"
+  ],
+  "payoff_cap": 10.0,
+  "tpd_cap": 1.5,
+  "version": "v2-select-v1"
+ },
+ "finalist_hash": "34aba8bfa129052fb1450ab7659734ee8910fab1dba7fc6c45279b4126b41e3c",
+ "frozen_at_utc": "2026-09-30T09:41:40Z",
+ "kind": "v2-frozen-finalists",
+ "markets": {
+  "EURUSD": {
+   "finalists": [
+    {
+     "cluster_id": 0,
+     "cluster_size": 5,
+     "crowding": null,
+     "front": 0,
+     "hash": "0d6886728ba219bfae67dd88559b9acdd78b84bfc9deba4fa57232adf35ef2f8",
+     "objectives": {
+      "e_adv": -0.051732,
+      "e_shock": -0.165814,
+      "novelty": 0.0,
+      "payoff": 2.459328,
+      "t_day": -0.279012,
+      "tpd": 0.829114
+     },
+     "rank": 0
+    },
+    {
+     "cluster_id": 1,
+     "cluster_size": 1,
+     "crowding": null,
+     "front": 0,
+     "hash": "10b7d2ff68624c6f5628e5ffa5f713b9fc55b28c6b7f7928197689e1fb97627d",
+     "objectives": {
+      "e_adv": -0.20942,
+      "e_shock": -0.095709,
+      "novelty": 0.373563,
+      "payoff": 3.014708,
+      "t_day": -0.764858,
+      "tpd": 0.253165
+     },
+     "rank": 1
+    },
+    {
+     "cluster_id": 2,
+     "cluster_size": 14,
+     "crowding": null,
+     "front": 0,
+     "hash": "1814632eb6495a367dfd4fd9f5c7f6a81de9b056988ddc7997ec54631b21b66a",
+     "objectives": {
+      "e_adv": 0.316568,
+      "e_shock": 0.018818,
+      "novelty": 0.139797,
+      "payoff": 2.257471,
+      "t_day": 0.933322,
+      "tpd": 0.278481
+     },
+     "rank": 2
+    },
+    {
+     "cluster_id": 3,
+     "cluster_size": 1,
+     "crowding": null,
+     "front": 0,
+     "hash": "4e96052edc3b263689b67ae16d1a53b68aee775c33a2c1bbaf9447157c3789ed",
+     "objectives": {
+      "e_adv": -0.918953,
+      "e_shock": -0.891427,
+      "novelty": 0.640192,
+      "payoff": 5.139438,
+      "t_day": -5.593079,
+      "tpd": 0.531646
+     },
+     "rank": 3
+    },
+    {
+     "cluster_id": 4,
+     "cluster_size": 1,
+     "crowding": null,
+     "front": 0,
+     "hash": "bc2aebd73b20327786c9e8c34b331b4edc1cf24d3e01b1fd4fa709c9c213d20a",
+     "objectives": {
+      "e_adv": 0.073699,
+      "e_shock": 0.039959,
+      "novelty": 0.538198,
+      "payoff": 1.583754,
+      "t_day": 0.333129,
+      "tpd": 0.272152
+     },
+     "rank": 4
+    },
+    {
+     "cluster_id": 5,
+     "cluster_size": 1,
+     "crowding": null,
+     "front": 0,
+     "hash": "c44ff9c0212b3aa2d0e8987ab4c184e3f93a733dce684484734ec21355ba4677",
+     "objectives": {
+      "e_adv": -0.048146,
+      "e_shock": -0.004926,
+      "novelty": 0.552306,
+      "payoff": 1.429761,
+      "t_day": -0.343323,
+      "tpd": 0.550633
+     },
+     "rank": 5
+    },
+    {
+     "cluster_id": 6,
+     "cluster_size": 1,
+     "crowding": null,
+     "front": 0,
+     "hash": "df9e488e4cee495a69ac75ce93e1659b43933bc07a8fa4022afef9c86148f7d3",
+     "objectives": {
+      "e_adv": -0.582795,
+      "e_shock": -0.503911,
+      "novelty": 0.811618,
+      "payoff": 2.63714,
+      "t_day": -2.370974,
+      "tpd": 0.253165
+     },
+     "rank": 6
+    },
+    {
+     "cluster_id": 7,
+     "cluster_size": 1,
+     "crowding": null,
+     "front": 0,
+     "hash": "ebfcd141131b843702ac125b374fdf9a05cbb45020510f2d8ec5d75d22de6ee6",
+     "objectives": {
+      "e_adv": -0.401257,
+      "e_shock": -0.40177,
+      "novelty": 0.560106,
+      "payoff": 10.0,
+      "t_day": -0.960893,
+      "tpd": 0.493671
+     },
+     "rank": 7
+    },
+    {
+     "cluster_id": 8,
+     "cluster_size": 8,
+     "crowding": null,
+     "front": 0,
+     "hash": "faded3aaeb87674f48935fbe031a7646a8516043d675b5f39913919fd7cd9826",
+     "objectives": {
+      "e_adv": -0.079407,
+      "e_shock": -0.151444,
+      "novelty": 0.000892,
+      "payoff": 1.760345,
+      "t_day": -0.779039,
+      "tpd": 1.5
+     },
+     "rank": 8
+    },
+    {
+     "cluster_id": 9,
+     "cluster_size": 1,
+     "crowding": 0.683835,
+     "front": 0,
+     "hash": "b66a46d4df11a3dc5544dbe7c89f5e0656c86ed08977b0d5b11bc1f126f95eda",
+     "objectives": {
+      "e_adv": -0.568587,
+      "e_shock": -0.749036,
+      "novelty": 0.4709,
+      "payoff": 8.200742,
+      "t_day": -2.995713,
+      "tpd": 1.5
+     },
+     "rank": 9
+    },
+    {
+     "cluster_id": 10,
+     "cluster_size": 1,
+     "crowding": 0.487413,
+     "front": 0,
+     "hash": "62acfa612acdaccce5f31e733cb6b5018742fae5f7bf504d83c7cec317f3bca6",
+     "objectives": {
+      "e_adv": -0.67165,
+      "e_shock": -0.620205,
+      "novelty": 0.276177,
+      "payoff": 7.687079,
+      "t_day": -3.323907,
+      "tpd": 0.816456
+     },
+     "rank": 10
+    },
+    {
+     "cluster_id": 11,
+     "cluster_size": 1,
+     "crowding": 0.384261,
+     "front": 0,
+     "hash": "88776d04a2a6cd2e6a2a0373638b2721b85faec284467222ad33a12b74664e4c",
+     "objectives": {
+      "e_adv": -0.452927,
+      "e_shock": -0.600186,
+      "novelty": 0.249281,
+      "payoff": 5.09266,
+      "t_day": -2.154813,
+      "tpd": 1.405063
+     },
+     "rank": 11
+    },
+    {
+     "cluster_id": 12,
+     "cluster_size": 1,
+     "crowding": 0.382437,
+     "front": 0,
+     "hash": "c4d63faa66b0b38ff007d10abb62a9ad0b41a12b18b29da2d5717dbab0f31361",
+     "objectives": {
+      "e_adv": -0.763086,
+      "e_shock": -0.554684,
+      "novelty": 0.257235,
+      "payoff": 5.507119,
+      "t_day": -4.12906,
+      "tpd": 0.85443
+     },
+     "rank": 12
+    },
+    {
+     "cluster_id": 13,
+     "cluster_size": 1,
+     "crowding": 0.374316,
+     "front": 0,
+     "hash": "7b6499279512205a90c10573d16fe7014c63b03784e539783b10b147e7b21c32",
+     "objectives": {
+      "e_adv": -0.655835,
+      "e_shock": -0.355998,
+      "novelty": 0.457672,
+      "payoff": 2.974776,
+      "t_day": -5.125258,
+      "tpd": 0.898734
+     },
+     "rank": 13
+    },
+    {
+     "cluster_id": 14,
+     "cluster_size": 1,
+     "crowding": 0.305646,
+     "front": 0,
+     "hash": "252e668579e009ced1b86d7c6bd69efe4e231f71dfc1177e75a061fe1672fdb3",
+     "objectives": {
+      "e_adv": -0.172547,
+      "e_shock": -0.185273,
+      "novelty": 0.385639,
+      "payoff": 1.960652,
+      "t_day": -1.591453,
+      "tpd": 1.303797
+     },
+     "rank": 14
+    },
+    {
+     "cluster_id": 15,
+     "cluster_size": 1,
+     "crowding": 0.302046,
+     "front": 0,
+     "hash": "8579befac11a4e66558a062935410df1b73663dc1a5a4b8e7c0f96320cb7db22",
+     "objectives": {
+      "e_adv": -0.688543,
+      "e_shock": -0.659249,
+      "novelty": 0.359773,
+      "payoff": 5.190216,
+      "t_day": -3.23376,
+      "tpd": 0.594937
+     },
+     "rank": 15
+    },
+    {
+     "cluster_id": 16,
+     "cluster_size": 1,
+     "crowding": 0.295395,
+     "front": 0,
+     "hash": "3c3ea1def354680b2dd65c6846567808e3f88e233e5060c268cce2747ba54955",
+     "objectives": {
+      "e_adv": -0.559651,
+      "e_shock": -0.438958,
+      "novelty": 0.783576,
+      "payoff": 2.774612,
+      "t_day": -2.25023,
+      "tpd": 0.278481
+     },
+     "rank": 16
+    },
+    {
+     "cluster_id": 17,
+     "cluster_size": 1,
+     "crowding": 0.285287,
+     "front": 0,
+     "hash": "144693567c58e3b7733e63848f4c845a6b8ac06fa71a5fdb35def75028723856",
+     "objectives": {
+      "e_adv": -0.329724,
+      "e_shock": -0.493425,
+      "novelty": 0.632525,
+      "payoff": 5.80652,
+      "t_day": -1.159095,
+      "tpd": 0.544304
+     },
+     "rank": 17
+    },
+    {
+     "cluster_id": 18,
+     "cluster_size": 1,
+     "crowding": 0.281288,
+     "front": 0,
+     "hash": "b953e839b514503550c046c8c19b856c60cae2c6d0ce98cf977af3c028298260",
+     "objectives": {
+      "e_adv": -0.545005,
+      "e_shock": -0.337946,
+      "novelty": 0.407291,
+      "payoff": 4.743318,
+      "t_day": -3.187683,
+      "tpd": 1.126582
+     },
+     "rank": 18
+    },
+    {
+     "cluster_id": 19,
+     "cluster_size": 1,
+     "crowding": 0.280206,
+     "front": 0,
+     "hash": "0e606d71ff34f4443c6b616c236cd158f72356cbad1e9a36f91f7850f87db4da",
+     "objectives": {
+      "e_adv": -0.553204,
+      "e_shock": -0.276477,
+      "novelty": 0.431319,
+      "payoff": 3.154559,
+      "t_day": -4.270751,
+      "tpd": 1.246835
+     },
+     "rank": 19
+    },
+    {
+     "cluster_id": 20,
+     "cluster_size": 3,
+     "crowding": 0.264342,
+     "front": 0,
+     "hash": "c67580bc58e946364848f61c73bd36e704a45b79c7c2c77eaf207204d12b3546",
+     "objectives": {
+      "e_adv": 0.150921,
+      "e_shock": -0.336743,
+      "novelty": 0.107227,
+      "payoff": 6.408237,
+      "t_day": 0.322417,
+      "tpd": 0.658228
+     },
+     "rank": 20
+    },
+    {
+     "cluster_id": 21,
+     "cluster_size": 3,
+     "crowding": 0.243401,
+     "front": 0,
+     "hash": "ed403c265780a90816370529a47e0a1481716519b92aa9d5fbd32fbe8637af63",
+     "objectives": {
+      "e_adv": -0.527057,
+      "e_shock": -0.101707,
+      "novelty": 0.058416,
+      "payoff": 3.061214,
+      "t_day": -2.566545,
+      "tpd": 0.481013
+     },
+     "rank": 21
+    },
+    {
+     "cluster_id": 22,
+     "cluster_size": 1,
+     "crowding": 0.230251,
+     "front": 0,
+     "hash": "6826136eff91a95096de8599977ac27dfb4200f60b3fc64c7cb8e1cb87cdd44f",
+     "objectives": {
+      "e_adv": -0.588553,
+      "e_shock": -0.457291,
+      "novelty": 0.507195,
+      "payoff": 2.179486,
+      "t_day": -4.184458,
+      "tpd": 0.64557
+     },
+     "rank": 22
+    },
+    {
+     "cluster_id": 23,
+     "cluster_size": 1,
+     "crowding": 0.225454,
+     "front": 0,
+     "hash": "b2633a80b9953c1c84b52dd0de875b70cfdde9a0ab1a73191d7697686981e58a",
+     "objectives": {
+      "e_adv": -0.21073,
+      "e_shock": -0.02844,
+      "novelty": 0.57084,
+      "payoff": 4.405206,
+      "t_day": -0.583319,
+      "tpd": 0.335443
+     },
+     "rank": 23
+    },
+    {
+     "cluster_id": 24,
+     "cluster_size": 1,
+     "crowding": 0.217454,
+     "front": 0,
+     "hash": "e9ae6d48092494beb0b2fef1d69e3d137a63dae863626665ec97bfad7d01f01c",
+     "objectives": {
+      "e_adv": -0.465524,
+      "e_shock": -0.07797,
+      "novelty": 0.294663,
+      "payoff": 5.642819,
+      "t_day": -1.348592,
+      "tpd": 0.291139
+     },
+     "rank": 24
+    },
+    {
+     "cluster_id": 25,
+     "cluster_size": 1,
+     "crowding": 0.207934,
+     "front": 0,
+     "hash": "005a5c0d3120f45b966d7c0c7b443d375620110a5f081e9a93f86e3d4fe4b5a1",
+     "objectives": {
+      "e_adv": -0.284797,
+      "e_shock": -0.598764,
+      "novelty": 0.410272,
+      "payoff": 4.429952,
+      "t_day": -0.847404,
+      "tpd": 0.322785
+     },
+     "rank": 25
+    },
+    {
+     "cluster_id": 26,
+     "cluster_size": 1,
+     "crowding": 0.191272,
+     "front": 0,
+     "hash": "ae5e48a4ed04e6ed013bc688b943a218a0f9e495d3ab41bdc8611376e10d58a2",
+     "objectives": {
+      "e_adv": -0.767921,
+      "e_shock": -0.33781,
+      "novelty": 0.504191,
+      "payoff": 2.927945,
+      "t_day": -4.211669,
+      "tpd": 0.379747
+     },
+     "rank": 26
+    },
+    {
+     "cluster_id": 27,
+     "cluster_size": 1,
+     "crowding": 0.184697,
+     "front": 0,
+     "hash": "1c771c72d583a00f4261c02d0409377b769bb5c892dbe0aba0328c1ba9d6a53a",
+     "objectives": {
+      "e_adv": -0.421551,
+      "e_shock": -0.423471,
+      "novelty": 0.344294,
+      "payoff": 6.184234,
+      "t_day": -1.094414,
+      "tpd": 0.582278
+     },
+     "rank": 27
+    },
+    {
+     "cluster_id": 28,
+     "cluster_size": 1,
+     "crowding": 0.180821,
+     "front": 0,
+     "hash": "2a873d3619fa3e9592d7450950cc951856e9a4d7c6ae95a92dae526ded1d5657",
+     "objectives": {
+      "e_adv": 0.104455,
+      "e_shock": -0.003963,
+      "novelty": 0.338759,
+      "payoff": 1.635973,
+      "t_day": 0.597108,
+      "tpd": 0.664557
+     },
+     "rank": 28
+    },
+    {
+     "cluster_id": 29,
+     "cluster_size": 6,
+     "crowding": 0.16812,
+     "front": 0,
+     "hash": "ec1a718e5d476232fd65b7ee0353c5b7acf60674e90b34cdc7802084fb6347eb",
+     "objectives": {
+      "e_adv": -0.206755,
+      "e_shock": -0.254199,
+      "novelty": 0.112111,
+      "payoff": 2.473249,
+      "t_day": -1.290062,
+      "tpd": 0.987342
+     },
+     "rank": 29
+    }
+   ],
+   "n_clusters": 101,
+   "n_eligible": 193
+  },
+  "GER40": {
+   "finalists": [
+    {
+     "cluster_id": 0,
+     "cluster_size": 1,
+     "crowding": null,
+     "front": 0,
+     "hash": "1e206c0fc3cb9b0f2369b21fe4d4f9431fc55242b0494b83ac73a55ed701c0ae",
+     "objectives": {
+      "e_adv": -0.43404,
+      "e_shock": -0.362424,
+      "novelty": 0.829263,
+      "payoff": 1.325601,
+      "t_day": -3.26639,
+      "tpd": 0.51875
+     },
+     "rank": 0
+    },
+    {
+     "cluster_id": 1,
+     "cluster_size": 1,
+     "crowding": null,
+     "front": 0,
+     "hash": "2639588fd485afe7dec96a43abcc2f5d35f0b5062928123a95129c95486698ca",
+     "objectives": {
+      "e_adv": 0.039374,
+      "e_shock": 0.048181,
+      "novelty": 0.471051,
+      "payoff": 0.982112,
+      "t_day": 0.358599,
+      "tpd": 0.63125
+     },
+     "rank": 1
+    },
+    {
+     "cluster_id": 2,
+     "cluster_size": 1,
+     "crowding": null,
+     "front": 0,
+     "hash": "35f1df6a5a413e26aa05e191b34073751037e6f580e7340ed00d2f88046833a3",
+     "objectives": {
+      "e_adv": 0.233317,
+      "e_shock": 0.228263,
+      "novelty": 0.623311,
+      "payoff": 2.052045,
+      "t_day": 0.877484,
+      "tpd": 0.25
+     },
+     "rank": 2
+    },
+    {
+     "cluster_id": 3,
+     "cluster_size": 8,
+     "crowding": null,
+     "front": 0,
+     "hash": "5af090a4de5c372eaf286ea8afb8a66f7886a8de687ba79824f636f70335feea",
+     "objectives": {
+      "e_adv": -0.615123,
+      "e_shock": -0.603465,
+      "novelty": 0.0,
+      "payoff": 3.162287,
+      "t_day": -3.560308,
+      "tpd": 0.5625
+     },
+     "rank": 3
+    },
+    {
+     "cluster_id": 4,
+     "cluster_size": 3,
+     "crowding": null,
+     "front": 0,
+     "hash": "9401f2578026ef5902b4dfd4e78488e12e4d733468a30aa2955beac2c74e36af",
+     "objectives": {
+      "e_adv": 0.393601,
+      "e_shock": 0.39644,
+      "novelty": 0.187902,
+      "payoff": 1.911818,
+      "t_day": 2.248634,
+      "tpd": 0.60625
+     },
+     "rank": 4
+    },
+    {
+     "cluster_id": 5,
+     "cluster_size": 1,
+     "crowding": null,
+     "front": 0,
+     "hash": "961ee033374bdcb58b9c6e80970afcd34d1e9264f2e3a7dda3d358dfc4327add",
+     "objectives": {
+      "e_adv": 0.030499,
+      "e_shock": 0.213434,
+      "novelty": 0.689162,
+      "payoff": 4.44166,
+      "t_day": 0.056372,
+      "tpd": 0.33125
+     },
+     "rank": 5
+    },
+    {
+     "cluster_id": 6,
+     "cluster_size": 1,
+     "crowding": null,
+     "front": 0,
+     "hash": "a9858cd63737650eff9aae0b28d54d7f18d9791cc2d9ee9471b83b96db0266a1",
+     "objectives": {
+      "e_adv": -0.57393,
+      "e_shock": -0.582598,
+      "novelty": 0.502436,
+      "payoff": 2.983147,
+      "t_day": -4.090639,
+      "tpd": 0.75
+     },
+     "rank": 6
+    },
+    {
+     "cluster_id": 7,
+     "cluster_size": 1,
+     "crowding": null,
+     "front": 0,
+     "hash": "e99e317a44d3f09a7422cd7f08095a12ea59dfe21163cd456084705f52f38c78",
+     "objectives": {
+      "e_adv": -0.135301,
+      "e_shock": -0.109864,
+      "novelty": 0.546379,
+      "payoff": 1.328476,
+      "t_day": -2.676204,
+      "tpd": 1.5
+     },
+     "rank": 7
+    },
+    {
+     "cluster_id": 8,
+     "cluster_size": 1,
+     "crowding": 0.321852,
+     "front": 0,
+     "hash": "761a46dc166cb20ff7d851fe3619869e3f8710e643c0ff3a4fa434619a31751d",
+     "objectives": {
+      "e_adv": -0.461677,
+      "e_shock": -0.422807,
+      "novelty": 0.266275,
+      "payoff": 3.002328,
+      "t_day": -2.540793,
+      "tpd": 0.55625
+     },
+     "rank": 8
+    },
+    {
+     "cluster_id": 9,
+     "cluster_size": 1,
+     "crowding": 0.317157,
+     "front": 0,
+     "hash": "62acfa612acdaccce5f31e733cb6b5018742fae5f7bf504d83c7cec317f3bca6",
+     "objectives": {
+      "e_adv": -0.401881,
+      "e_shock": -0.372844,
+      "novelty": 0.565925,
+      "payoff": 2.675975,
+      "t_day": -3.280585,
+      "tpd": 1.45
+     },
+     "rank": 9
+    },
+    {
+     "cluster_id": 10,
+     "cluster_size": 1,
+     "crowding": 0.305962,
+     "front": 0,
+     "hash": "c8d29a44e958a99ef9d5e200d7308526d2a1fcf86ba22c00f17cd8e5acaee2da",
+     "objectives": {
+      "e_adv": 0.304238,
+      "e_shock": 0.312625,
+      "novelty": 0.570983,
+      "payoff": 1.481169,
+      "t_day": 1.723199,
+      "tpd": 0.29375
+     },
+     "rank": 10
+    },
+    {
+     "cluster_id": 11,
+     "cluster_size": 3,
+     "crowding": 0.290821,
+     "front": 0,
+     "hash": "418195a0b37e473cb3e975ba46b112e33f0535439e735d464455109ebeb47c05",
+     "objectives": {
+      "e_adv": 0.218378,
+      "e_shock": 0.333205,
+      "novelty": 0.186332,
+      "payoff": 1.988972,
+      "t_day": 0.919676,
+      "tpd": 0.3875
+     },
+     "rank": 11
+    },
+    {
+     "cluster_id": 12,
+     "cluster_size": 1,
+     "crowding": 0.265594,
+     "front": 0,
+     "hash": "549c03695c8588af22f3c6d76bcb3c461153a9a3a06a81a32fc45cce8e265de0",
+     "objectives": {
+      "e_adv": 0.274439,
+      "e_shock": 0.282063,
+      "novelty": 0.509254,
+      "payoff": 1.800058,
+      "t_day": 1.538508,
+      "tpd": 0.4125
+     },
+     "rank": 12
+    },
+    {
+     "cluster_id": 13,
+     "cluster_size": 1,
+     "crowding": 0.260761,
+     "front": 0,
+     "hash": "3f88818100da184f7821a8b938056927df71440a530e286526fc71fd687eb64b",
+     "objectives": {
+      "e_adv": -0.312528,
+      "e_shock": -0.325772,
+      "novelty": 0.712557,
+      "payoff": 2.747389,
+      "t_day": -1.333209,
+      "tpd": 0.2625
+     },
+     "rank": 13
+    },
+    {
+     "cluster_id": 14,
+     "cluster_size": 1,
+     "crowding": 0.258902,
+     "front": 0,
+     "hash": "941fbec49836b20cee371848d24c2bc5acf8d0bd0f6ba95497d3e51818f07f83",
+     "objectives": {
+      "e_adv": -0.214157,
+      "e_shock": -0.206903,
+      "novelty": 0.418427,
+      "payoff": 1.573832,
+      "t_day": -2.34552,
+      "tpd": 1.1625
+     },
+     "rank": 14
+    },
+    {
+     "cluster_id": 15,
+     "cluster_size": 1,
+     "crowding": 0.249301,
+     "front": 0,
+     "hash": "7dffb25dd5b41a042c9fd1cebd27e4f7321c72112c7ff78208b0a58d45819822",
+     "objectives": {
+      "e_adv": -0.048099,
+      "e_shock": -0.019905,
+      "novelty": 0.292904,
+      "payoff": 1.445804,
+      "t_day": -0.522602,
+      "tpd": 1.26875
+     },
+     "rank": 15
+    },
+    {
+     "cluster_id": 16,
+     "cluster_size": 1,
+     "crowding": 0.242636,
+     "front": 0,
+     "hash": "46b8ed8bfa0ee08763545e7a96e56acf254da3225b8d7dde7b3af57f7793ced1",
+     "objectives": {
+      "e_adv": 0.187499,
+      "e_shock": 0.188978,
+      "novelty": 0.325295,
+      "payoff": 1.435231,
+      "t_day": 1.286587,
+      "tpd": 0.4375
+     },
+     "rank": 16
+    },
+    {
+     "cluster_id": 17,
+     "cluster_size": 1,
+     "crowding": 0.237797,
+     "front": 0,
+     "hash": "191827e87cfec1a4f43986b74ee280b37404b5e088a4cd22a8c17d61642e0f4f",
+     "objectives": {
+      "e_adv": -0.250187,
+      "e_shock": -0.265427,
+      "novelty": 0.681861,
+      "payoff": 1.900043,
+      "t_day": -2.28124,
+      "tpd": 1.0
+     },
+     "rank": 17
+    },
+    {
+     "cluster_id": 18,
+     "cluster_size": 1,
+     "crowding": 0.235699,
+     "front": 0,
+     "hash": "b6ee8d046fd90ef5c789e3ae1d1e84672e95afe25faaa1585b65d30e7b0a4e99",
+     "objectives": {
+      "e_adv": -0.431943,
+      "e_shock": -0.427169,
+      "novelty": 0.701297,
+      "payoff": 2.789115,
+      "t_day": -2.03687,
+      "tpd": 0.3875
+     },
+     "rank": 18
+    },
+    {
+     "cluster_id": 19,
+     "cluster_size": 1,
+     "crowding": 0.2058,
+     "front": 0,
+     "hash": "5d01209b278bbb19ce3f2b2931a4412f14443a3cfaadcda9ae1e01d50c21a507",
+     "objectives": {
+      "e_adv": 0.124763,
+      "e_shock": 0.153705,
+      "novelty": 0.242239,
+      "payoff": 1.334099,
+      "t_day": 1.054539,
+      "tpd": 0.80625
+     },
+     "rank": 19
+    },
+    {
+     "cluster_id": 20,
+     "cluster_size": 7,
+     "crowding": 0.199194,
+     "front": 0,
+     "hash": "31bd2cf84182c6eea58f9e7a5373d0ee9bf86f731a22d3d559fa18d437ac16ee",
+     "objectives": {
+      "e_adv": 0.134194,
+      "e_shock": 0.14331,
+      "novelty": 0.047455,
+      "payoff": 1.485411,
+      "t_day": 0.975293,
+      "tpd": 0.7125
+     },
+     "rank": 20
+    },
+    {
+     "cluster_id": 21,
+     "cluster_size": 1,
+     "crowding": 0.189773,
+     "front": 0,
+     "hash": "07100f9e467ed172f30b3008fc22babc82e8920bdc5a100ab0df756eb6626302",
+     "objectives": {
+      "e_adv": 0.038304,
+      "e_shock": 0.016071,
+      "novelty": 0.7676,
+      "payoff": 2.54967,
+      "t_day": 0.134298,
+      "tpd": 0.3
+     },
+     "rank": 21
+    },
+    {
+     "cluster_id": 22,
+     "cluster_size": 1,
+     "crowding": 0.189546,
+     "front": 0,
+     "hash": "af7f013d9ca5d3ed4df3dd43994ad75c8271c42b24b33d06dc72c90f8a4e32f0",
+     "objectives": {
+      "e_adv": -0.174729,
+      "e_shock": -0.144396,
+      "novelty": 0.360329,
+      "payoff": 2.156392,
+      "t_day": -1.216277,
+      "tpd": 0.64375
+     },
+     "rank": 22
+    },
+    {
+     "cluster_id": 23,
+     "cluster_size": 1,
+     "crowding": 0.181731,
+     "front": 0,
+     "hash": "73fcfce6c9deab88bf5189cc775625127a9843063d0a77375e7a4600c338b064",
+     "objectives": {
+      "e_adv": -0.193176,
+      "e_shock": -0.15927,
+      "novelty": 0.606386,
+      "payoff": 2.558161,
+      "t_day": -1.480374,
+      "tpd": 0.98125
+     },
+     "rank": 23
+    },
+    {
+     "cluster_id": 24,
+     "cluster_size": 5,
+     "crowding": 0.179533,
+     "front": 0,
+     "hash": "60975ee70d2886e316e25ecb961a8644efbdbbdb619c8ed31d414e25867f7720",
+     "objectives": {
+      "e_adv": -0.004636,
+      "e_shock": 0.016457,
+      "novelty": 0.101825,
+      "payoff": 1.598165,
+      "t_day": -0.061555,
+      "tpd": 1.5
+     },
+     "rank": 24
+    },
+    {
+     "cluster_id": 25,
+     "cluster_size": 1,
+     "crowding": 0.178246,
+     "front": 0,
+     "hash": "b44a7840efd065ef085b9d20a8ab8c4c18bf6f1d8aa6a445f30f9eaf9feec1bb",
+     "objectives": {
+      "e_adv": -0.148345,
+      "e_shock": -0.152786,
+      "novelty": 0.728017,
+      "payoff": 1.15916,
+      "t_day": -1.026771,
+      "tpd": 0.33125
+     },
+     "rank": 25
+    },
+    {
+     "cluster_id": 26,
+     "cluster_size": 1,
+     "crowding": 0.169857,
+     "front": 0,
+     "hash": "c7e8c14136947b79b7f1250357bb23782830ec86dfb297c8caf67afc44d168a9",
+     "objectives": {
+      "e_adv": -0.059468,
+      "e_shock": -0.029125,
+      "novelty": 0.413063,
+      "payoff": 1.317247,
+      "t_day": -0.664963,
+      "tpd": 1.16875
+     },
+     "rank": 26
+    },
+    {
+     "cluster_id": 27,
+     "cluster_size": 3,
+     "crowding": 0.165407,
+     "front": 0,
+     "hash": "4e3dd8894cb7d390a4d6ef19b7b275f4078ed0f1fc006a6798bd3a69ec06735c",
+     "objectives": {
+      "e_adv": 0.023041,
+      "e_shock": 0.039941,
+      "novelty": 0.092238,
+      "payoff": 1.5656,
+      "t_day": 0.233021,
+      "tpd": 1.3625
+     },
+     "rank": 27
+    },
+    {
+     "cluster_id": 28,
+     "cluster_size": 1,
+     "crowding": 0.161707,
+     "front": 0,
+     "hash": "12f356ce99f16ed460a09260fcd9a30a6d39570e2b95558a83f8268d52845946",
+     "objectives": {
+      "e_adv": 0.193697,
+      "e_shock": 0.202925,
+      "novelty": 0.510757,
+      "payoff": 2.170991,
+      "t_day": 0.754465,
+      "tpd": 0.28125
+     },
+     "rank": 28
+    },
+    {
+     "cluster_id": 29,
+     "cluster_size": 1,
+     "crowding": 0.156867,
+     "front": 0,
+     "hash": "626ba54fba78b94023b05b826f9a7708b06999fbc154cc0621758cc55c4cbb27",
+     "objectives": {
+      "e_adv": 0.100435,
+      "e_shock": 0.109538,
+      "novelty": 0.271336,
+      "payoff": 1.399498,
+      "t_day": 0.830956,
+      "tpd": 0.675
+     },
+     "rank": 29
+    }
+   ],
+   "n_clusters": 185,
+   "n_eligible": 250
+  },
+  "NAS100": {
+   "finalists": [
+    {
+     "cluster_id": 0,
+     "cluster_size": 1,
+     "crowding": null,
+     "front": 0,
+     "hash": "3e4280a89f03f39761f68b633dec14ba9f9e041be299e70b33b1716fd1bb8b1b",
+     "objectives": {
+      "e_adv": 0.431416,
+      "e_shock": 0.467491,
+      "novelty": 0.477271,
+      "payoff": 2.46515,
+      "t_day": 1.041432,
+      "tpd": 0.3
+     },
+     "rank": 0
+    },
+    {
+     "cluster_id": 1,
+     "cluster_size": 4,
+     "crowding": null,
+     "front": 0,
+     "hash": "4a617b5d7c43d9912aed6accbce04948584382dd7027d4210701ed1e46d95042",
+     "objectives": {
+      "e_adv": 0.22206,
+      "e_shock": 0.256917,
+      "novelty": 0.0,
+      "payoff": 1.470929,
+      "t_day": 1.471417,
+      "tpd": 0.507143
+     },
+     "rank": 1
+    },
+    {
+     "cluster_id": 2,
+     "cluster_size": 1,
+     "crowding": null,
+     "front": 0,
+     "hash": "777f222b0b47c0f342adce0b2ddd99ed29460c6d92754af6f7459c2817bfdb37",
+     "objectives": {
+      "e_adv": -0.654306,
+      "e_shock": -0.665324,
+      "novelty": 0.860219,
+      "payoff": 2.313608,
+      "t_day": -4.007627,
+      "tpd": 0.3
+     },
+     "rank": 2
+    },
+    {
+     "cluster_id": 3,
+     "cluster_size": 3,
+     "crowding": null,
+     "front": 0,
+     "hash": "77db408b9a088ba145349995e7a6697f0b84cdb423f42abd098f255a890acc78",
+     "objectives": {
+      "e_adv": 0.075534,
+      "e_shock": 0.063603,
+      "novelty": 0.000778,
+      "payoff": 5.73312,
+      "t_day": 0.14197,
+      "tpd": 0.357143
+     },
+     "rank": 3
+    },
+    {
+     "cluster_id": 4,
+     "cluster_size": 1,
+     "crowding": null,
+     "front": 0,
+     "hash": "811bcbb7cc0809b7b3fdb585159c64fa9d3fa9f40059550e9d1e07b6d1d6741b",
+     "objectives": {
+      "e_adv": 0.323408,
+      "e_shock": 0.383255,
+      "novelty": 0.211562,
+      "payoff": 3.366109,
+      "t_day": 0.618417,
+      "tpd": 0.285714
+     },
+     "rank": 4
+    },
+    {
+     "cluster_id": 5,
+     "cluster_size": 3,
+     "crowding": null,
+     "front": 0,
+     "hash": "e4e823d005fc28a31933f64c6f97d68e0395ae5bf0a34d52eef7a17acfcc0108",
+     "objectives": {
+      "e_adv": 0.002011,
+      "e_shock": -0.006599,
+      "novelty": 0.104766,
+      "payoff": 0.938384,
+      "t_day": 0.037064,
+      "tpd": 1.5
+     },
+     "rank": 5
+    },
+    {
+     "cluster_id": 6,
+     "cluster_size": 3,
+     "crowding": null,
+     "front": 0,
+     "hash": "f16e5d9a1e9fe6b3e5e3068766b9a0e23698e206ae1f4b0ed28f8078d76ddaac",
+     "objectives": {
+      "e_adv": -0.11649,
+      "e_shock": -0.120026,
+      "novelty": 0.0,
+      "payoff": 2.638297,
+      "t_day": -0.963659,
+      "tpd": 1.5
+     },
+     "rank": 6
+    },
+    {
+     "cluster_id": 7,
+     "cluster_size": 1,
+     "crowding": 1.112514,
+     "front": 0,
+     "hash": "757a73d0c2292d895985391bd883dfb1ae17015cf704f963107f0aba7a6c6582",
+     "objectives": {
+      "e_adv": -0.285574,
+      "e_shock": -0.301896,
+      "novelty": 0.61778,
+      "payoff": 1.826857,
+      "t_day": -2.156085,
+      "tpd": 0.792857
+     },
+     "rank": 7
+    },
+    {
+     "cluster_id": 8,
+     "cluster_size": 1,
+     "crowding": 0.925776,
+     "front": 0,
+     "hash": "adfaff56bda0a3a96b51cefa5f2ad2dbc4a6dfed0ffeb54f49bb868c7d102085",
+     "objectives": {
+      "e_adv": -0.565942,
+      "e_shock": -0.518067,
+      "novelty": 0.780542,
+      "payoff": 4.458778,
+      "t_day": -1.665784,
+      "tpd": 0.378571
+     },
+     "rank": 8
+    },
+    {
+     "cluster_id": 9,
+     "cluster_size": 1,
+     "crowding": 0.389296,
+     "front": 0,
+     "hash": "3e638fa644f959128a0c3df1276925231631955dac3fe7d58e23d6c3b8774489",
+     "objectives": {
+      "e_adv": 0.145729,
+      "e_shock": 0.208041,
+      "novelty": 0.295712,
+      "payoff": 2.667021,
+      "t_day": 0.825337,
+      "tpd": 1.078571
+     },
+     "rank": 9
+    },
+    {
+     "cluster_id": 10,
+     "cluster_size": 3,
+     "crowding": 0.362275,
+     "front": 0,
+     "hash": "bd7c0226c77aae41d84c82c30ec5666d2004a68cd7cf5137d2c523888cc1f6f4",
+     "objectives": {
+      "e_adv": -0.086782,
+      "e_shock": -0.081146,
+      "novelty": 0.047648,
+      "payoff": 3.599469,
+      "t_day": -0.409014,
+      "tpd": 0.928571
+     },
+     "rank": 10
+    },
+    {
+     "cluster_id": 11,
+     "cluster_size": 1,
+     "crowding": 0.352553,
+     "front": 0,
+     "hash": "5c9ad7987a69f742238ac436be00323f58b51ea81687ee425421ff8723645542",
+     "objectives": {
+      "e_adv": 0.079435,
+      "e_shock": 0.140154,
+      "novelty": 0.384654,
+      "payoff": 2.85656,
+      "t_day": 0.423993,
+      "tpd": 0.842857
+     },
+     "rank": 11
+    },
+    {
+     "cluster_id": 12,
+     "cluster_size": 1,
+     "crowding": 0.3224,
+     "front": 0,
+     "hash": "ebd974b89768494ed4570ad00ae1a600c6dffc0a7b807909d98cbd02ba0931e9",
+     "objectives": {
+      "e_adv": 0.043702,
+      "e_shock": -0.223839,
+      "novelty": 0.454998,
+      "payoff": 4.608728,
+      "t_day": 0.129559,
+      "tpd": 1.5
+     },
+     "rank": 12
+    },
+    {
+     "cluster_id": 13,
+     "cluster_size": 1,
+     "crowding": 0.310652,
+     "front": 0,
+     "hash": "6d6a5f8cd5fbd94f8868925e2605ce838c42a48b5349f736e0132d9a9fa2aaac",
+     "objectives": {
+      "e_adv": 0.27499,
+      "e_shock": 0.335589,
+      "novelty": 0.545402,
+      "payoff": 2.976792,
+      "t_day": 0.660582,
+      "tpd": 0.407143
+     },
+     "rank": 13
+    },
+    {
+     "cluster_id": 14,
+     "cluster_size": 1,
+     "crowding": 0.286028,
+     "front": 0,
+     "hash": "c0645b0981c828f4e6d910c7c72caeeffa3e6a1736b311454092da7a734a3d8f",
+     "objectives": {
+      "e_adv": 0.087791,
+      "e_shock": 0.085339,
+      "novelty": 0.800094,
+      "payoff": 0.969238,
+      "t_day": 0.604623,
+      "tpd": 0.35
+     },
+     "rank": 14
+    },
+    {
+     "cluster_id": 15,
+     "cluster_size": 1,
+     "crowding": 0.281367,
+     "front": 0,
+     "hash": "135e9ea332459262481eccb03a4a070400bb0c9da700cc986faa368d7f52fba2",
+     "objectives": {
+      "e_adv": -0.23146,
+      "e_shock": -0.124929,
+      "novelty": 0.740049,
+      "payoff": 3.494852,
+      "t_day": -0.670369,
+      "tpd": 0.328571
+     },
+     "rank": 15
+    },
+    {
+     "cluster_id": 16,
+     "cluster_size": 1,
+     "crowding": 0.276782,
+     "front": 0,
+     "hash": "4cdf0d776b97f75dd1b6b4d5951d4c5a728f5b77a0b13f0773db776a9bc314a1",
+     "objectives": {
+      "e_adv": -0.170581,
+      "e_shock": -0.181593,
+      "novelty": 0.612154,
+      "payoff": 1.227235,
+      "t_day": -1.308388,
+      "tpd": 0.542857
+     },
+     "rank": 16
+    },
+    {
+     "cluster_id": 17,
+     "cluster_size": 1,
+     "crowding": 0.237821,
+     "front": 0,
+     "hash": "799bf5c28b74873ac5e6db9e439fe336caaf4d45b9c7d70693113cbded5c50ae",
+     "objectives": {
+      "e_adv": -0.19912,
+      "e_shock": -0.150066,
+      "novelty": 0.687171,
+      "payoff": 1.82412,
+      "t_day": -1.187555,
+      "tpd": 0.4
+     },
+     "rank": 17
+    },
+    {
+     "cluster_id": 18,
+     "cluster_size": 1,
+     "crowding": 0.216232,
+     "front": 0,
+     "hash": "6afe35e9dd50772b1adb1cabd69111873f657331cf2e83be87eea8894c32223c",
+     "objectives": {
+      "e_adv": -0.081926,
+      "e_shock": -0.04195,
+      "novelty": 0.597038,
+      "payoff": 2.735158,
+      "t_day": -0.48049,
+      "tpd": 1.214286
+     },
+     "rank": 18
+    },
+    {
+     "cluster_id": 19,
+     "cluster_size": 1,
+     "crowding": 0.203069,
+     "front": 0,
+     "hash": "f56bee56398c40f5544569f6becb1430da855f8ac82d0ef4a70cc225a2a8e4a2",
+     "objectives": {
+      "e_adv": -0.015402,
+      "e_shock": -0.018217,
+      "novelty": 0.430886,
+      "payoff": 1.415817,
+      "t_day": -0.116055,
+      "tpd": 0.771429
+     },
+     "rank": 19
+    },
+    {
+     "cluster_id": 20,
+     "cluster_size": 1,
+     "crowding": 0.198838,
+     "front": 0,
+     "hash": "0414efec37eab3f177666f43efc846c107182256b62b905de584e9fdbf7c4022",
+     "objectives": {
+      "e_adv": -0.043531,
+      "e_shock": -0.041353,
+      "novelty": 0.288755,
+      "payoff": 1.902188,
+      "t_day": -0.522209,
+      "tpd": 1.5
+     },
+     "rank": 20
+    },
+    {
+     "cluster_id": 21,
+     "cluster_size": 1,
+     "crowding": 0.181155,
+     "front": 0,
+     "hash": "3c9b7363b4619d52ab91dc5c44e0b92fb4115299f85f4d2e08b7f328b5333d46",
+     "objectives": {
+      "e_adv": -0.029809,
+      "e_shock": 0.009234,
+      "novelty": 0.402607,
+      "payoff": 1.882581,
+      "t_day": -0.28954,
+      "tpd": 1.357143
+     },
+     "rank": 21
+    },
+    {
+     "cluster_id": 22,
+     "cluster_size": 2,
+     "crowding": 0.177961,
+     "front": 0,
+     "hash": "3c9a8341ca934d64aa7e2cc6e1960e2fb1e7bd4b3e809903d4541754ed5ed283",
+     "objectives": {
+      "e_adv": 0.040416,
+      "e_shock": 0.071607,
+      "novelty": 0.174345,
+      "payoff": 1.76015,
+      "t_day": 0.354143,
+      "tpd": 1.157143
+     },
+     "rank": 22
+    },
+    {
+     "cluster_id": 23,
+     "cluster_size": 1,
+     "crowding": 0.17586,
+     "front": 0,
+     "hash": "40b5efddaad5a7f9f386ff644a6f556865a02357784a18c76071340ac6e8933a",
+     "objectives": {
+      "e_adv": -0.099499,
+      "e_shock": -0.018188,
+      "novelty": 0.524834,
+      "payoff": 1.707662,
+      "t_day": -0.531885,
+      "tpd": 0.585714
+     },
+     "rank": 23
+    },
+    {
+     "cluster_id": 24,
+     "cluster_size": 1,
+     "crowding": 0.17515,
+     "front": 0,
+     "hash": "fafcc9c442f82f8d2043d4a69efb5ba50cf83d75e0cd5c392fe02a670453d617",
+     "objectives": {
+      "e_adv": 0.172388,
+      "e_shock": 0.209762,
+      "novelty": 0.41284,
+      "payoff": 1.410646,
+      "t_day": 1.017383,
+      "tpd": 0.442857
+     },
+     "rank": 24
+    },
+    {
+     "cluster_id": 25,
+     "cluster_size": 1,
+     "crowding": 0.173112,
+     "front": 0,
+     "hash": "b2633a80b9953c1c84b52dd0de875b70cfdde9a0ab1a73191d7697686981e58a",
+     "objectives": {
+      "e_adv": -0.174052,
+      "e_shock": -0.182225,
+      "novelty": 0.675361,
+      "payoff": 2.487809,
+      "t_day": -0.563887,
+      "tpd": 0.328571
+     },
+     "rank": 25
+    },
+    {
+     "cluster_id": 26,
+     "cluster_size": 1,
+     "crowding": 0.165117,
+     "front": 0,
+     "hash": "191827e87cfec1a4f43986b74ee280b37404b5e088a4cd22a8c17d61642e0f4f",
+     "objectives": {
+      "e_adv": -0.247857,
+      "e_shock": -0.204786,
+      "novelty": 0.61532,
+      "payoff": 2.131906,
+      "t_day": -1.305521,
+      "tpd": 0.414286
+     },
+     "rank": 26
+    },
+    {
+     "cluster_id": 27,
+     "cluster_size": 1,
+     "crowding": 0.160196,
+     "front": 0,
+     "hash": "3b1ab5368947b09d982d64d84c2f4525c408d537b5055a92c40dbe54fe35d1f1",
+     "objectives": {
+      "e_adv": -0.132029,
+      "e_shock": -0.031119,
+      "novelty": 0.451101,
+      "payoff": 1.550501,
+      "t_day": -0.918772,
+      "tpd": 0.607143
+     },
+     "rank": 27
+    },
+    {
+     "cluster_id": 28,
+     "cluster_size": 1,
+     "crowding": 0.159975,
+     "front": 0,
+     "hash": "2a2d0e8fc0e8e7499822606ae1bada221ea129a62eb24613f826a3f3a1f178e9",
+     "objectives": {
+      "e_adv": 0.158705,
+      "e_shock": 0.169389,
+      "novelty": 0.402971,
+      "payoff": 2.062296,
+      "t_day": 0.842093,
+      "tpd": 0.621429
+     },
+     "rank": 28
+    },
+    {
+     "cluster_id": 29,
+     "cluster_size": 1,
+     "crowding": 0.158015,
+     "front": 0,
+     "hash": "11c7d074d32b4c89a20ee5d29065bbea32ba58976d141703c4409e116687d7ec",
+     "objectives": {
+      "e_adv": -0.109327,
+      "e_shock": -0.101459,
+      "novelty": 0.48669,
+      "payoff": 2.998517,
+      "t_day": -1.027963,
+      "tpd": 1.5
+     },
+     "rank": 29
+    }
+   ],
+   "n_clusters": 128,
+   "n_eligible": 193
+  },
+  "SPX500": {
+   "finalists": [
+    {
+     "cluster_id": 0,
+     "cluster_size": 1,
+     "crowding": null,
+     "front": 0,
+     "hash": "2a3776036667edc70d46a5761d5285091a8fd2dd7605cb94aa5eda0c1547a5c6",
+     "objectives": {
+      "e_adv": 0.122803,
+      "e_shock": 0.152207,
+      "novelty": 0.293736,
+      "payoff": 1.034349,
+      "t_day": 0.853865,
+      "tpd": 0.307143
+     },
+     "rank": 0
+    },
+    {
+     "cluster_id": 1,
+     "cluster_size": 1,
+     "crowding": null,
+     "front": 0,
+     "hash": "2f5bbbd319119e89fac040a0b37f12bdb9971eb68803838516df96366f67ccb2",
+     "objectives": {
+      "e_adv": -0.595729,
+      "e_shock": -0.285094,
+      "novelty": 0.762555,
+      "payoff": 1.641917,
+      "t_day": -3.733975,
+      "tpd": 0.492857
+     },
+     "rank": 1
+    },
+    {
+     "cluster_id": 2,
+     "cluster_size": 12,
+     "crowding": null,
+     "front": 0,
+     "hash": "63e57681f25387fc0887465947741be88b8305dbd709dbb03a2548708b1bfb88",
+     "objectives": {
+      "e_adv": -0.066225,
+      "e_shock": -0.014646,
+      "novelty": 0.0,
+      "payoff": 1.102391,
+      "t_day": -0.751732,
+      "tpd": 1.1
+     },
+     "rank": 2
+    },
+    {
+     "cluster_id": 3,
+     "cluster_size": 1,
+     "crowding": null,
+     "front": 0,
+     "hash": "8024bd4d4ea30278081d8cfd3048299e930298c88a291400a72b0f31d7a9d856",
+     "objectives": {
+      "e_adv": -0.547266,
+      "e_shock": -0.407351,
+      "novelty": 0.590064,
+      "payoff": 1.74362,
+      "t_day": -5.618263,
+      "tpd": 1.035714
+     },
+     "rank": 3
+    },
+    {
+     "cluster_id": 4,
+     "cluster_size": 2,
+     "crowding": null,
+     "front": 0,
+     "hash": "9e2477976068c4ddd350e53e181a84ec2f5cd86b4d1aa2713904b99edc6362c6",
+     "objectives": {
+      "e_adv": 0.172215,
+      "e_shock": 0.295724,
+      "novelty": 0.173645,
+      "payoff": 1.659191,
+      "t_day": 0.664082,
+      "tpd": 0.321429
+     },
+     "rank": 4
+    },
+    {
+     "cluster_id": 5,
+     "cluster_size": 1,
+     "crowding": null,
+     "front": 0,
+     "hash": "a1549c2b51af40116509495180627e07dd76c943e568e4412d568f49e41b00d3",
+     "objectives": {
+      "e_adv": 0.063779,
+      "e_shock": 0.266081,
+      "novelty": 0.580335,
+      "payoff": 5.710378,
+      "t_day": 0.177806,
+      "tpd": 0.5
+     },
+     "rank": 5
+    },
+    {
+     "cluster_id": 6,
+     "cluster_size": 4,
+     "crowding": null,
+     "front": 0,
+     "hash": "a6d7eb00f4fac84cb813c42e3ba615283af8576c39c5a7c81961b9b9461b5b48",
+     "objectives": {
+      "e_adv": -0.376242,
+      "e_shock": -0.260691,
+      "novelty": 0.031832,
+      "payoff": 2.432507,
+      "t_day": -4.787428,
+      "tpd": 1.5
+     },
+     "rank": 6
+    },
+    {
+     "cluster_id": 7,
+     "cluster_size": 1,
+     "crowding": null,
+     "front": 0,
+     "hash": "b2633a80b9953c1c84b52dd0de875b70cfdde9a0ab1a73191d7697686981e58a",
+     "objectives": {
+      "e_adv": -0.294508,
+      "e_shock": -0.229132,
+      "novelty": 0.777915,
+      "payoff": 3.221043,
+      "t_day": -0.885845,
+      "tpd": 0.285714
+     },
+     "rank": 7
+    },
+    {
+     "cluster_id": 8,
+     "cluster_size": 1,
+     "crowding": null,
+     "front": 0,
+     "hash": "b5dfd79c485a6eac2b668e337476e75a2e37f7118f2233ad711f27063bca755f",
+     "objectives": {
+      "e_adv": 0.04834,
+      "e_shock": 0.29655,
+      "novelty": 0.58231,
+      "payoff": 1.208927,
+      "t_day": 0.309015,
+      "tpd": 0.328571
+     },
+     "rank": 8
+    },
+    {
+     "cluster_id": 9,
+     "cluster_size": 1,
+     "crowding": null,
+     "front": 0,
+     "hash": "bae65d10c221902c1f03230e26a96760df714d664e562005f141fd87edf904f5",
+     "objectives": {
+      "e_adv": -0.098304,
+      "e_shock": -0.077138,
+      "novelty": 0.224537,
+      "payoff": 0.885496,
+      "t_day": -1.167065,
+      "tpd": 0.907143
+     },
+     "rank": 9
+    },
+    {
+     "cluster_id": 10,
+     "cluster_size": 1,
+     "crowding": null,
+     "front": 0,
+     "hash": "df9e488e4cee495a69ac75ce93e1659b43933bc07a8fa4022afef9c86148f7d3",
+     "objectives": {
+      "e_adv": -0.044163,
+      "e_shock": -0.015573,
+      "novelty": 0.804833,
+      "payoff": 1.396792,
+      "t_day": -0.222609,
+      "tpd": 0.357143
+     },
+     "rank": 10
+    },
+    {
+     "cluster_id": 11,
+     "cluster_size": 1,
+     "crowding": 0.573565,
+     "front": 0,
+     "hash": "1638650b3298c634d30b4452f47a9b11a38b64dd204e705b08d0f0fe0f1a8200",
+     "objectives": {
+      "e_adv": -0.477948,
+      "e_shock": -0.365687,
+      "novelty": 0.68376,
+      "payoff": 1.751798,
+      "t_day": -3.25505,
+      "tpd": 0.507143
+     },
+     "rank": 11
+    },
+    {
+     "cluster_id": 12,
+     "cluster_size": 1,
+     "crowding": 0.458308,
+     "front": 0,
+     "hash": "40cec44468485b34faa5601c13b65ddeffb250c1961936d683cc63da53f272b1",
+     "objectives": {
+      "e_adv": -0.416331,
+      "e_shock": -0.264074,
+      "novelty": 0.42201,
+      "payoff": 1.772388,
+      "t_day": -4.11846,
+      "tpd": 1.371429
+     },
+     "rank": 12
+    },
+    {
+     "cluster_id": 13,
+     "cluster_size": 2,
+     "crowding": 0.346264,
+     "front": 0,
+     "hash": "6521d3d6272e6de33adb875d0781687af8daa7a83800adf75355e42836e8c1fd",
+     "objectives": {
+      "e_adv": 0.127993,
+      "e_shock": 0.181775,
+      "novelty": 0.193893,
+      "payoff": 1.438135,
+      "t_day": 0.680551,
+      "tpd": 0.45
+     },
+     "rank": 13
+    },
+    {
+     "cluster_id": 14,
+     "cluster_size": 1,
+     "crowding": 0.28014,
+     "front": 0,
+     "hash": "78f00dfa624194917c4d86a9d70d9453d6c149f60e5b19b210d007fcf0866abe",
+     "objectives": {
+      "e_adv": -0.379396,
+      "e_shock": -0.274998,
+      "novelty": 0.34755,
+      "payoff": 2.469548,
+      "t_day": -5.030436,
+      "tpd": 1.5
+     },
+     "rank": 14
+    },
+    {
+     "cluster_id": 15,
+     "cluster_size": 1,
+     "crowding": 0.27511,
+     "front": 0,
+     "hash": "31773659541403aea6fc79e4685e0a3d5d6ab62a53ad7f60e0dfa19048cdff2d",
+     "objectives": {
+      "e_adv": -0.19435,
+      "e_shock": -0.117032,
+      "novelty": 0.379675,
+      "payoff": 1.881605,
+      "t_day": -1.771761,
+      "tpd": 1.185714
+     },
+     "rank": 15
+    },
+    {
+     "cluster_id": 16,
+     "cluster_size": 4,
+     "crowding": 0.207212,
+     "front": 0,
+     "hash": "f2b02024cb80d9f21aa2748fbe06654b30022ccabd85a863b944c4672a31d804",
+     "objectives": {
+      "e_adv": 0.009936,
+      "e_shock": 0.069978,
+      "novelty": 0.059631,
+      "payoff": 1.398759,
+      "t_day": 0.076156,
+      "tpd": 0.542857
+     },
+     "rank": 16
+    },
+    {
+     "cluster_id": 17,
+     "cluster_size": 1,
+     "crowding": 0.200442,
+     "front": 0,
+     "hash": "9acd9402f6465491500df4896d18513d84114ece3e905c175e312ddfeca34b95",
+     "objectives": {
+      "e_adv": -0.345338,
+      "e_shock": -0.245881,
+      "novelty": 0.660448,
+      "payoff": 2.180829,
+      "t_day": -2.098312,
+      "tpd": 0.535714
+     },
+     "rank": 17
+    },
+    {
+     "cluster_id": 18,
+     "cluster_size": 1,
+     "crowding": 0.197056,
+     "front": 0,
+     "hash": "9c5036c7e7bbf019aaa6af2d36912501b487cd0a7224644cef9c982a5af60b26",
+     "objectives": {
+      "e_adv": -0.254208,
+      "e_shock": -0.018686,
+      "novelty": 0.590064,
+      "payoff": 2.612573,
+      "t_day": -1.092425,
+      "tpd": 0.671429
+     },
+     "rank": 18
+    },
+    {
+     "cluster_id": 19,
+     "cluster_size": 1,
+     "crowding": 0.184871,
+     "front": 0,
+     "hash": "4f36fe8d2061c5f0fffb5cf3b264831f6bc8573ae077c4e061a2f55726805c2a",
+     "objectives": {
+      "e_adv": -0.25129,
+      "e_shock": -0.201292,
+      "novelty": 0.345476,
+      "payoff": 1.477235,
+      "t_day": -2.586813,
+      "tpd": 1.35
+     },
+     "rank": 19
+    },
+    {
+     "cluster_id": 20,
+     "cluster_size": 1,
+     "crowding": 0.172066,
+     "front": 0,
+     "hash": "065422998a09f08cdf81cd331d4052d02c334113f7392f0d3148ed56f0cda757",
+     "objectives": {
+      "e_adv": -0.351348,
+      "e_shock": -0.229728,
+      "novelty": 0.554444,
+      "payoff": 1.816946,
+      "t_day": -3.185236,
+      "tpd": 1.028571
+     },
+     "rank": 20
+    },
+    {
+     "cluster_id": 21,
+     "cluster_size": 1,
+     "crowding": 0.162246,
+     "front": 0,
+     "hash": "8e69a25dd0cf315944abb98b5b33ad1d06597d572a30d255d2e7fc8c5bdca7cc",
+     "objectives": {
+      "e_adv": -0.1483,
+      "e_shock": 0.023805,
+      "novelty": 0.510429,
+      "payoff": 1.341228,
+      "t_day": -1.202235,
+      "tpd": 0.914286
+     },
+     "rank": 21
+    },
+    {
+     "cluster_id": 22,
+     "cluster_size": 1,
+     "crowding": 0.159723,
+     "front": 0,
+     "hash": "dbb63d56192d96ba4dd1d8288d206bd9ec1e03ee21f5564ca1bc5c395473eb69",
+     "objectives": {
+      "e_adv": -0.053828,
+      "e_shock": 0.026416,
+      "novelty": 0.654723,
+      "payoff": 2.044158,
+      "t_day": -0.273123,
+      "tpd": 0.435714
+     },
+     "rank": 22
+    },
+    {
+     "cluster_id": 23,
+     "cluster_size": 1,
+     "crowding": 0.157564,
+     "front": 0,
+     "hash": "0282518f69de6db43b5fe6ffc48d4a57526727ef05d8d2a093ccb9d9dfc898cb",
+     "objectives": {
+      "e_adv": -0.040136,
+      "e_shock": -0.004998,
+      "novelty": 0.329124,
+      "payoff": 1.350917,
+      "t_day": -0.294594,
+      "tpd": 0.578571
+     },
+     "rank": 23
+    },
+    {
+     "cluster_id": 24,
+     "cluster_size": 1,
+     "crowding": 0.149669,
+     "front": 0,
+     "hash": "3b894af67ed91db042964bfb1973ef4c66d45a605e7048fa4d0656dc54db6a46",
+     "objectives": {
+      "e_adv": -0.140667,
+      "e_shock": -0.023554,
+      "novelty": 0.282557,
+      "payoff": 1.190708,
+      "t_day": -1.953928,
+      "tpd": 1.428571
+     },
+     "rank": 24
+    },
+    {
+     "cluster_id": 25,
+     "cluster_size": 12,
+     "crowding": 0.148095,
+     "front": 0,
+     "hash": "a8a4f41f9cc162ab5b19ff58851c833c35c5168316fedbb3bd5188ae8f9b82a4",
+     "objectives": {
+      "e_adv": -0.199564,
+      "e_shock": -0.144115,
+      "novelty": 0.086138,
+      "payoff": 1.508065,
+      "t_day": -2.054107,
+      "tpd": 1.264286
+     },
+     "rank": 25
+    },
+    {
+     "cluster_id": 26,
+     "cluster_size": 1,
+     "crowding": 0.146391,
+     "front": 0,
+     "hash": "539e085999497d96fa792193472ca4dff20979832575209085c3c9496aaf53b3",
+     "objectives": {
+      "e_adv": -0.317111,
+      "e_shock": -0.259155,
+      "novelty": 0.205601,
+      "payoff": 1.63386,
+      "t_day": -3.931648,
+      "tpd": 1.5
+     },
+     "rank": 26
+    },
+    {
+     "cluster_id": 27,
+     "cluster_size": 1,
+     "crowding": 0.146105,
+     "front": 0,
+     "hash": "a86727072ae621bda3142ce4604ddfaef79a7e202d7fdfd5f8041ef143829200",
+     "objectives": {
+      "e_adv": -0.166491,
+      "e_shock": -0.114639,
+      "novelty": 0.510429,
+      "payoff": 1.38597,
+      "t_day": -1.385155,
+      "tpd": 0.814286
+     },
+     "rank": 27
+    },
+    {
+     "cluster_id": 28,
+     "cluster_size": 1,
+     "crowding": 0.133038,
+     "front": 0,
+     "hash": "f4c6ce22b64944a3d3b3c66171e6303fc62422811a948c862714662442025788",
+     "objectives": {
+      "e_adv": -0.377429,
+      "e_shock": -0.279066,
+      "novelty": 0.633519,
+      "payoff": 2.331987,
+      "t_day": -1.577799,
+      "tpd": 0.321429
+     },
+     "rank": 28
+    },
+    {
+     "cluster_id": 29,
+     "cluster_size": 1,
+     "crowding": 0.132056,
+     "front": 0,
+     "hash": "7585f5aaecf2c479505ca45a330a6eda5869193567776b91f6272ec13d8e5a70",
+     "objectives": {
+      "e_adv": -0.354845,
+      "e_shock": -0.183979,
+      "novelty": 0.289702,
+      "payoff": 1.923227,
+      "t_day": -4.698232,
+      "tpd": 1.5
+     },
+     "rank": 29
+    }
+   ],
+   "n_clusters": 115,
+   "n_eligible": 186
+  },
+  "XAUUSD": {
+   "finalists": [
+    {
+     "cluster_id": 0,
+     "cluster_size": 3,
+     "crowding": null,
+     "front": 0,
+     "hash": "078fd94dece76f34c6922869f48123d2555cc3397d131c19257d454b28beb9ba",
+     "objectives": {
+      "e_adv": -0.166695,
+      "e_shock": -0.171262,
+      "novelty": 0.009591,
+      "payoff": 2.025159,
+      "t_day": -1.451669,
+      "tpd": 1.280576
+     },
+     "rank": 0
+    },
+    {
+     "cluster_id": 1,
+     "cluster_size": 3,
+     "crowding": null,
+     "front": 0,
+     "hash": "11ba9107cfb8b2aef171ad9826a8a3b28cfb12454ff15b4ac48c8ff083fb5c00",
+     "objectives": {
+      "e_adv": 0.29958,
+      "e_shock": 0.32286,
+      "novelty": 0.089441,
+      "payoff": 1.992053,
+      "t_day": 1.198583,
+      "tpd": 0.330935
+     },
+     "rank": 1
+    },
+    {
+     "cluster_id": 2,
+     "cluster_size": 1,
+     "crowding": null,
+     "front": 0,
+     "hash": "25a9cd2c1cfd853fd77dd02c6641568284b24a53b6ee1855efe3f600647b574e",
+     "objectives": {
+      "e_adv": -0.101262,
+      "e_shock": -0.010979,
+      "novelty": 0.542978,
+      "payoff": 0.738426,
+      "t_day": -0.883058,
+      "tpd": 0.417266
+     },
+     "rank": 2
+    },
+    {
+     "cluster_id": 3,
+     "cluster_size": 1,
+     "crowding": null,
+     "front": 0,
+     "hash": "3520c609739177f3fa7b7df850ae0698606c846c6c1c270dbae67ee0d1ce8bfe",
+     "objectives": {
+      "e_adv": 0.076455,
+      "e_shock": 0.325504,
+      "novelty": 0.238469,
+      "payoff": 2.165319,
+      "t_day": 0.348682,
+      "tpd": 0.489209
+     },
+     "rank": 3
+    },
+    {
+     "cluster_id": 4,
+     "cluster_size": 1,
+     "crowding": null,
+     "front": 0,
+     "hash": "62acfa612acdaccce5f31e733cb6b5018742fae5f7bf504d83c7cec317f3bca6",
+     "objectives": {
+      "e_adv": -0.683332,
+      "e_shock": -0.682534,
+      "novelty": 0.29534,
+      "payoff": 2.904758,
+      "t_day": -4.583358,
+      "tpd": 0.935252
+     },
+     "rank": 4
+    },
+    {
+     "cluster_id": 5,
+     "cluster_size": 1,
+     "crowding": null,
+     "front": 0,
+     "hash": "ad5602533b5e52439ffb846cb1c26b12df9fdaddef1147d0ddf77c82c8138f21",
+     "objectives": {
+      "e_adv": -0.765667,
+      "e_shock": -0.577388,
+      "novelty": 0.507515,
+      "payoff": 2.830116,
+      "t_day": -4.641065,
+      "tpd": 0.604317
+     },
+     "rank": 5
+    },
+    {
+     "cluster_id": 6,
+     "cluster_size": 1,
+     "crowding": null,
+     "front": 0,
+     "hash": "af7f013d9ca5d3ed4df3dd43994ad75c8271c42b24b33d06dc72c90f8a4e32f0",
+     "objectives": {
+      "e_adv": -0.118796,
+      "e_shock": -0.035603,
+      "novelty": 0.709569,
+      "payoff": 2.231243,
+      "t_day": -0.47624,
+      "tpd": 0.28777
+     },
+     "rank": 6
+    },
+    {
+     "cluster_id": 7,
+     "cluster_size": 1,
+     "crowding": null,
+     "front": 0,
+     "hash": "b2633a80b9953c1c84b52dd0de875b70cfdde9a0ab1a73191d7697686981e58a",
+     "objectives": {
+      "e_adv": -0.523965,
+      "e_shock": -0.535113,
+      "novelty": 0.792252,
+      "payoff": 2.836285,
+      "t_day": -2.461519,
+      "tpd": 0.510791
+     },
+     "rank": 7
+    },
+    {
+     "cluster_id": 8,
+     "cluster_size": 1,
+     "crowding": null,
+     "front": 0,
+     "hash": "c6a684dcb0af8f139fc6f5d46626ed8a74d65adc8bae1531466ece810786aea3",
+     "objectives": {
+      "e_adv": -0.506826,
+      "e_shock": -0.426009,
+      "novelty": 0.294652,
+      "payoff": 3.181323,
+      "t_day": -5.354012,
+      "tpd": 1.5
+     },
+     "rank": 8
+    },
+    {
+     "cluster_id": 9,
+     "cluster_size": 1,
+     "crowding": null,
+     "front": 0,
+     "hash": "d3ab5025063d7b63b3312cf8a2a06168167dbc402ceab025a7f3af169cc325f5",
+     "objectives": {
+      "e_adv": -0.26093,
+      "e_shock": -0.187287,
+      "novelty": 0.255544,
+      "payoff": 0.926876,
+      "t_day": -4.02461,
+      "tpd": 1.5
+     },
+     "rank": 9
+    },
+    {
+     "cluster_id": 10,
+     "cluster_size": 1,
+     "crowding": null,
+     "front": 0,
+     "hash": "e2c5f68981b6614cff26b2129af6a0000a82a349b91fa0863bbfb1df172e3794",
+     "objectives": {
+      "e_adv": -0.54645,
+      "e_shock": -0.52404,
+      "novelty": 0.657167,
+      "payoff": 0.949626,
+      "t_day": -7.60239,
+      "tpd": 1.107914
+     },
+     "rank": 10
+    },
+    {
+     "cluster_id": 11,
+     "cluster_size": 1,
+     "crowding": 0.604428,
+     "front": 0,
+     "hash": "5e8609a675cd7a24e92562eb225868dd31ea4f45c9b2f908bf05d0afbcd8b641",
+     "objectives": {
+      "e_adv": -0.609357,
+      "e_shock": -0.489762,
+      "novelty": 0.494665,
+      "payoff": 2.36161,
+      "t_day": -5.816485,
+      "tpd": 1.316547
+     },
+     "rank": 11
+    },
+    {
+     "cluster_id": 12,
+     "cluster_size": 1,
+     "crowding": 0.513323,
+     "front": 0,
+     "hash": "cb533ab8269c3689e79979e28395f1f514105f8fd933b9cbe0262940fdc479a5",
+     "objectives": {
+      "e_adv": 0.058065,
+      "e_shock": 0.153397,
+      "novelty": 0.5096,
+      "payoff": 2.616017,
+      "t_day": 0.311033,
+      "tpd": 0.863309
+     },
+     "rank": 12
+    },
+    {
+     "cluster_id": 13,
+     "cluster_size": 1,
+     "crowding": 0.383171,
+     "front": 0,
+     "hash": "72a1bd81f6c91849842a32bc196eb99627f913db662d5036176da49e446b71a0",
+     "objectives": {
+      "e_adv": -0.237717,
+      "e_shock": -0.018009,
+      "novelty": 0.792252,
+      "payoff": 1.547039,
+      "t_day": -1.358101,
+      "tpd": 0.402878
+     },
+     "rank": 13
+    },
+    {
+     "cluster_id": 14,
+     "cluster_size": 1,
+     "crowding": 0.368355,
+     "front": 0,
+     "hash": "bc562b02de237b67859816c3c3fe55b359487cd8166f9ae77913a35db50c4666",
+     "objectives": {
+      "e_adv": -0.019913,
+      "e_shock": 0.016442,
+      "novelty": 0.660085,
+      "payoff": 0.763872,
+      "t_day": -0.164366,
+      "tpd": 0.388489
+     },
+     "rank": 14
+    },
+    {
+     "cluster_id": 15,
+     "cluster_size": 1,
+     "crowding": 0.354066,
+     "front": 0,
+     "hash": "041bd167c508e131f9e1b0d66e77ffbec3006c17088c88ab58a9758e6bc88b31",
+     "objectives": {
+      "e_adv": 0.117886,
+      "e_shock": 0.166635,
+      "novelty": 0.41086,
+      "payoff": 2.466947,
+      "t_day": 0.580776,
+      "tpd": 0.561151
+     },
+     "rank": 15
+    },
+    {
+     "cluster_id": 16,
+     "cluster_size": 1,
+     "crowding": 0.342012,
+     "front": 0,
+     "hash": "fa2118dc0c4eb9435e9c39f106497a8983c64b3170332a51ec6cff999d47ddb0",
+     "objectives": {
+      "e_adv": -0.292242,
+      "e_shock": -0.235523,
+      "novelty": 0.4503,
+      "payoff": 1.822029,
+      "t_day": -2.797495,
+      "tpd": 1.122302
+     },
+     "rank": 16
+    },
+    {
+     "cluster_id": 17,
+     "cluster_size": 2,
+     "crowding": 0.338596,
+     "front": 0,
+     "hash": "ce02fdc07d44fca85aaff5833e0bc0cbe297e3de53402255bced5601bf053be4",
+     "objectives": {
+      "e_adv": -0.119727,
+      "e_shock": -0.051168,
+      "novelty": 0.151963,
+      "payoff": 2.637737,
+      "t_day": -0.57657,
+      "tpd": 0.618705
+     },
+     "rank": 17
+    },
+    {
+     "cluster_id": 18,
+     "cluster_size": 1,
+     "crowding": 0.327218,
+     "front": 0,
+     "hash": "ec244f13c86c77f72b8929f9eb611122ebb2ddfae69946bb373f4cd527d8c5ed",
+     "objectives": {
+      "e_adv": 0.234303,
+      "e_shock": 0.29763,
+      "novelty": 0.41766,
+      "payoff": 2.033479,
+      "t_day": 1.008348,
+      "tpd": 0.33813
+     },
+     "rank": 18
+    },
+    {
+     "cluster_id": 19,
+     "cluster_size": 3,
+     "crowding": 0.311313,
+     "front": 0,
+     "hash": "bc09a0112d6469a946c9baeeadd05f9bd762533a8a29b302c4c7b1f401d744a6",
+     "objectives": {
+      "e_adv": -0.270749,
+      "e_shock": -0.220127,
+      "novelty": 0.145702,
+      "payoff": 1.385173,
+      "t_day": -2.684943,
+      "tpd": 1.395684
+     },
+     "rank": 19
+    },
+    {
+     "cluster_id": 20,
+     "cluster_size": 1,
+     "crowding": 0.286774,
+     "front": 0,
+     "hash": "4606c1e5b34bf95cfa41b92c873c8b25b66c38d54db317ca1247436b58612543",
+     "objectives": {
+      "e_adv": -0.303841,
+      "e_shock": -0.193695,
+      "novelty": 0.347893,
+      "payoff": 1.366828,
+      "t_day": -3.441601,
+      "tpd": 1.5
+     },
+     "rank": 20
+    },
+    {
+     "cluster_id": 21,
+     "cluster_size": 8,
+     "crowding": 0.2786,
+     "front": 0,
+     "hash": "09dc8756d9245294975ec6912b21f4d5f1d209902d8790331219605a0e5c2cad",
+     "objectives": {
+      "e_adv": -0.209161,
+      "e_shock": -0.169119,
+      "novelty": 0.18411,
+      "payoff": 1.767326,
+      "t_day": -2.072986,
+      "tpd": 1.021583
+     },
+     "rank": 21
+    },
+    {
+     "cluster_id": 22,
+     "cluster_size": 1,
+     "crowding": 0.278013,
+     "front": 0,
+     "hash": "44bae6353dfd97b96ba93037b279b6860b0e72ddaacc33c28e44f3a218892a46",
+     "objectives": {
+      "e_adv": -0.142844,
+      "e_shock": -0.093752,
+      "novelty": 0.585506,
+      "payoff": 2.743208,
+      "t_day": -0.754569,
+      "tpd": 0.899281
+     },
+     "rank": 22
+    },
+    {
+     "cluster_id": 23,
+     "cluster_size": 1,
+     "crowding": 0.256201,
+     "front": 0,
+     "hash": "ebfcd141131b843702ac125b374fdf9a05cbb45020510f2d8ec5d75d22de6ee6",
+     "objectives": {
+      "e_adv": -0.608604,
+      "e_shock": -0.429588,
+      "novelty": 0.696367,
+      "payoff": 1.745704,
+      "t_day": -4.596489,
+      "tpd": 0.589928
+     },
+     "rank": 23
+    },
+    {
+     "cluster_id": 24,
+     "cluster_size": 1,
+     "crowding": 0.254704,
+     "front": 0,
+     "hash": "1b067f1f3bf82fa03b5594c861c062be07898db02801e0c79648bab62de5be7d",
+     "objectives": {
+      "e_adv": 0.081792,
+      "e_shock": 0.226735,
+      "novelty": 0.244872,
+      "payoff": 2.223091,
+      "t_day": 0.36158,
+      "tpd": 0.431655
+     },
+     "rank": 24
+    },
+    {
+     "cluster_id": 25,
+     "cluster_size": 1,
+     "crowding": 0.253165,
+     "front": 0,
+     "hash": "fc3b104302918382de375c70544d499fcba4d4f5f0513e7a4f40b15eb44a98f4",
+     "objectives": {
+      "e_adv": -0.381582,
+      "e_shock": -0.150499,
+      "novelty": 0.639845,
+      "payoff": 0.932511,
+      "t_day": -3.185263,
+      "tpd": 0.47482
+     },
+     "rank": 25
+    },
+    {
+     "cluster_id": 26,
+     "cluster_size": 1,
+     "crowding": 0.241702,
+     "front": 0,
+     "hash": "95745e4c7d30d75e26b97266b4de895e88085c71bbc180d84a0255504ed798f1",
+     "objectives": {
+      "e_adv": -0.470246,
+      "e_shock": -0.411952,
+      "novelty": 0.591132,
+      "payoff": 0.921594,
+      "t_day": -3.971594,
+      "tpd": 0.561151
+     },
+     "rank": 26
+    },
+    {
+     "cluster_id": 27,
+     "cluster_size": 1,
+     "crowding": 0.231184,
+     "front": 0,
+     "hash": "899d1689c5734592d08703757b4ffa66945253374c46d3c70885568a5741ca8b",
+     "objectives": {
+      "e_adv": -0.170706,
+      "e_shock": 0.070027,
+      "novelty": 0.534302,
+      "payoff": 1.860331,
+      "t_day": -0.841477,
+      "tpd": 0.345324
+     },
+     "rank": 27
+    },
+    {
+     "cluster_id": 28,
+     "cluster_size": 1,
+     "crowding": 0.2135,
+     "front": 0,
+     "hash": "059ff6748825615a684567e313749be6dcbda60c501f02a140c1dac68fec8df6",
+     "objectives": {
+      "e_adv": -0.246417,
+      "e_shock": -0.190711,
+      "novelty": 0.266664,
+      "payoff": 0.928692,
+      "t_day": -3.786878,
+      "tpd": 1.5
+     },
+     "rank": 28
+    },
+    {
+     "cluster_id": 29,
+     "cluster_size": 1,
+     "crowding": 0.209383,
+     "front": 0,
+     "hash": "191827e87cfec1a4f43986b74ee280b37404b5e088a4cd22a8c17d61642e0f4f",
+     "objectives": {
+      "e_adv": -0.439751,
+      "e_shock": -0.431891,
+      "novelty": 0.608553,
+      "payoff": 1.974557,
+      "t_day": -2.496335,
+      "tpd": 0.467626
+     },
+     "rank": 29
+    }
+   ],
+   "n_clusters": 133,
+   "n_eligible": 197
+  }
+ },
+ "note": "fold-test-blind selection; frozen BEFORE the survival stage",
+ "sizes": {
+  "EURUSD": 30,
+  "GER40": 30,
+  "NAS100": 30,
+  "SPX500": 30,
+  "XAUUSD": 30
+ },
+ "stats_digests": {
+  "EURUSD": "e92c1bfb21abd919a4022b280c108ce1528d9e4375cf6b0a8fd17f3f7d7dd185",
+  "GER40": "e4142dd8a4fa4abe9aa64b65cb29c219daae0ac5e1fff4f562cb6110b1f51972",
+  "NAS100": "4d4327cacd4c65ca83112cfaeda9c427078d3f53bfaa8faaa9e313fdc77f3120",
+  "SPX500": "3ae730a14a3cc930124322d50d16ef031103542cb1b4f483eda2b2d514d4aa50",
+  "XAUUSD": "c8b0bf4fd1984a8f60ff1813fc34bf1c334a7c396fd1ff171a0cb80ebbef2814"
+ },
+ "version": "v2-select-v1"
+}

@@ -1,0 +1,7686 @@
+{
+ "candidates": [
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 0,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 1.0,
+    "size_below_min_skips": 367,
+    "train_trades_at_account": 0,
+    "train_trades_research": 71
+   },
+   "canonical_hash": "4a617b5d7c43d9912aed6accbce04948584382dd7027d4210701ed1e46d95042",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 0,
+      "cmp": "lt",
+      "kind": "feature",
+      "name": "range_ratio",
+      "op": "IS",
+      "q": 0.2,
+      "reg": "",
+      "tf": "M5",
+      "tol_atr": 0.0,
+      "variant": ""
+     },
+     {
+      "arg": 3,
+      "cmp": "",
+      "kind": "state",
+      "name": "TREND_UP",
+      "op": "HOLD",
+      "q": 0.0,
+      "reg": "",
+      "tf": "M15",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [],
+    "direction": "LONG",
+    "expires_after": 12,
+    "lineage": "COMPRESSION_EXPANSION>MUT4>X2",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "RECLAIM_UP",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.0,
+       "variant": "k6"
+      },
+      "guard": "none",
+      "invalidate": "BD:t0:first",
+      "within": 2
+     }
+    ],
+    "stop": {
+     "atr_mult": 2.0,
+     "buffer_atr": 0.0,
+     "kind": "atr",
+     "max_risk_atr": 2.0,
+     "pick": "",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 0.0,
+     "kind": "fixed_r",
+     "levels": [],
+     "min_space_r": 0.0,
+     "r": 2.0
+    },
+    "window": null
+   },
+   "lineage": "COMPRESSION_EXPANSION>MUT4>X2",
+   "stage": "deap",
+   "train_fitness": -0.14812217
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 0,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 1.0,
+    "size_below_min_skips": 367,
+    "train_trades_at_account": 0,
+    "train_trades_research": 71
+   },
+   "canonical_hash": "f15b2d8d9ed6d7aada3ee1c390c8efcfc87c23cba9efd71dfa54f7e3e83c5946",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 0,
+      "cmp": "lt",
+      "kind": "feature",
+      "name": "range_ratio",
+      "op": "IS",
+      "q": 0.2,
+      "reg": "",
+      "tf": "M5",
+      "tol_atr": 0.0,
+      "variant": ""
+     },
+     {
+      "arg": 3,
+      "cmp": "",
+      "kind": "state",
+      "name": "TREND_UP",
+      "op": "HOLD",
+      "q": 0.0,
+      "reg": "",
+      "tf": "M15",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [],
+    "direction": "LONG",
+    "expires_after": 12,
+    "lineage": "COMPRESSION_EXPANSION>MUT5>X5",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "RECLAIM_UP",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.0,
+       "variant": "k6"
+      },
+      "guard": "none",
+      "invalidate": "BD:t0:first",
+      "within": 12
+     }
+    ],
+    "stop": {
+     "atr_mult": 2.0,
+     "buffer_atr": 0.0,
+     "kind": "atr",
+     "max_risk_atr": 2.0,
+     "pick": "",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 0.0,
+     "kind": "fixed_r",
+     "levels": [],
+     "min_space_r": 0.0,
+     "r": 2.0
+    },
+    "window": null
+   },
+   "lineage": "COMPRESSION_EXPANSION>MUT5>X5",
+   "stage": "deap",
+   "train_fitness": -0.14812217
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 13,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 0.642045,
+    "size_below_min_skips": 113,
+    "train_trades_at_account": 63,
+    "train_trades_research": 151
+   },
+   "canonical_hash": "3e638fa644f959128a0c3df1276925231631955dac3fe7d58e23d6c3b8774489",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 0,
+      "cmp": "",
+      "kind": "event",
+      "name": "SWING_LOW_CONF",
+      "op": "IS",
+      "q": 0.0,
+      "reg": "",
+      "tf": "M5",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [],
+    "direction": "LONG",
+    "expires_after": 64,
+    "lineage": "FAILED_BREAKOUT>MUT3>X2",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "BREAK_UP",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.25,
+       "variant": ""
+      },
+      "guard": "none",
+      "invalidate": "none",
+      "within": 48
+     }
+    ],
+    "stop": {
+     "atr_mult": 0.0,
+     "buffer_atr": 0.1,
+     "kind": "swing",
+     "max_risk_atr": 4.0,
+     "pick": "",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 2.5,
+     "kind": "next_structure",
+     "levels": [
+      "m5_swing_high",
+      "pdh"
+     ],
+     "min_space_r": 1.5,
+     "r": 0.0
+    },
+    "window": null
+   },
+   "lineage": "FAILED_BREAKOUT>MUT3>X2",
+   "stage": "deap",
+   "train_fitness": -0.1553144
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 0,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 0.914452,
+    "size_below_min_skips": 1411,
+    "train_trades_at_account": 132,
+    "train_trades_research": 325
+   },
+   "canonical_hash": "e4e823d005fc28a31933f64c6f97d68e0395ae5bf0a34d52eef7a17acfcc0108",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 0,
+      "cmp": "",
+      "kind": "state",
+      "name": "TREND_UP",
+      "op": "IS",
+      "q": 0.0,
+      "reg": "",
+      "tf": "H1",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [],
+    "direction": "LONG",
+    "expires_after": 32,
+    "lineage": "BREAK_RETEST_MOMENTUM>MUT5>X4",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "RECLAIM_UP",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.0,
+       "variant": "k6"
+      },
+      "guard": "none",
+      "invalidate": "BD:t25:first",
+      "within": 3
+     }
+    ],
+    "stop": {
+     "atr_mult": 0.0,
+     "buffer_atr": 0.5,
+     "kind": "register",
+     "max_risk_atr": 6.0,
+     "pick": "first",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 0.0,
+     "kind": "fixed_r",
+     "levels": [],
+     "min_space_r": 0.0,
+     "r": 1.0
+    },
+    "window": null
+   },
+   "lineage": "BREAK_RETEST_MOMENTUM>MUT5>X4",
+   "stage": "deap",
+   "train_fitness": -0.17494298
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 0,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 0.970972,
+    "size_below_min_skips": 669,
+    "train_trades_at_account": 20,
+    "train_trades_research": 162
+   },
+   "canonical_hash": "3c9a8341ca934d64aa7e2cc6e1960e2fb1e7bd4b3e809903d4541754ed5ed283",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 0,
+      "cmp": "",
+      "kind": "state",
+      "name": "TREND_UP",
+      "op": "IS",
+      "q": 0.0,
+      "reg": "",
+      "tf": "H1",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [],
+    "direction": "LONG",
+    "expires_after": 32,
+    "lineage": "BREAK_RETEST_MOMENTUM>MUT4>X3",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "RECLAIM_UP",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.0,
+       "variant": "k6"
+      },
+      "guard": "none",
+      "invalidate": "none",
+      "within": 3
+     }
+    ],
+    "stop": {
+     "atr_mult": 0.0,
+     "buffer_atr": 0.5,
+     "kind": "register",
+     "max_risk_atr": 6.0,
+     "pick": "first",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 2.0,
+     "kind": "next_structure",
+     "levels": [
+      "h1_swing_high"
+     ],
+     "min_space_r": 1.5,
+     "r": 0.0
+    },
+    "window": [
+     570,
+     720
+    ]
+   },
+   "lineage": "BREAK_RETEST_MOMENTUM>MUT4>X3",
+   "stage": "deap",
+   "train_fitness": -0.18593825
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 6,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 0.630769,
+    "size_below_min_skips": 41,
+    "train_trades_at_account": 24,
+    "train_trades_research": 62
+   },
+   "canonical_hash": "fafcc9c442f82f8d2043d4a69efb5ba50cf83d75e0cd5c392fe02a670453d617",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 0,
+      "cmp": "",
+      "kind": "event",
+      "name": "SWING_HIGH_CONF",
+      "op": "IS",
+      "q": 0.0,
+      "reg": "",
+      "tf": "M5",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [
+     {
+      "arg": 0,
+      "cmp": "gt",
+      "kind": "feature",
+      "name": "ret_12",
+      "op": "IS",
+      "q": 0.7,
+      "reg": "",
+      "tf": "M5",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "direction": "SHORT",
+    "expires_after": 6,
+    "lineage": "BREAK_RETEST_MOMENTUM",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "BREAK_UP",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.0,
+       "variant": ""
+      },
+      "guard": "none",
+      "invalidate": "BD:t0:first",
+      "within": 8
+     },
+     {
+      "event": {
+       "arg": 0,
+       "name": "RETEST_HOLD_UP",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.25,
+       "variant": ""
+      },
+      "guard": "none",
+      "invalidate": "none",
+      "within": 5
+     }
+    ],
+    "stop": {
+     "atr_mult": 0.0,
+     "buffer_atr": 0.05,
+     "kind": "register",
+     "max_risk_atr": 4.0,
+     "pick": "ext",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 0.0,
+     "kind": "fixed_r",
+     "levels": [],
+     "min_space_r": 0.0,
+     "r": 1.5
+    },
+    "window": null
+   },
+   "lineage": "BREAK_RETEST_MOMENTUM",
+   "stage": "random",
+   "train_fitness": -0.19292129
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 0,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 0.90887,
+    "size_below_min_skips": 1496,
+    "train_trades_at_account": 150,
+    "train_trades_research": 355
+   },
+   "canonical_hash": "a07ad21e82883493ecc7853a3d5f0cada13adc8a7f769cc93a86992829e39b25",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 0,
+      "cmp": "",
+      "kind": "state",
+      "name": "TREND_UP",
+      "op": "IS",
+      "q": 0.0,
+      "reg": "",
+      "tf": "H1",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [],
+    "direction": "LONG",
+    "expires_after": 32,
+    "lineage": "BREAK_RETEST_MOMENTUM>MUT4>X4",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "RECLAIM_UP",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.0,
+       "variant": "k6"
+      },
+      "guard": "none",
+      "invalidate": "SN:TREND_UP:H1",
+      "within": 3
+     }
+    ],
+    "stop": {
+     "atr_mult": 0.0,
+     "buffer_atr": 0.5,
+     "kind": "register",
+     "max_risk_atr": 6.0,
+     "pick": "first",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 0.0,
+     "kind": "fixed_r",
+     "levels": [],
+     "min_space_r": 0.0,
+     "r": 1.0
+    },
+    "window": null
+   },
+   "lineage": "BREAK_RETEST_MOMENTUM>MUT4>X4",
+   "stage": "deap",
+   "train_fitness": -0.20230842
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 0,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 1.0,
+    "size_below_min_skips": 2017,
+    "train_trades_at_account": 0,
+    "train_trades_research": 153
+   },
+   "canonical_hash": "b3dca05c7449b1cf9a5509ad5499e578b21100c052bca5dea02e7aabb3e78cba",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 3,
+      "cmp": "",
+      "kind": "state",
+      "name": "TREND_UP",
+      "op": "HOLD",
+      "q": 0.0,
+      "reg": "",
+      "tf": "M15",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [],
+    "direction": "LONG",
+    "expires_after": 16,
+    "lineage": "TRENDLINE_BOUNCE_BREAK>MUT3>X5",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "TOUCH",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.25,
+       "variant": ""
+      },
+      "guard": "none",
+      "invalidate": "BD:t25:ext",
+      "within": 24
+     }
+    ],
+    "stop": {
+     "atr_mult": 3.0,
+     "buffer_atr": 0.0,
+     "kind": "atr",
+     "max_risk_atr": 4.0,
+     "pick": "",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 0.0,
+     "kind": "fixed_r",
+     "levels": [],
+     "min_space_r": 0.0,
+     "r": 2.0
+    },
+    "window": [
+     570,
+     900
+    ]
+   },
+   "lineage": "TRENDLINE_BOUNCE_BREAK>MUT3>X5",
+   "stage": "deap",
+   "train_fitness": -0.20536169
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 0,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 0.913793,
+    "size_below_min_skips": 1431,
+    "train_trades_at_account": 135,
+    "train_trades_research": 339
+   },
+   "canonical_hash": "d071b6750e50b66579c074263b4c6556e6e99fc17392b26686945ffa367e7847",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 0,
+      "cmp": "",
+      "kind": "state",
+      "name": "TREND_UP",
+      "op": "IS",
+      "q": 0.0,
+      "reg": "",
+      "tf": "H1",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [],
+    "direction": "LONG",
+    "expires_after": 32,
+    "lineage": "BREAK_RETEST_MOMENTUM>MUT5>X4",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "RECLAIM_UP",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.0,
+       "variant": "k6"
+      },
+      "guard": "none",
+      "invalidate": "SN:TREND_UP:H1",
+      "within": 2
+     }
+    ],
+    "stop": {
+     "atr_mult": 0.0,
+     "buffer_atr": 0.5,
+     "kind": "register",
+     "max_risk_atr": 6.0,
+     "pick": "first",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 0.0,
+     "kind": "fixed_r",
+     "levels": [],
+     "min_space_r": 0.0,
+     "r": 1.0
+    },
+    "window": null
+   },
+   "lineage": "BREAK_RETEST_MOMENTUM>MUT5>X4",
+   "stage": "deap",
+   "train_fitness": -0.20773067
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 0,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 0.92517,
+    "size_below_min_skips": 136,
+    "train_trades_at_account": 11,
+    "train_trades_research": 109
+   },
+   "canonical_hash": "642d86778117fed56e4ba07cf308d7985113f06ba50d0823622e5642e9c4cb97",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 0,
+      "cmp": "",
+      "kind": "event",
+      "name": "SWING_HIGH_CONF",
+      "op": "IS",
+      "q": 0.0,
+      "reg": "",
+      "tf": "M5",
+      "tol_atr": 0.0,
+      "variant": ""
+     },
+     {
+      "arg": 0,
+      "cmp": "",
+      "kind": "state",
+      "name": "TREND_UP",
+      "op": "IS",
+      "q": 0.0,
+      "reg": "",
+      "tf": "H1",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [],
+    "direction": "LONG",
+    "expires_after": 32,
+    "lineage": "BREAK_RETEST_MOMENTUM>MUT5>X5",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "TOUCH",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.25,
+       "variant": ""
+      },
+      "guard": "none",
+      "invalidate": "BD:t25:ext",
+      "within": 24
+     }
+    ],
+    "stop": {
+     "atr_mult": 1.0,
+     "buffer_atr": 0.0,
+     "kind": "atr",
+     "max_risk_atr": 1.5,
+     "pick": "",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 2.0,
+     "kind": "next_structure",
+     "levels": [
+      "h1_swing_high"
+     ],
+     "min_space_r": 1.5,
+     "r": 0.0
+    },
+    "window": [
+     570,
+     900
+    ]
+   },
+   "lineage": "BREAK_RETEST_MOMENTUM>MUT5>X5",
+   "stage": "deap",
+   "train_fitness": -0.21718232
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 0,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 0.92517,
+    "size_below_min_skips": 136,
+    "train_trades_at_account": 11,
+    "train_trades_research": 109
+   },
+   "canonical_hash": "fc29aa1b382618f55aa5e275ba7ff7516eca9d88c34088367967d4dfbf3faaf1",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 0,
+      "cmp": "",
+      "kind": "event",
+      "name": "SWING_HIGH_CONF",
+      "op": "IS",
+      "q": 0.0,
+      "reg": "",
+      "tf": "M5",
+      "tol_atr": 0.0,
+      "variant": ""
+     },
+     {
+      "arg": 0,
+      "cmp": "",
+      "kind": "state",
+      "name": "TREND_UP",
+      "op": "IS",
+      "q": 0.0,
+      "reg": "",
+      "tf": "H1",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [],
+    "direction": "LONG",
+    "expires_after": 32,
+    "lineage": "BREAK_RETEST_MOMENTUM>MUT4>X1",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "TOUCH",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.25,
+       "variant": ""
+      },
+      "guard": "none",
+      "invalidate": "BD:t25:ext",
+      "within": 24
+     }
+    ],
+    "stop": {
+     "atr_mult": 1.0,
+     "buffer_atr": 0.0,
+     "kind": "atr",
+     "max_risk_atr": 1.5,
+     "pick": "",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 2.0,
+     "kind": "next_structure",
+     "levels": [
+      "h1_swing_high"
+     ],
+     "min_space_r": 1.5,
+     "r": 0.0
+    },
+    "window": null
+   },
+   "lineage": "BREAK_RETEST_MOMENTUM>MUT4>X1",
+   "stage": "deap",
+   "train_fitness": -0.21718232
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 0,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 1.0,
+    "size_below_min_skips": 976,
+    "train_trades_at_account": 0,
+    "train_trades_research": 220
+   },
+   "canonical_hash": "a947be43a0fca85b73269a45b7fb60e8eb1b76db06f091ce3ce44ada7eeda6de",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 0,
+      "cmp": "",
+      "kind": "state",
+      "name": "TREND_UP",
+      "op": "IS",
+      "q": 0.0,
+      "reg": "",
+      "tf": "H1",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [],
+    "direction": "LONG",
+    "expires_after": 32,
+    "lineage": "BREAK_RETEST_MOMENTUM>MUT5>X4",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "RETEST_HOLD_UP",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.0,
+       "variant": ""
+      },
+      "guard": "none",
+      "invalidate": "none",
+      "within": 8
+     }
+    ],
+    "stop": {
+     "atr_mult": 1.5,
+     "buffer_atr": 0.0,
+     "kind": "atr",
+     "max_risk_atr": 1.5,
+     "pick": "",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 2.0,
+     "kind": "next_structure",
+     "levels": [
+      "h1_swing_high"
+     ],
+     "min_space_r": 1.5,
+     "r": 0.0
+    },
+    "window": null
+   },
+   "lineage": "BREAK_RETEST_MOMENTUM>MUT5>X4",
+   "stage": "deap",
+   "train_fitness": -0.21955659
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 1,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 0.900969,
+    "size_below_min_skips": 1674,
+    "train_trades_at_account": 184,
+    "train_trades_research": 401
+   },
+   "canonical_hash": "489d3568d03c6e3ff3b0eb5be0e26d02d476d57b667560f60a5643681d0e3408",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 0,
+      "cmp": "",
+      "kind": "state",
+      "name": "TREND_UP",
+      "op": "IS",
+      "q": 0.0,
+      "reg": "",
+      "tf": "H1",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [],
+    "direction": "LONG",
+    "expires_after": 32,
+    "lineage": "BREAK_RETEST_MOMENTUM>MUT4>X5",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "RECLAIM_UP",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.0,
+       "variant": "k6"
+      },
+      "guard": "none",
+      "invalidate": "none",
+      "within": 48
+     }
+    ],
+    "stop": {
+     "atr_mult": 0.0,
+     "buffer_atr": 0.5,
+     "kind": "register",
+     "max_risk_atr": 6.0,
+     "pick": "first",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 0.0,
+     "kind": "fixed_r",
+     "levels": [],
+     "min_space_r": 0.0,
+     "r": 1.0
+    },
+    "window": null
+   },
+   "lineage": "BREAK_RETEST_MOMENTUM>MUT4>X5",
+   "stage": "deap",
+   "train_fitness": -0.22097248
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 6,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 0.54,
+    "size_below_min_skips": 27,
+    "train_trades_at_account": 23,
+    "train_trades_research": 42
+   },
+   "canonical_hash": "3e4280a89f03f39761f68b633dec14ba9f9e041be299e70b33b1716fd1bb8b1b",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 0,
+      "cmp": "",
+      "kind": "state",
+      "name": "TREND_UP",
+      "op": "IS",
+      "q": 0.0,
+      "reg": "",
+      "tf": "M15",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [],
+    "direction": "LONG",
+    "expires_after": 64,
+    "lineage": "FAILED_BREAKOUT>MUT2>X3",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "BREAK_DN",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.25,
+       "variant": ""
+      },
+      "guard": "none",
+      "invalidate": "none",
+      "within": 12
+     },
+     {
+      "event": {
+       "arg": 0,
+       "name": "RECLAIM_UP",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.0,
+       "variant": "k6"
+      },
+      "guard": "none",
+      "invalidate": "none",
+      "within": 3
+     }
+    ],
+    "stop": {
+     "atr_mult": 0.0,
+     "buffer_atr": 0.1,
+     "kind": "swing",
+     "max_risk_atr": 4.0,
+     "pick": "",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 2.5,
+     "kind": "next_structure",
+     "levels": [
+      "m5_swing_high",
+      "pdh"
+     ],
+     "min_space_r": 1.5,
+     "r": 0.0
+    },
+    "window": null
+   },
+   "lineage": "FAILED_BREAKOUT>MUT2>X3",
+   "stage": "deap",
+   "train_fitness": -0.22244927
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 1,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 0.894068,
+    "size_below_min_skips": 1477,
+    "train_trades_at_account": 175,
+    "train_trades_research": 357
+   },
+   "canonical_hash": "41e9965c73222d822cea3c69a7f20947b1347d50fbcb8086365c4bbc3d4481d6",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 0,
+      "cmp": "",
+      "kind": "state",
+      "name": "TREND_UP",
+      "op": "IS",
+      "q": 0.0,
+      "reg": "",
+      "tf": "H1",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [],
+    "direction": "LONG",
+    "expires_after": 32,
+    "lineage": "BREAK_RETEST_MOMENTUM>MUT5>X5",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "TOUCH",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.25,
+       "variant": ""
+      },
+      "guard": "none",
+      "invalidate": "none",
+      "within": 12
+     }
+    ],
+    "stop": {
+     "atr_mult": 0.0,
+     "buffer_atr": 0.5,
+     "kind": "register",
+     "max_risk_atr": 6.0,
+     "pick": "first",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 2.0,
+     "kind": "next_structure",
+     "levels": [
+      "h1_swing_high"
+     ],
+     "min_space_r": 1.5,
+     "r": 0.0
+    },
+    "window": null
+   },
+   "lineage": "BREAK_RETEST_MOMENTUM>MUT5>X5",
+   "stage": "deap",
+   "train_fitness": -0.22919756
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 0,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 0.894996,
+    "size_below_min_skips": 1270,
+    "train_trades_at_account": 149,
+    "train_trades_research": 337
+   },
+   "canonical_hash": "550839f73b6d9905b849c11d2814c2eee1821467119a29afb04ca4e1a1d55665",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 0,
+      "cmp": "",
+      "kind": "state",
+      "name": "TREND_UP",
+      "op": "IS",
+      "q": 0.0,
+      "reg": "",
+      "tf": "H1",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [],
+    "direction": "LONG",
+    "expires_after": 32,
+    "lineage": "BREAK_RETEST_MOMENTUM>MUT4>X4",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "TOUCH",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.25,
+       "variant": ""
+      },
+      "guard": "none",
+      "invalidate": "none",
+      "within": 2
+     }
+    ],
+    "stop": {
+     "atr_mult": 0.0,
+     "buffer_atr": 0.5,
+     "kind": "register",
+     "max_risk_atr": 6.0,
+     "pick": "first",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 2.0,
+     "kind": "next_structure",
+     "levels": [
+      "h1_swing_high"
+     ],
+     "min_space_r": 1.5,
+     "r": 0.0
+    },
+    "window": null
+   },
+   "lineage": "BREAK_RETEST_MOMENTUM>MUT4>X4",
+   "stage": "deap",
+   "train_fitness": -0.23035849
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 0,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 0.914506,
+    "size_below_min_skips": 1305,
+    "train_trades_at_account": 122,
+    "train_trades_research": 252
+   },
+   "canonical_hash": "7d120cff3fdfa4f502dc781fc550aff04bc52b3f7d11e391092d00f3cfe122de",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 0,
+      "cmp": "",
+      "kind": "state",
+      "name": "TREND_UP",
+      "op": "IS",
+      "q": 0.0,
+      "reg": "",
+      "tf": "H1",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [],
+    "direction": "LONG",
+    "expires_after": 32,
+    "lineage": "BREAK_RETEST_MOMENTUM>MUT3>X3",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "RECLAIM_UP",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.0,
+       "variant": "k6"
+      },
+      "guard": "none",
+      "invalidate": "none",
+      "within": 3
+     }
+    ],
+    "stop": {
+     "atr_mult": 0.0,
+     "buffer_atr": 0.5,
+     "kind": "register",
+     "max_risk_atr": 6.0,
+     "pick": "first",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 2.0,
+     "kind": "next_structure",
+     "levels": [
+      "h1_swing_high"
+     ],
+     "min_space_r": 1.5,
+     "r": 0.0
+    },
+    "window": null
+   },
+   "lineage": "BREAK_RETEST_MOMENTUM>MUT3>X3",
+   "stage": "deap",
+   "train_fitness": -0.23440033
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 2,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 0.891442,
+    "size_below_min_skips": 1552,
+    "train_trades_at_account": 189,
+    "train_trades_research": 376
+   },
+   "canonical_hash": "5dce62788a7c820d61ab9bc16c09f975feca918e8bbeac8632c3536a57b6c07a",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 0,
+      "cmp": "",
+      "kind": "state",
+      "name": "TREND_UP",
+      "op": "IS",
+      "q": 0.0,
+      "reg": "",
+      "tf": "H1",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [],
+    "direction": "LONG",
+    "expires_after": 32,
+    "lineage": "BREAK_RETEST_MOMENTUM>MUT3>X4",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "TOUCH",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.25,
+       "variant": ""
+      },
+      "guard": "none",
+      "invalidate": "none",
+      "within": 48
+     }
+    ],
+    "stop": {
+     "atr_mult": 0.0,
+     "buffer_atr": 0.5,
+     "kind": "register",
+     "max_risk_atr": 6.0,
+     "pick": "first",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 2.0,
+     "kind": "next_structure",
+     "levels": [
+      "h1_swing_high"
+     ],
+     "min_space_r": 1.5,
+     "r": 0.0
+    },
+    "window": null
+   },
+   "lineage": "BREAK_RETEST_MOMENTUM>MUT3>X4",
+   "stage": "deap",
+   "train_fitness": -0.23564538
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 0,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 1.0,
+    "size_below_min_skips": 307,
+    "train_trades_at_account": 0,
+    "train_trades_research": 61
+   },
+   "canonical_hash": "fd45b0e8190bf060bde06288c326492251e9ae2517b0b93d206c1fac4f4dcaa3",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 0,
+      "cmp": "lt",
+      "kind": "feature",
+      "name": "range_ratio",
+      "op": "IS",
+      "q": 0.2,
+      "reg": "",
+      "tf": "M5",
+      "tol_atr": 0.0,
+      "variant": ""
+     },
+     {
+      "arg": 3,
+      "cmp": "",
+      "kind": "state",
+      "name": "TREND_UP",
+      "op": "HOLD",
+      "q": 0.0,
+      "reg": "",
+      "tf": "M15",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [],
+    "direction": "LONG",
+    "expires_after": 12,
+    "lineage": "COMPRESSION_EXPANSION>MUT5>X2",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "RECLAIM_UP",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.0,
+       "variant": "k6"
+      },
+      "guard": "F:slope_20:gt:0.70",
+      "invalidate": "BD:t0:first",
+      "within": 2
+     }
+    ],
+    "stop": {
+     "atr_mult": 2.0,
+     "buffer_atr": 0.0,
+     "kind": "atr",
+     "max_risk_atr": 2.0,
+     "pick": "",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 0.0,
+     "kind": "fixed_r",
+     "levels": [],
+     "min_space_r": 0.0,
+     "r": 2.0
+    },
+    "window": null
+   },
+   "lineage": "COMPRESSION_EXPANSION>MUT5>X2",
+   "stage": "deap",
+   "train_fitness": -0.23736623
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 0,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 0.931682,
+    "size_below_min_skips": 1091,
+    "train_trades_at_account": 80,
+    "train_trades_research": 188
+   },
+   "canonical_hash": "6899feeab60d03b523b68aecef73dc28afa3cd3eb1d399b6215aea543a845a21",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 0,
+      "cmp": "",
+      "kind": "state",
+      "name": "TREND_UP",
+      "op": "IS",
+      "q": 0.0,
+      "reg": "",
+      "tf": "H1",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [],
+    "direction": "LONG",
+    "expires_after": 32,
+    "lineage": "BREAK_RETEST_MOMENTUM>MUT4>X3",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "RECLAIM_UP",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.0,
+       "variant": "k6"
+      },
+      "guard": "none",
+      "invalidate": "BD:t0:lvl",
+      "within": 3
+     }
+    ],
+    "stop": {
+     "atr_mult": 0.0,
+     "buffer_atr": 0.5,
+     "kind": "register",
+     "max_risk_atr": 6.0,
+     "pick": "first",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 2.0,
+     "kind": "next_structure",
+     "levels": [
+      "h1_swing_high"
+     ],
+     "min_space_r": 1.5,
+     "r": 0.0
+    },
+    "window": null
+   },
+   "lineage": "BREAK_RETEST_MOMENTUM>MUT4>X3",
+   "stage": "deap",
+   "train_fitness": -0.25039741
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 0,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 1.0,
+    "size_below_min_skips": 418,
+    "train_trades_at_account": 0,
+    "train_trades_research": 80
+   },
+   "canonical_hash": "b335238f12199b255594e7ed531111db3e756e022cd938dde261af3131c51fee",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 0,
+      "cmp": "lt",
+      "kind": "feature",
+      "name": "range_ratio",
+      "op": "IS",
+      "q": 0.2,
+      "reg": "",
+      "tf": "M5",
+      "tol_atr": 0.0,
+      "variant": ""
+     },
+     {
+      "arg": 3,
+      "cmp": "",
+      "kind": "state",
+      "name": "TREND_UP",
+      "op": "HOLD",
+      "q": 0.0,
+      "reg": "",
+      "tf": "M15",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [],
+    "direction": "LONG",
+    "expires_after": 12,
+    "lineage": "COMPRESSION_EXPANSION>MUT5>X2",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "RECLAIM_UP",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.0,
+       "variant": "k6"
+      },
+      "guard": "none",
+      "invalidate": "E:BOS_DN:M5",
+      "within": 2
+     }
+    ],
+    "stop": {
+     "atr_mult": 2.0,
+     "buffer_atr": 0.0,
+     "kind": "atr",
+     "max_risk_atr": 2.0,
+     "pick": "",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 0.0,
+     "kind": "fixed_r",
+     "levels": [],
+     "min_space_r": 0.0,
+     "r": 2.0
+    },
+    "window": null
+   },
+   "lineage": "COMPRESSION_EXPANSION>MUT5>X2",
+   "stage": "deap",
+   "train_fitness": -0.25753106
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 0,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 0.976764,
+    "size_below_min_skips": 1135,
+    "train_trades_at_account": 27,
+    "train_trades_research": 288
+   },
+   "canonical_hash": "e2cb7444d3f3e803c7843025669c12e95eff641475b71c9b28874556f245b230",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 0,
+      "cmp": "",
+      "kind": "state",
+      "name": "TREND_UP",
+      "op": "IS",
+      "q": 0.0,
+      "reg": "",
+      "tf": "H1",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [
+     {
+      "arg": 0,
+      "cmp": "gt",
+      "kind": "feature",
+      "name": "atr_pct",
+      "op": "IS",
+      "q": 0.7,
+      "reg": "",
+      "tf": "M5",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "direction": "LONG",
+    "expires_after": 32,
+    "lineage": "BREAK_RETEST_MOMENTUM>MUT5>X4",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "RECLAIM_UP",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.0,
+       "variant": "k6"
+      },
+      "guard": "none",
+      "invalidate": "SN:TREND_UP:H1",
+      "within": 3
+     }
+    ],
+    "stop": {
+     "atr_mult": 0.0,
+     "buffer_atr": 0.5,
+     "kind": "register",
+     "max_risk_atr": 6.0,
+     "pick": "first",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 0.0,
+     "kind": "fixed_r",
+     "levels": [],
+     "min_space_r": 0.0,
+     "r": 1.0
+    },
+    "window": null
+   },
+   "lineage": "BREAK_RETEST_MOMENTUM>MUT5>X4",
+   "stage": "deap",
+   "train_fitness": -0.26317038
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 0,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 0.908616,
+    "size_below_min_skips": 1392,
+    "train_trades_at_account": 140,
+    "train_trades_research": 273
+   },
+   "canonical_hash": "f80a103012941579e8eda1cbfe148a23ed446b1e62a2ea93f12a3c7ad41a09c5",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 0,
+      "cmp": "",
+      "kind": "state",
+      "name": "TREND_UP",
+      "op": "IS",
+      "q": 0.0,
+      "reg": "",
+      "tf": "H1",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [],
+    "direction": "LONG",
+    "expires_after": 32,
+    "lineage": "BREAK_RETEST_MOMENTUM>MUT4>X4",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "RECLAIM_UP",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.0,
+       "variant": "k6"
+      },
+      "guard": "none",
+      "invalidate": "none",
+      "within": 8
+     }
+    ],
+    "stop": {
+     "atr_mult": 0.0,
+     "buffer_atr": 0.5,
+     "kind": "register",
+     "max_risk_atr": 6.0,
+     "pick": "first",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 2.0,
+     "kind": "next_structure",
+     "levels": [
+      "h1_swing_high"
+     ],
+     "min_space_r": 1.5,
+     "r": 0.0
+    },
+    "window": null
+   },
+   "lineage": "BREAK_RETEST_MOMENTUM>MUT4>X4",
+   "stage": "deap",
+   "train_fitness": -0.26529052
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 5,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 0.764286,
+    "size_below_min_skips": 107,
+    "train_trades_at_account": 33,
+    "train_trades_research": 118
+   },
+   "canonical_hash": "5c9ad7987a69f742238ac436be00323f58b51ea81687ee425421ff8723645542",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 0,
+      "cmp": "",
+      "kind": "event",
+      "name": "SWING_LOW_CONF",
+      "op": "IS",
+      "q": 0.0,
+      "reg": "",
+      "tf": "M5",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [],
+    "direction": "LONG",
+    "expires_after": 64,
+    "lineage": "FAILED_BREAKOUT>MUT3>X2",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "RECLAIM_UP",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.0,
+       "variant": "k6"
+      },
+      "guard": "none",
+      "invalidate": "none",
+      "within": 48
+     }
+    ],
+    "stop": {
+     "atr_mult": 0.0,
+     "buffer_atr": 0.5,
+     "kind": "swing",
+     "max_risk_atr": 4.0,
+     "pick": "",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 2.5,
+     "kind": "next_structure",
+     "levels": [
+      "m5_swing_high",
+      "pdh"
+     ],
+     "min_space_r": 1.5,
+     "r": 0.0
+    },
+    "window": null
+   },
+   "lineage": "FAILED_BREAKOUT>MUT3>X2",
+   "stage": "deap",
+   "train_fitness": -0.27252327
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 0,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 1.0,
+    "size_below_min_skips": 49,
+    "train_trades_at_account": 0,
+    "train_trades_research": 44
+   },
+   "canonical_hash": "2a3776036667edc70d46a5761d5285091a8fd2dd7605cb94aa5eda0c1547a5c6",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 0,
+      "cmp": "",
+      "kind": "event",
+      "name": "SWING_HIGH_CONF",
+      "op": "IS",
+      "q": 0.0,
+      "reg": "",
+      "tf": "M5",
+      "tol_atr": 0.0,
+      "variant": ""
+     },
+     {
+      "arg": 5,
+      "cmp": "",
+      "kind": "state",
+      "name": "TREND_UP",
+      "op": "HOLD",
+      "q": 0.0,
+      "reg": "",
+      "tf": "H1",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [],
+    "direction": "LONG",
+    "expires_after": 32,
+    "lineage": "BREAK_RETEST_MOMENTUM",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "BREAK_UP",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.0,
+       "variant": ""
+      },
+      "guard": "none",
+      "invalidate": "BD:t25:lvl",
+      "within": 12
+     },
+     {
+      "event": {
+       "arg": 0,
+       "name": "RETEST_HOLD_UP",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.1,
+       "variant": ""
+      },
+      "guard": "none",
+      "invalidate": "BD:t25:first",
+      "within": 2
+     }
+    ],
+    "stop": {
+     "atr_mult": 2.0,
+     "buffer_atr": 0.0,
+     "kind": "atr",
+     "max_risk_atr": 6.0,
+     "pick": "",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 0.0,
+     "kind": "fixed_r",
+     "levels": [],
+     "min_space_r": 0.0,
+     "r": 1.0
+    },
+    "window": null
+   },
+   "lineage": "BREAK_RETEST_MOMENTUM",
+   "stage": "random",
+   "train_fitness": -0.27693115
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 21,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 0.961744,
+    "size_below_min_skips": 2162,
+    "train_trades_at_account": 86,
+    "train_trades_research": 349
+   },
+   "canonical_hash": "85fd320215d220d8b3f54550d23f1fc64d6ad62dd987b379b91fd240a69e80b1",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 0,
+      "cmp": "lt",
+      "kind": "feature",
+      "name": "range_ratio",
+      "op": "IS",
+      "q": 0.7,
+      "reg": "",
+      "tf": "M5",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [],
+    "direction": "LONG",
+    "expires_after": 64,
+    "lineage": "FAILED_BREAKOUT>MUT3>X4",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "RECLAIM_UP",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.0,
+       "variant": "k6"
+      },
+      "guard": "none",
+      "invalidate": "none",
+      "within": 3
+     }
+    ],
+    "stop": {
+     "atr_mult": 0.0,
+     "buffer_atr": 0.1,
+     "kind": "swing",
+     "max_risk_atr": 4.0,
+     "pick": "",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 0.0,
+     "kind": "fixed_r",
+     "levels": [],
+     "min_space_r": 0.0,
+     "r": 2.0
+    },
+    "window": null
+   },
+   "lineage": "FAILED_BREAKOUT>MUT3>X4",
+   "stage": "deap",
+   "train_fitness": -0.27874223
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 1,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 0.966102,
+    "size_below_min_skips": 114,
+    "train_trades_at_account": 4,
+    "train_trades_research": 73
+   },
+   "canonical_hash": "a5e3039e30c574e3c242b52e38ee60da5c8fd0cb000580d2effb15980dc8b853",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 0,
+      "cmp": "",
+      "kind": "state",
+      "name": "TREND_UP",
+      "op": "IS",
+      "q": 0.0,
+      "reg": "",
+      "tf": "H1",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [],
+    "direction": "LONG",
+    "expires_after": 32,
+    "lineage": "BREAK_RETEST_MOMENTUM>MUT4>X4",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "RECLAIM_UP",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.0,
+       "variant": "k6"
+      },
+      "guard": "none",
+      "invalidate": "none",
+      "within": 3
+     },
+     {
+      "event": {
+       "arg": 0,
+       "name": "ZONE_EXIT",
+       "op": "IS",
+       "tf": "M15",
+       "tol": 0.0,
+       "variant": "m15_range"
+      },
+      "guard": "none",
+      "invalidate": "none",
+      "within": 8
+     }
+    ],
+    "stop": {
+     "atr_mult": 0.0,
+     "buffer_atr": 0.5,
+     "kind": "register",
+     "max_risk_atr": 6.0,
+     "pick": "first",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 2.0,
+     "kind": "next_structure",
+     "levels": [
+      "h1_swing_high"
+     ],
+     "min_space_r": 1.5,
+     "r": 0.0
+    },
+    "window": null
+   },
+   "lineage": "BREAK_RETEST_MOMENTUM>MUT4>X4",
+   "stage": "deap",
+   "train_fitness": -0.28819668
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 0,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 1.0,
+    "size_below_min_skips": 846,
+    "train_trades_at_account": 0,
+    "train_trades_research": 186
+   },
+   "canonical_hash": "8f687a25b52a8602ff53c017157b3a02a13f878b03bc6170e2d8ac09646f05f6",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 0,
+      "cmp": "",
+      "kind": "state",
+      "name": "TREND_UP",
+      "op": "IS",
+      "q": 0.0,
+      "reg": "",
+      "tf": "H1",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [],
+    "direction": "LONG",
+    "expires_after": 32,
+    "lineage": "BREAK_RETEST_MOMENTUM>MUT5>X3",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "RETEST_HOLD_UP",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.0,
+       "variant": ""
+      },
+      "guard": "F:dist_vwap_atr:gt:0.30",
+      "invalidate": "none",
+      "within": 8
+     }
+    ],
+    "stop": {
+     "atr_mult": 1.5,
+     "buffer_atr": 0.0,
+     "kind": "atr",
+     "max_risk_atr": 1.5,
+     "pick": "",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 2.0,
+     "kind": "next_structure",
+     "levels": [
+      "h1_swing_high"
+     ],
+     "min_space_r": 1.5,
+     "r": 0.0
+    },
+    "window": null
+   },
+   "lineage": "BREAK_RETEST_MOMENTUM>MUT5>X3",
+   "stage": "deap",
+   "train_fitness": -0.29817976
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 0,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 0.956995,
+    "size_below_min_skips": 1758,
+    "train_trades_at_account": 79,
+    "train_trades_research": 414
+   },
+   "canonical_hash": "3608687140908156025682b294693c2e3981bcf04beeffafd3af4407c8535c8e",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 0,
+      "cmp": "",
+      "kind": "state",
+      "name": "TREND_UP",
+      "op": "IS",
+      "q": 0.0,
+      "reg": "",
+      "tf": "M15",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [],
+    "direction": "LONG",
+    "expires_after": 64,
+    "lineage": "FAILED_BREAKOUT>MUT4>X5",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "TOUCH",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.25,
+       "variant": ""
+      },
+      "guard": "none",
+      "invalidate": "BD:t25:ext",
+      "within": 24
+     }
+    ],
+    "stop": {
+     "atr_mult": 1.0,
+     "buffer_atr": 0.0,
+     "kind": "atr",
+     "max_risk_atr": 1.5,
+     "pick": "",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 2.0,
+     "kind": "next_structure",
+     "levels": [
+      "h1_swing_high"
+     ],
+     "min_space_r": 1.5,
+     "r": 0.0
+    },
+    "window": null
+   },
+   "lineage": "FAILED_BREAKOUT>MUT4>X5",
+   "stage": "deap",
+   "train_fitness": -0.29823254
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 98,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 0.687291,
+    "size_below_min_skips": 822,
+    "train_trades_at_account": 374,
+    "train_trades_research": 397
+   },
+   "canonical_hash": "df32f45ec2237fe0b7210abac1aa25b3908257d70de5e446016e8c87e114497d",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 0,
+      "cmp": "",
+      "kind": "state",
+      "name": "TREND_UP",
+      "op": "IS",
+      "q": 0.0,
+      "reg": "",
+      "tf": "H1",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [],
+    "direction": "LONG",
+    "expires_after": 32,
+    "lineage": "BREAK_RETEST_MOMENTUM>MUT5>X4",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "RECLAIM_UP",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.0,
+       "variant": "k6"
+      },
+      "guard": "none",
+      "invalidate": "SN:TREND_UP:H1",
+      "within": 3
+     }
+    ],
+    "stop": {
+     "atr_mult": 0.0,
+     "buffer_atr": 0.1,
+     "kind": "register",
+     "max_risk_atr": 4.0,
+     "pick": "first",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 0.0,
+     "kind": "fixed_r",
+     "levels": [],
+     "min_space_r": 0.0,
+     "r": 1.0
+    },
+    "window": null
+   },
+   "lineage": "BREAK_RETEST_MOMENTUM>MUT5>X4",
+   "stage": "deap",
+   "train_fitness": -0.30522493
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 0,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 0.959184,
+    "size_below_min_skips": 47,
+    "train_trades_at_account": 2,
+    "train_trades_research": 49
+   },
+   "canonical_hash": "c0645b0981c828f4e6d910c7c72caeeffa3e6a1736b311454092da7a734a3d8f",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 0,
+      "cmp": "",
+      "kind": "event",
+      "name": "SWING_HIGH_CONF",
+      "op": "IS",
+      "q": 0.0,
+      "reg": "",
+      "tf": "M5",
+      "tol_atr": 0.0,
+      "variant": ""
+     },
+     {
+      "arg": 0,
+      "cmp": "gt",
+      "kind": "feature",
+      "name": "slope_20",
+      "op": "IS",
+      "q": 0.3,
+      "reg": "",
+      "tf": "M5",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [],
+    "direction": "SHORT",
+    "expires_after": 6,
+    "lineage": "BREAK_RETEST_MOMENTUM",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "BREAK_UP",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.25,
+       "variant": ""
+      },
+      "guard": "none",
+      "invalidate": "BD:t0:first",
+      "within": 8
+     },
+     {
+      "event": {
+       "arg": 0,
+       "name": "RETEST_HOLD_UP",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.1,
+       "variant": ""
+      },
+      "guard": "none",
+      "invalidate": "none",
+      "within": 8
+     }
+    ],
+    "stop": {
+     "atr_mult": 1.0,
+     "buffer_atr": 0.0,
+     "kind": "atr",
+     "max_risk_atr": 6.0,
+     "pick": "",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 0.0,
+     "kind": "fixed_r",
+     "levels": [],
+     "min_space_r": 0.0,
+     "r": 1.0
+    },
+    "window": null
+   },
+   "lineage": "BREAK_RETEST_MOMENTUM",
+   "stage": "random",
+   "train_fitness": -0.30752924
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 0,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 0.764331,
+    "size_below_min_skips": 120,
+    "train_trades_at_account": 37,
+    "train_trades_research": 129
+   },
+   "canonical_hash": "16cfe94c0219c5d0b45de24ec47a948ccb2965e02a5669df82422b0d40bf8ab4",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 0,
+      "cmp": "",
+      "kind": "event",
+      "name": "SWING_HIGH_CONF",
+      "op": "IS",
+      "q": 0.0,
+      "reg": "",
+      "tf": "M5",
+      "tol_atr": 0.0,
+      "variant": ""
+     },
+     {
+      "arg": 0,
+      "cmp": "",
+      "kind": "state",
+      "name": "TREND_UP",
+      "op": "IS",
+      "q": 0.0,
+      "reg": "",
+      "tf": "H1",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [],
+    "direction": "LONG",
+    "expires_after": 32,
+    "lineage": "BREAK_RETEST_MOMENTUM>MUT7>X5",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "TOUCH",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.25,
+       "variant": ""
+      },
+      "guard": "none",
+      "invalidate": "BD:t25:ext",
+      "within": 48
+     }
+    ],
+    "stop": {
+     "atr_mult": 0.0,
+     "buffer_atr": 0.5,
+     "kind": "register",
+     "max_risk_atr": 6.0,
+     "pick": "first",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 0.0,
+     "kind": "fixed_r",
+     "levels": [],
+     "min_space_r": 0.0,
+     "r": 2.0
+    },
+    "window": null
+   },
+   "lineage": "BREAK_RETEST_MOMENTUM>MUT7>X5",
+   "stage": "deap",
+   "train_fitness": -0.3090307
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 6,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 0.928401,
+    "size_below_min_skips": 389,
+    "train_trades_at_account": 30,
+    "train_trades_research": 134
+   },
+   "canonical_hash": "2f5dfec0f300c9a0ff0d118f797defe177acd96065a7c3519b6328a92773224f",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 0,
+      "cmp": "",
+      "kind": "state",
+      "name": "TREND_UP",
+      "op": "IS",
+      "q": 0.0,
+      "reg": "",
+      "tf": "M15",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [],
+    "direction": "LONG",
+    "expires_after": 64,
+    "lineage": "FAILED_BREAKOUT>MUT3>X4",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "RECLAIM_UP",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.0,
+       "variant": "k6"
+      },
+      "guard": "none",
+      "invalidate": "none",
+      "within": 3
+     },
+     {
+      "event": {
+       "arg": 0,
+       "name": "RETEST_HOLD_UP",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.0,
+       "variant": ""
+      },
+      "guard": "none",
+      "invalidate": "none",
+      "within": 3
+     }
+    ],
+    "stop": {
+     "atr_mult": 0.0,
+     "buffer_atr": 0.1,
+     "kind": "swing",
+     "max_risk_atr": 4.0,
+     "pick": "",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 0.0,
+     "kind": "fixed_r",
+     "levels": [],
+     "min_space_r": 0.0,
+     "r": 3.0
+    },
+    "window": null
+   },
+   "lineage": "FAILED_BREAKOUT>MUT3>X4",
+   "stage": "deap",
+   "train_fitness": -0.3096434
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 0,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 1.0,
+    "size_below_min_skips": 823,
+    "train_trades_at_account": 0,
+    "train_trades_research": 179
+   },
+   "canonical_hash": "764b89d661f02976045c7040b139c10d5d90a83e6ed38d66dd0931388123cc0c",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 0,
+      "cmp": "",
+      "kind": "state",
+      "name": "TREND_UP",
+      "op": "IS",
+      "q": 0.0,
+      "reg": "",
+      "tf": "H1",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [],
+    "direction": "LONG",
+    "expires_after": 32,
+    "lineage": "BREAK_RETEST_MOMENTUM>MUT4>X3",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "RETEST_HOLD_UP",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.0,
+       "variant": ""
+      },
+      "guard": "F:slope_20:gt:0.20",
+      "invalidate": "none",
+      "within": 8
+     }
+    ],
+    "stop": {
+     "atr_mult": 1.5,
+     "buffer_atr": 0.0,
+     "kind": "atr",
+     "max_risk_atr": 1.5,
+     "pick": "",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 2.0,
+     "kind": "next_structure",
+     "levels": [
+      "h1_swing_high"
+     ],
+     "min_space_r": 1.5,
+     "r": 0.0
+    },
+    "window": null
+   },
+   "lineage": "BREAK_RETEST_MOMENTUM>MUT4>X3",
+   "stage": "deap",
+   "train_fitness": -0.31172487
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 0,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 1.0,
+    "size_below_min_skips": 259,
+    "train_trades_at_account": 0,
+    "train_trades_research": 145
+   },
+   "canonical_hash": "449c4593cccb968f1ed35292d7952a482d8b64738bfcc6d5685dec725d92584e",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 0,
+      "cmp": "",
+      "kind": "event",
+      "name": "SWING_LOW_CONF",
+      "op": "IS",
+      "q": 0.0,
+      "reg": "",
+      "tf": "M5",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [],
+    "direction": "LONG",
+    "expires_after": 64,
+    "lineage": "FAILED_BREAKOUT>MUT3>X4",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "RETEST_HOLD_UP",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.1,
+       "variant": ""
+      },
+      "guard": "F:ret_12:lt:0.40",
+      "invalidate": "none",
+      "within": 24
+     },
+     {
+      "event": {
+       "arg": 0,
+       "name": "TOUCH",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.25,
+       "variant": ""
+      },
+      "guard": "none",
+      "invalidate": "BD:t25:ext",
+      "within": 24
+     }
+    ],
+    "stop": {
+     "atr_mult": 3.0,
+     "buffer_atr": 0.0,
+     "kind": "atr",
+     "max_risk_atr": 4.0,
+     "pick": "",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 0.0,
+     "kind": "fixed_r",
+     "levels": [],
+     "min_space_r": 0.0,
+     "r": 2.0
+    },
+    "window": null
+   },
+   "lineage": "FAILED_BREAKOUT>MUT3>X4",
+   "stage": "deap",
+   "train_fitness": -0.31467398
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 19,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 0.963029,
+    "size_below_min_skips": 2162,
+    "train_trades_at_account": 83,
+    "train_trades_research": 347
+   },
+   "canonical_hash": "efde9f719ef6b28a1c87b820519d5bbd99bbf2e425134e4103530d19ae4cc5a7",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 0,
+      "cmp": "lt",
+      "kind": "feature",
+      "name": "range_ratio",
+      "op": "IS",
+      "q": 0.7,
+      "reg": "",
+      "tf": "M5",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [],
+    "direction": "LONG",
+    "expires_after": 64,
+    "lineage": "FAILED_BREAKOUT>MUT4>X4",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "RECLAIM_UP",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.0,
+       "variant": "k6"
+      },
+      "guard": "none",
+      "invalidate": "E:BOS_DN:M15",
+      "within": 3
+     }
+    ],
+    "stop": {
+     "atr_mult": 0.0,
+     "buffer_atr": 0.1,
+     "kind": "swing",
+     "max_risk_atr": 4.0,
+     "pick": "",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 0.0,
+     "kind": "fixed_r",
+     "levels": [],
+     "min_space_r": 0.0,
+     "r": 2.0
+    },
+    "window": null
+   },
+   "lineage": "FAILED_BREAKOUT>MUT4>X4",
+   "stage": "deap",
+   "train_fitness": -0.32241748
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 1,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 0.893758,
+    "size_below_min_skips": 1489,
+    "train_trades_at_account": 177,
+    "train_trades_research": 361
+   },
+   "canonical_hash": "27ab2edea5bfa6a4116ee4f80a49f35e5512320ebcec73ec743e5fcafa6dab1c",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 0,
+      "cmp": "",
+      "kind": "state",
+      "name": "TREND_UP",
+      "op": "IS",
+      "q": 0.0,
+      "reg": "",
+      "tf": "H1",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [],
+    "direction": "LONG",
+    "expires_after": 32,
+    "lineage": "BREAK_RETEST_MOMENTUM>MUT4>X4",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "TOUCH",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.25,
+       "variant": ""
+      },
+      "guard": "none",
+      "invalidate": "E:CHOCH_DN:M5",
+      "within": 48
+     }
+    ],
+    "stop": {
+     "atr_mult": 0.0,
+     "buffer_atr": 0.5,
+     "kind": "register",
+     "max_risk_atr": 6.0,
+     "pick": "first",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 2.0,
+     "kind": "next_structure",
+     "levels": [
+      "h1_swing_high"
+     ],
+     "min_space_r": 1.5,
+     "r": 0.0
+    },
+    "window": null
+   },
+   "lineage": "BREAK_RETEST_MOMENTUM>MUT4>X4",
+   "stage": "deap",
+   "train_fitness": -0.32428675
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 0,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 1.0,
+    "size_below_min_skips": 374,
+    "train_trades_at_account": 0,
+    "train_trades_research": 216
+   },
+   "canonical_hash": "bfcbc0dc0172097be15a9b1a8e8f161bf7aef19630bc8bdae4eaafbb1af23cde",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 0,
+      "cmp": "",
+      "kind": "event",
+      "name": "SWING_LOW_CONF",
+      "op": "IS",
+      "q": 0.0,
+      "reg": "",
+      "tf": "M5",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [],
+    "direction": "LONG",
+    "expires_after": 64,
+    "lineage": "FAILED_BREAKOUT>MUT4>X4",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "TOUCH",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.25,
+       "variant": ""
+      },
+      "guard": "none",
+      "invalidate": "BD:t25:ext",
+      "within": 48
+     }
+    ],
+    "stop": {
+     "atr_mult": 2.0,
+     "buffer_atr": 0.0,
+     "kind": "atr",
+     "max_risk_atr": 4.0,
+     "pick": "",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 2.0,
+     "kind": "next_structure",
+     "levels": [
+      "h1_swing_high"
+     ],
+     "min_space_r": 1.5,
+     "r": 0.0
+    },
+    "window": null
+   },
+   "lineage": "FAILED_BREAKOUT>MUT4>X4",
+   "stage": "deap",
+   "train_fitness": -0.32609829
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 1,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 0.86708,
+    "size_below_min_skips": 1259,
+    "train_trades_at_account": 193,
+    "train_trades_research": 367
+   },
+   "canonical_hash": "9e116e492b11532bc1f5a2bbb46c4b35e3827b3990bee299a87ae592092f9981",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 3,
+      "cmp": "",
+      "kind": "state",
+      "name": "TREND_UP",
+      "op": "HOLD",
+      "q": 0.0,
+      "reg": "",
+      "tf": "M15",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [],
+    "direction": "LONG",
+    "expires_after": 16,
+    "lineage": "TRENDLINE_BOUNCE_BREAK>MUT2>X5",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "TOUCH",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.25,
+       "variant": ""
+      },
+      "guard": "none",
+      "invalidate": "BD:t25:ext",
+      "within": 24
+     }
+    ],
+    "stop": {
+     "atr_mult": 0.0,
+     "buffer_atr": 0.5,
+     "kind": "register",
+     "max_risk_atr": 6.0,
+     "pick": "first",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 2.0,
+     "kind": "next_structure",
+     "levels": [
+      "h1_swing_high"
+     ],
+     "min_space_r": 1.5,
+     "r": 0.0
+    },
+    "window": [
+     570,
+     900
+    ]
+   },
+   "lineage": "TRENDLINE_BOUNCE_BREAK>MUT2>X5",
+   "stage": "deap",
+   "train_fitness": -0.32932073
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 22,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 0.765101,
+    "size_below_min_skips": 228,
+    "train_trades_at_account": 70,
+    "train_trades_research": 165
+   },
+   "canonical_hash": "c4c29200137fc6939fbb80f3b591f105f02ab378c64b4f24b9ff95304de82ab3",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 0,
+      "cmp": "",
+      "kind": "state",
+      "name": "TREND_UP",
+      "op": "IS",
+      "q": 0.0,
+      "reg": "",
+      "tf": "M15",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [],
+    "direction": "LONG",
+    "expires_after": 64,
+    "lineage": "FAILED_BREAKOUT>MUT3>X4",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "BREAK_DN",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.25,
+       "variant": ""
+      },
+      "guard": "none",
+      "invalidate": "none",
+      "within": 12
+     },
+     {
+      "event": {
+       "arg": 0,
+       "name": "RETEST_HOLD_UP",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.0,
+       "variant": ""
+      },
+      "guard": "none",
+      "invalidate": "none",
+      "within": 3
+     }
+    ],
+    "stop": {
+     "atr_mult": 0.0,
+     "buffer_atr": 0.1,
+     "kind": "swing",
+     "max_risk_atr": 6.0,
+     "pick": "",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 0.0,
+     "kind": "fixed_r",
+     "levels": [],
+     "min_space_r": 0.0,
+     "r": 1.5
+    },
+    "window": null
+   },
+   "lineage": "FAILED_BREAKOUT>MUT3>X4",
+   "stage": "deap",
+   "train_fitness": -0.33835829
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 1,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 0.823123,
+    "size_below_min_skips": 954,
+    "train_trades_at_account": 205,
+    "train_trades_research": 409
+   },
+   "canonical_hash": "7e829ce1d0e9ff17e25784b16c9c1abe154abafab5bf60a1901646fe5939df90",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 5,
+      "cmp": "",
+      "kind": "state",
+      "name": "TREND_UP",
+      "op": "HOLD",
+      "q": 0.0,
+      "reg": "",
+      "tf": "M15",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [],
+    "direction": "LONG",
+    "expires_after": 16,
+    "lineage": "TRENDLINE_BOUNCE_BREAK>MUT4>X4",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "RETEST_HOLD_UP",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.1,
+       "variant": ""
+      },
+      "guard": "none",
+      "invalidate": "none",
+      "within": 24
+     }
+    ],
+    "stop": {
+     "atr_mult": 0.0,
+     "buffer_atr": 0.5,
+     "kind": "register",
+     "max_risk_atr": 1.5,
+     "pick": "first",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 2.0,
+     "kind": "next_structure",
+     "levels": [
+      "h1_swing_high"
+     ],
+     "min_space_r": 1.5,
+     "r": 0.0
+    },
+    "window": null
+   },
+   "lineage": "TRENDLINE_BOUNCE_BREAK>MUT4>X4",
+   "stage": "deap",
+   "train_fitness": -0.33983292
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 21,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 0.919395,
+    "size_below_min_skips": 730,
+    "train_trades_at_account": 64,
+    "train_trades_research": 223
+   },
+   "canonical_hash": "b0dfc3b8282228910ab98ed640dde474d4caffc4b34bc7b9d16388cf7e37300d",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 0,
+      "cmp": "lt",
+      "kind": "feature",
+      "name": "range_ratio",
+      "op": "IS",
+      "q": 0.7,
+      "reg": "",
+      "tf": "M5",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [],
+    "direction": "LONG",
+    "expires_after": 64,
+    "lineage": "FAILED_BREAKOUT>MUT2>X4",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "RECLAIM_UP",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.0,
+       "variant": "k6"
+      },
+      "guard": "none",
+      "invalidate": "none",
+      "within": 3
+     }
+    ],
+    "stop": {
+     "atr_mult": 0.0,
+     "buffer_atr": 0.1,
+     "kind": "swing",
+     "max_risk_atr": 4.0,
+     "pick": "",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 2.5,
+     "kind": "next_structure",
+     "levels": [
+      "m5_swing_high",
+      "pdh"
+     ],
+     "min_space_r": 1.5,
+     "r": 0.0
+    },
+    "window": null
+   },
+   "lineage": "FAILED_BREAKOUT>MUT2>X4",
+   "stage": "deap",
+   "train_fitness": -0.34035782
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 0,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 1.0,
+    "size_below_min_skips": 53,
+    "train_trades_at_account": 0,
+    "train_trades_research": 42
+   },
+   "canonical_hash": "f9ea25b166eb2cfdad4731496996e9594cc9b737be2702cedb00a9b20838c35d",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 5,
+      "cmp": "",
+      "kind": "state",
+      "name": "TREND_UP",
+      "op": "HOLD",
+      "q": 0.0,
+      "reg": "",
+      "tf": "M15",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [],
+    "direction": "LONG",
+    "expires_after": 96,
+    "lineage": "TRENDLINE_BOUNCE_BREAK",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "TRENDLINE_TOUCH",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.0,
+       "variant": "t10"
+      },
+      "guard": "none",
+      "invalidate": "BD:t0:first",
+      "within": 8
+     },
+     {
+      "event": {
+       "arg": 0,
+       "name": "MOMENTUM_RESUME_UP",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.0,
+       "variant": ""
+      },
+      "guard": "none",
+      "invalidate": "SN:TREND_UP:M15",
+      "within": 48
+     }
+    ],
+    "stop": {
+     "atr_mult": 1.5,
+     "buffer_atr": 0.0,
+     "kind": "atr",
+     "max_risk_atr": 6.0,
+     "pick": "",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 1.5,
+     "kind": "next_structure",
+     "levels": [
+      "h1_swing_high",
+      "pdh"
+     ],
+     "min_space_r": 1.5,
+     "r": 0.0
+    },
+    "window": null
+   },
+   "lineage": "TRENDLINE_BOUNCE_BREAK",
+   "stage": "random",
+   "train_fitness": -0.34199835
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 0,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 1.0,
+    "size_below_min_skips": 264,
+    "train_trades_at_account": 0,
+    "train_trades_research": 54
+   },
+   "canonical_hash": "53550e664d7692b75926ca7ad2e3b161adc5235542ea1329abed9bd4f18d3bc9",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 0,
+      "cmp": "lt",
+      "kind": "feature",
+      "name": "range_ratio",
+      "op": "IS",
+      "q": 0.2,
+      "reg": "",
+      "tf": "M5",
+      "tol_atr": 0.0,
+      "variant": ""
+     },
+     {
+      "arg": 3,
+      "cmp": "",
+      "kind": "state",
+      "name": "TREND_UP",
+      "op": "HOLD",
+      "q": 0.0,
+      "reg": "",
+      "tf": "M15",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [
+     {
+      "arg": 0,
+      "cmp": "lt",
+      "kind": "feature",
+      "name": "atr_pct",
+      "op": "IS",
+      "q": 0.8,
+      "reg": "",
+      "tf": "M5",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "direction": "LONG",
+    "expires_after": 12,
+    "lineage": "COMPRESSION_EXPANSION>MUT6>X4",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "RECLAIM_UP",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.0,
+       "variant": "k6"
+      },
+      "guard": "F:slope_20:gt:0.70",
+      "invalidate": "BD:t0:first",
+      "within": 2
+     }
+    ],
+    "stop": {
+     "atr_mult": 2.0,
+     "buffer_atr": 0.0,
+     "kind": "atr",
+     "max_risk_atr": 2.0,
+     "pick": "",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 0.0,
+     "kind": "fixed_r",
+     "levels": [],
+     "min_space_r": 0.0,
+     "r": 2.0
+    },
+    "window": null
+   },
+   "lineage": "COMPRESSION_EXPANSION>MUT6>X4",
+   "stage": "deap",
+   "train_fitness": -0.34548334
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 0,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 0.896882,
+    "size_below_min_skips": 374,
+    "train_trades_at_account": 43,
+    "train_trades_research": 316
+   },
+   "canonical_hash": "60641f82ed9044ea1a7c87c4aa09d43e83dcac4a28af31fc044b2bc9731cece8",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 0,
+      "cmp": "",
+      "kind": "event",
+      "name": "SWING_LOW_CONF",
+      "op": "IS",
+      "q": 0.0,
+      "reg": "",
+      "tf": "M5",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [],
+    "direction": "LONG",
+    "expires_after": 64,
+    "lineage": "FAILED_BREAKOUT>MUT3>X3",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "TOUCH",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.25,
+       "variant": ""
+      },
+      "guard": "none",
+      "invalidate": "BD:t25:ext",
+      "within": 48
+     }
+    ],
+    "stop": {
+     "atr_mult": 0.0,
+     "buffer_atr": 0.5,
+     "kind": "register",
+     "max_risk_atr": 6.0,
+     "pick": "first",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 2.0,
+     "kind": "next_structure",
+     "levels": [
+      "h1_swing_high"
+     ],
+     "min_space_r": 1.5,
+     "r": 0.0
+    },
+    "window": null
+   },
+   "lineage": "FAILED_BREAKOUT>MUT3>X3",
+   "stage": "deap",
+   "train_fitness": -0.35152194
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 0,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 0.883117,
+    "size_below_min_skips": 68,
+    "train_trades_at_account": 9,
+    "train_trades_research": 58
+   },
+   "canonical_hash": "de6225988a1202938e3b9b292eff703e76782d6ac49f4630a111dee229347915",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 0,
+      "cmp": "",
+      "kind": "event",
+      "name": "SWING_HIGH_CONF",
+      "op": "IS",
+      "q": 0.0,
+      "reg": "",
+      "tf": "M5",
+      "tol_atr": 0.0,
+      "variant": ""
+     },
+     {
+      "arg": 0,
+      "cmp": "",
+      "kind": "state",
+      "name": "TREND_UP",
+      "op": "IS",
+      "q": 0.0,
+      "reg": "",
+      "tf": "H1",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [],
+    "direction": "LONG",
+    "expires_after": 24,
+    "lineage": "BREAK_RETEST_MOMENTUM>MUT6>X3",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "TOUCH",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.25,
+       "variant": ""
+      },
+      "guard": "none",
+      "invalidate": "BD:t25:ext",
+      "within": 24
+     },
+     {
+      "event": {
+       "arg": 0,
+       "name": "BREAK_UP",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.1,
+       "variant": ""
+      },
+      "guard": "none",
+      "invalidate": "E:BOS_DN:M5",
+      "within": 24
+     }
+    ],
+    "stop": {
+     "atr_mult": 0.0,
+     "buffer_atr": 0.5,
+     "kind": "register",
+     "max_risk_atr": 4.0,
+     "pick": "first",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 2.0,
+     "kind": "next_structure",
+     "levels": [
+      "h1_swing_high"
+     ],
+     "min_space_r": 1.5,
+     "r": 0.0
+    },
+    "window": null
+   },
+   "lineage": "BREAK_RETEST_MOMENTUM>MUT6>X3",
+   "stage": "deap",
+   "train_fitness": -0.35174241
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 0,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 1.0,
+    "size_below_min_skips": 134,
+    "train_trades_at_account": 0,
+    "train_trades_research": 69
+   },
+   "canonical_hash": "d2a8f638d0bb0c4faa2eee5071d6dac38dac43325c6753ff084ba26284506b70",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 0,
+      "cmp": "",
+      "kind": "event",
+      "name": "SWING_HIGH_CONF",
+      "op": "IS",
+      "q": 0.0,
+      "reg": "",
+      "tf": "M5",
+      "tol_atr": 0.0,
+      "variant": ""
+     },
+     {
+      "arg": 0,
+      "cmp": "",
+      "kind": "state",
+      "name": "TREND_UP",
+      "op": "IS",
+      "q": 0.0,
+      "reg": "",
+      "tf": "H1",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [],
+    "direction": "LONG",
+    "expires_after": 32,
+    "lineage": "BREAK_RETEST_MOMENTUM>MUT4>X3",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "RECLAIM_UP",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.0,
+       "variant": "k6"
+      },
+      "guard": "none",
+      "invalidate": "none",
+      "within": 48
+     }
+    ],
+    "stop": {
+     "atr_mult": 0.0,
+     "buffer_atr": 0.5,
+     "kind": "swing",
+     "max_risk_atr": 4.0,
+     "pick": "",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 0.0,
+     "kind": "fixed_r",
+     "levels": [],
+     "min_space_r": 0.0,
+     "r": 1.5
+    },
+    "window": null
+   },
+   "lineage": "BREAK_RETEST_MOMENTUM>MUT4>X3",
+   "stage": "deap",
+   "train_fitness": -0.35178588
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 0,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 0.96419,
+    "size_below_min_skips": 1077,
+    "train_trades_at_account": 40,
+    "train_trades_research": 348
+   },
+   "canonical_hash": "75474e95f5263e02e288171028eabf805ae3261b71e8358ffc1bf8fa09f2c937",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 0,
+      "cmp": "gt",
+      "kind": "feature",
+      "name": "range_ratio",
+      "op": "IS",
+      "q": 0.7,
+      "reg": "",
+      "tf": "M5",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [],
+    "direction": "LONG",
+    "expires_after": 32,
+    "lineage": "BREAK_RETEST_MOMENTUM>MUT4>X4",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "RECLAIM_UP",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.0,
+       "variant": "k6"
+      },
+      "guard": "none",
+      "invalidate": "none",
+      "within": 3
+     }
+    ],
+    "stop": {
+     "atr_mult": 0.0,
+     "buffer_atr": 0.5,
+     "kind": "register",
+     "max_risk_atr": 6.0,
+     "pick": "first",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 2.0,
+     "kind": "next_structure",
+     "levels": [
+      "h1_swing_high"
+     ],
+     "min_space_r": 1.5,
+     "r": 0.0
+    },
+    "window": null
+   },
+   "lineage": "BREAK_RETEST_MOMENTUM>MUT4>X4",
+   "stage": "deap",
+   "train_fitness": -0.35815332
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 20,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 0.919847,
+    "size_below_min_skips": 723,
+    "train_trades_at_account": 63,
+    "train_trades_research": 224
+   },
+   "canonical_hash": "2c0feb77d9782578661b8b193671d0cc0635419b32f2cf8c8526b4902b84bb4a",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 0,
+      "cmp": "lt",
+      "kind": "feature",
+      "name": "range_ratio",
+      "op": "IS",
+      "q": 0.7,
+      "reg": "",
+      "tf": "M5",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [],
+    "direction": "LONG",
+    "expires_after": 64,
+    "lineage": "FAILED_BREAKOUT>MUT3>X5",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "RECLAIM_UP",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.0,
+       "variant": "k6"
+      },
+      "guard": "none",
+      "invalidate": "none",
+      "within": 3
+     }
+    ],
+    "stop": {
+     "atr_mult": 0.0,
+     "buffer_atr": 0.1,
+     "kind": "swing",
+     "max_risk_atr": 4.0,
+     "pick": "",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 2.5,
+     "kind": "next_structure",
+     "levels": [
+      "m5_swing_high",
+      "pdh"
+     ],
+     "min_space_r": 1.5,
+     "r": 0.0
+    },
+    "window": [
+     570,
+     900
+    ]
+   },
+   "lineage": "FAILED_BREAKOUT>MUT3>X5",
+   "stage": "deap",
+   "train_fitness": -0.36187582
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 20,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 0.919847,
+    "size_below_min_skips": 723,
+    "train_trades_at_account": 63,
+    "train_trades_research": 224
+   },
+   "canonical_hash": "aee3ac0b68cd90c2cf062f3cb75e8953a73c710d329b55e689a0a6b2c16cdd23",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 0,
+      "cmp": "lt",
+      "kind": "feature",
+      "name": "range_ratio",
+      "op": "IS",
+      "q": 0.7,
+      "reg": "",
+      "tf": "M5",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [],
+    "direction": "LONG",
+    "expires_after": 48,
+    "lineage": "FAILED_BREAKOUT>MUT4>X5",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "RECLAIM_UP",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.0,
+       "variant": "k6"
+      },
+      "guard": "none",
+      "invalidate": "none",
+      "within": 3
+     }
+    ],
+    "stop": {
+     "atr_mult": 0.0,
+     "buffer_atr": 0.1,
+     "kind": "swing",
+     "max_risk_atr": 4.0,
+     "pick": "",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 2.5,
+     "kind": "next_structure",
+     "levels": [
+      "m5_swing_high",
+      "pdh"
+     ],
+     "min_space_r": 1.5,
+     "r": 0.0
+    },
+    "window": [
+     570,
+     900
+    ]
+   },
+   "lineage": "FAILED_BREAKOUT>MUT4>X5",
+   "stage": "deap",
+   "train_fitness": -0.36187582
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 21,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 0.883303,
+    "size_below_min_skips": 492,
+    "train_trades_at_account": 65,
+    "train_trades_research": 219
+   },
+   "canonical_hash": "8cf9e43fde3515e5a46bbb1a3a6acd444435ee462d42554b1d64e866e7458185",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 0,
+      "cmp": "lt",
+      "kind": "feature",
+      "name": "range_ratio",
+      "op": "IS",
+      "q": 0.7,
+      "reg": "",
+      "tf": "M5",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [],
+    "direction": "LONG",
+    "expires_after": 64,
+    "lineage": "FAILED_BREAKOUT>MUT3>X4",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "RECLAIM_UP",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.0,
+       "variant": "k6"
+      },
+      "guard": "F:ret_12:lt:0.80",
+      "invalidate": "none",
+      "within": 3
+     }
+    ],
+    "stop": {
+     "atr_mult": 0.0,
+     "buffer_atr": 0.1,
+     "kind": "swing",
+     "max_risk_atr": 4.0,
+     "pick": "",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 2.5,
+     "kind": "next_structure",
+     "levels": [
+      "m5_swing_high",
+      "pdh"
+     ],
+     "min_space_r": 1.5,
+     "r": 0.0
+    },
+    "window": null
+   },
+   "lineage": "FAILED_BREAKOUT>MUT3>X4",
+   "stage": "deap",
+   "train_fitness": -0.36191144
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 0,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 1.0,
+    "size_below_min_skips": 168,
+    "train_trades_at_account": 0,
+    "train_trades_research": 67
+   },
+   "canonical_hash": "61a1a19c2e5a3578088bf35233a18e0fdd2c1df702fa466834a1ce85a96e8af1",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 0,
+      "cmp": "lt",
+      "kind": "feature",
+      "name": "range_ratio",
+      "op": "IS",
+      "q": 0.2,
+      "reg": "",
+      "tf": "M5",
+      "tol_atr": 0.0,
+      "variant": ""
+     },
+     {
+      "arg": 3,
+      "cmp": "",
+      "kind": "state",
+      "name": "TREND_UP",
+      "op": "HOLD",
+      "q": 0.0,
+      "reg": "",
+      "tf": "M15",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [],
+    "direction": "LONG",
+    "expires_after": 12,
+    "lineage": "COMPRESSION_EXPANSION>MUT6>X4",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "BREAK_UP",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.1,
+       "variant": ""
+      },
+      "guard": "none",
+      "invalidate": "E:BOS_DN:M5",
+      "within": 12
+     }
+    ],
+    "stop": {
+     "atr_mult": 2.0,
+     "buffer_atr": 0.0,
+     "kind": "atr",
+     "max_risk_atr": 2.0,
+     "pick": "",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 0.0,
+     "kind": "fixed_r",
+     "levels": [],
+     "min_space_r": 0.0,
+     "r": 2.0
+    },
+    "window": null
+   },
+   "lineage": "COMPRESSION_EXPANSION>MUT6>X4",
+   "stage": "deap",
+   "train_fitness": -0.36575904
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 0,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 0.826087,
+    "size_below_min_skips": 494,
+    "train_trades_at_account": 104,
+    "train_trades_research": 190
+   },
+   "canonical_hash": "3c9b7363b4619d52ab91dc5c44e0b92fb4115299f85f4d2e08b7f328b5333d46",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 0,
+      "cmp": "",
+      "kind": "state",
+      "name": "TREND_UP",
+      "op": "IS",
+      "q": 0.0,
+      "reg": "",
+      "tf": "H1",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [],
+    "direction": "LONG",
+    "expires_after": 32,
+    "lineage": "BREAK_RETEST_MOMENTUM>MUT5>X5",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "RETEST_HOLD_UP",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.1,
+       "variant": ""
+      },
+      "guard": "F:slope_20:gt:0.60",
+      "invalidate": "none",
+      "within": 8
+     }
+    ],
+    "stop": {
+     "atr_mult": 0.0,
+     "buffer_atr": 0.5,
+     "kind": "register",
+     "max_risk_atr": 6.0,
+     "pick": "first",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 2.0,
+     "kind": "next_structure",
+     "levels": [
+      "h1_swing_high"
+     ],
+     "min_space_r": 1.5,
+     "r": 0.0
+    },
+    "window": null
+   },
+   "lineage": "BREAK_RETEST_MOMENTUM>MUT5>X5",
+   "stage": "deap",
+   "train_fitness": -0.36685742
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 0,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 0.986486,
+    "size_below_min_skips": 73,
+    "train_trades_at_account": 1,
+    "train_trades_research": 60
+   },
+   "canonical_hash": "1d01dc22d27ff90403f1b9b273d7bc3b0b5fbc1bda67dc9ffac47c528f1cbaac",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 0,
+      "cmp": "",
+      "kind": "event",
+      "name": "SWING_HIGH_CONF",
+      "op": "IS",
+      "q": 0.0,
+      "reg": "",
+      "tf": "M5",
+      "tol_atr": 0.0,
+      "variant": ""
+     },
+     {
+      "arg": 5,
+      "cmp": "",
+      "kind": "state",
+      "name": "TREND_UP",
+      "op": "HOLD",
+      "q": 0.0,
+      "reg": "",
+      "tf": "H1",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [],
+    "direction": "LONG",
+    "expires_after": 64,
+    "lineage": "BREAK_RETEST_MOMENTUM",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "BREAK_UP",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.1,
+       "variant": ""
+      },
+      "guard": "F:slope_20:gt:0.30",
+      "invalidate": "BD:t0:first",
+      "within": 8
+     },
+     {
+      "event": {
+       "arg": 0,
+       "name": "RETEST_HOLD_UP",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.1,
+       "variant": ""
+      },
+      "guard": "none",
+      "invalidate": "none",
+      "within": 8
+     }
+    ],
+    "stop": {
+     "atr_mult": 1.5,
+     "buffer_atr": 0.0,
+     "kind": "atr",
+     "max_risk_atr": 2.0,
+     "pick": "",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 0.0,
+     "kind": "fixed_r",
+     "levels": [],
+     "min_space_r": 0.0,
+     "r": 1.5
+    },
+    "window": [
+     570,
+     900
+    ]
+   },
+   "lineage": "BREAK_RETEST_MOMENTUM",
+   "stage": "random",
+   "train_fitness": -0.37070212
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 0,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 1.0,
+    "size_below_min_skips": 1153,
+    "train_trades_at_account": 0,
+    "train_trades_research": 136
+   },
+   "canonical_hash": "f81aff7221ac38d4913cacad33422bfb95dee0e18206f3ee650ae1d37536c842",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 3,
+      "cmp": "",
+      "kind": "state",
+      "name": "TREND_UP",
+      "op": "HOLD",
+      "q": 0.0,
+      "reg": "",
+      "tf": "M15",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [],
+    "direction": "LONG",
+    "expires_after": 16,
+    "lineage": "TRENDLINE_BOUNCE_BREAK>MUT2>X4",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "TOUCH",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.25,
+       "variant": ""
+      },
+      "guard": "none",
+      "invalidate": "BD:t25:ext",
+      "within": 24
+     },
+     {
+      "event": {
+       "arg": 0,
+       "name": "RETEST_HOLD_UP",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.25,
+       "variant": ""
+      },
+      "guard": "none",
+      "invalidate": "BD:t0:ext",
+      "within": 24
+     }
+    ],
+    "stop": {
+     "atr_mult": 3.0,
+     "buffer_atr": 0.0,
+     "kind": "atr",
+     "max_risk_atr": 4.0,
+     "pick": "",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 0.0,
+     "kind": "fixed_r",
+     "levels": [],
+     "min_space_r": 0.0,
+     "r": 2.0
+    },
+    "window": [
+     570,
+     900
+    ]
+   },
+   "lineage": "TRENDLINE_BOUNCE_BREAK>MUT2>X4",
+   "stage": "deap",
+   "train_fitness": -0.37217321
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 0,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 0.903704,
+    "size_below_min_skips": 122,
+    "train_trades_at_account": 13,
+    "train_trades_research": 94
+   },
+   "canonical_hash": "77ef9ff92186209586a9023adb82ccb001610c2d4c07f7e0f6ede54459380d6b",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 0,
+      "cmp": "",
+      "kind": "state",
+      "name": "TREND_UP",
+      "op": "IS",
+      "q": 0.0,
+      "reg": "",
+      "tf": "H1",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [],
+    "direction": "LONG",
+    "expires_after": 16,
+    "lineage": "TREND_PULLBACK_RESUME",
+    "steps": [
+     {
+      "event": {
+       "arg": 5,
+       "name": "TREND_UP",
+       "op": "HOLD",
+       "tf": "H1",
+       "tol": 0.0,
+       "variant": ""
+      },
+      "guard": "none",
+      "invalidate": "BD:t0:first",
+      "within": 2
+     },
+     {
+      "event": {
+       "arg": 0,
+       "name": "MOMENTUM_RESUME_UP",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.0,
+       "variant": ""
+      },
+      "guard": "none",
+      "invalidate": "E:CHOCH_DN:M5",
+      "within": 24
+     }
+    ],
+    "stop": {
+     "atr_mult": 1.0,
+     "buffer_atr": 0.0,
+     "kind": "atr",
+     "max_risk_atr": 2.0,
+     "pick": "",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 0.0,
+     "kind": "fixed_r",
+     "levels": [],
+     "min_space_r": 0.0,
+     "r": 1.5
+    },
+    "window": null
+   },
+   "lineage": "TREND_PULLBACK_RESUME",
+   "stage": "random",
+   "train_fitness": -0.37394792
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 0,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 0.981481,
+    "size_below_min_skips": 53,
+    "train_trades_at_account": 1,
+    "train_trades_research": 40
+   },
+   "canonical_hash": "7278a25997a95d7d3c0628237f620261ecbb9133c6dc62c8960e8f6da7c7b21b",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 5,
+      "cmp": "",
+      "kind": "state",
+      "name": "TREND_UP",
+      "op": "HOLD",
+      "q": 0.0,
+      "reg": "",
+      "tf": "M15",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [],
+    "direction": "LONG",
+    "expires_after": 16,
+    "lineage": "TRENDLINE_BOUNCE_BREAK>MUT2",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "TRENDLINE_BREAK",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.0,
+       "variant": "t25"
+      },
+      "guard": "none",
+      "invalidate": "BD:t0:first",
+      "within": 2
+     },
+     {
+      "event": {
+       "arg": 0,
+       "name": "RETEST_HOLD_UP",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.0,
+       "variant": ""
+      },
+      "guard": "F:slope_20:gt:0.20",
+      "invalidate": "none",
+      "within": 8
+     }
+    ],
+    "stop": {
+     "atr_mult": 0.0,
+     "buffer_atr": 0.1,
+     "kind": "swing",
+     "max_risk_atr": 6.0,
+     "pick": "",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 0.0,
+     "kind": "fixed_r",
+     "levels": [],
+     "min_space_r": 0.0,
+     "r": 2.5
+    },
+    "window": null
+   },
+   "lineage": "TRENDLINE_BOUNCE_BREAK>MUT2",
+   "stage": "deap",
+   "train_fitness": -0.37706619
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 1,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 0.836,
+    "size_below_min_skips": 1045,
+    "train_trades_at_account": 205,
+    "train_trades_research": 394
+   },
+   "canonical_hash": "88150986b83be4ab879df5330051853d25c0d4f445ecc0b4ace0ac59597c5086",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 5,
+      "cmp": "",
+      "kind": "state",
+      "name": "TREND_UP",
+      "op": "HOLD",
+      "q": 0.0,
+      "reg": "",
+      "tf": "M15",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [],
+    "direction": "LONG",
+    "expires_after": 16,
+    "lineage": "TRENDLINE_BOUNCE_BREAK>MUT3>X4",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "RETEST_HOLD_UP",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.1,
+       "variant": ""
+      },
+      "guard": "none",
+      "invalidate": "none",
+      "within": 24
+     }
+    ],
+    "stop": {
+     "atr_mult": 0.0,
+     "buffer_atr": 0.5,
+     "kind": "register",
+     "max_risk_atr": 6.0,
+     "pick": "first",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 2.0,
+     "kind": "next_structure",
+     "levels": [
+      "h1_swing_high"
+     ],
+     "min_space_r": 1.5,
+     "r": 0.0
+    },
+    "window": null
+   },
+   "lineage": "TRENDLINE_BOUNCE_BREAK>MUT3>X4",
+   "stage": "deap",
+   "train_fitness": -0.37893984
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 0,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 1.0,
+    "size_below_min_skips": 66,
+    "train_trades_at_account": 0,
+    "train_trades_research": 56
+   },
+   "canonical_hash": "ecaa39d84f827b5cbb0e4eecb3c1a24f90bb1805e88bb2b76377c34111459963",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 0,
+      "cmp": "",
+      "kind": "event",
+      "name": "SWING_LOW_CONF",
+      "op": "IS",
+      "q": 0.0,
+      "reg": "",
+      "tf": "M5",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [],
+    "direction": "LONG",
+    "expires_after": 64,
+    "lineage": "FAILED_BREAKOUT>MUT2>X5",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "BREAK_DN",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.25,
+       "variant": ""
+      },
+      "guard": "none",
+      "invalidate": "E:BOS_DN:M15",
+      "within": 5
+     },
+     {
+      "event": {
+       "arg": 0,
+       "name": "RETEST_HOLD_UP",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.25,
+       "variant": ""
+      },
+      "guard": "none",
+      "invalidate": "BD:t0:ext",
+      "within": 24
+     }
+    ],
+    "stop": {
+     "atr_mult": 3.0,
+     "buffer_atr": 0.0,
+     "kind": "atr",
+     "max_risk_atr": 4.0,
+     "pick": "",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 0.0,
+     "kind": "fixed_r",
+     "levels": [],
+     "min_space_r": 0.0,
+     "r": 2.0
+    },
+    "window": null
+   },
+   "lineage": "FAILED_BREAKOUT>MUT2>X5",
+   "stage": "deap",
+   "train_fitness": -0.38321729
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 0,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 0.768,
+    "size_below_min_skips": 96,
+    "train_trades_at_account": 29,
+    "train_trades_research": 106
+   },
+   "canonical_hash": "702064374d311a28317dc9c03f78fbc4c5799014613708fcc1b87a906dac42f0",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 0,
+      "cmp": "",
+      "kind": "event",
+      "name": "SWING_HIGH_CONF",
+      "op": "IS",
+      "q": 0.0,
+      "reg": "",
+      "tf": "M5",
+      "tol_atr": 0.0,
+      "variant": ""
+     },
+     {
+      "arg": 0,
+      "cmp": "",
+      "kind": "state",
+      "name": "TREND_UP",
+      "op": "IS",
+      "q": 0.0,
+      "reg": "",
+      "tf": "H1",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [],
+    "direction": "LONG",
+    "expires_after": 32,
+    "lineage": "BREAK_RETEST_MOMENTUM>MUT6>X4",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "TOUCH",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.25,
+       "variant": ""
+      },
+      "guard": "none",
+      "invalidate": "BD:t25:ext",
+      "within": 12
+     }
+    ],
+    "stop": {
+     "atr_mult": 0.0,
+     "buffer_atr": 0.5,
+     "kind": "register",
+     "max_risk_atr": 6.0,
+     "pick": "first",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 2.0,
+     "kind": "next_structure",
+     "levels": [
+      "h1_swing_high"
+     ],
+     "min_space_r": 1.5,
+     "r": 0.0
+    },
+    "window": null
+   },
+   "lineage": "BREAK_RETEST_MOMENTUM>MUT6>X4",
+   "stage": "deap",
+   "train_fitness": -0.38773098
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 33,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 0.899654,
+    "size_below_min_skips": 1040,
+    "train_trades_at_account": 116,
+    "train_trades_research": 240
+   },
+   "canonical_hash": "60bcc05a5a2baf5bd37d838c1d6478efe9787e87875ff5075413eb1947a5ffa7",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 5,
+      "cmp": "",
+      "kind": "state",
+      "name": "TREND_UP",
+      "op": "HOLD",
+      "q": 0.0,
+      "reg": "",
+      "tf": "H1",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [
+     {
+      "arg": 3,
+      "cmp": "",
+      "kind": "state",
+      "name": "TREND_UP",
+      "op": "HOLD",
+      "q": 0.0,
+      "reg": "",
+      "tf": "H1",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "direction": "LONG",
+    "expires_after": 12,
+    "lineage": "TREND_PULLBACK_RESUME>MUT4>X4",
+    "steps": [
+     {
+      "event": {
+       "arg": 5,
+       "name": "TREND_UP",
+       "op": "HOLD",
+       "tf": "H1",
+       "tol": 0.0,
+       "variant": ""
+      },
+      "guard": "F:ret_12:lt:0.70",
+      "invalidate": "BD:t0:first",
+      "within": 8
+     }
+    ],
+    "stop": {
+     "atr_mult": 0.0,
+     "buffer_atr": 0.25,
+     "kind": "swing",
+     "max_risk_atr": 3.0,
+     "pick": "",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 0.0,
+     "kind": "fixed_r",
+     "levels": [],
+     "min_space_r": 0.0,
+     "r": 2.5
+    },
+    "window": null
+   },
+   "lineage": "TREND_PULLBACK_RESUME>MUT4>X4",
+   "stage": "deap",
+   "train_fitness": -0.38992393
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 33,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 0.899654,
+    "size_below_min_skips": 1040,
+    "train_trades_at_account": 116,
+    "train_trades_research": 240
+   },
+   "canonical_hash": "9e2db4a0b6beef150411cd6b23a68fd32f82466ce14394114b9d546a10463ca2",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 5,
+      "cmp": "",
+      "kind": "state",
+      "name": "TREND_UP",
+      "op": "HOLD",
+      "q": 0.0,
+      "reg": "",
+      "tf": "H1",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [
+     {
+      "arg": 3,
+      "cmp": "",
+      "kind": "state",
+      "name": "TREND_UP",
+      "op": "HOLD",
+      "q": 0.0,
+      "reg": "",
+      "tf": "H1",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "direction": "LONG",
+    "expires_after": 6,
+    "lineage": "TREND_PULLBACK_RESUME>MUT3>X4",
+    "steps": [
+     {
+      "event": {
+       "arg": 5,
+       "name": "TREND_UP",
+       "op": "HOLD",
+       "tf": "H1",
+       "tol": 0.0,
+       "variant": ""
+      },
+      "guard": "F:ret_12:lt:0.70",
+      "invalidate": "BD:t0:first",
+      "within": 8
+     }
+    ],
+    "stop": {
+     "atr_mult": 0.0,
+     "buffer_atr": 0.25,
+     "kind": "swing",
+     "max_risk_atr": 3.0,
+     "pick": "",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 0.0,
+     "kind": "fixed_r",
+     "levels": [],
+     "min_space_r": 0.0,
+     "r": 2.5
+    },
+    "window": null
+   },
+   "lineage": "TREND_PULLBACK_RESUME>MUT3>X4",
+   "stage": "deap",
+   "train_fitness": -0.38992393
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 27,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 0.84715,
+    "size_below_min_skips": 654,
+    "train_trades_at_account": 118,
+    "train_trades_research": 108
+   },
+   "canonical_hash": "f56bee56398c40f5544569f6becb1430da855f8ac82d0ef4a70cc225a2a8e4a2",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 0,
+      "cmp": "",
+      "kind": "state",
+      "name": "TREND_UP",
+      "op": "IS",
+      "q": 0.0,
+      "reg": "",
+      "tf": "H1",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [],
+    "direction": "LONG",
+    "expires_after": 32,
+    "lineage": "BREAK_RETEST_MOMENTUM>MUT6>X4",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "RECLAIM_UP",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.0,
+       "variant": "k6"
+      },
+      "guard": "none",
+      "invalidate": "BD:t0:lvl",
+      "within": 3
+     },
+     {
+      "event": {
+       "arg": 5,
+       "name": "TREND_UP",
+       "op": "HOLD",
+       "tf": "M15",
+       "tol": 0.0,
+       "variant": ""
+      },
+      "guard": "none",
+      "invalidate": "SN:TREND_UP:M15",
+      "within": 8
+     }
+    ],
+    "stop": {
+     "atr_mult": 0.0,
+     "buffer_atr": 0.5,
+     "kind": "register",
+     "max_risk_atr": 6.0,
+     "pick": "first",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 2.0,
+     "kind": "next_structure",
+     "levels": [
+      "h1_swing_high"
+     ],
+     "min_space_r": 1.5,
+     "r": 0.0
+    },
+    "window": null
+   },
+   "lineage": "BREAK_RETEST_MOMENTUM>MUT6>X4",
+   "stage": "deap",
+   "train_fitness": -0.39444284
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 1,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 0.907407,
+    "size_below_min_skips": 49,
+    "train_trades_at_account": 5,
+    "train_trades_research": 49
+   },
+   "canonical_hash": "3aa43c9479aa1632f84d7fc4db71a299f02cb1ec0222258fceef82002b92f244",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 0,
+      "cmp": "",
+      "kind": "state",
+      "name": "TREND_UP",
+      "op": "IS",
+      "q": 0.0,
+      "reg": "",
+      "tf": "H1",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [],
+    "direction": "LONG",
+    "expires_after": 32,
+    "lineage": "BREAK_RETEST_MOMENTUM>MUT4>X4",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "BOS_UP",
+       "op": "IS",
+       "tf": "M15",
+       "tol": 0.0,
+       "variant": ""
+      },
+      "guard": "none",
+      "invalidate": "none",
+      "within": 48
+     }
+    ],
+    "stop": {
+     "atr_mult": 0.0,
+     "buffer_atr": 0.5,
+     "kind": "register",
+     "max_risk_atr": 6.0,
+     "pick": "first",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 2.0,
+     "kind": "next_structure",
+     "levels": [
+      "h1_swing_high"
+     ],
+     "min_space_r": 1.5,
+     "r": 0.0
+    },
+    "window": null
+   },
+   "lineage": "BREAK_RETEST_MOMENTUM>MUT4>X4",
+   "stage": "deap",
+   "train_fitness": -0.395136
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 11,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 0.573529,
+    "size_below_min_skips": 39,
+    "train_trades_at_account": 29,
+    "train_trades_research": 57
+   },
+   "canonical_hash": "6d6a5f8cd5fbd94f8868925e2605ce838c42a48b5349f736e0132d9a9fa2aaac",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 0,
+      "cmp": "",
+      "kind": "event",
+      "name": "SWING_LOW_CONF",
+      "op": "IS",
+      "q": 0.0,
+      "reg": "",
+      "tf": "M5",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [],
+    "direction": "LONG",
+    "expires_after": 64,
+    "lineage": "FAILED_BREAKOUT>MUT8>X6",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "SWING_HIGH_CONF",
+       "op": "IS",
+       "tf": "M15",
+       "tol": 0.0,
+       "variant": ""
+      },
+      "guard": "none",
+      "invalidate": "BD:t25:ext",
+      "within": 48
+     }
+    ],
+    "stop": {
+     "atr_mult": 0.0,
+     "buffer_atr": 0.1,
+     "kind": "swing",
+     "max_risk_atr": 4.0,
+     "pick": "",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 2.5,
+     "kind": "next_structure",
+     "levels": [
+      "m5_swing_high",
+      "pdh"
+     ],
+     "min_space_r": 1.5,
+     "r": 0.0
+    },
+    "window": null
+   },
+   "lineage": "FAILED_BREAKOUT>MUT8>X6",
+   "stage": "deap",
+   "train_fitness": -0.39545157
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 0,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 1.0,
+    "size_below_min_skips": 214,
+    "train_trades_at_account": 0,
+    "train_trades_research": 119
+   },
+   "canonical_hash": "623a4b53b30e8f199698f2da57e10eba3b95618c0d7dd35163ba1c0c2e97f11f",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 0,
+      "cmp": "",
+      "kind": "event",
+      "name": "SWING_LOW_CONF",
+      "op": "IS",
+      "q": 0.0,
+      "reg": "",
+      "tf": "M5",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [],
+    "direction": "LONG",
+    "expires_after": 64,
+    "lineage": "FAILED_BREAKOUT>MUT4>X4",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "RETEST_HOLD_UP",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.1,
+       "variant": ""
+      },
+      "guard": "F:ret_12:lt:0.40",
+      "invalidate": "none",
+      "within": 24
+     },
+     {
+      "event": {
+       "arg": 0,
+       "name": "TOUCH",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.25,
+       "variant": ""
+      },
+      "guard": "none",
+      "invalidate": "BD:t25:ext",
+      "within": 24
+     }
+    ],
+    "stop": {
+     "atr_mult": 3.0,
+     "buffer_atr": 0.0,
+     "kind": "atr",
+     "max_risk_atr": 4.0,
+     "pick": "",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 0.0,
+     "kind": "fixed_r",
+     "levels": [],
+     "min_space_r": 0.0,
+     "r": 2.0
+    },
+    "window": [
+     600,
+     900
+    ]
+   },
+   "lineage": "FAILED_BREAKOUT>MUT4>X4",
+   "stage": "deap",
+   "train_fitness": -0.39603889
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 6,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 0.576271,
+    "size_below_min_skips": 34,
+    "train_trades_at_account": 25,
+    "train_trades_research": 59
+   },
+   "canonical_hash": "993fb840268e06c8808ff1f22994f80162eda04570cb8f9ea649b79e83809ac1",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 0,
+      "cmp": "",
+      "kind": "event",
+      "name": "SWING_HIGH_CONF",
+      "op": "IS",
+      "q": 0.0,
+      "reg": "",
+      "tf": "M5",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [],
+    "direction": "SHORT",
+    "expires_after": 12,
+    "lineage": "BREAK_RETEST_MOMENTUM",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "BREAK_UP",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.1,
+       "variant": ""
+      },
+      "guard": "none",
+      "invalidate": "BD:t0:first",
+      "within": 3
+     },
+     {
+      "event": {
+       "arg": 0,
+       "name": "RETEST_HOLD_UP",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.25,
+       "variant": ""
+      },
+      "guard": "none",
+      "invalidate": "BD:t10:lvl",
+      "within": 8
+     }
+    ],
+    "stop": {
+     "atr_mult": 0.0,
+     "buffer_atr": 0.1,
+     "kind": "register",
+     "max_risk_atr": 4.0,
+     "pick": "ext",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 0.0,
+     "kind": "fixed_r",
+     "levels": [],
+     "min_space_r": 0.0,
+     "r": 2.0
+    },
+    "window": [
+     570,
+     900
+    ]
+   },
+   "lineage": "BREAK_RETEST_MOMENTUM",
+   "stage": "random",
+   "train_fitness": -0.39821071
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 33,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 0.764228,
+    "size_below_min_skips": 376,
+    "train_trades_at_account": 116,
+    "train_trades_research": 229
+   },
+   "canonical_hash": "3c476bd91dc302597a5e9d67c849ba6a38de758356f07265b042e3acedd0dc53",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 5,
+      "cmp": "",
+      "kind": "state",
+      "name": "TREND_UP",
+      "op": "HOLD",
+      "q": 0.0,
+      "reg": "",
+      "tf": "H1",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [
+     {
+      "arg": 3,
+      "cmp": "",
+      "kind": "state",
+      "name": "TREND_UP",
+      "op": "HOLD",
+      "q": 0.0,
+      "reg": "",
+      "tf": "H1",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "direction": "LONG",
+    "expires_after": 6,
+    "lineage": "TREND_PULLBACK_RESUME>MUT4>X4",
+    "steps": [
+     {
+      "event": {
+       "arg": 5,
+       "name": "TREND_UP",
+       "op": "HOLD",
+       "tf": "H1",
+       "tol": 0.0,
+       "variant": ""
+      },
+      "guard": "F:ret_12:lt:0.70",
+      "invalidate": "BD:t0:first",
+      "within": 8
+     }
+    ],
+    "stop": {
+     "atr_mult": 0.0,
+     "buffer_atr": 0.25,
+     "kind": "swing",
+     "max_risk_atr": 1.5,
+     "pick": "",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 0.0,
+     "kind": "fixed_r",
+     "levels": [],
+     "min_space_r": 0.0,
+     "r": 2.5
+    },
+    "window": null
+   },
+   "lineage": "TREND_PULLBACK_RESUME>MUT4>X4",
+   "stage": "deap",
+   "train_fitness": -0.40076021
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 0,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 0.772414,
+    "size_below_min_skips": 112,
+    "train_trades_at_account": 33,
+    "train_trades_research": 118
+   },
+   "canonical_hash": "9dde3bf7068b9dc99442bad900e16a98f1545bf7010e1dc627d2e709c96b2605",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 0,
+      "cmp": "",
+      "kind": "event",
+      "name": "SWING_HIGH_CONF",
+      "op": "IS",
+      "q": 0.0,
+      "reg": "",
+      "tf": "M5",
+      "tol_atr": 0.0,
+      "variant": ""
+     },
+     {
+      "arg": 0,
+      "cmp": "",
+      "kind": "state",
+      "name": "TREND_UP",
+      "op": "IS",
+      "q": 0.0,
+      "reg": "",
+      "tf": "H1",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [],
+    "direction": "LONG",
+    "expires_after": 32,
+    "lineage": "BREAK_RETEST_MOMENTUM>MUT3>X1",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "TOUCH",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.25,
+       "variant": ""
+      },
+      "guard": "none",
+      "invalidate": "BD:t25:ext",
+      "within": 24
+     }
+    ],
+    "stop": {
+     "atr_mult": 0.0,
+     "buffer_atr": 0.5,
+     "kind": "register",
+     "max_risk_atr": 6.0,
+     "pick": "first",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 2.0,
+     "kind": "next_structure",
+     "levels": [
+      "h1_swing_high"
+     ],
+     "min_space_r": 1.5,
+     "r": 0.0
+    },
+    "window": null
+   },
+   "lineage": "BREAK_RETEST_MOMENTUM>MUT3>X1",
+   "stage": "deap",
+   "train_fitness": -0.40618016
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 2,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 0.908163,
+    "size_below_min_skips": 178,
+    "train_trades_at_account": 18,
+    "train_trades_research": 87
+   },
+   "canonical_hash": "2a2d0e8fc0e8e7499822606ae1bada221ea129a62eb24613f826a3f3a1f178e9",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 5,
+      "cmp": "",
+      "kind": "state",
+      "name": "TREND_UP",
+      "op": "HOLD",
+      "q": 0.0,
+      "reg": "",
+      "tf": "H1",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [
+     {
+      "arg": 3,
+      "cmp": "",
+      "kind": "state",
+      "name": "TREND_UP",
+      "op": "HOLD",
+      "q": 0.0,
+      "reg": "",
+      "tf": "H1",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "direction": "LONG",
+    "expires_after": 6,
+    "lineage": "TREND_PULLBACK_RESUME>MUT2>X6",
+    "steps": [
+     {
+      "event": {
+       "arg": 5,
+       "name": "TREND_UP",
+       "op": "HOLD",
+       "tf": "H1",
+       "tol": 0.0,
+       "variant": ""
+      },
+      "guard": "F:atr_pct:gt:0.80",
+      "invalidate": "BD:t0:first",
+      "within": 8
+     },
+     {
+      "event": {
+       "arg": 0,
+       "name": "TOUCH",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.25,
+       "variant": ""
+      },
+      "guard": "none",
+      "invalidate": "BD:t25:ext",
+      "within": 8
+     },
+     {
+      "event": {
+       "arg": 0,
+       "name": "RETEST_HOLD_UP",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.0,
+       "variant": ""
+      },
+      "guard": "F:slope_20:gt:0.20",
+      "invalidate": "none",
+      "within": 8
+     }
+    ],
+    "stop": {
+     "atr_mult": 0.0,
+     "buffer_atr": 0.5,
+     "kind": "register",
+     "max_risk_atr": 6.0,
+     "pick": "first",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 2.0,
+     "kind": "next_structure",
+     "levels": [
+      "h1_swing_high"
+     ],
+     "min_space_r": 1.5,
+     "r": 0.0
+    },
+    "window": null
+   },
+   "lineage": "TREND_PULLBACK_RESUME>MUT2>X6",
+   "stage": "deap",
+   "train_fitness": -0.40971204
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 0,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 0.868421,
+    "size_below_min_skips": 66,
+    "train_trades_at_account": 10,
+    "train_trades_research": 59
+   },
+   "canonical_hash": "722d1ee3d8772e112d792a4f6570c9e4c33ac950d62be294b4d5c935344f5e8b",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 0,
+      "cmp": "",
+      "kind": "event",
+      "name": "SWING_HIGH_CONF",
+      "op": "IS",
+      "q": 0.0,
+      "reg": "",
+      "tf": "M5",
+      "tol_atr": 0.0,
+      "variant": ""
+     },
+     {
+      "arg": 0,
+      "cmp": "",
+      "kind": "state",
+      "name": "TREND_UP",
+      "op": "IS",
+      "q": 0.0,
+      "reg": "",
+      "tf": "H1",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [],
+    "direction": "LONG",
+    "expires_after": 32,
+    "lineage": "BREAK_RETEST_MOMENTUM>MUT5>X1",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "TOUCH",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.25,
+       "variant": ""
+      },
+      "guard": "none",
+      "invalidate": "BD:t25:ext",
+      "within": 24
+     },
+     {
+      "event": {
+       "arg": 0,
+       "name": "BREAK_UP",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.1,
+       "variant": ""
+      },
+      "guard": "none",
+      "invalidate": "E:BOS_DN:M5",
+      "within": 12
+     }
+    ],
+    "stop": {
+     "atr_mult": 0.0,
+     "buffer_atr": 0.5,
+     "kind": "register",
+     "max_risk_atr": 6.0,
+     "pick": "first",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 2.0,
+     "kind": "next_structure",
+     "levels": [
+      "h1_swing_high"
+     ],
+     "min_space_r": 1.5,
+     "r": 0.0
+    },
+    "window": null
+   },
+   "lineage": "BREAK_RETEST_MOMENTUM>MUT5>X1",
+   "stage": "deap",
+   "train_fitness": -0.41212155
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 0,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 0.773333,
+    "size_below_min_skips": 116,
+    "train_trades_at_account": 34,
+    "train_trades_research": 119
+   },
+   "canonical_hash": "1462fd1abab7b9d22a92ab7543f135affe91cd6c32ae9b245617da8424e03098",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 0,
+      "cmp": "",
+      "kind": "event",
+      "name": "SWING_HIGH_CONF",
+      "op": "IS",
+      "q": 0.0,
+      "reg": "",
+      "tf": "M5",
+      "tol_atr": 0.0,
+      "variant": ""
+     },
+     {
+      "arg": 0,
+      "cmp": "",
+      "kind": "state",
+      "name": "TREND_UP",
+      "op": "IS",
+      "q": 0.0,
+      "reg": "",
+      "tf": "H1",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [],
+    "direction": "LONG",
+    "expires_after": 32,
+    "lineage": "BREAK_RETEST_MOMENTUM>MUT2>X2",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "TOUCH",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.25,
+       "variant": ""
+      },
+      "guard": "none",
+      "invalidate": "BD:t25:ext",
+      "within": 48
+     }
+    ],
+    "stop": {
+     "atr_mult": 0.0,
+     "buffer_atr": 0.5,
+     "kind": "register",
+     "max_risk_atr": 4.0,
+     "pick": "first",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 2.0,
+     "kind": "next_structure",
+     "levels": [
+      "h1_swing_high"
+     ],
+     "min_space_r": 1.5,
+     "r": 0.0
+    },
+    "window": null
+   },
+   "lineage": "BREAK_RETEST_MOMENTUM>MUT2>X2",
+   "stage": "deap",
+   "train_fitness": -0.41232208
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 0,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 0.773333,
+    "size_below_min_skips": 116,
+    "train_trades_at_account": 34,
+    "train_trades_research": 119
+   },
+   "canonical_hash": "1d7ad005824f941303bec5255acca7b7ff7b7dd244f7f6d6fb980f796f9f0a1d",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 0,
+      "cmp": "",
+      "kind": "event",
+      "name": "SWING_HIGH_CONF",
+      "op": "IS",
+      "q": 0.0,
+      "reg": "",
+      "tf": "M5",
+      "tol_atr": 0.0,
+      "variant": ""
+     },
+     {
+      "arg": 0,
+      "cmp": "",
+      "kind": "state",
+      "name": "TREND_UP",
+      "op": "IS",
+      "q": 0.0,
+      "reg": "",
+      "tf": "H1",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [],
+    "direction": "LONG",
+    "expires_after": 32,
+    "lineage": "BREAK_RETEST_MOMENTUM>MUT1>X2",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "TOUCH",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.25,
+       "variant": ""
+      },
+      "guard": "none",
+      "invalidate": "BD:t25:ext",
+      "within": 48
+     }
+    ],
+    "stop": {
+     "atr_mult": 0.0,
+     "buffer_atr": 0.5,
+     "kind": "register",
+     "max_risk_atr": 6.0,
+     "pick": "first",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 2.0,
+     "kind": "next_structure",
+     "levels": [
+      "h1_swing_high"
+     ],
+     "min_space_r": 1.5,
+     "r": 0.0
+    },
+    "window": null
+   },
+   "lineage": "BREAK_RETEST_MOMENTUM>MUT1>X2",
+   "stage": "deap",
+   "train_fitness": -0.41232208
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 8,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 0.935673,
+    "size_below_min_skips": 480,
+    "train_trades_at_account": 33,
+    "train_trades_research": 129
+   },
+   "canonical_hash": "624f0c817d6a2bc678af3b7db1c9319df9cfabfdf9dce8fee90e250d0436f308",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 0,
+      "cmp": "",
+      "kind": "state",
+      "name": "TREND_UP",
+      "op": "IS",
+      "q": 0.0,
+      "reg": "",
+      "tf": "M15",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [],
+    "direction": "LONG",
+    "expires_after": 64,
+    "lineage": "FAILED_BREAKOUT>MUT1>X3",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "RECLAIM_UP",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.0,
+       "variant": "k6"
+      },
+      "guard": "none",
+      "invalidate": "none",
+      "within": 3
+     }
+    ],
+    "stop": {
+     "atr_mult": 0.0,
+     "buffer_atr": 0.1,
+     "kind": "swing",
+     "max_risk_atr": 4.0,
+     "pick": "",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 2.5,
+     "kind": "next_structure",
+     "levels": [
+      "m5_swing_high",
+      "pdh"
+     ],
+     "min_space_r": 1.5,
+     "r": 0.0
+    },
+    "window": null
+   },
+   "lineage": "FAILED_BREAKOUT>MUT1>X3",
+   "stage": "deap",
+   "train_fitness": -0.41299212
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 0,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 0.981481,
+    "size_below_min_skips": 53,
+    "train_trades_at_account": 1,
+    "train_trades_research": 40
+   },
+   "canonical_hash": "3f5a4be86eb88e1515aba54fdd3b65fc98eb2bec37f2c2ec0a1572adc70e703f",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 5,
+      "cmp": "",
+      "kind": "state",
+      "name": "TREND_UP",
+      "op": "HOLD",
+      "q": 0.0,
+      "reg": "",
+      "tf": "M15",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [],
+    "direction": "LONG",
+    "expires_after": 16,
+    "lineage": "TRENDLINE_BOUNCE_BREAK>MUT1",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "TRENDLINE_BREAK",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.0,
+       "variant": "t25"
+      },
+      "guard": "none",
+      "invalidate": "BD:t0:first",
+      "within": 2
+     },
+     {
+      "event": {
+       "arg": 0,
+       "name": "RETEST_HOLD_UP",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.0,
+       "variant": ""
+      },
+      "guard": "F:slope_20:gt:0.20",
+      "invalidate": "none",
+      "within": 8
+     }
+    ],
+    "stop": {
+     "atr_mult": 0.0,
+     "buffer_atr": 0.1,
+     "kind": "swing",
+     "max_risk_atr": 6.0,
+     "pick": "",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 0.0,
+     "kind": "fixed_r",
+     "levels": [],
+     "min_space_r": 0.0,
+     "r": 1.5
+    },
+    "window": null
+   },
+   "lineage": "TRENDLINE_BOUNCE_BREAK>MUT1",
+   "stage": "deap",
+   "train_fitness": -0.41328179
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 1,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 0.815642,
+    "size_below_min_skips": 730,
+    "train_trades_at_account": 165,
+    "train_trades_research": 297
+   },
+   "canonical_hash": "3fb40bf8d1511405e6b658ba29dd6cb217c4f46440732fb332b8a0954de5b052",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 0,
+      "cmp": "",
+      "kind": "state",
+      "name": "TREND_UP",
+      "op": "IS",
+      "q": 0.0,
+      "reg": "",
+      "tf": "H1",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [],
+    "direction": "LONG",
+    "expires_after": 32,
+    "lineage": "BREAK_RETEST_MOMENTUM>MUT3>X3",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "RETEST_HOLD_UP",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.0,
+       "variant": ""
+      },
+      "guard": "F:slope_20:gt:0.20",
+      "invalidate": "none",
+      "within": 8
+     }
+    ],
+    "stop": {
+     "atr_mult": 0.0,
+     "buffer_atr": 0.5,
+     "kind": "register",
+     "max_risk_atr": 6.0,
+     "pick": "first",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 2.0,
+     "kind": "next_structure",
+     "levels": [
+      "h1_swing_high"
+     ],
+     "min_space_r": 1.5,
+     "r": 0.0
+    },
+    "window": null
+   },
+   "lineage": "BREAK_RETEST_MOMENTUM>MUT3>X3",
+   "stage": "deap",
+   "train_fitness": -0.41384534
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 0,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 0.876543,
+    "size_below_min_skips": 71,
+    "train_trades_at_account": 10,
+    "train_trades_research": 61
+   },
+   "canonical_hash": "81a853c21b17c7a493ca7319a3c3b679381cc3041575eb198c6b1bcaaf8046dd",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 0,
+      "cmp": "",
+      "kind": "event",
+      "name": "SWING_HIGH_CONF",
+      "op": "IS",
+      "q": 0.0,
+      "reg": "",
+      "tf": "M5",
+      "tol_atr": 0.0,
+      "variant": ""
+     },
+     {
+      "arg": 0,
+      "cmp": "",
+      "kind": "state",
+      "name": "TREND_UP",
+      "op": "IS",
+      "q": 0.0,
+      "reg": "",
+      "tf": "H1",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [],
+    "direction": "LONG",
+    "expires_after": 32,
+    "lineage": "BREAK_RETEST_MOMENTUM>MUT5>X1",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "TOUCH",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.25,
+       "variant": ""
+      },
+      "guard": "none",
+      "invalidate": "BD:t25:ext",
+      "within": 24
+     },
+     {
+      "event": {
+       "arg": 0,
+       "name": "BREAK_UP",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.1,
+       "variant": ""
+      },
+      "guard": "none",
+      "invalidate": "E:BOS_DN:M5",
+      "within": 48
+     }
+    ],
+    "stop": {
+     "atr_mult": 0.0,
+     "buffer_atr": 0.5,
+     "kind": "register",
+     "max_risk_atr": 6.0,
+     "pick": "first",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 2.0,
+     "kind": "next_structure",
+     "levels": [
+      "h1_swing_high"
+     ],
+     "min_space_r": 1.5,
+     "r": 0.0
+    },
+    "window": null
+   },
+   "lineage": "BREAK_RETEST_MOMENTUM>MUT5>X1",
+   "stage": "deap",
+   "train_fitness": -0.41644428
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 0,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 0.876543,
+    "size_below_min_skips": 71,
+    "train_trades_at_account": 10,
+    "train_trades_research": 61
+   },
+   "canonical_hash": "f51303b8c65c19f97bf7e8fed7c6bee8e6deaf1e2b414d1307245a27d8674a6d",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 0,
+      "cmp": "",
+      "kind": "event",
+      "name": "SWING_HIGH_CONF",
+      "op": "IS",
+      "q": 0.0,
+      "reg": "",
+      "tf": "M5",
+      "tol_atr": 0.0,
+      "variant": ""
+     },
+     {
+      "arg": 0,
+      "cmp": "",
+      "kind": "state",
+      "name": "TREND_UP",
+      "op": "IS",
+      "q": 0.0,
+      "reg": "",
+      "tf": "H1",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [],
+    "direction": "LONG",
+    "expires_after": 32,
+    "lineage": "BREAK_RETEST_MOMENTUM>MUT4>X1",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "TOUCH",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.25,
+       "variant": ""
+      },
+      "guard": "none",
+      "invalidate": "BD:t25:ext",
+      "within": 24
+     },
+     {
+      "event": {
+       "arg": 0,
+       "name": "BREAK_UP",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.1,
+       "variant": ""
+      },
+      "guard": "none",
+      "invalidate": "E:BOS_DN:M5",
+      "within": 24
+     }
+    ],
+    "stop": {
+     "atr_mult": 0.0,
+     "buffer_atr": 0.5,
+     "kind": "register",
+     "max_risk_atr": 6.0,
+     "pick": "first",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 2.0,
+     "kind": "next_structure",
+     "levels": [
+      "h1_swing_high"
+     ],
+     "min_space_r": 1.5,
+     "r": 0.0
+    },
+    "window": null
+   },
+   "lineage": "BREAK_RETEST_MOMENTUM>MUT4>X1",
+   "stage": "deap",
+   "train_fitness": -0.41644428
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 0,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 0.878049,
+    "size_below_min_skips": 72,
+    "train_trades_at_account": 10,
+    "train_trades_research": 61
+   },
+   "canonical_hash": "ffebf54ac69355e888069a0e4e180567cba75ce022511e041291589d5bc3b855",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 0,
+      "cmp": "",
+      "kind": "event",
+      "name": "SWING_HIGH_CONF",
+      "op": "IS",
+      "q": 0.0,
+      "reg": "",
+      "tf": "M5",
+      "tol_atr": 0.0,
+      "variant": ""
+     },
+     {
+      "arg": 0,
+      "cmp": "",
+      "kind": "state",
+      "name": "TREND_UP",
+      "op": "IS",
+      "q": 0.0,
+      "reg": "",
+      "tf": "H1",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [],
+    "direction": "LONG",
+    "expires_after": 32,
+    "lineage": "BREAK_RETEST_MOMENTUM>MUT5>X3",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "TOUCH",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.25,
+       "variant": ""
+      },
+      "guard": "none",
+      "invalidate": "BD:t25:ext",
+      "within": 48
+     },
+     {
+      "event": {
+       "arg": 0,
+       "name": "BREAK_UP",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.1,
+       "variant": ""
+      },
+      "guard": "none",
+      "invalidate": "E:BOS_DN:M5",
+      "within": 24
+     }
+    ],
+    "stop": {
+     "atr_mult": 0.0,
+     "buffer_atr": 0.5,
+     "kind": "register",
+     "max_risk_atr": 4.0,
+     "pick": "first",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 2.0,
+     "kind": "next_structure",
+     "levels": [
+      "h1_swing_high"
+     ],
+     "min_space_r": 1.5,
+     "r": 0.0
+    },
+    "window": null
+   },
+   "lineage": "BREAK_RETEST_MOMENTUM>MUT5>X3",
+   "stage": "deap",
+   "train_fitness": -0.41644428
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 0,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 0.905172,
+    "size_below_min_skips": 105,
+    "train_trades_at_account": 11,
+    "train_trades_research": 96
+   },
+   "canonical_hash": "51d767ebde9bbc81e5f092b5ae6e979388844a9fa44a655bcb7fb484323efd31",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 0,
+      "cmp": "",
+      "kind": "event",
+      "name": "SWING_HIGH_CONF",
+      "op": "IS",
+      "q": 0.0,
+      "reg": "",
+      "tf": "M5",
+      "tol_atr": 0.0,
+      "variant": ""
+     },
+     {
+      "arg": 0,
+      "cmp": "",
+      "kind": "state",
+      "name": "TREND_UP",
+      "op": "IS",
+      "q": 0.0,
+      "reg": "",
+      "tf": "H1",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [],
+    "direction": "LONG",
+    "expires_after": 24,
+    "lineage": "BREAK_RETEST_MOMENTUM>MUT6>X4",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "TOUCH",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.25,
+       "variant": ""
+      },
+      "guard": "none",
+      "invalidate": "BD:t25:ext",
+      "within": 24
+     },
+     {
+      "event": {
+       "arg": 0,
+       "name": "RECLAIM_UP",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.0,
+       "variant": "k6"
+      },
+      "guard": "none",
+      "invalidate": "E:BOS_DN:M5",
+      "within": 2
+     }
+    ],
+    "stop": {
+     "atr_mult": 0.0,
+     "buffer_atr": 0.5,
+     "kind": "register",
+     "max_risk_atr": 4.0,
+     "pick": "first",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 2.0,
+     "kind": "next_structure",
+     "levels": [
+      "h1_swing_high"
+     ],
+     "min_space_r": 1.5,
+     "r": 0.0
+    },
+    "window": null
+   },
+   "lineage": "BREAK_RETEST_MOMENTUM>MUT6>X4",
+   "stage": "deap",
+   "train_fitness": -0.41739042
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 0,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 1.0,
+    "size_below_min_skips": 69,
+    "train_trades_at_account": 0,
+    "train_trades_research": 56
+   },
+   "canonical_hash": "c68cbf6fd1df2a38c66bf962f413f1ec8db6de5564fad286e155f8e7245bb528",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 0,
+      "cmp": "",
+      "kind": "event",
+      "name": "SWING_HIGH_CONF",
+      "op": "IS",
+      "q": 0.0,
+      "reg": "",
+      "tf": "M5",
+      "tol_atr": 0.0,
+      "variant": ""
+     },
+     {
+      "arg": 0,
+      "cmp": "",
+      "kind": "state",
+      "name": "TREND_UP",
+      "op": "IS",
+      "q": 0.0,
+      "reg": "",
+      "tf": "H1",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [],
+    "direction": "LONG",
+    "expires_after": 32,
+    "lineage": "BREAK_RETEST_MOMENTUM>MUT5>X5",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "RECLAIM_UP",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.0,
+       "variant": "k6"
+      },
+      "guard": "none",
+      "invalidate": "SN:TREND_UP:H1",
+      "within": 3
+     }
+    ],
+    "stop": {
+     "atr_mult": 1.5,
+     "buffer_atr": 0.0,
+     "kind": "atr",
+     "max_risk_atr": 6.0,
+     "pick": "",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 0.0,
+     "kind": "fixed_r",
+     "levels": [],
+     "min_space_r": 0.0,
+     "r": 1.5
+    },
+    "window": null
+   },
+   "lineage": "BREAK_RETEST_MOMENTUM>MUT5>X5",
+   "stage": "deap",
+   "train_fitness": -0.42011261
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 0,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 0.780702,
+    "size_below_min_skips": 89,
+    "train_trades_at_account": 25,
+    "train_trades_research": 97
+   },
+   "canonical_hash": "a89941bfcb226022c8640ddae66b6fa6e42475221efabf008b648402295b3b55",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 0,
+      "cmp": "",
+      "kind": "event",
+      "name": "SWING_HIGH_CONF",
+      "op": "IS",
+      "q": 0.0,
+      "reg": "",
+      "tf": "M5",
+      "tol_atr": 0.0,
+      "variant": ""
+     },
+     {
+      "arg": 0,
+      "cmp": "",
+      "kind": "state",
+      "name": "TREND_UP",
+      "op": "IS",
+      "q": 0.0,
+      "reg": "",
+      "tf": "H1",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [],
+    "direction": "LONG",
+    "expires_after": 32,
+    "lineage": "BREAK_RETEST_MOMENTUM>MUT4>X2",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "TOUCH",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.25,
+       "variant": ""
+      },
+      "guard": "none",
+      "invalidate": "BD:t25:ext",
+      "within": 8
+     }
+    ],
+    "stop": {
+     "atr_mult": 0.0,
+     "buffer_atr": 0.5,
+     "kind": "register",
+     "max_risk_atr": 6.0,
+     "pick": "first",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 2.0,
+     "kind": "next_structure",
+     "levels": [
+      "h1_swing_high"
+     ],
+     "min_space_r": 1.5,
+     "r": 0.0
+    },
+    "window": null
+   },
+   "lineage": "BREAK_RETEST_MOMENTUM>MUT4>X2",
+   "stage": "deap",
+   "train_fitness": -0.42296599
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 0,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 0.874074,
+    "size_below_min_skips": 118,
+    "train_trades_at_account": 17,
+    "train_trades_research": 108
+   },
+   "canonical_hash": "01fe48dc84cfc47fff03f1f22840b2955173d4f8746268f1a909cccfd295bb8d",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 0,
+      "cmp": "",
+      "kind": "event",
+      "name": "SWING_HIGH_CONF",
+      "op": "IS",
+      "q": 0.0,
+      "reg": "",
+      "tf": "M5",
+      "tol_atr": 0.0,
+      "variant": ""
+     },
+     {
+      "arg": 0,
+      "cmp": "",
+      "kind": "state",
+      "name": "TREND_UP",
+      "op": "IS",
+      "q": 0.0,
+      "reg": "",
+      "tf": "H1",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [],
+    "direction": "LONG",
+    "expires_after": 32,
+    "lineage": "BREAK_RETEST_MOMENTUM>MUT6>X3",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "BREAK_UP",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.1,
+       "variant": ""
+      },
+      "guard": "none",
+      "invalidate": "E:BOS_DN:M5",
+      "within": 24
+     }
+    ],
+    "stop": {
+     "atr_mult": 0.0,
+     "buffer_atr": 0.5,
+     "kind": "register",
+     "max_risk_atr": 4.0,
+     "pick": "first",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 2.0,
+     "kind": "next_structure",
+     "levels": [
+      "h1_swing_high"
+     ],
+     "min_space_r": 1.5,
+     "r": 0.0
+    },
+    "window": null
+   },
+   "lineage": "BREAK_RETEST_MOMENTUM>MUT6>X3",
+   "stage": "deap",
+   "train_fitness": -0.43441716
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 0,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 1.0,
+    "size_below_min_skips": 97,
+    "train_trades_at_account": 0,
+    "train_trades_research": 73
+   },
+   "canonical_hash": "332ab5988753fc277bec5bc6c24819c6e8fa0c6d19d9701ef8c4f0b9b4f43307",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 0,
+      "cmp": "",
+      "kind": "event",
+      "name": "SWING_LOW_CONF",
+      "op": "IS",
+      "q": 0.0,
+      "reg": "",
+      "tf": "M5",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [],
+    "direction": "LONG",
+    "expires_after": 64,
+    "lineage": "FAILED_BREAKOUT>MUT1>X3",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "BOS_UP",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.0,
+       "variant": ""
+      },
+      "guard": "none",
+      "invalidate": "none",
+      "within": 3
+     }
+    ],
+    "stop": {
+     "atr_mult": 0.0,
+     "buffer_atr": 0.1,
+     "kind": "swing",
+     "max_risk_atr": 4.0,
+     "pick": "",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 2.5,
+     "kind": "next_structure",
+     "levels": [
+      "m5_swing_high",
+      "pdh"
+     ],
+     "min_space_r": 1.5,
+     "r": 0.0
+    },
+    "window": null
+   },
+   "lineage": "FAILED_BREAKOUT>MUT1>X3",
+   "stage": "deap",
+   "train_fitness": -0.44151538
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 1,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 0.979821,
+    "size_below_min_skips": 437,
+    "train_trades_at_account": 9,
+    "train_trades_research": 98
+   },
+   "canonical_hash": "9316544c2577bc280451f5e4f07c8b754f253fbb00c226b10da771d8d951b432",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 0,
+      "cmp": "",
+      "kind": "state",
+      "name": "TREND_UP",
+      "op": "IS",
+      "q": 0.0,
+      "reg": "",
+      "tf": "M15",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [],
+    "direction": "LONG",
+    "expires_after": 64,
+    "lineage": "FAILED_BREAKOUT>MUT4>X4",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "RECLAIM_UP",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.0,
+       "variant": "k6"
+      },
+      "guard": "none",
+      "invalidate": "BD:t0:lvl",
+      "within": 3
+     }
+    ],
+    "stop": {
+     "atr_mult": 0.0,
+     "buffer_atr": 0.1,
+     "kind": "swing",
+     "max_risk_atr": 4.0,
+     "pick": "",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 2.5,
+     "kind": "next_structure",
+     "levels": [
+      "m5_swing_high",
+      "pdh"
+     ],
+     "min_space_r": 1.5,
+     "r": 0.0
+    },
+    "window": null
+   },
+   "lineage": "FAILED_BREAKOUT>MUT4>X4",
+   "stage": "deap",
+   "train_fitness": -0.44271433
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 2,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 0.883495,
+    "size_below_min_skips": 91,
+    "train_trades_at_account": 12,
+    "train_trades_research": 69
+   },
+   "canonical_hash": "b5b1ba4dd46e400baf02a73b3b25811bebc5097891f10244251bced9d8471bf8",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 5,
+      "cmp": "",
+      "kind": "state",
+      "name": "TREND_UP",
+      "op": "HOLD",
+      "q": 0.0,
+      "reg": "",
+      "tf": "M15",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [],
+    "direction": "LONG",
+    "expires_after": 16,
+    "lineage": "TRENDLINE_BOUNCE_BREAK>MUT2>X6",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "TRENDLINE_BREAK",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.0,
+       "variant": "t25"
+      },
+      "guard": "none",
+      "invalidate": "BD:t0:first",
+      "within": 2
+     }
+    ],
+    "stop": {
+     "atr_mult": 0.0,
+     "buffer_atr": 0.1,
+     "kind": "swing",
+     "max_risk_atr": 6.0,
+     "pick": "",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 0.0,
+     "kind": "fixed_r",
+     "levels": [],
+     "min_space_r": 0.0,
+     "r": 2.5
+    },
+    "window": null
+   },
+   "lineage": "TRENDLINE_BOUNCE_BREAK>MUT2>X6",
+   "stage": "deap",
+   "train_fitness": -0.4431588
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 0,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 0.826474,
+    "size_below_min_skips": 743,
+    "train_trades_at_account": 156,
+    "train_trades_research": 291
+   },
+   "canonical_hash": "0414efec37eab3f177666f43efc846c107182256b62b905de584e9fdbf7c4022",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 5,
+      "cmp": "",
+      "kind": "state",
+      "name": "TREND_UP",
+      "op": "HOLD",
+      "q": 0.0,
+      "reg": "",
+      "tf": "M15",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [],
+    "direction": "LONG",
+    "expires_after": 16,
+    "lineage": "TRENDLINE_BOUNCE_BREAK>MUT5>X5",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "RETEST_HOLD_UP",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.1,
+       "variant": ""
+      },
+      "guard": "F:slope_20:gt:0.50",
+      "invalidate": "none",
+      "within": 24
+     }
+    ],
+    "stop": {
+     "atr_mult": 0.0,
+     "buffer_atr": 0.5,
+     "kind": "register",
+     "max_risk_atr": 6.0,
+     "pick": "first",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 2.0,
+     "kind": "next_structure",
+     "levels": [
+      "h1_swing_high"
+     ],
+     "min_space_r": 1.5,
+     "r": 0.0
+    },
+    "window": null
+   },
+   "lineage": "TRENDLINE_BOUNCE_BREAK>MUT5>X5",
+   "stage": "deap",
+   "train_fitness": -0.44430738
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 0,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 1.0,
+    "size_below_min_skips": 96,
+    "train_trades_at_account": 0,
+    "train_trades_research": 72
+   },
+   "canonical_hash": "6532a7fa34655c91dd4f0da863799477ffe66295701571e09a38fbb91097a421",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 0,
+      "cmp": "",
+      "kind": "event",
+      "name": "SWING_LOW_CONF",
+      "op": "IS",
+      "q": 0.0,
+      "reg": "",
+      "tf": "M5",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [],
+    "direction": "LONG",
+    "expires_after": 64,
+    "lineage": "FAILED_BREAKOUT>MUT2>X3",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "BOS_UP",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.0,
+       "variant": ""
+      },
+      "guard": "HA:3:first",
+      "invalidate": "none",
+      "within": 3
+     }
+    ],
+    "stop": {
+     "atr_mult": 0.0,
+     "buffer_atr": 0.1,
+     "kind": "swing",
+     "max_risk_atr": 4.0,
+     "pick": "",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 2.5,
+     "kind": "next_structure",
+     "levels": [
+      "m5_swing_high",
+      "pdh"
+     ],
+     "min_space_r": 1.5,
+     "r": 0.0
+    },
+    "window": null
+   },
+   "lineage": "FAILED_BREAKOUT>MUT2>X3",
+   "stage": "deap",
+   "train_fitness": -0.44554737
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 33,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 0.443114,
+    "size_below_min_skips": 74,
+    "train_trades_at_account": 93,
+    "train_trades_research": 151
+   },
+   "canonical_hash": "a6bb86094b4a13e35756de920a08e474be40577949e208a3ea95fbd0954e1334",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 0,
+      "cmp": "",
+      "kind": "event",
+      "name": "SWING_LOW_CONF",
+      "op": "IS",
+      "q": 0.0,
+      "reg": "",
+      "tf": "M5",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [],
+    "direction": "LONG",
+    "expires_after": 96,
+    "lineage": "FAILED_BREAKOUT>MUT3>X5",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "RECLAIM_UP",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.0,
+       "variant": "k6"
+      },
+      "guard": "none",
+      "invalidate": "none",
+      "within": 48
+     }
+    ],
+    "stop": {
+     "atr_mult": 0.0,
+     "buffer_atr": 0.1,
+     "kind": "swing",
+     "max_risk_atr": 4.0,
+     "pick": "",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 2.5,
+     "kind": "next_structure",
+     "levels": [
+      "m5_swing_high",
+      "pdh"
+     ],
+     "min_space_r": 1.5,
+     "r": 0.0
+    },
+    "window": null
+   },
+   "lineage": "FAILED_BREAKOUT>MUT3>X5",
+   "stage": "deap",
+   "train_fitness": -0.44720163
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 33,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 0.443114,
+    "size_below_min_skips": 74,
+    "train_trades_at_account": 93,
+    "train_trades_research": 151
+   },
+   "canonical_hash": "c1a1da7d840036e297dba291f5cb2731374aadf229e938258b0df33eb0b46a1c",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 0,
+      "cmp": "",
+      "kind": "event",
+      "name": "SWING_LOW_CONF",
+      "op": "IS",
+      "q": 0.0,
+      "reg": "",
+      "tf": "M5",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [],
+    "direction": "LONG",
+    "expires_after": 64,
+    "lineage": "FAILED_BREAKOUT>MUT2>X2",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "RECLAIM_UP",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.0,
+       "variant": "k6"
+      },
+      "guard": "none",
+      "invalidate": "none",
+      "within": 48
+     }
+    ],
+    "stop": {
+     "atr_mult": 0.0,
+     "buffer_atr": 0.1,
+     "kind": "swing",
+     "max_risk_atr": 4.0,
+     "pick": "",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 2.5,
+     "kind": "next_structure",
+     "levels": [
+      "m5_swing_high",
+      "pdh"
+     ],
+     "min_space_r": 1.5,
+     "r": 0.0
+    },
+    "window": null
+   },
+   "lineage": "FAILED_BREAKOUT>MUT2>X2",
+   "stage": "deap",
+   "train_fitness": -0.44720163
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 5,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 0.947368,
+    "size_below_min_skips": 234,
+    "train_trades_at_account": 13,
+    "train_trades_research": 103
+   },
+   "canonical_hash": "1e1662254824cb5e1472eca0a7df8f30def2d8b0bdf8180b2941d61354b29008",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 5,
+      "cmp": "",
+      "kind": "state",
+      "name": "TREND_UP",
+      "op": "HOLD",
+      "q": 0.0,
+      "reg": "",
+      "tf": "H1",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [
+     {
+      "arg": 3,
+      "cmp": "",
+      "kind": "state",
+      "name": "TREND_UP",
+      "op": "HOLD",
+      "q": 0.0,
+      "reg": "",
+      "tf": "H1",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "direction": "LONG",
+    "expires_after": 6,
+    "lineage": "TREND_PULLBACK_RESUME>MUT3>X1",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "RETEST_HOLD_UP",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.0,
+       "variant": ""
+      },
+      "guard": "none",
+      "invalidate": "none",
+      "within": 3
+     },
+     {
+      "event": {
+       "arg": 5,
+       "name": "TREND_UP",
+       "op": "HOLD",
+       "tf": "H1",
+       "tol": 0.0,
+       "variant": ""
+      },
+      "guard": "F:atr_pct:gt:0.80",
+      "invalidate": "BD:t0:first",
+      "within": 8
+     }
+    ],
+    "stop": {
+     "atr_mult": 0.0,
+     "buffer_atr": 0.25,
+     "kind": "swing",
+     "max_risk_atr": 3.0,
+     "pick": "",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 0.0,
+     "kind": "fixed_r",
+     "levels": [],
+     "min_space_r": 0.0,
+     "r": 2.5
+    },
+    "window": null
+   },
+   "lineage": "TREND_PULLBACK_RESUME>MUT3>X1",
+   "stage": "deap",
+   "train_fitness": -0.44789963
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 42,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 0.694362,
+    "size_below_min_skips": 234,
+    "train_trades_at_account": 103,
+    "train_trades_research": 173
+   },
+   "canonical_hash": "2588fe7b32bde611d56fd9ffece357c192106144eb1bd5b3da3cad24fb25c1f2",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 0,
+      "cmp": "",
+      "kind": "state",
+      "name": "TREND_UP",
+      "op": "IS",
+      "q": 0.0,
+      "reg": "",
+      "tf": "M15",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [],
+    "direction": "LONG",
+    "expires_after": 64,
+    "lineage": "FAILED_BREAKOUT>MUT2>X4",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "RETEST_HOLD_UP",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.0,
+       "variant": ""
+      },
+      "guard": "F:slope_20:gt:0.20",
+      "invalidate": "none",
+      "within": 8
+     }
+    ],
+    "stop": {
+     "atr_mult": 0.0,
+     "buffer_atr": 0.1,
+     "kind": "swing",
+     "max_risk_atr": 4.0,
+     "pick": "",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 2.5,
+     "kind": "next_structure",
+     "levels": [
+      "m5_swing_high",
+      "pdh"
+     ],
+     "min_space_r": 1.5,
+     "r": 0.0
+    },
+    "window": null
+   },
+   "lineage": "FAILED_BREAKOUT>MUT2>X4",
+   "stage": "deap",
+   "train_fitness": -0.44833047
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 95,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 0.89654,
+    "size_below_min_skips": 2591,
+    "train_trades_at_account": 299,
+    "train_trades_research": 460
+   },
+   "canonical_hash": "57a886ab706f3bfa56751906e9862af05ae44e54958a4c1207af2ff3d6164b50",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 0,
+      "cmp": "lt",
+      "kind": "feature",
+      "name": "range_ratio",
+      "op": "IS",
+      "q": 0.7,
+      "reg": "",
+      "tf": "M5",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [],
+    "direction": "LONG",
+    "expires_after": 64,
+    "lineage": "FAILED_BREAKOUT>MUT3>X5",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "TOUCH",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.25,
+       "variant": ""
+      },
+      "guard": "none",
+      "invalidate": "none",
+      "within": 48
+     }
+    ],
+    "stop": {
+     "atr_mult": 0.0,
+     "buffer_atr": 0.1,
+     "kind": "swing",
+     "max_risk_atr": 4.0,
+     "pick": "",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 0.0,
+     "kind": "fixed_r",
+     "levels": [],
+     "min_space_r": 0.0,
+     "r": 2.0
+    },
+    "window": null
+   },
+   "lineage": "FAILED_BREAKOUT>MUT3>X5",
+   "stage": "deap",
+   "train_fitness": -0.4487195
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 31,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 0.740864,
+    "size_below_min_skips": 223,
+    "train_trades_at_account": 78,
+    "train_trades_research": 148
+   },
+   "canonical_hash": "0569bbfa6614c2107ba941d5d296318c052fb9b3a006941649d301e0c3db6e3d",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 0,
+      "cmp": "",
+      "kind": "state",
+      "name": "TREND_UP",
+      "op": "IS",
+      "q": 0.0,
+      "reg": "",
+      "tf": "M15",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [
+     {
+      "arg": 0,
+      "cmp": "gt",
+      "kind": "feature",
+      "name": "ret_12",
+      "op": "IS",
+      "q": 0.2,
+      "reg": "",
+      "tf": "M5",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "direction": "LONG",
+    "expires_after": 64,
+    "lineage": "FAILED_BREAKOUT>MUT3>X4",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "RETEST_HOLD_UP",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.0,
+       "variant": ""
+      },
+      "guard": "F:slope_20:gt:0.20",
+      "invalidate": "none",
+      "within": 8
+     }
+    ],
+    "stop": {
+     "atr_mult": 0.0,
+     "buffer_atr": 0.1,
+     "kind": "swing",
+     "max_risk_atr": 4.0,
+     "pick": "",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 2.5,
+     "kind": "next_structure",
+     "levels": [
+      "m5_swing_high",
+      "pdh"
+     ],
+     "min_space_r": 1.5,
+     "r": 0.0
+    },
+    "window": null
+   },
+   "lineage": "FAILED_BREAKOUT>MUT3>X4",
+   "stage": "deap",
+   "train_fitness": -0.4571533
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 2,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 0.980159,
+    "size_below_min_skips": 247,
+    "train_trades_at_account": 5,
+    "train_trades_research": 84
+   },
+   "canonical_hash": "5d7710831e0707420561c1cdcf7071d4ffc68979b3e981b8187583ee469689d3",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 5,
+      "cmp": "",
+      "kind": "state",
+      "name": "TREND_UP",
+      "op": "HOLD",
+      "q": 0.0,
+      "reg": "",
+      "tf": "H1",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [
+     {
+      "arg": 3,
+      "cmp": "",
+      "kind": "state",
+      "name": "TREND_UP",
+      "op": "HOLD",
+      "q": 0.0,
+      "reg": "",
+      "tf": "H1",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "direction": "LONG",
+    "expires_after": 6,
+    "lineage": "TREND_PULLBACK_RESUME>MUT3>X4",
+    "steps": [
+     {
+      "event": {
+       "arg": 5,
+       "name": "TREND_UP",
+       "op": "HOLD",
+       "tf": "H1",
+       "tol": 0.0,
+       "variant": ""
+      },
+      "guard": "F:atr_pct:gt:0.80",
+      "invalidate": "BD:t10:first",
+      "within": 8
+     },
+     {
+      "event": {
+       "arg": 0,
+       "name": "RETEST_HOLD_UP",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.0,
+       "variant": ""
+      },
+      "guard": "F:slope_20:gt:0.20",
+      "invalidate": "none",
+      "within": 8
+     }
+    ],
+    "stop": {
+     "atr_mult": 0.0,
+     "buffer_atr": 0.25,
+     "kind": "swing",
+     "max_risk_atr": 3.0,
+     "pick": "",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 0.0,
+     "kind": "fixed_r",
+     "levels": [],
+     "min_space_r": 0.0,
+     "r": 2.5
+    },
+    "window": null
+   },
+   "lineage": "TREND_PULLBACK_RESUME>MUT3>X4",
+   "stage": "deap",
+   "train_fitness": -0.45814256
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 2,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 0.980159,
+    "size_below_min_skips": 247,
+    "train_trades_at_account": 5,
+    "train_trades_research": 84
+   },
+   "canonical_hash": "7d9a421c408a591c3372103f354694cbab027d45ac61a0fa990534cfa59a0f14",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 5,
+      "cmp": "",
+      "kind": "state",
+      "name": "TREND_UP",
+      "op": "HOLD",
+      "q": 0.0,
+      "reg": "",
+      "tf": "H1",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [
+     {
+      "arg": 3,
+      "cmp": "",
+      "kind": "state",
+      "name": "TREND_UP",
+      "op": "HOLD",
+      "q": 0.0,
+      "reg": "",
+      "tf": "H1",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "direction": "LONG",
+    "expires_after": 6,
+    "lineage": "TREND_PULLBACK_RESUME>MUT5>X5",
+    "steps": [
+     {
+      "event": {
+       "arg": 5,
+       "name": "TREND_UP",
+       "op": "HOLD",
+       "tf": "H1",
+       "tol": 0.0,
+       "variant": ""
+      },
+      "guard": "F:atr_pct:gt:0.80",
+      "invalidate": "BD:t10:first",
+      "within": 5
+     },
+     {
+      "event": {
+       "arg": 0,
+       "name": "RETEST_HOLD_UP",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.0,
+       "variant": ""
+      },
+      "guard": "F:slope_20:gt:0.20",
+      "invalidate": "none",
+      "within": 8
+     }
+    ],
+    "stop": {
+     "atr_mult": 0.0,
+     "buffer_atr": 0.25,
+     "kind": "swing",
+     "max_risk_atr": 3.0,
+     "pick": "",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 0.0,
+     "kind": "fixed_r",
+     "levels": [],
+     "min_space_r": 0.0,
+     "r": 2.5
+    },
+    "window": null
+   },
+   "lineage": "TREND_PULLBACK_RESUME>MUT5>X5",
+   "stage": "deap",
+   "train_fitness": -0.45814256
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 2,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 0.979253,
+    "size_below_min_skips": 236,
+    "train_trades_at_account": 5,
+    "train_trades_research": 84
+   },
+   "canonical_hash": "81dde24bf12c430a0bd458adc84a86578d77a8b7f8ddb5a4d09df1d8c77a2e3a",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 5,
+      "cmp": "",
+      "kind": "state",
+      "name": "TREND_UP",
+      "op": "HOLD",
+      "q": 0.0,
+      "reg": "",
+      "tf": "H1",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [
+     {
+      "arg": 3,
+      "cmp": "",
+      "kind": "state",
+      "name": "TREND_UP",
+      "op": "HOLD",
+      "q": 0.0,
+      "reg": "",
+      "tf": "H1",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "direction": "LONG",
+    "expires_after": 6,
+    "lineage": "TREND_PULLBACK_RESUME>MUT2>X4",
+    "steps": [
+     {
+      "event": {
+       "arg": 5,
+       "name": "TREND_UP",
+       "op": "HOLD",
+       "tf": "H1",
+       "tol": 0.0,
+       "variant": ""
+      },
+      "guard": "F:atr_pct:gt:0.80",
+      "invalidate": "BD:t0:first",
+      "within": 8
+     },
+     {
+      "event": {
+       "arg": 0,
+       "name": "RETEST_HOLD_UP",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.0,
+       "variant": ""
+      },
+      "guard": "F:slope_20:gt:0.20",
+      "invalidate": "none",
+      "within": 8
+     }
+    ],
+    "stop": {
+     "atr_mult": 0.0,
+     "buffer_atr": 0.25,
+     "kind": "swing",
+     "max_risk_atr": 3.0,
+     "pick": "",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 0.0,
+     "kind": "fixed_r",
+     "levels": [],
+     "min_space_r": 0.0,
+     "r": 2.5
+    },
+    "window": null
+   },
+   "lineage": "TREND_PULLBACK_RESUME>MUT2>X4",
+   "stage": "deap",
+   "train_fitness": -0.45884782
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 0,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 0.84127,
+    "size_below_min_skips": 53,
+    "train_trades_at_account": 10,
+    "train_trades_research": 54
+   },
+   "canonical_hash": "001712169cccc783023087466f2036946d5200cf17fa5b38bc4a7e4b400b8542",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 0,
+      "cmp": "",
+      "kind": "event",
+      "name": "SWING_HIGH_CONF",
+      "op": "IS",
+      "q": 0.0,
+      "reg": "",
+      "tf": "M5",
+      "tol_atr": 0.0,
+      "variant": ""
+     },
+     {
+      "arg": 0,
+      "cmp": "",
+      "kind": "state",
+      "name": "TREND_UP",
+      "op": "IS",
+      "q": 0.0,
+      "reg": "",
+      "tf": "H1",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [
+     {
+      "arg": 0,
+      "cmp": "gt",
+      "kind": "feature",
+      "name": "ret_12",
+      "op": "IS",
+      "q": 0.7,
+      "reg": "",
+      "tf": "M5",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "direction": "LONG",
+    "expires_after": 32,
+    "lineage": "BREAK_RETEST_MOMENTUM>MUT3>X2",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "RETEST_HOLD_UP",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.25,
+       "variant": ""
+      },
+      "guard": "none",
+      "invalidate": "BD:t0:ext",
+      "within": 48
+     }
+    ],
+    "stop": {
+     "atr_mult": 0.0,
+     "buffer_atr": 0.5,
+     "kind": "register",
+     "max_risk_atr": 6.0,
+     "pick": "first",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 2.0,
+     "kind": "next_structure",
+     "levels": [
+      "h1_swing_high"
+     ],
+     "min_space_r": 1.5,
+     "r": 0.0
+    },
+    "window": null
+   },
+   "lineage": "BREAK_RETEST_MOMENTUM>MUT3>X2",
+   "stage": "deap",
+   "train_fitness": -0.46487649
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 0,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 1.0,
+    "size_below_min_skips": 188,
+    "train_trades_at_account": 0,
+    "train_trades_research": 74
+   },
+   "canonical_hash": "9e1c1f7aa72b3e50876db05da98f27325d2c842a5733f9af7b5e357175bfa6c7",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 3,
+      "cmp": "",
+      "kind": "state",
+      "name": "TREND_UP",
+      "op": "HOLD",
+      "q": 0.0,
+      "reg": "",
+      "tf": "M15",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [],
+    "direction": "LONG",
+    "expires_after": 16,
+    "lineage": "TRENDLINE_BOUNCE_BREAK>MUT2>X3",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "RETEST_HOLD_UP",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.1,
+       "variant": ""
+      },
+      "guard": "F:ret_12:lt:0.40",
+      "invalidate": "none",
+      "within": 24
+     },
+     {
+      "event": {
+       "arg": 0,
+       "name": "TOUCH",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.25,
+       "variant": ""
+      },
+      "guard": "none",
+      "invalidate": "BD:t25:ext",
+      "within": 24
+     },
+     {
+      "event": {
+       "arg": 0,
+       "name": "RETEST_HOLD_UP",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.25,
+       "variant": ""
+      },
+      "guard": "none",
+      "invalidate": "BD:t0:ext",
+      "within": 24
+     }
+    ],
+    "stop": {
+     "atr_mult": 3.0,
+     "buffer_atr": 0.0,
+     "kind": "atr",
+     "max_risk_atr": 4.0,
+     "pick": "",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 0.0,
+     "kind": "fixed_r",
+     "levels": [],
+     "min_space_r": 0.0,
+     "r": 2.0
+    },
+    "window": [
+     570,
+     900
+    ]
+   },
+   "lineage": "TRENDLINE_BOUNCE_BREAK>MUT2>X3",
+   "stage": "deap",
+   "train_fitness": -0.46515588
+  },
+  {
+   "account_feasibility": {
+    "feasible": false,
+    "leverage_capped_trades_at_account": 0,
+    "real_account_eur": 500.0,
+    "size_below_min_skip_share": 0.918994,
+    "size_below_min_skips": 329,
+    "train_trades_at_account": 29,
+    "train_trades_research": 323
+   },
+   "canonical_hash": "f49bb21b0e21b93abd571b719303df0a9284e03c99efe7ee82b1cbfdec153834",
+   "genome": {
+    "anchor": [
+     {
+      "arg": 0,
+      "cmp": "",
+      "kind": "event",
+      "name": "SWING_LOW_CONF",
+      "op": "IS",
+      "q": 0.0,
+      "reg": "",
+      "tf": "M5",
+      "tol_atr": 0.0,
+      "variant": ""
+     }
+    ],
+    "context": [],
+    "direction": "LONG",
+    "expires_after": 64,
+    "lineage": "FAILED_BREAKOUT>MUT3>X3",
+    "steps": [
+     {
+      "event": {
+       "arg": 0,
+       "name": "RETEST_HOLD_UP",
+       "op": "IS",
+       "tf": "M5",
+       "tol": 0.25,
+       "variant": ""
+      },
+      "guard": "F:dist_vwap_atr:lt:0.70",
+      "invalidate": "BD:t25:lvl",
+      "within": 48
+     }
+    ],
+    "stop": {
+     "atr_mult": 0.0,
+     "buffer_atr": 0.5,
+     "kind": "register",
+     "max_risk_atr": 6.0,
+     "pick": "first",
+     "tf": "M5"
+    },
+    "target": {
+     "fallback_r": 0.0,
+     "kind": "fixed_r",
+     "levels": [],
+     "min_space_r": 0.0,
+     "r": 1.0
+    },
+    "window": null
+   },
+   "lineage": "FAILED_BREAKOUT>MUT3>X3",
+   "stage": "deap",
+   "train_fitness": -0.46900868
+  }
+ ],
+ "meta": {
+  "fold_digest": "9dcffd12eb2f2fcbd74bd9e610028d894ef5e0781e7ec89e6540cf3b1918b351",
+  "prior": {
+   "label": "v1 cumulative",
+   "trials": 30310,
+   "unique_specs": 29798
+  },
+  "scope": "Train-only ranking (search fold 0)"
+ }
+}

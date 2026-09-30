@@ -1,0 +1,74 @@
+{
+ "config_hash": "1b24ae564f5cda7df1386cf3636b3f581e2b6d1e95927b3d7f348c910318037e",
+ "frame_build_s": 32.5,
+ "market": "GER40",
+ "n_candidates": 1500,
+ "null_seed": 20300005,
+ "peak_rss_mb": 914.5,
+ "scope": "TRAIN side of search fold 0 only (null frame); no fold-test number",
+ "search_seed": 20260930,
+ "search_stats_s": 30.5,
+ "stats": {
+  "best_e": 0.46969415423766214,
+  "best_t": 2.4768407564824972,
+  "e_quantiles": {
+   "max": 0.469694,
+   "p05": -0.547198,
+   "p50": -0.194955,
+   "p95": 0.118995
+  },
+  "median_e": -0.19495489302185748,
+  "n_clusters_eligible": 172,
+  "n_e_pos": 32,
+  "n_eligible": 230,
+  "n_passers": 230,
+  "n_specs": 1500,
+  "n_t_gt2": 4,
+  "p95_e": 0.11899534108006643,
+  "top5_pareto": [
+   {
+    "e_adv": 0.46969415423766214,
+    "e_shock": 0.4561216241894274,
+    "n_trades": 51,
+    "payoff": 1.306982306713785,
+    "t_day": 2.4768407564824972,
+    "tpd": 0.31875
+   },
+   {
+    "e_adv": -0.07924770675618019,
+    "e_shock": -0.08435538217482719,
+    "n_trades": 119,
+    "payoff": 2.4299915435013597,
+    "t_day": -0.5722151324109839,
+    "tpd": 0.74375
+   },
+   {
+    "e_adv": -0.9806123180926429,
+    "e_shock": -0.9928033009388413,
+    "n_trades": 72,
+    "payoff": 2.33599249143082,
+    "t_day": -8.750366193110745,
+    "tpd": 0.45
+   },
+   {
+    "e_adv": -0.3736642764815253,
+    "e_shock": -0.2863809937416718,
+    "n_trades": 50,
+    "payoff": 2.0468814202111467,
+    "t_day": -1.8764100568002184,
+    "tpd": 0.3125
+   },
+   {
+    "e_adv": -0.5533100732553548,
+    "e_shock": -0.51897681980882,
+    "n_trades": 124,
+    "payoff": 5.522776396400399,
+    "t_day": -2.7964552552431456,
+    "tpd": 0.775
+   }
+  ]
+ },
+ "type": "B",
+ "type_name": "block_shuffle",
+ "unique_specs": 1500
+}

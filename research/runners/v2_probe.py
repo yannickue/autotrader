@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import gzip
 import json
 import shutil
 import statistics
@@ -37,6 +38,7 @@ for _path in (str(REPO_ROOT), str(REPO_ROOT / "src")):
         sys.path.insert(0, _path)
 
 import numpy as np  # noqa: E402
+import pandas as pd  # noqa: E402
 
 from alpha.common.market_costs import (  # noqa: E402
     cost_scenarios_for,
@@ -77,6 +79,7 @@ from alpha.discovery.temporal_search import (  # noqa: E402
     lineage_family,
     search_windows,
 )
+from alpha.discovery.v2_select import daily_hash, daily_vector, trade_stats  # noqa: E402
 from alpha.fast.screen import screen_partition_trades  # noqa: E402
 from alpha.fast.sim import (  # noqa: E402
     EXIT_FIXED_R,
@@ -92,6 +95,8 @@ DEFAULT_CONFIG = REPO_ROOT / "research/configs/v2_probe.json"
 SUMMARY_VERSION = "v2-probe-summary-v1"
 ADVERSE = "COMBINED_ADVERSE"
 BASE = "BASE"
+SHOCK = "EXIT_SHOCK"
+STATS_VERSION = "v2-probe-stats-v1"
 POOL_KEEP = 100
 
 
@@ -142,11 +147,36 @@ def _q(values: list[float] | np.ndarray, qs=(0.05, 0.25, 0.5, 0.75, 0.95)) -> di
     return out
 
 
-def market_arrays(features: Any) -> MarketArrays:
-    """MarketArrays from a FeatureSet (same wiring as ``ar2_fast._market``)."""
+def local_market_minute(ts_ns: np.ndarray, tz: str) -> np.ndarray:
+    """Minute-of-day of each UTC bar-OPEN stamp in the market's LOCAL calendar timezone (DST-correct, per bar).
+
+    CLOCK FIX (2026-09-30): the FeatureSet's ``berlin_minute`` is ALWAYS Europe/Berlin, but
+    ``SimWindow.from_spec`` and the temporal kernel's session windows are stated in the market's local
+    clock (NAS100/SPX500 America/New_York, XAUUSD/EURUSD Europe/London).  Pairing them was misaligned."""
+    idx = pd.DatetimeIndex(np.asarray(ts_ns, dtype="int64").view("datetime64[ns]"), tz="UTC").tz_convert(tz)
+    return (idx.hour * 60 + idx.minute).to_numpy(np.int16)
+
+
+def market_clock_minute(features: Any, spec: Any) -> np.ndarray:
+    """Local-clock minute per bar for ``spec``; Europe/Berlin markets (GER40) return the FeatureSet's
+    ``berlin_minute`` itself, so their results stay bit-identical."""
+    if spec is None or spec.calendar.tz == "Europe/Berlin":
+        return np.asarray(features["berlin_minute"])
+    return local_market_minute(features["ts_ns"], spec.calendar.tz)
+
+
+def market_arrays(features: Any, minute: np.ndarray | None = None) -> MarketArrays:
+    """MarketArrays from a FeatureSet (same wiring as ``ar2_fast._market``).
+
+    ``minute`` = the market-LOCAL minute-of-day (``market_clock_minute``); None keeps the Berlin minute
+    (correct for GER40 / synthetic tests only).  ``day`` stays the Berlin day id: Berlin midnight lies
+    outside the cash/entry windows of every market here (NY 09:30-15:55 = Berlin 15:30-21:55, London
+    08:00-16:55 = Berlin 09:00-17:55; for the 24h markets the London/Berlin midnight differ by 1 h, which
+    is irrelevant inside the entry windows), so day grouping and the forced flat agree."""
     contig = np.asarray(features["contig"], dtype=bool)
     return MarketArrays(features["o"], features["h"], features["l"], features["c"], features["spread"],
-                        features["berlin_minute"], features["berlin_day_id"], np.r_[contig[1:], False])
+                        features["berlin_minute"] if minute is None else minute, features["berlin_day_id"],
+                        np.r_[contig[1:], False])
 
 
 def market_sim_params(spec: Any, cfg: dict) -> tuple[SizingSpec, SimRules, dict[str, CostScenario], SimWindow]:
@@ -174,6 +204,7 @@ class ProbeEvaluator(TemporalEvaluator):
         super().__init__(*a, **kw)
         self.skip_totals = np.zeros(len(SKIP_LABELS), dtype=np.int64)
         self.records: dict[str, tuple[TemporalGenome, TemporalEval, str]] = {}
+        self.train_cands: dict[str, CandidateArrays] = {}  # fresh computations only (Train-side candidates)
         self.stage = "init"
 
     def _reduce(self, trades, want_val):  # type: ignore[no-untyped-def]
@@ -187,6 +218,8 @@ class ProbeEvaluator(TemporalEvaluator):
         res = super().evaluate(genome, kind, need_base=False)
         if res.reject != "invalid_genome" and res.genome_hash not in self.records:
             self.records[res.genome_hash] = (canonicalize(genome), res, self.stage)
+        if res.train_candidates is not None and res.genome_hash not in self.train_cands:
+            self.train_cands[res.genome_hash] = res.train_candidates
         return res
 
 
@@ -214,7 +247,10 @@ class ProbeContext:
     features_cache_key: str | None = None
 
 
-def build_real_context(canonical: str, cfg: dict, cache_dir: Path) -> ProbeContext:
+def build_real_context(canonical: str, cfg: dict, cache_dir: Path,
+                       dev_transform: Callable[[Any], Any] | None = None) -> ProbeContext:
+    """``dev_transform`` (null calibration only): maps the real dev DataFrame to a synthetic one with the
+    SAME timestamps / spreads; everything downstream (features, events, folds, thresholds) is rebuilt."""
     from alpha.discovery.folds import assert_dev_only
     from alpha.events.store import load_or_build_events
     from alpha.temporal.frame import build_market_frame
@@ -225,6 +261,8 @@ def build_real_context(canonical: str, cfg: dict, cache_dir: Path) -> ProbeConte
     spec = load_market_spec(canonical)
     source = cfg["ger40_source"] if canonical == "GER40" else "v2"
     dev = mf.build_dev_frame(spec, source)
+    if dev_transform is not None:
+        dev = dev_transform(dev)
     features = mf.build_feature_store(dev, spec, cache_dir)
     dates = berlin_dates_from_ts_ns(features["ts_ns"])
     assert_dev_only(dates)
@@ -237,6 +275,9 @@ def build_real_context(canonical: str, cfg: dict, cache_dir: Path) -> ProbeConte
     if ev_mb > cfg["max_event_cache_mb"]:
         raise RuntimeError(f"EventSet cache is {ev_mb:.0f} MB > {cfg['max_event_cache_mb']} MB limit")
     frame = build_market_frame(features, events, plan=plan)
+    minute = market_clock_minute(features, spec)
+    if spec.calendar.tz != "Europe/Berlin":  # kernel session windows compare against frame.berlin_minute
+        frame = dataclasses.replace(frame, berlin_minute=minute)  # carries the market-LOCAL minute (see market_arrays)
     atr = np.asarray(features["m5_atr14"], dtype=float)
     med_atr = float(np.nanmedian(atr[plan.mask(dates, plan.train)]))
     sizing, rules, costs, window = market_sim_params(spec, cfg)
@@ -252,6 +293,8 @@ def build_real_context(canonical: str, cfg: dict, cache_dir: Path) -> ProbeConte
         "build_s": round(time.perf_counter() - t0, 1),
         "sim_window": dataclasses.asdict(window),
         "sim_window_note": "SimWindow.from_spec(spec): entry/flat minutes in the market's LOCAL calendar tz",
+        "clock": {"tz": spec.calendar.tz, "minute_basis": "market-local (MarketArrays.minute and MarketFrame."
+                  "berlin_minute); day id = Berlin day", "clock_fix": "2026-09-30 local-clock fix"},
         "cost_scenarios": {n: dataclasses.asdict(c) for n, c in costs.items()},
         "cost_note": "alpha.common.market_costs.cost_scenarios_for / sizing_for (research account "
                      f"{cfg['sizing']['research_equity_eur']:g} EUR)",
@@ -259,7 +302,7 @@ def build_real_context(canonical: str, cfg: dict, cache_dir: Path) -> ProbeConte
     if sanity["calendar_provisional"]:
         log(f"[{canonical}] WARNING provisional calendar (status={sanity['calendar_status']})")
     fp = stable_hash({"f": meta["features_cache_key"], "e": meta["events_cache_key"], "m": canonical})
-    return ProbeContext(canonical, lambda: frame, market_arrays(features), dates, plan,
+    return ProbeContext(canonical, lambda: frame, market_arrays(features, minute), dates, plan,
                         fold_report(dates, folds, f["embargo_days"]),
                         EventPool.from_array_names(events), sizing, rules, costs, fp, atr, meta,
                         window=window, market_spec=spec, events_cache_key=meta["events_cache_key"],
@@ -551,6 +594,90 @@ def summarize(ev: ProbeEvaluator, ctx: ProbeContext, cfg: dict, n_candidates: in
     return summary, pool
 
 
+# --------------------------------------------------------------------------- per-candidate compact stats
+def exit_shock_cost(base: CostScenario, extra_spread_price: float) -> CostScenario:
+    """EXIT_SHOCK = BASE plus one extra (median) spread on EVERY market fill (entry and market exits), the
+    simulator-level analogue of the rawscan ``EXIT_SHOCK`` (BASE + one full extra spread at entry and exit)."""
+    return dataclasses.replace(base, name=SHOCK, slippage_pts=base.slippage_pts + float(extra_spread_price))
+
+
+def median_train_spread(ctx: ProbeContext) -> float:
+    sp = ctx.market.spread[_train_mask(ctx)]
+    sp = sp[np.isfinite(sp) & (sp > 0)]
+    return float(np.median(sp)) if len(sp) else 0.0
+
+
+STAT_COLUMNS = (
+    "hash", "stage", "family", "reject", "passer", "complexity", "n_train_candidates", "n_trades", "tpd",
+    "e_adv", "e_base", "e_shock", "t_day", "payoff", "profit_factor", "win_rate", "avg_win_r", "avg_loss_r",
+    "daily_hash",
+)
+
+
+def collect_stats(ev: ProbeEvaluator, ctx: ProbeContext) -> tuple[list[dict], dict[str, np.ndarray], np.ndarray]:
+    """Compact Train stats of ALL valid evaluated specs (passers and rejects with any Train candidate).
+
+    Re-simulates each spec's Train candidates (same kernel, costs, sizing, window as the search) under
+    BASE, COMBINED_ADVERSE and EXIT_SHOCK.  Train only: the candidate stream is cut to Train decisions
+    before the simulation, so no Validation/fold-test bar is ever simulated here.  Returns (rows,
+    hash -> daily-R vector (ADVERSE; train-day axis), train day ids)."""
+    tm = _train_mask(ctx)
+    days = np.unique(ctx.market.day[tm])
+    n_days = len(days)
+    shock = exit_shock_cost(ev._costs[BASE], median_train_spread(ctx))
+    costs = {"adv": ev._costs[ADVERSE], "base": ev._costs[BASE], "shock": shock}
+    rows: list[dict] = []
+    daily: dict[str, np.ndarray] = {}
+    for h, (g, r, stage) in sorted(ev.records.items()):
+        row: dict[str, Any] = {c: None for c in STAT_COLUMNS}
+        row.update(hash=h, stage=stage, family=lineage_family(r.lineage or g.lineage), reject=r.reject or "",
+                   passer=not r.rejected, complexity=r.complexity, n_train_candidates=r.n_train_candidates,
+                   n_trades=0)
+        cands = ev.train_cands.get(h)
+        if cands is None and r.n_train_candidates:
+            spec = temporal_compile.compile_temporal(g, ev.resolver, canonical=True)
+            res = evaluate_temporal_many([spec], ev.frame, use_cache=True, cache=ev._prefix_cache)[0].candidates
+            res = attach_min_space(res, spec)
+            cands = res.subset(tm[res.decision_idx]) if len(res.decision_idx) else res
+        if cands is not None and len(cands.decision_idx):
+            per = {}
+            for k, cost in costs.items():
+                tr = simulate_fast(ctx.market, cands, cost, ctx.sizing, ctx.rules, ctx.window)
+                keep = tm[tr.entry_idx] if len(tr) else np.zeros(0, bool)
+                per[k] = (tr.r_multiple[keep], tr.entry_day[keep])
+            st = trade_stats(*per["adv"])
+            row.update(n_trades=st["n_trades"], tpd=st["n_trades"] / n_days if n_days else None,
+                       e_adv=st["mean_r"], t_day=st["t_day"], payoff=st["payoff"],
+                       profit_factor=st["profit_factor"], win_rate=st["win_rate"], avg_win_r=st["avg_win_r"],
+                       avg_loss_r=st["avg_loss_r"],
+                       e_base=trade_stats(*per["base"])["mean_r"], e_shock=trade_stats(*per["shock"])["mean_r"])
+            if st["n_trades"]:
+                vec = daily_vector(per["adv"][0], per["adv"][1], days)
+                daily[h] = vec.astype(np.float32)
+                row["daily_hash"] = daily_hash(vec)
+        rows.append(row)
+    return rows, daily, days
+
+
+def write_stats(out_dir: Path, ev: ProbeEvaluator, rows: list[dict], daily: dict[str, np.ndarray],
+                days: np.ndarray) -> None:
+    """``stats.csv.gz`` (ALL evaluated specs), ``genomes.json.gz`` (hash -> genome) and ``daily_r.npz``."""
+    df = pd.DataFrame(rows, columns=list(STAT_COLUMNS))
+    df.to_csv(out_dir / "stats.csv.gz", index=False, compression="gzip", float_format="%.8g")
+    genomes = {h: g.to_dict() for h, (g, _, _) in sorted(ev.records.items())}
+    with gzip.open(out_dir / "genomes.json.gz", "wt", encoding="utf-8") as fh:
+        json.dump(genomes, fh, sort_keys=True, allow_nan=False)
+    hs = sorted(daily)
+    np.savez_compressed(out_dir / "daily_r.npz", hashes=np.array(hs), day_ids=np.asarray(days, dtype=np.int64),
+                        mat=np.stack([daily[h] for h in hs]) if hs else np.zeros((0, len(days)), np.float32))
+
+
+def load_stats(out_dir: Path) -> tuple[pd.DataFrame, dict[str, np.ndarray]]:
+    df = pd.read_csv(out_dir / "stats.csv.gz")
+    z = np.load(out_dir / "daily_r.npz")
+    return df, {str(h): z["mat"][i].astype(np.float64) for i, h in enumerate(z["hashes"])}
+
+
 def render_markdown(s: dict) -> str:
     c, z = s["counts"], s["zero_trade"]
     lines = [
@@ -576,6 +703,14 @@ def render_markdown(s: dict) -> str:
 
 
 # --------------------------------------------------------------------------- driver
+def make_evaluator(ctx: ProbeContext, cfg: dict, ledger: TemporalTrialLedger | None = None,
+                   cache_dir: Path | None = None) -> ProbeEvaluator:
+    return ProbeEvaluator(ctx.frame_provider, ctx.market, ctx.dates, ctx.plan, sizing=ctx.sizing, rules=ctx.rules,
+                          cost_scenarios=ctx.costs, min_train_trades=cfg["min_train_trades"], ledger=ledger,
+                          cache_dir=cache_dir, data_fingerprint=ctx.data_fingerprint, window=ctx.window,
+                          events_cache_key=ctx.events_cache_key, features_cache_key=ctx.features_cache_key)
+
+
 def run_probe(ctx: ProbeContext, cfg: dict, n_candidates: int, seed: int, out_dir: Path,
               cache_dir: Path | None = None, resume: bool = False) -> dict:
     t_all = time.perf_counter()
@@ -589,17 +724,19 @@ def run_probe(ctx: ProbeContext, cfg: dict, n_candidates: int, seed: int, out_di
         old = json.loads(ledger_path.read_text(encoding="utf-8"))
         ledger = TemporalTrialLedger.from_json(json.dumps(old["ledger"]))
         carried = {"trials": ledger.total_trials, "unique_specs": ledger.unique}
-    ev = ProbeEvaluator(ctx.frame_provider, ctx.market, ctx.dates, ctx.plan, sizing=ctx.sizing, rules=ctx.rules,
-                        cost_scenarios=ctx.costs, min_train_trades=cfg["min_train_trades"], ledger=ledger,
-                        cache_dir=cache_dir, data_fingerprint=ctx.data_fingerprint, window=ctx.window,
-                        events_cache_key=ctx.events_cache_key, features_cache_key=ctx.features_cache_key)
+    ev = make_evaluator(ctx, cfg, ledger, cache_dir)
     log(f"[{ctx.market_name}] search: n_candidates={n_candidates} seed={seed} train_days="
         f"{len(np.unique(ctx.market.day[_train_mask(ctx)]))}")
     t0 = time.perf_counter()
     search_info = run_search(ev, ctx, cfg, n_candidates, seed, timings)
     timings["search_total_s"] = round(time.perf_counter() - t0, 2)
+    t0 = time.perf_counter()
+    stat_rows, daily, train_days = collect_stats(ev, ctx)
+    timings["stats_s"] = round(time.perf_counter() - t0, 2)
     summary, pool = summarize(ev, ctx, cfg, n_candidates, timings, search_info, prior)
     summary["ledger_carried_in"] = carried
+    summary["stats_file"] = {"version": STATS_VERSION, "rows": len(stat_rows), "with_trades": len(daily),
+                             "cost_exit_shock": "BASE + one extra median Train spread on every market fill"}
     timings["total_s"] = round(time.perf_counter() - t_all, 2)
     summary["peak_rss_mb"] = peak_rss_mb()
     led_json = json.loads(ledger.to_json())
@@ -612,6 +749,7 @@ def run_probe(ctx: ProbeContext, cfg: dict, n_candidates: int, seed: int, out_di
         {"meta": {"scope": "Train-only ranking (search fold 0)", "fold_digest": ctx.plan.fold_digest,
                   "prior": prior}, "candidates": pool}, indent=1, sort_keys=True, allow_nan=False),
         encoding="utf-8")
+    write_stats(out_dir, ev, stat_rows, daily, train_days)
     (out_dir / "probe_summary.json").write_text(json.dumps(summary, indent=1, sort_keys=True, allow_nan=False),
                                                 encoding="utf-8")
     (out_dir / "probe_summary.md").write_text(render_markdown(summary), encoding="utf-8")

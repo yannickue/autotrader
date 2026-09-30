@@ -1,0 +1,12 @@
+INVALIDATED BEFORE LOCAL-CLOCK FIX (2026-09-30)
+The runs of NAS100, SPX500, XAUUSD and EURUSD in v2_probe_r1 were simulated with MarketArrays.minute and the temporal kernel's
+frame.berlin_minute = Europe/Berlin minute while SimWindow.from_spec and the archetype/genome windows are in the market's LOCAL clock
+(NY 09:30-15:00/flat 15:55; London 08:00-15:00/flat 16:55). Windows were misaligned (~6 h NAS/SPX, ~1 h XAU/EUR). GER40 (Berlin) is unaffected and unchanged.
+The old files are kept under _invalidated_pre_clock_fix/<M>/ for reference ONLY; the market directories were overwritten by the corrected re-run
+(same seed/config/n_candidates=1500, max_event_cache_mb raised 600 -> 900).
+
+Old (invalid) headline numbers (Train, COMBINED_ADVERSE, passers >=40 Train trades):
+  NAS100: passers 162, median -0.216847, p95 0.024007, max 0.242329, min -0.756243, n 162
+  SPX500: passers 153, median -0.352798, p95 -0.126832, max -0.032092, min -0.896994, n 153
+  XAUUSD: passers 199, median -0.163889, p95 0.140661, max 0.248817, min -0.685593, n 199
+  EURUSD: passers 174, median -0.344736, p95 -0.094568, max 0.112995, min -0.998249, n 174
