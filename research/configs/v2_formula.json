@@ -1,0 +1,47 @@
+{
+ "version": "V2F-config-1",
+ "note": "FormulaAlpha probe: DEAP GP over trailing (causal) formulas vs a random-formula baseline. Fitness uses TRAIN bars only; later partitions are never loaded into the search.",
+ "market": "GER40",
+ "dataset_root": "data/ar1_ger40",
+ "dev_cut": "2026-08-31",
+ "seed": 20260930,
+ "splits": {
+  "train": ["2025-02-01", "2025-11-30"],
+  "validation": ["2025-12-01", "2026-04-30"],
+  "oos": ["2026-05-01", "2026-08-31"]
+ },
+ "embargo_days": 5,
+ "sizing": {"note": "alpha.common.sim.DEFAULT_SIZING / DEFAULT_RULES, BASE and COMBINED_ADVERSE cost scenarios"},
+ "untracked_exploratory_trials": {
+  "count": 7200,
+  "note": "3 seeds x (GP novelty_w 0.5 + GP novelty_w 0.9 + random baseline) x 800 unique formulas, Train-only fitness, run to choose novelty_w (0.5 -> 0.9: more decorrelated top-100 at equal quality). Not in trial_ledger.json."
+ },
+ "cache_dir": "data/feature_store/v2f",
+ "report_dir": "research/reports/v2_formula",
+ "search": {
+  "horizons": [6, 12, 24],
+  "max_evals": 800,
+  "pop_size": 50,
+  "hof_size": 20,
+  "novelty_w": 0.9,
+  "elite_share": 0.2,
+  "n_chunks": 4,
+  "complexity_penalty": 0.0001
+ },
+ "signal": {
+  "q_grid": [0.8, 0.9, 0.95],
+  "default_q": 0.9,
+  "stop_k": 1.5,
+  "target_r": 1.5,
+  "cooldown": 12,
+  "session": false
+ },
+ "report": {
+  "top_k": 20,
+  "decorrelated_top": 100
+ },
+ "null": {
+  "n_shifts": 5,
+  "sample_formulas": 120
+ }
+}
