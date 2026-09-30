@@ -31,7 +31,7 @@ import json
 import os
 import sqlite3
 import threading
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -301,6 +301,17 @@ CREATE TABLE IF NOT EXISTS scan_errors (
     error TEXT NOT NULL,
     recorded_utc TEXT NOT NULL,
     PRIMARY KEY (market, bar_close_utc)
+);
+-- Which gate blocked a labelled non-traded opportunity (and why it was labelled). The immutable
+-- ``counterfactuals`` row is unchanged; this side table carries the attribution for the funnel.
+CREATE TABLE IF NOT EXISTS counterfactual_meta (
+    opportunity_id TEXT PRIMARY KEY REFERENCES counterfactuals(opportunity_id),
+    source TEXT NOT NULL,
+    gate_code TEXT,
+    gate_class TEXT,
+    gate_codes TEXT NOT NULL,
+    fill_assumption TEXT NOT NULL,
+    recorded_utc TEXT NOT NULL
 );
 -- Trade type / censoring tag per intent. No row = legacy = STRATEGY, not censored.
 CREATE TABLE IF NOT EXISTS trade_tags (
@@ -1121,9 +1132,20 @@ class DemoStore:
         return self._q("SELECT COUNT(*) n FROM outcomes")[0]["n"]
 
     # ---- counterfactuals -----------------------------------------------------------------------
-    def record_counterfactual(self, label: CounterfactualLabel) -> bool:
-        """Insert-once for REJECTED decisions. Re-labelling with the same values (labelled_utc aside)
-        is a no-op (False); differing values raise."""
+    def record_counterfactual(
+        self,
+        label: CounterfactualLabel,
+        *,
+        source: str | None = None,
+        gate_code: str | None = None,
+        gate_class: str | None = None,
+        gate_codes: Sequence[str] = (),
+    ) -> bool:
+        """Insert-once for NON-TRADED opportunities: REJECTED decisions (default) or - when ``source`` is
+        given - engine-accepted ones that never became a trade (stack reject, cancelled, send failed,
+        shadow dry-run).  A decision whose intent is in flight or traded is refused.  ``gate_*`` is the
+        attribution stored beside the immutable label.  Re-labelling with the same values
+        (labelled_utc aside) is a no-op (False); differing values raise."""
         new = label.to_dict()
         with self._tx() as c:
             dec = c.execute(
@@ -1133,7 +1155,13 @@ class DemoStore:
             if dec is None:
                 raise MissingParentError("no decision for counterfactual")
             if dec["accepted"]:
-                raise DemoStoreError("counterfactuals are for REJECTED decisions only")
+                if source is None:
+                    raise DemoStoreError("counterfactuals are for REJECTED decisions only")
+                it = c.execute(
+                    "SELECT state FROM intents WHERE opportunity_id=?", (label.opportunity_id,)
+                ).fetchone()
+                if it is not None and it["state"] not in ("RISK_REJECTED", "SEND_FAILED", "CANCELLED"):
+                    raise DemoStoreError(f"intent is {it['state']}: traded / in flight, not a counterfactual")
             if dec["phase"] != label.phase:
                 raise DemoStoreError("counterfactual phase differs from decision phase")
             row = c.execute(
@@ -1150,7 +1178,87 @@ class DemoStore:
                 "INSERT INTO counterfactuals(opportunity_id,phase,labelled_utc,json) VALUES(?,?,?,?)",
                 (label.opportunity_id, label.phase, label.labelled_utc, label.to_json()),
             )
+            c.execute(
+                "INSERT OR IGNORE INTO counterfactual_meta(opportunity_id,source,gate_code,gate_class,gate_codes,"
+                "fill_assumption,recorded_utc) VALUES(?,?,?,?,?,?,?)",
+                (
+                    label.opportunity_id, source or "ENGINE_REJECTED", gate_code, gate_class,
+                    json.dumps(list(gate_codes)), "INTENDED_ENTRY_OPTIMISTIC", self._clock(),
+                ),
+            )
             return True
+
+    def non_traded_unlabelled(self, phase: str | None = None) -> list[dict[str, Any]]:
+        """Every opportunity that did NOT become a trade and has no counterfactual label yet:
+        engine rejects, catch-up misses, and engine-ACCEPTED ones that ended RISK_REJECTED / SEND_FAILED /
+        CANCELLED (incl. shadow dry-run) or never got an intent.  Raw facts only; the attribution
+        (source, gate) is derived by ``demo.labeling``.  In-flight and traded intents are excluded."""
+        _check_phase(phase)
+        sql = (
+            "SELECT d.opportunity_id AS opportunity_id, d.phase AS phase, d.decided_utc AS decided_utc, "
+            "d.accepted AS accepted, d.reasons AS reasons, d.policy_id AS policy_id, d.shadow AS shadow, "
+            "s.json AS sjson, i.intent_id AS intent_id, i.state AS istate, "
+            "rd.reject_code AS rd_code, rd.gate_class AS rd_class, "
+            "json_extract(rk.json,'$.reject_reason') AS rk_reason, "
+            "(SELECT e.detail FROM intent_events e WHERE e.intent_id=i.intent_id "
+            " AND e.to_state IN ('CANCELLED','SEND_FAILED','RISK_REJECTED') ORDER BY e.seq DESC LIMIT 1) AS term_detail "
+            "FROM decisions d JOIN snapshots s ON s.opportunity_id=d.opportunity_id "
+            "LEFT JOIN counterfactuals c ON c.opportunity_id=d.opportunity_id "
+            "LEFT JOIN intents i ON i.opportunity_id=d.opportunity_id "
+            "LEFT JOIN risk_detail rd ON rd.intent_id=i.intent_id AND rd.kind='REJECTED' "
+            "LEFT JOIN risk_records rk ON rk.intent_id=i.intent_id "
+            "WHERE c.opportunity_id IS NULL AND (d.accepted=0 OR i.intent_id IS NULL "
+            "OR i.state IN ('RISK_REJECTED','SEND_FAILED','CANCELLED'))"
+        )
+        args: tuple = ()
+        if phase:
+            sql += " AND d.phase=?"
+            args = (phase,)
+        out = []
+        for r in self._q(sql + " ORDER BY d.decided_utc, d.opportunity_id", args):
+            out.append({
+                "decision": self._decision_from_row(r),
+                "snapshot": snapshot_from_dict(json.loads(r["sjson"])),
+                "intent_id": r["intent_id"], "intent_state": r["istate"],
+                "stack_code": r["rd_code"] or r["rk_reason"], "stack_class": r["rd_class"],
+                "terminal_detail": {} if r["term_detail"] is None else json.loads(r["term_detail"]),
+            })
+        return out
+
+    def counterfactual_rows(self, phase: str | None = None) -> list[dict[str, Any]]:
+        """Every label with its attribution and the snapshot facts the funnel slices on (one query).
+        Legacy labels without a ``counterfactual_meta`` row are ENGINE_REJECTED with the decision's reasons."""
+        _check_phase(phase)
+        sql = (
+            "SELECT cf.opportunity_id AS opportunity_id, cf.json AS cjson, m.source AS source, "
+            "m.gate_code AS gate_code, m.gate_class AS gate_class, m.gate_codes AS gate_codes, "
+            "d.reasons AS reasons, s.market AS market, json_extract(s.json,'$.signal.family') AS family, "
+            "json_extract(s.json,'$.market_state.clock.local_minute') AS local_minute, "
+            "json_extract(s.json,'$.market_state.clock.session_bucket') AS session_bucket "
+            "FROM counterfactuals cf JOIN snapshots s ON s.opportunity_id=cf.opportunity_id "
+            "LEFT JOIN decisions d ON d.opportunity_id=cf.opportunity_id "
+            "LEFT JOIN counterfactual_meta m ON m.opportunity_id=cf.opportunity_id"
+        )
+        args: tuple = ()
+        if phase:
+            sql += " WHERE cf.phase=?"
+            args = (phase,)
+        out = []
+        for r in self._q(sql, args):
+            lab = json.loads(r["cjson"])
+            codes = json.loads(r["gate_codes"]) if r["gate_codes"] else [
+                x for x in (json.loads(r["reasons"]) if r["reasons"] else []) if x != "ACCEPTED"
+            ]
+            out.append({
+                "opportunity_id": r["opportunity_id"], "market": r["market"], "family": r["family"],
+                "local_minute": r["local_minute"], "session": r["session_bucket"],
+                "source": r["source"] or "ENGINE_REJECTED",
+                "gate_code": r["gate_code"] or (codes[0] if codes else None),
+                "gate_class": r["gate_class"], "gate_codes": codes,
+                "r": lab["hypothetical_r"], "mfe_r": lab["hypothetical_mfe_r"],
+                "mae_r": lab["hypothetical_mae_r"], "target_before_stop": lab["target_before_stop"],
+            })
+        return out
 
     def get_counterfactual(self, opportunity_id: str) -> CounterfactualLabel | None:
         r = self._one("SELECT json FROM counterfactuals WHERE opportunity_id=?", (opportunity_id,))
