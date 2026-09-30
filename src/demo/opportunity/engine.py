@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Protocol
 
@@ -43,6 +44,7 @@ from demo.contracts import Decision, OpportunitySnapshot, Phase, TradeIntent, op
 from demo.opportunity.bar_source import (
     M5_SECONDS,
     BarSource,
+    Quote,
     closed_bars_only,
     tick_activity_of,
     validate_frame,
@@ -67,6 +69,28 @@ from demo.opportunity.snapshot import (
     realized_vol,
 )
 from markets.spec import MarketSpec, load_market_spec
+
+# Reason codes of a CATCH-UP decision: an opportunity found on a bar that is already older than one bar
+# when it is evaluated is NEVER tradable (no chasing of stale entries); it is recorded as a terminal,
+# explained non-trade and labelled counterfactually like every other rejection.
+CATCHUP_MISSED = "CATCHUP_MISSED"
+EXPIRED_ENTRY = "EXPIRED_ENTRY"
+ALREADY_MOVED = "ALREADY_MOVED"
+CATCHUP_CODES: tuple[str, ...] = (CATCHUP_MISSED, EXPIRED_ENTRY, ALREADY_MOVED)
+ORIGIN_CATCHUP = "CATCHUP"
+
+
+@dataclass(frozen=True, slots=True)
+class CatchupInfo:
+    """Evaluate a PAST closed bar causally (``now`` = that bar's close) while knowing the real clock.
+
+    ``live_now``   real processing time (the decision is stamped with it; the age is ``live_now - signal``);
+    ``live_quote`` the current executable quote, only used to classify ``ALREADY_MOVED`` (never to trade).
+    """
+
+    live_now: datetime
+    live_quote: Quote | None = None
+
 
 DEFAULT_WINDOW_BARS = 6000  # ~3 weeks of M5: D1 ATR14 and the previous cash day are always inside
 DEFAULT_MIN_HISTORY_BARS = 600
@@ -246,11 +270,36 @@ class OpportunityEngine:
                 out[ld] = (fr, MarketCalendar.from_market_spec(self._mspec[ld]))
         return out
 
+    def _catchup_decision(
+        self, snap: OpportunitySnapshot, cand: Candidate, assessment, catchup: CatchupInfo,
+    ) -> Decision:
+        live_now = to_utc(catchup.live_now)
+        dec = self._policy.decision(snap.opportunity_id, self._phase, live_now, assessment)
+        if not dec.accepted:
+            return dec  # an engine reject stays exactly that (its own gate codes), just decided late
+        reasons = [CATCHUP_MISSED, EXPIRED_ENTRY]
+        q = catchup.live_quote
+        if q is not None and q.valid:
+            live_exec = q.ask if cand.direction > 0 else q.bid
+            tol = abs(assessment.geometry.entry_zone_hi - assessment.geometry.entry_zone_lo) / 2.0
+            if abs(live_exec - cand.close) > tol:
+                reasons.append(ALREADY_MOVED)
+        return Decision(
+            opportunity_id=dec.opportunity_id, phase=dec.phase, decided_utc=dec.decided_utc, accepted=False,
+            reasons=tuple(reasons), policy_id=dec.policy_id, shadow=dec.shadow,
+        )
+
     def intents_for(self, pairs: list[tuple[OpportunitySnapshot, Decision]]) -> list[TradeIntent]:
         return [self._intents[s.opportunity_id] for s, d in pairs
                 if d.accepted and s.opportunity_id in self._intents]
 
-    def on_m5_close(self, market: str, now_utc: datetime) -> list[tuple[OpportunitySnapshot, Decision]]:
+    def on_m5_close(
+        self, market: str, now_utc: datetime, *, catchup: CatchupInfo | None = None,
+    ) -> list[tuple[OpportunitySnapshot, Decision]]:
+        """Closed-bar evaluation. ``catchup`` set: ``now_utc`` is the CLOSE of a past bar (causal
+        truncation), the quote is synthesised from that bar (close + recorded bar spread: there is no
+        historical executable quote), snapshots carry ``signal.origin = CATCHUP`` and an opportunity the
+        policy would have accepted is recorded as a rejected ``CATCHUP_MISSED`` decision (never an intent)."""
         now = to_utc(now_utc)
         self.last_intents = []
         self.last_candidates = []
@@ -264,12 +313,16 @@ class OpportunityEngine:
         last_ts = pd.Timestamp(frame["ts"].iloc[-1])
         if self._last_bar.get(market) == last_ts:
             return []  # this closed bar was already processed (idempotent per bar)
-        self._last_bar[market] = last_ts
         self.health[market] = "ok"
 
         data = assemble_live(market, ms, frame, self._leaders(market, now))
         i = len(data) - 2  # deciding bar; the last row is the placeholder
-        quote = self._source.latest_quote(market)
+        if catchup is None:
+            quote = self._source.latest_quote(market)
+        else:
+            last_close = float(frame["close"].iloc[-1])
+            last_spread = float(frame["spread_pts"].iloc[-1]) * float(ms.point_size)
+            quote = Quote(ts_utc=now, bid=last_close, ask=last_close + last_spread)
         found: list[tuple[FrozenSpec, Candidate]] = []
         for fs in self._prod.specs_for(market):
             cands = generate_candidates(data, fs.spec, fs.thr)
@@ -278,6 +331,7 @@ class OpportunityEngine:
                 continue
             found.append((fs, make_candidate(market, ms, fs, data, cands, int(hit[0]))))
         if not found:
+            self._last_bar[market] = last_ts
             return []
 
         ctx = build_context(frame, found[0][1].signal_ts, ms.calendar.tz)
@@ -306,6 +360,14 @@ class OpportunityEngine:
                 "target_r": None if not math.isfinite(cand.target_r) else cand.target_r,
                 "structural_target": math.isfinite(cand.target),
             }
+            if catchup is not None:
+                signal_meta["origin"] = ORIGIN_CATCHUP
+                signal_meta["catchup"] = {
+                    "live_now": to_utc(catchup.live_now).isoformat(),
+                    "age_s": (to_utc(catchup.live_now) - to_utc(cand.signal_ts)).total_seconds(),
+                    "synthetic_quote": "bar_close_plus_recorded_bar_spread",
+                    "engine_verdict": "ACCEPTED" if assessment.accepted else list(assessment.reasons),
+                }
             ff = forced_flat_utc(ms, cand.signal_ts, cand.window.exit_min).isoformat()
             snap = build_snapshot(
                 cand=cand, assessment=assessment, phase=self._phase, created_utc=now, mspec=ms,
@@ -313,7 +375,10 @@ class OpportunityEngine:
                 structure=build_structure(data, i, ms, cand.direction), signal_meta=signal_meta,
                 tick_activity=tick, rvol=rvol, forced_flat_iso=ff,
             )
-            dec = self._policy.decision(snap.opportunity_id, self._phase, now, assessment)
+            if catchup is None:
+                dec = self._policy.decision(snap.opportunity_id, self._phase, now, assessment)
+            else:
+                dec = self._catchup_decision(snap, cand, assessment, catchup)
             if dec.accepted:
                 intent = self._policy.intent_for(snap, dec, ms, cand.window)
                 if intent is not None:
@@ -321,4 +386,14 @@ class OpportunityEngine:
                     self.last_intents.append(intent)
                     self.last_candidates.append(cand)
             pairs.append((snap, dec))
+        # marked processed only after the WHOLE bar was built without an exception: a failure anywhere
+        # above leaves the bar retryable (the runner retries once, then records a SCAN_ERROR)
+        self._last_bar[market] = last_ts
         return pairs
+
+    def release_seen(self) -> None:
+        """Drop in-flight (not yet persisted) seen ids so a bar whose persistence failed can be rebuilt.
+        Persisted opportunities stay seen through their snapshot row."""
+        fn = getattr(self._seen, "release_all", None)
+        if fn is not None:
+            fn()

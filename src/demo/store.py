@@ -283,6 +283,42 @@ CREATE TABLE IF NOT EXISTS shadow_predictions (
     PRIMARY KEY (opportunity_id, model_name)
 );
 CREATE INDEX IF NOT EXISTS ix_shadow_phase ON shadow_predictions(phase);
+
+-- Lane R2 additions (backward compatible: new tables only; an old DB simply has them created empty).
+-- Closed-bar catch-up pointer: newest closed bar (by its CLOSE) whose evaluation is complete, per
+-- (market, timeframe). Upserted atomically and monotonic; survives restarts.
+CREATE TABLE IF NOT EXISTS bar_pointers (
+    market TEXT NOT NULL,
+    timeframe TEXT NOT NULL,
+    last_bar_close_utc TEXT NOT NULL,
+    updated_utc TEXT NOT NULL,
+    PRIMARY KEY (market, timeframe)
+);
+-- A bar whose evaluation failed twice: auditable, never silent.
+CREATE TABLE IF NOT EXISTS scan_errors (
+    market TEXT NOT NULL,
+    bar_close_utc TEXT NOT NULL,
+    error TEXT NOT NULL,
+    recorded_utc TEXT NOT NULL,
+    PRIMARY KEY (market, bar_close_utc)
+);
+-- Trade type / censoring tag per intent. No row = legacy = STRATEGY, not censored.
+CREATE TABLE IF NOT EXISTS trade_tags (
+    intent_id TEXT PRIMARY KEY REFERENCES intents(intent_id),
+    trade_type TEXT NOT NULL,
+    censored INTEGER NOT NULL,
+    exit_class TEXT,
+    source TEXT,
+    recorded_utc TEXT NOT NULL,
+    json TEXT NOT NULL
+);
+-- Extra outcome analytics (time to 0.25R/0.5R/1R, giveback, ...) without touching OutcomeRecord.
+CREATE TABLE IF NOT EXISTS outcome_extra (
+    intent_id TEXT PRIMARY KEY REFERENCES intents(intent_id),
+    phase TEXT NOT NULL,
+    recorded_utc TEXT NOT NULL,
+    json TEXT NOT NULL
+);
 """
 
 _IMMUTABLE_TABLES = (
@@ -378,6 +414,52 @@ class DemoStore:
     def get_meta(self, key: str) -> str | None:
         row = self._one("SELECT value FROM meta WHERE key=?", (key,))
         return None if row is None else row["value"]
+
+    def set_meta(self, key: str, value: str) -> None:
+        """Upsert a mutable meta value (atomic)."""
+        with self._tx() as c:
+            c.execute(
+                "INSERT INTO meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (key, value),
+            )
+
+    # ---- closed-bar catch-up pointer ----------------------------------------------------------
+    def get_bar_pointer(self, market: str, timeframe: str = "M5") -> str | None:
+        """ISO UTC CLOSE of the newest fully processed closed bar of (market, timeframe), or None."""
+        r = self._one(
+            "SELECT last_bar_close_utc FROM bar_pointers WHERE market=? AND timeframe=?", (market, timeframe)
+        )
+        return None if r is None else r["last_bar_close_utc"]
+
+    def set_bar_pointer(self, market: str, close_utc: str, timeframe: str = "M5") -> bool:
+        """Atomic insert-or-advance; never moves backwards. True if the pointer changed."""
+        new = parse_utc(close_utc)
+        with self._tx() as c:
+            r = c.execute(
+                "SELECT last_bar_close_utc FROM bar_pointers WHERE market=? AND timeframe=?", (market, timeframe)
+            ).fetchone()
+            if r is not None and parse_utc(r["last_bar_close_utc"]) >= new:
+                return False
+            c.execute(
+                "INSERT INTO bar_pointers(market,timeframe,last_bar_close_utc,updated_utc) VALUES(?,?,?,?) "
+                "ON CONFLICT(market,timeframe) DO UPDATE SET last_bar_close_utc=excluded.last_bar_close_utc, "
+                "updated_utc=excluded.updated_utc",
+                (market, timeframe, new.isoformat(), self._clock()),
+            )
+            return True
+
+    def record_scan_error(self, market: str, bar_close_utc: str, error: str) -> None:
+        with self._tx() as c:
+            c.execute(
+                "INSERT OR REPLACE INTO scan_errors(market,bar_close_utc,error,recorded_utc) VALUES(?,?,?,?)",
+                (market, parse_utc(bar_close_utc).isoformat(), error[:500], self._clock()),
+            )
+
+    def scan_errors(self) -> list[dict[str, str]]:
+        return [dict(r) for r in self._q("SELECT * FROM scan_errors ORDER BY bar_close_utc, market")]
+
+    def bar_pointers(self) -> dict[tuple[str, str], str]:
+        return {(r["market"], r["timeframe"]): r["last_bar_close_utc"] for r in self._q("SELECT * FROM bar_pointers")}
 
     def set_meta_once(self, key: str, value: str) -> bool:
         """Insert-once marker (e.g. 'milestone emitted'). Returns True only for the first writer."""

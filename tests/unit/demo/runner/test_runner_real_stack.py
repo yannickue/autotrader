@@ -79,6 +79,7 @@ def test_runner_drives_the_real_stack_end_to_end(rig):
     # a second same-symbol intent is NOT swallowed by the runner: the stack classifies it (TEMPORARY)
     b = _pair("b")
     engine.push("GER40", b)
+    store._conn.execute("DELETE FROM bar_pointers")  # direct re-scan of the same bar (the pointer would make it a no-op)
     runner._scan_market("GER40", datetime.now(UTC))
     assert store.get_state(b[2].intent_id) == RISK_REJECTED
     rd = store.get_risk_detail(b[2].intent_id, "REJECTED")

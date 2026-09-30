@@ -148,15 +148,25 @@ def floor_m5(dt: datetime) -> datetime:
 
 
 class StoreSeenAdapter:
-    """Engine ``SeenStore`` protocol (``add_if_new``) on top of the persistent ``DemoStore`` seen-set."""
+    """Engine ``SeenStore`` protocol (``add_if_new``) on top of the persistent ``DemoStore`` seen-set.
+
+    The id is NOT committed here: ``DemoStore.record_snapshot`` inserts it into ``seen`` in the SAME
+    transaction as the snapshot.  Until then it is only remembered in memory (``_pending``), so an
+    exception between build and persist can never leave a seen id without a snapshot (the opportunity
+    would be lost forever).  ``release_all`` drops the in-flight ids after a bar was processed."""
 
     def __init__(self, store: DemoStore) -> None:
         self._store = store
+        self._pending: set[str] = set()
 
     def add_if_new(self, opportunity_id: str) -> bool:
-        if self._store.seen(opportunity_id):
+        if opportunity_id in self._pending or self._store.seen(opportunity_id):
             return False
-        return self._store.mark_seen(opportunity_id)
+        self._pending.add(opportunity_id)
+        return True
+
+    def release_all(self) -> None:
+        self._pending.clear()
 
 
 def load_learning(model_dir: str | Path | None, enabled: bool | None) -> tuple[Any, Any, str | None]:
@@ -293,6 +303,10 @@ class RunnerConfig:
     learning: bool | None = None
     model_dir: Path | None = None
     value_per_unit_eur: dict[str, float] = field(default_factory=dict)
+    # ---- closed-bar catch-up (Lane R2) ---------------------------------------------------------
+    catchup_max_bars: int = 300  # evaluate at most this many missed closed bars per market and cycle
+    catchup_max_age_s: float = 24 * 3600.0  # bars closed longer ago than this are skipped (counted), not evaluated
+    live_max_age_s: float = 300.0  # the newest bar is processed LIVE only while it is at most one M5 bar old
 
     def __post_init__(self) -> None:
         if self.mode not in MODES:
@@ -382,6 +396,8 @@ class DemoRunner:
         self._funnel: dict[str, Any] | None = None
         self._funnel_at: datetime | None = None
         self._funnel_dirty = True
+        self._scan_pending: set[str] = set()  # markets whose newest bar is not fully scanned yet (retry next cycle)
+        self._catchup: dict[str, dict[str, Any]] = {}  # per market catch-up counters (heartbeat / tests)
         self.submit_count = 0
         self.shadow_submit_count = 0  # dry-run submits (shadow mode); never counted as trades
         self.milestones: list[int] = []
@@ -669,7 +685,7 @@ class DemoRunner:
                     idle.add(m)
                     info["idle_market_closed"] = True
                 continue
-            if self._last_close.get(m) != close:
+            if self._last_close.get(m) != close or m in self._scan_pending:
                 self._last_close[m] = close
                 new.append(m)
         expected = [m for m in enabled if m not in idle]
@@ -705,9 +721,12 @@ class DemoRunner:
             self._stack_failure(exc, now, "feeds")
         except Exception as exc:
             self._note_error(now, f"feed_error: {type(exc).__name__}: {exc}")
-        if self.can_trade():
+        # Record-everything: bars are scanned (snapshot + decision persisted) whenever the runner has not
+        # failed closed - also during a halt / transient condition.  ``_execute`` then cancels an accepted
+        # intent with reason 'halted' (recorded, counterfactually labelled); nothing is lost silently.
+        if self.fail_reason is None and not self._stopping:
             for m in new_bars:
-                if not self.can_trade():
+                if self.fail_reason is not None:
                     break
                 self._section(now, f"scan:{m}", lambda n, m=m: self._scan_market(m, n), event_critical=False)
         self._section(now, "periodic", self._periodic, event_critical=False)
@@ -734,13 +753,105 @@ class DemoRunner:
         self._handle_events(events, now)
 
     # ---------------------------------------------------------------------------- opportunities
+    def _catchup_stats(self, market: str) -> dict[str, Any]:
+        return self._catchup.setdefault(market, {
+            "evaluated": 0, "live": 0, "skipped_closed": 0, "skipped_old": 0, "missed_found": 0, "last_catchup_utc": None,
+        })
+
+    def _pending_closes(self, market: str, newest: datetime) -> tuple[list[datetime], int]:
+        """Closes (UTC) of the closed M5 bars to evaluate now, chronological, newest last, plus the number
+        of bars skipped because they are older than the catch-up bound.  No pointer yet (first ever run on
+        this store, or a legacy DB) -> only the newest bar: history is never replayed blindly."""
+        ptr_s = self.store.get_bar_pointer(market)
+        if ptr_s is None:
+            return [newest], 0
+        ptr = parse_utc(ptr_s)
+        if newest <= ptr:
+            return [], 0
+        try:
+            closes = sorted({t.astimezone(UTC) + _M5 for t, *_ in self._frame_rows(market)})
+        except StackFailClosed:
+            raise
+        except Exception as exc:
+            self._warnings.append(f"catchup_frame_unavailable:{market}:{type(exc).__name__}")
+            closes = []
+        pending = [c for c in closes if ptr < c <= newest]
+        if not pending or pending[-1] != newest:
+            pending.append(newest)
+        floor = newest - timedelta(seconds=self.cfg.catchup_max_age_s)
+        kept = [c for c in pending if c >= floor or c == newest]
+        skipped = len(pending) - len(kept)
+        if len(kept) > self.cfg.catchup_max_bars:
+            skipped += len(kept) - self.cfg.catchup_max_bars
+            kept = kept[-self.cfg.catchup_max_bars:]
+        return kept, skipped
+
     def _scan_market(self, market: str, now: datetime) -> None:
-        pairs = self.engine.on_m5_close(market, now)
-        if not pairs:
+        """Evaluate EVERY closed M5 bar since the persisted pointer, oldest first.  The newest bar is
+        processed live (tradable) while it is at most one bar old; every older bar is a CATCH-UP bar:
+        evaluated causally at its own close, recorded, counterfactually labelled, NEVER traded."""
+        from demo.opportunity.engine import CatchupInfo
+
+        newest = self._last_close.get(market)
+        if newest is None:
             return
-        intents = {i.opportunity_id: i for i in self.engine.intents_for(list(pairs))}
-        for snap, dec in pairs:
-            self._process_pair(snap, dec, intents.get(snap.opportunity_id), now)
+        st = self._catchup_stats(market)
+        self._scan_pending.add(market)
+        closes, skipped_old = self._pending_closes(market, newest)
+        st["skipped_old"] += skipped_old
+        for close in closes:
+            live = close == newest and (now - close).total_seconds() <= self.cfg.live_max_age_s
+            if close != newest and not self._market_should_be_open(market, close):
+                st["skipped_closed"] += 1  # closed-market period: nothing to evaluate
+                self.store.set_bar_pointer(market, _iso(close))
+                continue
+            if live:
+                call: Callable[[], Any] = lambda: self.engine.on_m5_close(market, now)  # noqa: E731
+                st["live"] += 1
+            else:
+                quote = None
+                with contextlib.suppress(StackFailClosed, Exception):
+                    quote = self.stack.bar_source.latest_quote(market)
+                info = CatchupInfo(now, quote)
+                call = lambda close=close, info=info: self.engine.on_m5_close(market, close, catchup=info)  # noqa: E731
+                st["evaluated"] += 1
+                st["last_catchup_utc"] = _iso(now)
+            pairs = self._engine_bar(market, close, call, now)
+            try:
+                if pairs:
+                    intents = {i.opportunity_id: i for i in self.engine.intents_for(list(pairs))}
+                    for snap, dec in pairs:
+                        if not live and not dec.accepted and "CATCHUP_MISSED" in dec.reasons:
+                            st["missed_found"] += 1
+                        self._process_pair(snap, dec, intents.get(snap.opportunity_id), now, catchup=not live)
+            finally:
+                self._release_seen()
+            self.store.set_bar_pointer(market, _iso(close))  # only after the bar is fully processed
+        self._scan_pending.discard(market)
+
+    def _release_seen(self) -> None:
+        fn = getattr(self.engine, "release_seen", None)
+        if fn is not None:
+            fn()
+
+    def _engine_bar(self, market: str, close: datetime, call: Callable[[], Any], now: datetime) -> Any:
+        """One engine evaluation with ONE retry.  A second failure is recorded in the store
+        (``scan_errors``, status SCAN_ERROR) and the bar is skipped: auditable, never silent, and it cannot
+        wedge the market.  Stack / persistence failures are not scan errors: they propagate."""
+        last: Exception | None = None
+        for _attempt in (1, 2):
+            try:
+                return call()
+            except (StackFailClosed, sqlite3.Error, OSError):
+                raise
+            except Exception as exc:
+                last = exc
+                self._note_error(now, f"scan_error:{market}:{_iso(close)}: {type(exc).__name__}: {exc}")
+                self._release_seen()
+        assert last is not None
+        self.store.record_scan_error(market, _iso(close), f"{type(last).__name__}: {last}")
+        self._warnings.append(f"SCAN_ERROR:{market}:{_iso(close)}")
+        return None
 
     def _with_shadow(self, snap: OpportunitySnapshot, dec: Decision, now: datetime) -> Decision:
         """Predictions are persisted BEFORE the decision row (created_utc = decision time, never later)."""
@@ -763,7 +874,10 @@ class DemoRunner:
         self._pred_status = {n: str(p.get("status")) for n, p in preds.items()}
         return dataclasses.replace(dec, shadow=stored) if stored and not dec.shadow else dec
 
-    def _process_pair(self, snap: OpportunitySnapshot, dec: Decision, intent: TradeIntent | None, now: datetime) -> None:
+    def _process_pair(
+        self, snap: OpportunitySnapshot, dec: Decision, intent: TradeIntent | None, now: datetime,
+        *, catchup: bool = False,
+    ) -> None:
         if snap.phase != self.cfg.phase:  # DISCOVERY and FROZEN data must never be mixed by one runner
             self._fail_closed(f"phase_mismatch: engine={snap.phase} runner={self.cfg.phase}", now)
             return
@@ -789,6 +903,9 @@ class DemoRunner:
             }
         if not dec.accepted or self.cfg.mode not in ("demo-auto", "shadow"):
             return  # rejected -> counterfactual later (shadow-approved ones go through the DRY-RUN stack)
+        if catchup:  # defence in depth: a catch-up bar is NEVER submitted, whatever the engine returned
+            self._note_error(now, f"catchup_accepted_not_submitted: {snap.opportunity_id}")
+            return
         if intent is None:
             self._note_error(now, f"accepted_without_intent: {snap.opportunity_id}")
             return

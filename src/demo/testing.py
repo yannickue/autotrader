@@ -253,14 +253,25 @@ class ScriptedEngine:
 
     def __init__(self) -> None:
         self.queue: dict[str, list[list[tuple[OpportunitySnapshot, Decision, TradeIntent | None]]]] = {}
-        self.calls: list[tuple[str, datetime]] = []
+        self.calls: list[tuple[str, datetime]] = []  # LIVE calls only (what tests always asserted on)
+        self.catchup_calls: list[tuple[str, datetime, Any]] = []
+        self.catchup_queue: dict[str, list[list[tuple[OpportunitySnapshot, Decision, TradeIntent | None]]]] = {}
         self._intents: dict[str, TradeIntent] = {}
         self.last_intents: list[TradeIntent] = []
 
     def push(self, market: str, *triples: tuple[OpportunitySnapshot, Decision, TradeIntent | None]) -> None:
         self.queue.setdefault(market, []).append(list(triples))
 
-    def on_m5_close(self, market: str, now: datetime) -> list[tuple[OpportunitySnapshot, Decision]]:
+    def push_catchup(self, market: str, *triples: tuple[OpportunitySnapshot, Decision, TradeIntent | None]) -> None:
+        self.catchup_queue.setdefault(market, []).append(list(triples))
+
+    def on_m5_close(
+        self, market: str, now: datetime, *, catchup: Any = None,
+    ) -> list[tuple[OpportunitySnapshot, Decision]]:
+        if catchup is not None:
+            self.catchup_calls.append((market, now, catchup))
+            cq = self.catchup_queue.get(market, [])
+            return [(s, d) for s, d, _ in cq.pop(0)] if cq else []
         self.calls.append((market, now))
         batch = self.queue.get(market, [])
         if not batch:
