@@ -130,3 +130,19 @@ auditor review before interpreting results.
    `bos` reused as BOS_UP) -> day/gap boundary test, train-only thresholds test, BOS fixture asserting 1 close-based pulse per swing.
 Sim-side risk: a structural `target` already crossed by the gap at o[i+1]. Pin simulate_fast's behaviour for a finite target on the wrong
 side of the fill with a test BEFORE next_structure targets are used.
+
+## 8. Bound-clause semantics (FROZEN by the orchestrator; kernel and reference oracle MUST implement exactly this)
+Bound clauses compare bars against a REGISTER price R captured earlier in the same instance. All windows are counted in M5 bars, are
+run-local (never cross a day/contig boundary: the window is clipped at run_start of u), and read only bars <= u. LONG frame shown; SHORT is
+the price mirror (swap high/low, flip comparisons). ATR = m5_atr14[u]; tol in {0, 0.1, 0.25} ATR (variant suffix t0/t10/t25).
+- TOUCH_REG(R, tol): l[u] <= R + tol*ATR and c[u] > R (touched the level from above and closed above it).
+- CLOSE_ABOVE_REG(R, tol): c[u] > R + tol*ATR. CLOSE_BELOW_REG(R, tol): c[u] < R - tol*ATR.
+- BREAK_REG(R, tol) (up): c[u] > R + tol*ATR and c[u-1] <= R + tol*ATR (first close through; needs u-1 in the same run, else false).
+  Down form (LONG-frame invalidation): c[u] < R - tol*ATR and c[u-1] >= R - tol*ATR.
+- RECLAIM_REG(R, k): c[u] > R and there is a bar v in (u-k, u) (k in {3,6}, clipped at run start) with c[v] < R.
+- RETEST_HOLD_REG(R, tol, k): exists bar v in (u-k, u) with c[v] > R + tol*ATR[v] (a prior break above), and l[u] <= R + tol*ATR[u] and c[u] > R.
+- HOLD_ABOVE(k) as a GUARD on level R: c[t] > R for the last k bars t in (u-k, u] (all k bars must exist inside the run; needs guards_all on the trigger bar).
+  HOLD_BELOW mirrored. BEFORE(k) on an event/state: the pulse/state was true at least once in (u-k, u) (strictly before u, run-local).
+- A bound clause never reads any bar > u; registers are prices captured at the transition bar (evl/evx/bar_low/bar_high/close/min_low_since_enter
+  /max_high_since_enter/lv). min/max_since_enter cover (t_enter, u] inclusive of u and are recomputed only from bars <= u.
+- PULLBACK_HOLD is NOT an event: express as state clause (st_{tf}_trend_up) with op HOLD arg k.
