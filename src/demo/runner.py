@@ -106,6 +106,7 @@ EXIT_UNAVAILABLE = 8
 
 CHAMPION = "static-demo-policy-v1"
 MODES = ("shadow", "demo-auto")
+EXPECTED_DEMO_SERVER = "ActivTradesEU-Server"
 _ORDER = (PLANNED, RISK_APPROVED, SENT, FILLED, PROTECTED, CLOSED)
 _M5 = timedelta(minutes=5)
 
@@ -1442,10 +1443,21 @@ def build_live_runner(
             raise LiveStackUnavailable(f"MetaTrader5 package not importable: {exc}") from exc
         state_dir.mkdir(parents=True, exist_ok=True)
         art.mkdir(parents=True, exist_ok=True)
+        kwargs = dict(stack_kwargs or {})
+        if "config" not in kwargs:
+            from demo.execution.live import StackConfig
+
+            # The attached terminal reports account.server 'ActivTradesEU-Server' (observed on the real
+            # DEMO terminal 2026-09-30, trade_mode 0) while the .env display value differs. DEMO-ness is
+            # proven by trade_mode == 0 + the expected login, never by the server name; the server is
+            # pinned as an identity tripwire (override: DEMO_TRADER_EXPECTED_SERVER).
+            kwargs["config"] = StackConfig(
+                expected_server=os.environ.get("DEMO_TRADER_EXPECTED_SERVER", EXPECTED_DEMO_SERVER)
+            )
         stack: StackPort = Mt5DemoStack(  # type: ignore[assignment]
             client=client, connection=connection, state_dir=state_dir,
             market_specs=all_specs,  # the stack needs the FULL universe (symbol registry cross-check); ``names`` only limits what the runner scans
-            dry_run=dry_run, **dict(stack_kwargs or {}),
+            dry_run=dry_run, **kwargs,
         )
     else:
         art.mkdir(parents=True, exist_ok=True)
