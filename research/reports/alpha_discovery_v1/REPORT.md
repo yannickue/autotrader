@@ -6,13 +6,13 @@ Validation 2025-12-01..2026-04-30. Fitness is Train-only; Validation is a surviv
 ## Verdict block
 
 ```
-AUTOMATED ALPHA DISCOVERY V1:            INCOMPLETE (search + screening done; two evidence items open, see section 7)
+AUTOMATED ALPHA DISCOVERY V1:            COMPLETE (Nautilus stage deliberately deferred; see section 7)
 SEARCH PERFORMANCE:                      PASS (1000 real-kernel variants ~4 s, gate <= 5 min)
 TOTAL UNIQUE STRATEGIES TESTED:          29,798 (30,310 trials; campaigns main1 + main2 + main3_hf)
 FAST-SCREEN SURVIVORS (Stage E):         main1 28 (old, looser gates; 2 under current gates), main2 1, main3_hf 0
 NAUTILUS SURVIVORS:                      0 - stage not run (deferred, no finalist warrants it)
 ROBUST POSITIVE TRAIN+VALIDATION EDGE:   NO (rule verdict INCONCLUSIVE; nothing exceeds the selection null;
-                                         real results lie inside the null-data range)
+                                         real results are at or BELOW the powered null-data range)
 OOS TOUCHED BY AD1:                      NO - but the same OOS window was already evaluated in AR1
                                          (oos_access_log: 3 evaluations), so it is NOT a clean holdout
 ```
@@ -61,24 +61,39 @@ selection-aware statistics; provenance checks; degeneracy audit.
 - Trade frequency of every surviving candidate is far below 'several per day'. The frequent-trading
   region of this grammar/feature space looks empty (best Train fitness ~0.1, none survives Validation).
 
-## 6. Null calibration (v1, 3 seeds, block-shuffled returns, drift-preserving)
-Stage-E 'finalists' appeared on structure-free data in 2 of 3 seeds (10 and 5; Val t up to 1.87, pooled
-t up to 2.76; 0 in the third). Real main2 (C 15, E 1, Val t 1.13, pooled t 1.84) lies inside the null
-range. Consequence: the stage gates alone are not a discovery criterion; only the selection null bound
-rejects candidates - and none exceeds it.
+## 6. Null calibration
+v1 (3 seeds, block-shuffled, drift-preserving): Stage-E 'finalists' appeared on structure-free data in 2 of 3
+seeds. That null was biased (kept real drift) and underpowered, so it was replaced.
+Powered null (same campaign settings as main2, cumulative N 20,199, current gates):
+| null | seeds | Stage-C survivors mean (q95) | Stage-E finalists mean (min..max) | max finalist Val t mean / q95 | max pooled t mean / q95 |
+|---|---|---|---|---|---|
+| zero-drift block shuffle (within partition, time-of-day strata) | 12 | 25.5 (51) | 10.3 (1..26) | 1.71 / 2.42 | 3.00 / 3.46 |
+| sign-flip per Berlin day | 4 | 27.5 (44) | 8.5 (1..27) | 1.47 / 1.63 | 2.68 / 3.22 |
+| REAL main2 | - | 15 | 1 | 1.13 | 1.84 |
+| REAL main1 (current gates) | - | 25 | 2 | 1.18 | 2.00 |
+Reading (numbers only): the real campaigns do not exceed the null; their best Validation t (1.13-1.18) is below
+the null medians (1.5-1.7) and their best pooled t (1.84-2.00) is below the smallest null value seen in the
+zero-drift run (2.13). The stage gates alone therefore do not separate real data from structure-free data.
+Caveat: only 12/4 seeds; the null still allows the same search freedom, so it measures the pipeline's
+false-positive level, not the absence of any edge.
 
-## 7. Open items (NOT done; do not read the verdict as stronger than this)
-Decision (user, 2026-09-30): items 1 and 2 are NOT restarted in V1; they are to be caught up in V2.
-1. No random-entry / intraday-drift baseline. All finalists are LONG and the 09:00-21:30 window drifted
-   +4.7 pts/day (Train) and +16.1 pts/day (Validation); a LONG 'edge' may be buy-the-day drift. The
-   verdict rule now makes YES impossible without such a baseline (`--drift-baseline-json`). The
-   builder was stopped before finishing it; nothing of it is committed.
-2. The v1 null is biased (spreads real drift across Train/Validation) and underpowered (3 seeds). A
-   zero-drift, time-of-day-stratified, >=12-seed null was started and stopped unfinished.
-3. Nautilus survivor validation (Stage F) not run: needs a SignalCandidate-consuming Nautilus strategy,
+## 6b. Drift / random-entry baseline (real finalists, COMBINED_ADVERSE, 500 seeded draws)
+For each finalist: random entries with the same direction, stop/target rule, entry-minute distribution and
+trade counts. Random entries lose under these rules (mean about -0.17 R for the main2 finalist, costs + stops).
+main2 finalist (TREND_PULLBACK): excess over random entries +0.34 R Train (p 0.004), +0.38 R Validation
+(p 0.022), +0.36 R pooled (p 0.002). So it is not just buy-the-day drift, but p 0.02 among 800 pool candidates and
+~30k trials is not evidence of an edge; Validation t is 1.13 (< 2.5 required for YES). Verdict stays INCONCLUSIVE.
+Data: drift_baseline/real.json, drift_baseline/null_*.json.
+
+## 7. Open items
+1. Nautilus survivor validation (Stage F) not run: needs a SignalCandidate-consuming Nautilus strategy,
    a BacktestResult->TradeArrays exporter and cost-model parity (Nautilus lacks explicit slippage and the
    trades/day cap). No finalist justifies the effort yet.
-4. Walk-forward, Qlib/RD-Agent spike, exit research, dynamic sizing, RL: deferred by design.
+2. Speed optimisation of the evaluator (lazy BASE-cost simulation, clause-mask memoisation, buffered cache
+   writes) was started separately; it must be bit-identical to be merged and is not part of this verdict.
+3. Walk-forward, Qlib/RD-Agent spike, exit research, dynamic sizing, RL: deferred by design (V2).
+4. Documented limitations: context flags not directional; session levels span the calendar day incl. overnight;
+   thresholds use all 24 h Train bars; Validation partly in-sample after repeated use.
 
 ## 8. Reviews
 - Gemini (agy, tool-free, `pro`): accepted - Validation is a survival filter (partly in-sample), entry-delay
@@ -96,7 +111,6 @@ Decision (user, 2026-09-30): items 1 and 2 are NOT restarted in V1; they are to 
 - Codex final review: not run (weekly quota exhausted during the phase); replaced by the Opus audit.
 
 ## 9. Recommendation
-Do not promote any AD1 candidate. Before spending more search budget: (a) finish the drift baseline and the
-zero-drift null, (b) decide how to obtain a genuinely unseen forward period (the 2026-05..08 OOS was viewed in
-AR1), (c) consider adding directional context flags and multi-market data to raise trade frequency. The OOS
+Do not promote any AD1 candidate. Before spending more search budget: (a) V2 design (directional context, more markets/frequency), (b) decide how to obtain a genuinely unseen forward period (the 2026-05..08 OOS was viewed in
+AR1), (c) consider multi-market data to raise trade frequency. The OOS
 period remains untouched by AD1 and is not to be run without an explicit decision.
