@@ -102,6 +102,8 @@ def test_accept_logs_the_complete_risk_detail(env):
     ):
         assert key in d, key
     assert d["decision"] == "TRADE" and d["reject_code"] is None
+    assert d["expected_payoff_r"] == 1.8 and d["win_probability"] == 0.44
+    assert d["win_probability_uncertainty"] == 0.12
     assert d["family"] == "BREAKOUT" and d["cluster"] == "INDEX"
     assert d["signal_inputs"]["win_probability"] == 0.44
     assert d["signal_inputs"]["win_probability_uncertainty"] == 0.12
@@ -120,6 +122,7 @@ def test_reject_logs_the_same_detail_with_the_exact_reason(env):
     for key in ("structural_stop", "stop_distance", "portfolio_risk_before", "equity", "family", "spread"):
         assert key in d, key
     assert d["signal_inputs"] == {"confidence": 0.9}
+    assert d["expected_payoff_r"] is None and d["win_probability"] is None  # absent => None
 
 
 # -- quality inputs never decide ----------------------------------------------------------------------------
@@ -326,6 +329,7 @@ def test_same_symbol_setup_is_a_temporary_limitation_not_a_risk_rule(env):
     assert detail["addon_classification"] == "SHARED_STOP_POSSIBLE"
     assert detail["temporary_limitation"] is True and detail["otherwise_valid"] is True
     assert detail["gate_reject_class"] == "TEMPORARY"
+    assert detail["existing_tranches"] == ["a"] and detail["existing_net_risk_eur"] > 0
     assert detail["netting"] == "BROKER_ONE_NET_POSITION_PER_SYMBOL"
     assert detail["internal_model"] == "TRANCHE_LEDGER_KEYED_BY_INTENT_ID"
     independent = stack.submit(make_intent(intent_id="c", stop=24900.0, target=25200.0))
@@ -409,3 +413,24 @@ def test_tca_with_commission_and_slippage(tmp_path):
         assert fill.cost_price_units == Decimal("1.5") + Decimal("1.0") + Decimal("6")
     finally:
         stack.stop()
+
+
+def test_family_and_tranche_context_survive_a_restart(tmp_path):
+    broker = build_broker()
+    first = make_stack(broker, tmp_path)
+    first.start()
+    first.submit(make_intent(intent_id="ger"), context={"family": "BREAKOUT"})
+    first.stop()
+    second = make_stack(broker, tmp_path)
+    try:
+        second.start()
+        events = second.submit(
+            make_intent(intent_id="gold", market="XAUUSD", broker_symbol="GOLD", entry_ref=4170.0,
+                        stop=4150.0, target=4215.0),
+            context={"family": "BREAKOUT"},
+        )
+        d = events[0].risk_detail
+        assert d["family_risk_before"] > 0  # the adopted GER40 tranche still belongs to BREAKOUT
+        assert d["concentration_before"]["family"] == 1
+    finally:
+        second.stop()

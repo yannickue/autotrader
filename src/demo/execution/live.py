@@ -13,6 +13,14 @@ Threads (three, and only three):
 * the MT5 LANE thread (``Mt5Executor``) carries EVERY MT5 IPC call - including the bar/quote reads
   of ``LiveBarSource`` - strictly one at a time, and the session refuses MT5 calls from anywhere else.
 
+Risk. Sizing follows the structural stop of the intent (never moved): broker min lot / step ->
+ACTUAL loss at the stop -> ACTUAL EUR / equity risk -> leverage -> portfolio, cluster and family risk
+-> configurable HARD caps (``RiskCaps``) -> TRADE / SKIP. The minimum lot is accepted whatever its
+actual risk unless it violates a hard cap (``size_below_min`` + the named cap). Quality inputs are
+logged only. Every decision carries a complete ``risk_detail``. Broker netting (one net position per
+symbol) is only the broker's representation: intents are tranches in a ledger; v1 blocks same-symbol
+add-on/opposite exposure under the TEMPORARY limitation codes of ``demo.execution.gates``.
+
 Money model. Broker truth (account equity/balance, deals, positions) is read from MT5 and drives
 the risk gate (``demo.execution.risk_policy``); Nautilus' own PnL of cross-currency / multiplier
 instruments (XAUUSD, EURUSD) is NOT money-correct and is never used for decisions or events.
@@ -101,7 +109,13 @@ from demo.execution.strategy import (
     JobOutcome,
     client_order_id_for,
 )
-from demo.execution.tranches import UNKNOWN_FAMILY, AddonClass, classify_addon
+from demo.execution.tranches import (
+    UNKNOWN_FAMILY,
+    AddonClass,
+    Tranche,
+    TrancheLedger,
+    classify_addon,
+)
 from demo.opportunity.bar_source import Quote, validate_frame
 from nautilus_mt5.data_client import Mt5DataClientConfig
 from nautilus_mt5.execution_client import Mt5ExecClientConfig
@@ -496,6 +510,7 @@ class Mt5DemoStack:
         self._lane: Any = None
         self._markets: dict[str, _MarketInfo] = {}
         self._gate = DemoRiskGate(caps=self._cfg.risk_caps)
+        self._ledger = TrancheLedger()  # last broker-truth tranche ledger (risk math + logging)
         self._reject_counts: Counter[str] = Counter()
         self._otherwise_valid: Counter[str] = Counter()
         self._results: dict[str, list[ExecutionEvent]] = {}
@@ -1085,6 +1100,15 @@ class Mt5DemoStack:
             self._otherwise_valid[reason] += 1
 
     @staticmethod
+    def _quality_log(context: Mapping[str, Any]) -> dict[str, Any]:
+        """Top-level logged fields (None when the runner did not supply them). Never used to decide."""
+        return {
+            "expected_payoff_r": context.get("expected_payoff_r"),
+            "win_probability": context.get("win_probability"),
+            "win_probability_uncertainty": context.get("win_probability_uncertainty"),
+        }
+
+    @staticmethod
     def _signal_inputs(context: Mapping[str, Any]) -> dict[str, Any]:
         """QUALITY inputs: logged (and rankable) only - they never reach the sizer or a gate."""
         keys = (
@@ -1120,6 +1144,7 @@ class Mt5DemoStack:
                 "gate_hard": gate.hard if gate else None,
                 "policy_id": POLICY_ID,
                 "signal_inputs": self._signal_inputs(context or {}),
+                **self._quality_log(context or {}),
             }
         )
         self._registry.insert(
@@ -1223,7 +1248,19 @@ class Mt5DemoStack:
                 "existing_net_quantity": _dec(existing.volume),
                 "temporary_limitation": True,
             }
+            net = self._ledger.net_position(intent.market)
+            if net is not None:
+                addon_detail["existing_tranches"] = [t.intent_id for t in net.tranches]
+                addon_detail["existing_net_risk_eur"] = net.risk_money
+                addon_detail["existing_average_entry"] = net.average_entry
             if assessment.classification is AddonClass.SHARED_STOP_POSSIBLE:
+                # FUTURE(add-on): this is where a SAFE add-on would be executed. It needs (1) adapter
+                # support for an entry on an open net position that re-sends the SAME SL/TP and is
+                # verified at the broker afterwards, (2) the combined size checked against the
+                # per-trade / aggregate / cluster / leverage / margin caps (sized below with the
+                # SHARED stop), (3) a new tranche row in the ledger, (4) Nautilus protective-order
+                # bookkeeping for the enlarged position. Until then it is rejected as
+                # ADDON_SHARED_STOP_POSSIBLE_NOT_YET_IMPLEMENTED (TEMPORARY, counted separately).
                 stop_for_sizing = _dec(existing.sl)  # combined exposure is protected by THIS stop
         outcome: RiskOutcome = self._gate.size(
             intent=intent, market=prepared.facts, account=prepared.account, bid=prepared.bid,
@@ -1266,6 +1303,7 @@ class Mt5DemoStack:
         if not inserted:
             return [Rejected(intent_id=intent.intent_id, reason=G.R_DUPLICATE_INTENT)]
         detail["signal_inputs"] = self._signal_inputs(context)
+        detail.update(self._quality_log(context))
         accepted = Accepted(
             intent_id=intent.intent_id,
             quantity=approval.quantity,
@@ -1387,6 +1425,7 @@ class Mt5DemoStack:
                 "gate_reject_class": gate.gate_class.value if gate else None,
                 "gate_hard": gate.hard if gate else None,
                 "signal_inputs": self._signal_inputs(context),
+                **self._quality_log(context),
             }
         )
         self._count_reject(reason)
@@ -1530,7 +1569,7 @@ class Mt5DemoStack:
         gross = net_notional = ZERO
         notionals: dict[str, Decimal] = {}
         signed: dict[str, Decimal] = {}
-        risks: list[OpenRisk] = []
+        ledger = TrancheLedger()
         rows_by_ticket = {int(p.ticket): r for p, _, r in self._lane_own_positions(positions)}
         for p in positions:
             market = self._canonical_of(str(p.symbol))
@@ -1547,15 +1586,33 @@ class Mt5DemoStack:
             signed[market] = signed.get(market, ZERO) + units * side
             sl = _dec(p.sl or 0)
             if sl > 0:
-                risks.append(
-                    OpenRisk(
+                # BROKER net position -> INTERNAL tranche record keyed by intent_id (v1: one
+                # tranche per symbol; the ledger already aggregates several, see tranches.py)
+                row = rows_by_ticket.get(int(p.ticket))
+                tp = _dec(p.tp or 0)
+                ledger.add(
+                    Tranche(
+                        intent_id=row.intent_id if row is not None else f"broker-position:{int(p.ticket)}",
                         market=market,
                         cluster=CLUSTERS[market],
+                        family=self._family_of(row),
+                        direction=side,
+                        quantity=_dec(p.volume),
+                        entry_price=_dec(p.price_open),
+                        stop=sl,
+                        target=tp if tp > 0 else None,
                         risk_money=units * abs(_dec(p.price_open) - sl) * fx,
-                        family=self._family_of(rows_by_ticket.get(int(p.ticket))),
-                        intent_id=(rows_by_ticket[int(p.ticket)].intent_id if int(p.ticket) in rows_by_ticket and rows_by_ticket[int(p.ticket)] is not None else None),
+                        opened_utc=None,
                     )
                 )
+        self._ledger = ledger
+        risks = [
+            OpenRisk(
+                market=t.market, cluster=t.cluster, risk_money=t.risk_money, family=t.family,
+                intent_id=t.intent_id,
+            )
+            for t in ledger.tranches()
+        ]
         return GateAccount(
             equity=equity,
             balance=balance,
