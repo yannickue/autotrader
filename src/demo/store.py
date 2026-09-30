@@ -214,6 +214,31 @@ CREATE TABLE IF NOT EXISTS risk_records (
 );
 CREATE INDEX IF NOT EXISTS ix_risk_phase ON risk_records(phase);
 
+-- Lane I additions (backward compatible: new tables only). Full machine-readable risk/sizing detail of
+-- the stack decision (ACCEPTED and REJECTED-after-decision, incl. exact reject code + gate class) and the
+-- per-fill transaction-cost analysis. Keyed by intent_id; contracts.py records are unchanged.
+CREATE TABLE IF NOT EXISTS risk_detail (
+    intent_id TEXT NOT NULL REFERENCES intents(intent_id),
+    kind TEXT NOT NULL,
+    opportunity_id TEXT NOT NULL,
+    phase TEXT NOT NULL,
+    reject_code TEXT,
+    gate_class TEXT,
+    recorded_utc TEXT NOT NULL,
+    json TEXT NOT NULL,
+    PRIMARY KEY (intent_id, kind)
+);
+CREATE INDEX IF NOT EXISTS ix_risk_detail_phase ON risk_detail(phase, kind);
+
+CREATE TABLE IF NOT EXISTS tca_records (
+    intent_id TEXT PRIMARY KEY REFERENCES intents(intent_id),
+    opportunity_id TEXT NOT NULL,
+    phase TEXT NOT NULL,
+    recorded_utc TEXT NOT NULL,
+    json TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_tca_phase ON tca_records(phase);
+
 CREATE TABLE IF NOT EXISTS execution_records (
     seq INTEGER PRIMARY KEY AUTOINCREMENT,
     intent_id TEXT NOT NULL REFERENCES intents(intent_id),
@@ -252,7 +277,11 @@ CREATE TABLE IF NOT EXISTS shadow_predictions (
 CREATE INDEX IF NOT EXISTS ix_shadow_phase ON shadow_predictions(phase);
 """
 
-_IMMUTABLE_TABLES = ("snapshots", "decisions", "counterfactuals", "outcomes", "shadow_predictions")
+_IMMUTABLE_TABLES = (
+    "snapshots", "decisions", "counterfactuals", "outcomes", "shadow_predictions",
+    "risk_detail", "tca_records",
+)
+RISK_DETAIL_KINDS = ("ACCEPTED", "REJECTED")
 
 
 def _triggers() -> str:
@@ -768,6 +797,106 @@ class DemoStore:
     def get_risk(self, intent_id: str) -> RiskRecord | None:
         r = self._one("SELECT json FROM risk_records WHERE intent_id=?", (intent_id,))
         return None if r is None else RiskRecord.from_dict(json.loads(r["json"]))
+
+    # ---- Lane I: risk detail + TCA (new tables, contracts.py untouched) --------------------------------
+    def record_risk_detail(
+        self, intent_id: str, kind: str, detail: dict[str, Any] | None
+    ) -> bool:
+        """Insert-once full risk/sizing detail of the stack decision for ``intent_id``.
+
+        ``kind`` is ``ACCEPTED`` (sized and approved) or ``REJECTED`` (SKIP / refused after the engine
+        accepted). Both can exist for one intent (``[Accepted, Rejected]`` after-sizing refusals).
+        ``reject_code`` / ``gate_class`` are also stored as indexed columns. Identical re-insert is a
+        no-op (False); a differing payload raises ``ImmutableRecordError``."""
+        if kind not in RISK_DETAIL_KINDS:
+            raise ValueError(f"bad risk_detail kind {kind!r}")
+        if detail is None:
+            return False
+        payload = json.dumps(detail, sort_keys=True, default=str)
+        d = json.loads(payload)
+        with self._tx() as c:
+            phase = self._intent_phase(c, intent_id)
+            opp = c.execute(
+                "SELECT opportunity_id FROM intents WHERE intent_id=?", (intent_id,)
+            ).fetchone()["opportunity_id"]
+            row = c.execute(
+                "SELECT json FROM risk_detail WHERE intent_id=? AND kind=?", (intent_id, kind)
+            ).fetchone()
+            if row is not None:
+                if row["json"] == payload:
+                    return False
+                raise ImmutableRecordError("risk_detail is immutable")
+            c.execute(
+                "INSERT INTO risk_detail(intent_id,kind,opportunity_id,phase,reject_code,gate_class,"
+                "recorded_utc,json) VALUES(?,?,?,?,?,?,?,?)",
+                (intent_id, kind, opp, phase, d.get("reject_code"), d.get("gate_reject_class"),
+                 self._clock(), payload),
+            )
+            return True
+
+    def get_risk_detail(self, intent_id: str, kind: str) -> dict[str, Any] | None:
+        r = self._one("SELECT json FROM risk_detail WHERE intent_id=? AND kind=?", (intent_id, kind))
+        return None if r is None else json.loads(r["json"])
+
+    def list_risk_details(
+        self, phase: str | None = None, kind: str | None = None
+    ) -> list[dict[str, Any]]:
+        """Rows ``{intent_id, opportunity_id, kind, phase, reject_code, gate_class, detail}``."""
+        _check_phase(phase)
+        sql, args = "SELECT * FROM risk_detail WHERE 1=1", []
+        if phase is not None:
+            sql += " AND phase=?"
+            args.append(phase)
+        if kind is not None:
+            sql += " AND kind=?"
+            args.append(kind)
+        return [
+            {
+                "intent_id": r["intent_id"], "opportunity_id": r["opportunity_id"], "kind": r["kind"],
+                "phase": r["phase"], "reject_code": r["reject_code"], "gate_class": r["gate_class"],
+                "detail": json.loads(r["json"]),
+            }
+            for r in self._q(sql + " ORDER BY recorded_utc, intent_id, kind", tuple(args))
+        ]
+
+    def record_tca(self, intent_id: str, tca: dict[str, Any] | None) -> bool:
+        """Insert-once per-fill transaction-cost analysis (price units unless noted)."""
+        if not tca:
+            return False
+        payload = json.dumps(tca, sort_keys=True, default=str)
+        with self._tx() as c:
+            phase = self._intent_phase(c, intent_id)
+            opp = c.execute(
+                "SELECT opportunity_id FROM intents WHERE intent_id=?", (intent_id,)
+            ).fetchone()["opportunity_id"]
+            row = c.execute("SELECT json FROM tca_records WHERE intent_id=?", (intent_id,)).fetchone()
+            if row is not None:
+                if row["json"] == payload:
+                    return False
+                raise ImmutableRecordError("tca record is immutable")
+            c.execute(
+                "INSERT INTO tca_records(intent_id,opportunity_id,phase,recorded_utc,json) "
+                "VALUES(?,?,?,?,?)",
+                (intent_id, opp, phase, self._clock(), payload),
+            )
+            return True
+
+    def get_tca(self, intent_id: str) -> dict[str, Any] | None:
+        r = self._one("SELECT json FROM tca_records WHERE intent_id=?", (intent_id,))
+        return None if r is None else json.loads(r["json"])
+
+    def list_tca(self, phase: str | None = None) -> list[dict[str, Any]]:
+        _check_phase(phase)
+        rows = (
+            self._q("SELECT * FROM tca_records WHERE phase=? ORDER BY recorded_utc", (phase,))
+            if phase is not None
+            else self._q("SELECT * FROM tca_records ORDER BY recorded_utc")
+        )
+        return [
+            {"intent_id": r["intent_id"], "opportunity_id": r["opportunity_id"], "phase": r["phase"],
+             **json.loads(r["json"])}
+            for r in rows
+        ]
 
     def record_execution(self, intent_id: str, ex: ExecutionRecord) -> bool:
         """Append-only log; the latest row is the current record (fill, then verified fees/swap, ...).
