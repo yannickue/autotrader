@@ -29,14 +29,37 @@ controls for lookahead, survivorship, leakage, overfitting, and parameter instab
 search space and seed are recorded; selection uses robustness and risk-adjusted evidence rather
 than the highest in-sample return or a fixed daily trade count.
 
+## Test policy and segments (persistent, user-mandated)
+
+Markers are applied path-based by `tests/conftest.py`; timings are in `docs/TEST_TIMING.md`.
+Tiers partition the suite: **FAST** (`-m fast`, target < 2 min), **INTEGRATION** (`-m integration`,
+< 5 min), **SLOW/CHAOS/REPLAY** (`-m slow`); **SAFETY** (`-m safety`, < 8 min) is an overlay covering
+risk, execution, reconciliation, persistence, reduce-only, idempotency, stale-signal, exposure and
+leverage invariants (plus contracts, property, chaos and parity suites). **FULL** = all tiers. Every
+test stays in FULL; no test is deselected, skipped or xfailed by the tiering.
+
+| Situation | Required |
+|---|---|
+| Lane completion | targeted tests + relevant contracts/invariants + `ruff check` on the touched area + `compileall` of the relevant paths. No full repo. |
+| Normal merge | targeted + FAST + relevant INTEGRATION (+ relevant SAFETY when risk, execution, reconciliation or persistence changed). Use `run_tests.py changed`. |
+| Major release / phase / safety gate | FULL, preferably segmented (`run_tests.py full`). |
+
+If FULL is expected to take more than 15 minutes, do not start it and report
+`FULL DEFERRED — SLOW SUITE PERFORMANCE STILL ABOVE BUDGET`. Never run an unqualified whole-repo
+`pytest` on the shared 8 GB machine while the live runner/MT5 is active. `serial`-marked tests
+(sqlite/subprocess/MT5/heartbeat) are never spread across xdist workers concurrently.
+
 ## Commands and promotion
 
 ```shell
 uv sync --frozen --python 3.12
 uv run ruff check .
 uv run python -m compileall -q src scripts tests
-uv run pytest
+uv run python scripts/run_tests.py fast          # or integration | safety | slow | full | changed
 ```
+
+`uv run pytest` over the whole repo is reserved for explicit release/phase/safety gates and remains
+valid (every test is still collected); the segmented form is preferred.
 
 Paper mode requires all implemented gates to pass. Shadow and live promotion additionally require
 recorded replay parity, reconciliation and restart tests, chaos tests, venue sandbox evidence,

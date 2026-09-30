@@ -12,6 +12,7 @@ dependencies = [
 [dependency-groups]
 dev = [
     "pytest==9.1.1",
+    "pytest-xdist==3.8.0",
     "ruff==0.16.9",
 ]
 learning = [
@@ -35,6 +36,19 @@ default-groups = ["dev", "research", "learning"]
 addopts = "--strict-config --strict-markers"
 pythonpath = ["src", "."]
 testpaths = ["tests"]
+# Markers are applied path-based by tests/conftest.py (see docs/TEST_TIMING.md / docs/TEST_GATES.md).
+# Tier markers fast|integration|slow partition the suite; the rest are overlays.
+markers = [
+    "fast: pure/unit tier, target < 2 min (tier marker)",
+    "integration: persistence/subprocess/runner/framework boundaries, target < 5 min (tier marker)",
+    "slow: heavy research, real-data, replay, parity and chaos suites (tier marker)",
+    "safety: risk/execution/reconciliation/persistence/reduce-only/idempotency/stale-signal/exposure/leverage invariants (overlay)",
+    "chaos: failure-injection suites (overlay)",
+    "replay: deterministic replay / parity suites (overlay)",
+    "broker: MT5 / venue-adapter boundary tests, fake broker only (overlay)",
+    "serial: shares on-disk/process-global resources; never run concurrently with other serial tests (overlay)",
+    "xdist_group: pytest-xdist loadgroup grouping (inert without xdist)",
+]
 
 [tool.ruff]
 line-length = 100
