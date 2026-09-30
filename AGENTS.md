@@ -20,5 +20,10 @@ cross-boundary work. A boundary change requires review from every affected owner
 - Cross-owner refactors require a written scope, affected-owner review, and Lead integration.
 - No agent may commit secrets, enable live trading, relax a safety gate, or bypass risk.
 - Research code must never be imported by the production execution path.
-- Completion claims require the commands in `docs/TEST_GATES.md` to have actually run.
+- Completion claims require the commands in `docs/TEST_GATES.md` to have actually run, at the scope
+  that document assigns to the change class (lane: targeted + contracts/invariants + ruff/compileall of
+  the touched area; merge: targeted + FAST + relevant INTEGRATION/SAFETY; FULL only for release/phase/
+  safety gates). Nobody runs an unqualified whole-repo `pytest` for a lane or ordinary merge.
+- If FULL is expected to exceed 15 minutes, do not start it; report
+  `FULL DEFERRED — SLOW SUITE PERFORMANCE STILL ABOVE BUDGET`.
 
