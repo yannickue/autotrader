@@ -4,7 +4,8 @@
 Modes are mutually exclusive.  Exit codes: 0 success; 2 bad arguments, missing explicit DEMO
 authorization or MT5_ALLOW_ACCOUNT_LOGIN=1; 3 no heartbeat / NOT RUNNING (--status); 7 fail-closed
 stop (after an orderly shutdown); 8 the real MT5 DEMO stack (demo.execution.live.Mt5DemoStack) is
-not available in this checkout.
+not available in this checkout; 9 a second ``--shadow``/``--demo-auto`` on the same artifacts directory was refused
+(single-instance lock ``<artifacts>/runner.lock``, PID + process creation time, stale locks are taken over).
 
 * ``--preflight``    read-only C7 preflight.
 * ``--shadow``       full loop (bars -> opportunities -> decisions -> counterfactuals -> shadow learning),
@@ -33,6 +34,10 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(REPO_ROOT / "src"))
+if str(Path(__file__).resolve().parent / "autostart") not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parent / "autostart"))
+
+import instance_lock  # noqa: E402  (scripts/autostart/instance_lock.py; pure stdlib)
 
 ARTIFACTS = REPO_ROOT / "artifacts" / "demo_trader"
 HEARTBEAT = ARTIFACTS / "heartbeat.json"
@@ -153,6 +158,20 @@ def _run(args: argparse.Namespace, mode: str) -> int:
         r.store.close()
 
 
+def _run_single_instance(args: argparse.Namespace, mode: str) -> int:
+    """One runner per artifacts directory.  Refused BEFORE any MT5 attach / store open."""
+    lock = instance_lock.InstanceLock(args.artifacts / "runner.lock", role=f"runner:{mode}")
+    try:
+        lock.acquire()
+    except instance_lock.LockHeld as exc:
+        print(f"REFUSED: {exc}", file=sys.stderr)
+        return instance_lock.EXIT_ALREADY_RUNNING
+    try:
+        return _run(args, mode)
+    finally:
+        lock.release()
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     if args.status:
@@ -179,7 +198,7 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 2
-    return _run(args, "demo-auto" if args.demo_auto else "shadow")
+    return _run_single_instance(args, "demo-auto" if args.demo_auto else "shadow")
 
 
 if __name__ == "__main__":
