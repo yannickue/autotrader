@@ -40,7 +40,9 @@ PINNED_REAL_GER40 = {
 
 def _digest(t) -> str:
     h = hashlib.sha256()
-    for x in (t.as_matrix(), t.skip_counts, t.exit_reason):
+    # skip_counts[:10]: the label appended after the pin (space_below_min_at_fill) must be 0 and is not hashed
+    assert t.skip_counts[10:].sum() == 0
+    for x in (t.as_matrix(), t.skip_counts[:10], t.exit_reason):
         h.update(x.tobytes())
     return h.hexdigest()
 

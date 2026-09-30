@@ -45,7 +45,7 @@ def _ctx(frame, cfg) -> v2_probe.ProbeContext:
     return v2_probe.ProbeContext(
         "SYNTH", lambda: frame, market_from_frame(frame), dates, plan, fold_report(dates, folds, f["embargo_days"]),
         EventPool.full(), SizingSpec(min_risk_pts=0.5, max_risk_pts=60.0), SimRules(),
-        {n: COST_SCENARIOS[n] for n in ("BASE", "COMBINED_ADVERSE")}, 1.0, "synthetic", np.asarray(frame.atr), {})
+        {n: COST_SCENARIOS[n] for n in ("BASE", "COMBINED_ADVERSE")}, "synthetic", np.asarray(frame.atr), {})
 
 
 def _run(frame, tmp_path, name="a", n=100, seed=5, resume=False):
@@ -131,18 +131,44 @@ def test_search_split_uses_train_only_and_no_dev_bar_after_dev_end(frame):
     assert ctx.dates[tm].max() < ctx.dates[te].min()
 
 
-def test_market_sim_params_ger40_is_v1_and_others_scale():
+def test_market_sim_params_come_from_market_costs_not_atr_scaling():
+    from alpha.common.market_costs import cost_scenarios_for, sizing_for
+    from alpha.common.sim import DEFAULT_SIZING
+    from alpha.fast.sim import GER40_WINDOW, SimWindow
     from markets.spec import load_market_spec
 
     cfg = _cfg()
-    sizing, rules, costs, scale = v2_probe.market_sim_params(load_market_spec("GER40"), cfg, 3.0)
-    assert scale == 1.0 and sizing.min_risk_pts == 5.0 and sizing.max_risk_pts == 400.0
+    assert "ger40_median_atr_price" not in json.dumps(cfg)  # ad-hoc ATR-ratio scaling is gone
+    ger = load_market_spec("GER40")
+    sizing, rules, costs, window = v2_probe.market_sim_params(ger, cfg)
+    assert sizing == DEFAULT_SIZING and window == GER40_WINDOW  # discovery: normalised 10,000 EUR research account
     assert rules.max_entry_spread_pts == 8.0 and costs["COMBINED_ADVERSE"] == COST_SCENARIOS["COMBINED_ADVERSE"]
-    cfg["reference"]["ger40_median_atr_price"] = None
-    with pytest.raises(ValueError):
-        v2_probe.market_sim_params(load_market_spec("XAUUSD"), cfg, 1.0)
-    cfg["reference"]["ger40_median_atr_price"] = 4.0
-    s2, r2, c2, sc = v2_probe.market_sim_params(load_market_spec("XAUUSD"), cfg, 1.0)
-    assert sc == pytest.approx(0.25) and s2.min_risk_pts == pytest.approx(1.25)
-    assert c2["COMBINED_ADVERSE"].slippage_pts == pytest.approx(1.5 * 0.25) and s2.contract_size == 100.0
-    assert r2.max_entry_spread_pts == load_market_spec("XAUUSD").max_entry_spread_price
+    xau = load_market_spec("XAUUSD")
+    s2, r2, c2, w2 = v2_probe.market_sim_params(xau, cfg)
+    assert s2 == sizing_for(xau, account_eur=cfg["sizing"]["research_equity_eur"], risk_fraction=cfg["sizing"]["risk_fraction"])
+    full = cost_scenarios_for(xau)
+    assert c2 == {n: full[n] for n in ("BASE", "COMBINED_ADVERSE")} and w2 == SimWindow.from_spec(xau)
+    assert s2.equity_eur == 10_000.0 and s2.max_leverage <= 10.0
+    assert r2.max_entry_spread_pts == xau.max_entry_spread_price
+
+
+def test_account_feasibility_is_annotation_only_and_reports_size_below_min(frame, tmp_path):
+    def run(name, acct):
+        cfg = _cfg()
+        cfg["account"]["real_account_eur"] = acct
+        return v2_probe.run_probe(_ctx(frame, cfg), cfg, 80, 5, tmp_path / name, None, False), tmp_path / name
+
+    big, big_dir = run("big", 1_000_000.0)
+    small, small_dir = run("small", 5.0)
+    for key in ("counts", "families", "niches", "sim_skips", "train_trades_passers"):
+        assert big[key] == small[key], key  # discovery is independent of the real account
+    pool_b = json.loads((big_dir / "candidate_pool.json").read_text(encoding="utf-8"))["candidates"]
+    pool_s = json.loads((small_dir / "candidate_pool.json").read_text(encoding="utf-8"))["candidates"]
+    assert [(c["canonical_hash"], c["train_fitness"]) for c in pool_b] == [(c["canonical_hash"], c["train_fitness"]) for c in pool_s]
+    fb, fs = big["account_feasibility"], small["account_feasibility"]
+    assert fb["real_account_eur"] == 1_000_000.0 and fs["real_account_eur"] == 5.0
+    assert fb["influences_fitness_or_selection"] is False
+    assert fs["candidates_annotated"] == len(pool_s) > 0
+    row_s, row_b = pool_s[0]["account_feasibility"], pool_b[0]["account_feasibility"]
+    assert row_s["size_below_min_skip_share"] > row_b["size_below_min_skip_share"]
+    assert row_b["train_trades_at_account"] >= row_s["train_trades_at_account"]

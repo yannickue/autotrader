@@ -15,7 +15,7 @@ import numpy as np
 
 from alpha.common.protocol import Partition, SplitPlan
 from alpha.common.sim import DEFAULT_RULES, DEFAULT_SIZING, CostScenario, SimRules, SizingSpec
-from alpha.fast.sim import CandidateArrays, MarketArrays, TradeArrays, simulate_fast
+from alpha.fast.sim import CandidateArrays, MarketArrays, SimWindow, TradeArrays, simulate_fast
 from alpha.fast.spec import StrategySpec
 
 
@@ -177,12 +177,16 @@ def light_screen(
     dates: np.ndarray,
     sizing: SizingSpec = DEFAULT_SIZING,
     rules: SimRules = DEFAULT_RULES,
+    window: SimWindow | None = None,
 ) -> LightScreenResult:
-    """Simulate one candidate set and return compact embargo-aware Train/Validation metrics."""
+    """Simulate one candidate set and return compact embargo-aware Train/Validation metrics.
+
+    ``window=None`` keeps the V1 GER40 entry/flat constants; other markets pass
+    ``SimWindow.from_spec``."""
     dates = np.asarray(dates).astype("datetime64[D]")
     if len(dates) != len(market.o):
         raise ValueError("dates must contain one Berlin date per market bar")
-    trades = simulate_fast(market, candidates, cost, sizing, rules)
+    trades = simulate_fast(market, candidates, cost, sizing, rules, window)
     return screen_trades(trades, market, split, dates=dates, sizing=sizing)
 
 
@@ -195,10 +199,13 @@ def light_screen_many(
     dates: np.ndarray,
     sizing: SizingSpec = DEFAULT_SIZING,
     rules: SimRules = DEFAULT_RULES,
+    window: SimWindow | None = None,
 ) -> list[LightScreenResult]:
     """Screen independent candidate sets without retaining their TradeArrays."""
     return [
-        light_screen(market, candidates, cost, split, dates=dates, sizing=sizing, rules=rules)
+        light_screen(
+            market, candidates, cost, split, dates=dates, sizing=sizing, rules=rules, window=window
+        )
         for candidates in candidate_sets
     ]
 

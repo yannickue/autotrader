@@ -38,10 +38,13 @@ for _path in (str(REPO_ROOT), str(REPO_ROOT / "src")):
 
 import numpy as np  # noqa: E402
 
-from alpha.common.frame import ENTRY_END_MIN, ENTRY_START_MIN  # noqa: E402
+from alpha.common.market_costs import (  # noqa: E402
+    cost_scenarios_for,
+    market_cost_model,
+    sizing_for,
+)
 from alpha.common.protocol import stable_hash  # noqa: E402
 from alpha.common.sim import (  # noqa: E402
-    COST_SCENARIOS,
     CostScenario,
     SimRules,
     SizingSpec,
@@ -60,6 +63,7 @@ from alpha.discovery.temporal_evaluate import (  # noqa: E402
     TemporalEval,
     TemporalEvaluator,
     TemporalTrialLedger,
+    attach_min_space,
 )
 from alpha.discovery.temporal_genome import (  # noqa: E402
     EventPool,
@@ -68,13 +72,18 @@ from alpha.discovery.temporal_genome import (  # noqa: E402
     genome_tfs,
 )
 from alpha.discovery.temporal_niches import Elite, NicheArchive, niche_key, role_path  # noqa: E402
-from alpha.discovery.temporal_search import evolve_temporal, lineage_family  # noqa: E402
+from alpha.discovery.temporal_search import (  # noqa: E402
+    evolve_temporal,
+    lineage_family,
+    search_windows,
+)
 from alpha.fast.screen import screen_partition_trades  # noqa: E402
 from alpha.fast.sim import (  # noqa: E402
     EXIT_FIXED_R,
     SKIP_LABELS,
     CandidateArrays,
     MarketArrays,
+    SimWindow,
     simulate_fast,
 )
 from alpha.temporal.evaluate import evaluate_temporal_many  # noqa: E402
@@ -140,33 +149,21 @@ def market_arrays(features: Any) -> MarketArrays:
                         features["berlin_minute"], features["berlin_day_id"], np.r_[contig[1:], False])
 
 
-def market_sim_params(spec: Any, cfg: dict, median_atr_price: float
-                      ) -> tuple[SizingSpec, SimRules, dict[str, CostScenario], float]:
-    """(sizing, rules, {BASE, COMBINED_ADVERSE}, scale) for a market.
+def market_sim_params(spec: Any, cfg: dict) -> tuple[SizingSpec, SimRules, dict[str, CostScenario], SimWindow]:
+    """(research sizing, rules, {BASE, COMBINED_ADVERSE}, SimWindow) for a market, from ``market_costs``.
 
-    GER40 keeps the V1 constants (scale 1).  Other markets scale slippage and the risk-distance
-    bounds by ``median_atr / cfg.reference.ger40_median_atr_price`` and take contract size / lot
-    step / min lot from the MarketSpec; the spread cap is the spec's (PRICE units)."""
+    DISCOVERY runs on the NORMALISED research account (``cfg.sizing.research_equity_eur``, 10,000 EUR = V1
+    ``DEFAULT_SIZING`` for GER40, exactly) so results are in comparable R and minimum-lot feasibility does
+    not distort the search; feasibility at the real account is a separate annotation
+    (``account_feasibility``).  Costs / risk band / lot / contract / leverage come from
+    ``cost_scenarios_for`` / ``sizing_for``; the window is the market's local-minute entry/flat window.
+    The spread cap is the spec's (PRICE units)."""
     s = cfg["sizing"]
-    if spec.canonical == "GER40":
-        scale = 1.0
-        lot_step, min_lot, contract = s["lot_step"], s["min_lot"], spec.contract_size
-    else:
-        ref = cfg["reference"].get("ger40_median_atr_price")
-        if not ref:
-            raise ValueError("config reference.ger40_median_atr_price is required for non-GER40 markets")
-        scale = float(median_atr_price) / float(ref)
-        lot_step, min_lot, contract = spec.volume_step, spec.volume_min, spec.contract_size
-    sizing = SizingSpec(
-        equity_eur=s["equity_eur"], risk_fraction=s["risk_fraction"], lot_step=lot_step, min_lot=min_lot,
-        max_leverage=min(s["max_leverage"], spec.max_leverage), min_risk_pts=s["min_risk_pts"] * scale,
-        max_risk_pts=s["max_risk_pts"] * scale, contract_size=contract,
-    )
+    sizing = sizing_for(spec, account_eur=s["research_equity_eur"], risk_fraction=s["risk_fraction"])
     rules = SimRules(max_trades_per_day=cfg["rules"]["max_trades_per_day"],
                      max_entry_spread_pts=spec.max_entry_spread_price)
-    costs = {n: dataclasses.replace(COST_SCENARIOS[n], slippage_pts=COST_SCENARIOS[n].slippage_pts * scale)
-             for n in (BASE, ADVERSE)}
-    return sizing, rules, costs, scale
+    costs = {n: c for n, c in cost_scenarios_for(spec).items() if n in (BASE, ADVERSE)}
+    return sizing, rules, costs, SimWindow.from_spec(spec)
 
 
 # --------------------------------------------------------------------------- evaluator
@@ -208,10 +205,13 @@ class ProbeContext:
     sizing: SizingSpec
     rules: SimRules
     costs: dict[str, CostScenario]
-    scale: float
     data_fingerprint: str
     atr: np.ndarray
     meta: dict = field(default_factory=dict)
+    window: SimWindow | None = None  # None = V1 GER40 constants (synthetic tests)
+    market_spec: Any = None
+    events_cache_key: str | None = None  # mandatory for the on-disk result cache (fail closed)
+    features_cache_key: str | None = None
 
 
 def build_real_context(canonical: str, cfg: dict, cache_dir: Path) -> ProbeContext:
@@ -239,26 +239,31 @@ def build_real_context(canonical: str, cfg: dict, cache_dir: Path) -> ProbeConte
     frame = build_market_frame(features, events, plan=plan)
     atr = np.asarray(features["m5_atr14"], dtype=float)
     med_atr = float(np.nanmedian(atr[plan.mask(dates, plan.train)]))
-    sizing, rules, costs, scale = market_sim_params(spec, cfg, med_atr)
+    sizing, rules, costs, window = market_sim_params(spec, cfg)
     sanity = mf.sanity_report(spec, dev, features, source)
     keep = ("calendar_status", "calendar_provisional", "n_bars", "first_bar_utc", "last_bar_utc",
             "n_local_days", "n_cash_session_days", "bars_per_day", "share_bars_in_entry_window",
             "share_entry_window_bars_over_cap", "gaps")
     meta = {
         "source": source, "sanity": {k: sanity[k] for k in keep}, "median_atr14_price_train": med_atr,
-        "scale_vs_ger40": scale, "event_cache_mb": round(ev_mb, 1),
+        "event_cache_mb": round(ev_mb, 1),
         "features_cache_key": getattr(features, "metadata", {}).get("cache_key"),
         "events_cache_key": getattr(events, "metadata", {}).get("cache_key"),
         "build_s": round(time.perf_counter() - t0, 1),
-        "sim_window_note": ("simulate_fast uses the GER40 Berlin entry/flat constants (09:00-20:00 / "
-                            "21:30) for EVERY market" if canonical != "GER40" else "V1 constants"),
+        "sim_window": dataclasses.asdict(window),
+        "sim_window_note": "SimWindow.from_spec(spec): entry/flat minutes in the market's LOCAL calendar tz",
+        "cost_scenarios": {n: dataclasses.asdict(c) for n, c in costs.items()},
+        "cost_note": "alpha.common.market_costs.cost_scenarios_for / sizing_for (research account "
+                     f"{cfg['sizing']['research_equity_eur']:g} EUR)",
     }
     if sanity["calendar_provisional"]:
         log(f"[{canonical}] WARNING provisional calendar (status={sanity['calendar_status']})")
     fp = stable_hash({"f": meta["features_cache_key"], "e": meta["events_cache_key"], "m": canonical})
     return ProbeContext(canonical, lambda: frame, market_arrays(features), dates, plan,
                         fold_report(dates, folds, f["embargo_days"]),
-                        EventPool.from_array_names(events), sizing, rules, costs, scale, fp, atr, meta)
+                        EventPool.from_array_names(events), sizing, rules, costs, fp, atr, meta,
+                        window=window, market_spec=spec, events_cache_key=meta["events_cache_key"],
+                        features_cache_key=meta["features_cache_key"])
 
 
 # --------------------------------------------------------------------------- search
@@ -272,7 +277,7 @@ def run_search(ev: ProbeEvaluator, ctx: ProbeContext, cfg: dict, n_candidates: i
     budget = min(int(s["deap_budget_fraction"] * n_candidates), s["deap_pop"] * (s["deap_gens"] + 1))
     if budget >= s["deap_pop"] and s["deap_pop"] >= 2:
         res = evolve_temporal(ev, pool, s["deap_pop"], s["deap_gens"], seed, s["deap_cxpb"], s["deap_mutpb"],
-                              max_evaluations=budget, hof_size=max(s["deap_pop"], 50))
+                              max_evaluations=budget, hof_size=max(s["deap_pop"], 50), window=ctx.window)
         info["deap"] = {"budget": budget, "unique_evaluations": res.evaluations_used,
                         "budget_exhausted": res.budget_exhausted, "generations_run": len(res.stats) - 1,
                         "niches_at_end": res.archive.n_niches, "twins_rejected": res.archive.twins_rejected}
@@ -284,9 +289,10 @@ def run_search(ev: ProbeEvaluator, ctx: ProbeContext, cfg: dict, n_candidates: i
     ev.stage = "random"
     rng = np.random.default_rng(seed + 1)
     names = available_archetypes(pool)
+    windows = search_windows(ctx.window)
     attempts, i = 0, 0
     while ev.ledger.unique < n_candidates and attempts < 8 * n_candidates:
-        g = random_genome(rng, pool, archetype=names[i % len(names)])
+        g = random_genome(rng, pool, archetype=names[i % len(names)], windows=windows)
         i += 1
         attempts += 1
         ev.evaluate(g, kind="structural", need_base=False)
@@ -349,7 +355,8 @@ def drift_baselines(ctx: ProbeContext, ev: ProbeEvaluator, cfg: dict, seed: int,
     b = cfg["baselines"]
     m, tm = ctx.market, _train_mask(ctx)
     atr = ctx.atr
-    ok = tm & np.isfinite(atr) & (atr > 0) & (m.minute >= ENTRY_START_MIN) & (m.minute < ENTRY_END_MIN)
+    win = ctx.window if ctx.window is not None else SimWindow()  # None = V1 GER40 constants
+    ok = tm & np.isfinite(atr) & (atr > 0) & (m.minute >= win.entry_start_min) & (m.minute < win.entry_end_min)
     idx = np.flatnonzero(ok)
     n_days = len(np.unique(m.day[tm]))
     cost = ev._costs[ADVERSE]
@@ -363,7 +370,7 @@ def drift_baselines(ctx: ProbeContext, ev: ProbeEvaluator, cfg: dict, seed: int,
         c = CandidateArrays(decision, direction.astype(np.int8), stop, np.full(len(decision), np.nan),
                             np.full(len(decision), float(b["target_r"])),
                             np.full(len(decision), EXIT_FIXED_R, dtype=np.int8))
-        tr = simulate_fast(m, c, cost, ctx.sizing, ctx.rules)
+        tr = simulate_fast(m, c, cost, ctx.sizing, ctx.rules, ctx.window)
         mask = tm[tr.entry_idx] if len(tr) else np.zeros(0, bool)
         sc = screen_partition_trades(tr, mask, n_days, contract_size=ctx.sizing.contract_size)
         return {"n_trades": sc.n_trades,
@@ -398,6 +405,66 @@ def _draws(rows: list[dict]) -> dict:
     return {"draws": len(rows), "expectancy_r_mean": round(float(np.mean(e)), 5) if e else None,
             "expectancy_r_sd": round(float(np.std(e)), 5) if len(e) > 1 else None,
             "trades_mean": round(float(np.mean([r["n_trades"] for r in rows])), 1) if rows else None}
+
+
+def account_feasibility(ev: ProbeEvaluator, ctx: ProbeContext, cfg: dict,
+                        rows: list[tuple[TemporalGenome, TemporalEval, str]]) -> tuple[dict, dict[str, dict]]:
+    """ANNOTATION ONLY (never used by fitness / selection): feasibility at the REAL account.
+
+    Discovery runs on the normalised research account; here the same Train candidates of each annotated
+    pool candidate are re-simulated (COMBINED_ADVERSE) at ``cfg.account.real_account_eur`` with the same
+    risk fraction / lot rules / leverage cap and the ``size_below_min`` skips are counted.
+    ``size_below_min_skip_share`` = size_below_min skips / (booked trades + size_below_min skips) among the
+    Train entries.  Market level: min-lot risk at the minimum stop vs the approved risk, min-lot leverage
+    vs the research cap (30x is only the permitted ceiling)."""
+    acct = float(cfg["account"]["real_account_eur"])
+    real = dataclasses.replace(ctx.sizing, equity_eur=acct)
+    tm = _train_mask(ctx)
+    market: dict[str, Any] = {
+        "real_account_eur": acct, "research_account_eur": ctx.sizing.equity_eur,
+        "risk_fraction": ctx.sizing.risk_fraction, "approved_risk_eur": round(acct * ctx.sizing.risk_fraction, 6),
+        "min_lot": ctx.sizing.min_lot, "lot_step": ctx.sizing.lot_step,
+        "leverage_cap_research": ctx.sizing.max_leverage, "leverage_ceiling_permitted": 30.0,
+        "influences_fitness_or_selection": False,
+    }
+    if ctx.market_spec is not None:
+        m = market_cost_model(ctx.market_spec, acct, risk_fraction=ctx.sizing.risk_fraction)
+        market.update(min_lot_risk_at_min_stop_eur=round(m.min_lot_risk_at_min_stop_eur, 6),
+                      min_lot_feasible_at_min_stop=m.min_lot_feasible_at_min_stop,
+                      min_lot_leverage=None if m.min_lot_leverage is None else round(m.min_lot_leverage, 4),
+                      min_lot_leverage_within_research_cap=(
+                          None if m.min_lot_leverage is None else m.min_lot_leverage <= ctx.sizing.max_leverage))
+    else:
+        lot_risk = ctx.sizing.min_lot * ctx.sizing.min_risk_pts * ctx.sizing.contract_size
+        market.update(min_lot_risk_at_min_stop_eur=round(lot_risk, 6),
+                      min_lot_feasible_at_min_stop=lot_risk <= acct * ctx.sizing.risk_fraction + 1e-12,
+                      min_lot_leverage=None, min_lot_leverage_within_research_cap=None)
+    per: dict[str, dict] = {}
+    if rows:
+        specs = [temporal_compile.compile_temporal(g, ev.resolver, canonical=True) for g, _, _ in rows]
+        results = evaluate_temporal_many(specs, ev.frame, use_cache=False)
+        for (_, r, _), spec, res in zip(rows, specs, results, strict=True):
+            c = attach_min_space(res.candidates, spec)
+            c = c.subset(tm[c.decision_idx]) if len(c.decision_idx) else c
+            kw = (ctx.market, c, ev._costs[ADVERSE])
+            t_res = simulate_fast(*kw, ctx.sizing, ctx.rules, ctx.window)
+            t_real = simulate_fast(*kw, real, ctx.rules, ctx.window)
+            below = int(t_real.skips["size_below_min"])
+            attempted = len(t_real) + below
+            per[r.genome_hash] = {
+                "real_account_eur": acct, "train_trades_research": len(t_res), "train_trades_at_account": len(t_real),
+                "size_below_min_skips": below,
+                "size_below_min_skip_share": round(below / attempted, 6) if attempted else None,
+                "leverage_capped_trades_at_account": int(np.sum(t_real.leverage_capped)),
+                "feasible": below == 0 and len(t_real) > 0,
+            }
+    shares = [v["size_below_min_skip_share"] for v in per.values() if v["size_below_min_skip_share"] is not None]
+    market.update(
+        candidates_annotated=len(per), share_size_below_min_of_train_entries=_q(shares, (0.25, 0.5, 0.75)),
+        candidates_fully_feasible=sum(1 for v in per.values() if v["feasible"]),
+        candidates_majority_skipped=sum(1 for x in shares if x > 0.5),
+        note="annotation only; discovery/fitness/selection use the research account (see market_sim_params)")
+    return market, per
 
 
 def summarize(ev: ProbeEvaluator, ctx: ProbeContext, cfg: dict, n_candidates: int, timings: dict[str, float],
@@ -474,8 +541,13 @@ def summarize(ev: ProbeEvaluator, ctx: ProbeContext, cfg: dict, n_candidates: in
         "runtime_s": timings, "peak_rss_mb": peak_rss_mb(),
     }
     pool_rows = sorted(passers, key=lambda t: (-train_fitness(t[1].train, ev.min_trades), t[1].genome_hash))[:POOL_KEEP]
+    t0 = time.perf_counter()
+    feas, feas_rows = account_feasibility(ev, ctx, cfg, pool_rows)  # after ranking: cannot influence it
+    timings["account_feasibility_s"] = round(time.perf_counter() - t0, 2)
+    summary["account_feasibility"] = feas
     pool = [{"canonical_hash": r.genome_hash, "train_fitness": round(train_fitness(r.train, ev.min_trades), 8),
-             "stage": stage, "lineage": g.lineage, "genome": g.to_dict()} for g, r, stage in pool_rows]
+             "stage": stage, "lineage": g.lineage, "genome": g.to_dict(),
+             "account_feasibility": feas_rows.get(r.genome_hash)} for g, r, stage in pool_rows]
     return summary, pool
 
 
@@ -519,7 +591,8 @@ def run_probe(ctx: ProbeContext, cfg: dict, n_candidates: int, seed: int, out_di
         carried = {"trials": ledger.total_trials, "unique_specs": ledger.unique}
     ev = ProbeEvaluator(ctx.frame_provider, ctx.market, ctx.dates, ctx.plan, sizing=ctx.sizing, rules=ctx.rules,
                         cost_scenarios=ctx.costs, min_train_trades=cfg["min_train_trades"], ledger=ledger,
-                        cache_dir=cache_dir, data_fingerprint=ctx.data_fingerprint)
+                        cache_dir=cache_dir, data_fingerprint=ctx.data_fingerprint, window=ctx.window,
+                        events_cache_key=ctx.events_cache_key, features_cache_key=ctx.features_cache_key)
     log(f"[{ctx.market_name}] search: n_candidates={n_candidates} seed={seed} train_days="
         f"{len(np.unique(ctx.market.day[_train_mask(ctx)]))}")
     t0 = time.perf_counter()
@@ -573,7 +646,7 @@ def main(argv: list[str] | None = None) -> int:
         for m in markets:
             ctx = build_real_context(m, cfg, cache_dir)
             log(f"[{m}] median ATR14 (train) = {ctx.meta['median_atr14_price_train']:.6g}, "
-                f"scale vs GER40 = {ctx.scale:.4g}")
+                f"window = {ctx.window}")
             run_probe(ctx, cfg, n, seed, out_root / m, cache_dir / "evals", args.resume)
     finally:
         if not args.keep_cache:

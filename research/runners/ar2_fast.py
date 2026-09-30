@@ -619,9 +619,7 @@ def _restriction_candidate_mask(
 
 
 def _subset_candidates(candidates: CandidateArrays, mask: np.ndarray) -> CandidateArrays:
-    return CandidateArrays(
-        *(getattr(candidates, name)[mask] for name in candidates.__dataclass_fields__)
-    )
+    return candidates.subset(mask)
 
 
 def _matrix_rows(

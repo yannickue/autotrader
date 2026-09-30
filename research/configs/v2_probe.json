@@ -23,20 +23,18 @@
  },
  "cost": {
   "search_scenario": "COMBINED_ADVERSE",
-  "note": "TemporalEvaluator evaluates BASE and COMBINED_ADVERSE; lean search reads COMBINED_ADVERSE only. Slippage of non-GER40 markets is scaled by median_atr / ger40_median_atr_price"
+  "note": "TemporalEvaluator evaluates BASE and COMBINED_ADVERSE; lean search reads COMBINED_ADVERSE only. Costs per market: alpha.common.market_costs.cost_scenarios_for(spec)"
  },
  "sizing": {
-  "equity_eur": 10000.0,
+  "research_equity_eur": 10000.0,
   "risk_fraction": 0.005,
-  "lot_step": 0.25,
-  "min_lot": 0.25,
-  "max_leverage": 10.0,
-  "min_risk_pts": 5.0,
-  "max_risk_pts": 400.0,
-  "note": "GER40 = V1 values exactly. Other markets: min/max_risk_pts and slippage scaled by ATR ratio, contract_size/lot_step/min_lot from the MarketSpec"
+  "note": "DISCOVERY runs on a normalised 10,000 EUR research account (V1 DEFAULT_SIZING) so results are in comparable R and min-lot feasibility does not distort the search. Cost/sizing per market come from alpha.common.market_costs (cost_scenarios_for / sizing_for): spread-normalised slippage, risk band in median spreads, contract size / lot step / min lot from the MarketSpec, leverage min(10 research cap, spec cap)"
+ },
+ "account": {
+  "real_account_eur": 500.0,
+  "note": "ANNOTATION ONLY (never fitness/selection): min-lot / risk-fraction / leverage feasibility and the share of Train entries skipped size_below_min at the real account"
  },
  "rules": {"max_trades_per_day": 6},
- "reference": {"ger40_median_atr_price": 17.2318, "note": "median M5 ATR14 (price units) on the GER40 search-train side, measured by the 2026-09-30 smoke"},
  "confluence": {"top_k": 50},
  "baselines": {"draws": 20, "stop_atr_mult": 1.0, "target_r": 1.5},
  "prior": {"trials": 30310, "unique_specs": 29798, "label": "v1 cumulative"},

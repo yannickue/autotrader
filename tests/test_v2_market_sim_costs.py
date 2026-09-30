@@ -195,7 +195,8 @@ def test_temporal_eval_exposes_skip_counts_and_train_candidates_without_changing
         g = ta.random_genome(rng, pool)
         ea = a.evaluate(g, need_base=False)
         if ea.rejected:
-            assert ea.skip_counts is None and ea.train_candidates is not None
+            # Stage-A rejects ran no sim; a post-sim too_few_trades reject keeps its skip diagnostics
+            assert (ea.skip_counts is None or ea.reject == "too_few_trades") and ea.train_candidates is not None
             continue
         assert set(ea.skip_counts) == set(SKIP_LABELS)
         assert isinstance(ea.train_candidates, CandidateArrays)

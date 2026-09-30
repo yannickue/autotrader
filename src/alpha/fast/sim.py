@@ -56,6 +56,10 @@ SKIP_LABELS = (
     # Appended (V2 structural targets): finite target not strictly beyond the fill, or its
     # implied R is not finite / <= 0.  Existing indices 0..8 are unchanged for V1 consumers.
     "target_crossed_at_fill",
+    # Appended (V2 structural targets): the per-candidate ``min_space_r`` (required distance to the
+    # target in R, checked by the temporal kernel against the decision CLOSE) is not met at the
+    # ACTUAL fill (o[i+1] + spread + slippage).  Only for candidates carrying a finite min_space_r.
+    "space_below_min_at_fill",
 )
 
 
@@ -154,7 +158,12 @@ class MarketArrays:
 
 @dataclass(frozen=True)
 class CandidateArrays:
-    """Sparse decisions; ``target`` overrides the R-derived fixed target when finite."""
+    """Sparse decisions; ``target`` overrides the R-derived fixed target when finite.
+
+    ``min_space_r`` (optional, default ``None`` = no check, bit-identical V1 / GER40 behaviour) is a
+    per-candidate float array: the minimum implied R to a FINITE ``target`` measured at the actual
+    fill.  NaN entries (and candidates with a NaN target) are not checked.
+    """
 
     decision_idx: np.ndarray
     direction: np.ndarray
@@ -162,6 +171,7 @@ class CandidateArrays:
     target: np.ndarray
     target_r: np.ndarray
     exit_kind: np.ndarray
+    min_space_r: np.ndarray | None = None
 
     def __post_init__(self) -> None:
         arrays = (
@@ -180,8 +190,21 @@ class CandidateArrays:
             raise ValueError("direction must contain only +1 or -1")
         if np.any((arrays[5] != EXIT_FIXED_R) & (arrays[5] != EXIT_TRAIL)):
             raise ValueError("unknown exit kind")
-        for name, value in zip(self.__dataclass_fields__, arrays, strict=True):
+        for name, value in zip(self.__dataclass_fields__, arrays, strict=False):
             object.__setattr__(self, name, value)
+        if self.min_space_r is not None:
+            ms = _contiguous(self.min_space_r, np.float64)
+            if len(ms) != len(arrays[0]):
+                raise ValueError("min_space_r must have one entry per candidate")
+            object.__setattr__(self, "min_space_r", ms)
+
+    def subset(self, mask: np.ndarray) -> CandidateArrays:
+        """Candidates selected by a boolean mask (keeps ``min_space_r``)."""
+        return CandidateArrays(
+            self.decision_idx[mask], self.direction[mask], self.stop[mask], self.target[mask],
+            self.target_r[mask], self.exit_kind[mask],
+            None if self.min_space_r is None else self.min_space_r[mask],
+        )
 
     @classmethod
     def from_signal_candidates(
@@ -284,6 +307,7 @@ def _simulate_kernel(
     candidate_target: np.ndarray,
     target_r: np.ndarray,
     exit_kind: np.ndarray,
+    min_space: np.ndarray,
     spread_mult: float,
     slip: float,
     penetration: float,
@@ -307,7 +331,7 @@ def _simulate_kernel(
     out_f = np.empty((15, cap), dtype=np.float64)
     out_b = np.empty((2, cap), dtype=np.bool_)
     reasons = np.empty(cap, dtype=np.int8)
-    skips = np.zeros(10, dtype=np.int64)
+    skips = np.zeros(11, dtype=np.int64)
     n = len(o)
     count = 0
     next_free = 0
@@ -375,6 +399,12 @@ def _simulate_kernel(
                 implied_r = beyond / risk
                 if not (beyond > eps and np.isfinite(implied_r) and implied_r > 0.0):
                     skips[9] += 1
+                    continue
+                # Re-check of the temporal kernel's min_space_r (checked there against the decision
+                # close) at the ACTUAL fill: implied R to target < required space -> skip, same
+                # slot / day-cap semantics as the guard above.  NaN = no check.
+                if np.isfinite(min_space[ci]) and implied_r < min_space[ci] - 1e-12:
+                    skips[10] += 1
                     continue
             else:
                 target = fill + r_value * risk if side > 0 else fill - r_value * risk
@@ -533,6 +563,12 @@ def simulate_fast(
 ) -> TradeArrays:
     """Simulate one sparse candidate stream with AR1-equivalent fills.
 
+    LIVE PARITY: the simulator enforces two pre-fill checks that a close-based signal engine cannot:
+    cannot: ``target_crossed_at_fill`` (finite target not strictly beyond the actual fill) and
+    ``space_below_min_at_fill`` (implied R to target at the actual fill < the candidate's
+    ``min_space_r``).  The LIVE executor MUST implement the same two checks against the real
+    ask/bid fill before sending an order; otherwise research results and live behaviour diverge.
+
     ``window=None`` keeps the V1 GER40 Berlin constants (bit-identical). For any other market pass
     ``SimWindow.from_spec(spec)`` together with ``MarketArrays`` whose ``minute`` is local-calendar
     minutes (see :class:`SimWindow`).
@@ -542,6 +578,9 @@ def simulate_fast(
         candidates.decision_idx[0] < 0 or candidates.decision_idx[-1] >= len(market.o)
     ):
         raise IndexError("candidate decision index outside market arrays")
+    min_space = candidates.min_space_r
+    if min_space is None:
+        min_space = np.full(len(candidates.decision_idx), np.nan)
     ints, floats, bools, reasons, holding, skips = _simulate_kernel(
         market.o,
         market.h,
@@ -557,6 +596,7 @@ def simulate_fast(
         candidates.target,
         candidates.target_r,
         candidates.exit_kind,
+        min_space,
         cost.spread_mult,
         cost.slippage_pts,
         cost.target_penetration_pts,

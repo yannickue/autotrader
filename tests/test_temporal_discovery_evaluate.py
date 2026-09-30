@@ -149,10 +149,10 @@ def test_twin_detection_by_train_decision_stream(frame):
 
 
 def test_result_cache_persists_across_evaluators(frame, tmp_path):
-    ev = _evaluator(frame, cache_dir=tmp_path)
+    ev = _evaluator(frame, cache_dir=tmp_path, events_cache_key="synthetic-events")
     g, lean = _good(ev)
     ev.flush()
-    ev2 = _evaluator(frame, cache_dir=tmp_path)
+    ev2 = _evaluator(frame, cache_dir=tmp_path, events_cache_key="synthetic-events")
     again = ev2.evaluate(g, need_base=False)
     assert ev2.sim_count == 0 and ev2.ledger.cache_hits == 1 and again.train == lean.train
 

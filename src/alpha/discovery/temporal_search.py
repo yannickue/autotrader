@@ -40,6 +40,7 @@ from alpha.discovery.temporal_archetypes import (
     random_genome,
     random_stop,
     random_target,
+    windows_for,
 )
 from alpha.discovery.temporal_genome import (
     EXPIRES_GRID,
@@ -211,8 +212,21 @@ def _op_target(g, rng, pool):
     return replace(g, target=random_target(rng))
 
 
-def _op_window(g, rng, pool):
-    return replace(g, window=None if g.window is not None and rng.random() < 0.5 else _pick(rng, WINDOWS))
+def _op_window(g, rng, pool, windows=None):
+    """``windows`` = allowed time windows (``search_windows``); ``None`` keeps the legacy GER40 WINDOWS."""
+    choices = WINDOWS if windows is None else tuple(windows)
+    return replace(g, window=None if g.window is not None and rng.random() < 0.5 else _pick(rng, choices))
+
+
+_op_window.wants_windows = True  # type: ignore[attr-defined]
+
+
+def search_windows(window: Any | None, evaluator: Any = None) -> tuple[tuple[int, int], ...] | None:
+    """Genome time windows for a market: ``windows_for(entry_start, entry_end)`` of ``window`` (a
+    ``SimWindow``; falls back to ``evaluator.window``).  ``None`` (no window anywhere) = legacy GER40
+    ``WINDOWS`` (unchanged behaviour)."""
+    w = window if window is not None else getattr(evaluator, "window", None)
+    return None if w is None else windows_for(w.entry_start_min, w.entry_end_min)
 
 
 def _op_context(g, rng, pool):
@@ -267,7 +281,8 @@ _OP_P = _OP_P / _OP_P.sum()
 
 
 def mutate_structure(genome: TemporalGenome, rng: np.random.Generator,
-                     pool: EventPool | None = None) -> TemporalGenome:
+                     pool: EventPool | None = None,
+                     windows: tuple[tuple[int, int], ...] | None = None) -> TemporalGenome:
     """One structural mutation; canonical, validate()-passing, different from the parent.
 
     Bounded retries; on exhaustion the parent is returned unchanged.
@@ -277,7 +292,7 @@ def mutate_structure(genome: TemporalGenome, rng: np.random.Generator,
     for _ in range(MUTATION_RETRIES):
         op = _OPS[int(rng.choice(len(_OPS), p=_OP_P))][0]
         try:
-            child = op(genome, rng, pool)
+            child = op(genome, rng, pool, windows) if getattr(op, "wants_windows", False)                 else op(genome, rng, pool)
             if child is None:
                 continue
             child = canonicalize(replace(child, lineage=_bump_lineage(genome, mut=1)))
@@ -654,7 +669,7 @@ class _Scorer:
 
 
 def _stratified_seed(rng, pool: EventPool, population: int, scorer: _Scorer, strata: Sequence[str],
-                     tries: int = 60) -> list[TIndividual]:
+                     tries: int = 60, windows: tuple[tuple[int, int], ...] | None = None) -> list[TIndividual]:
     inds: list[TIndividual] = []
     seen: set[str] = set()
     slot = 0
@@ -663,7 +678,7 @@ def _stratified_seed(rng, pool: EventPool, population: int, scorer: _Scorer, str
         slot += 1
         pick = None
         for _ in range(tries):
-            g = random_genome(rng, pool, archetype=name)
+            g = random_genome(rng, pool, archetype=name, windows=windows)
             if canonical_hash(g) not in seen:
                 pick = g
                 break
@@ -726,12 +741,14 @@ def evolve_temporal(
     cxpb: float = 0.6, mutpb: float = 0.4, hof_size: int = 50, *, max_evaluations: int | None = None,
     lineage_cap: float = LINEAGE_CAP_FRACTION, niche_cap: int | None = None,
     novelty_weight: float = 0.05, elite_pb: float = 0.15, archive: NicheArchive | None = None,
-    progress: Any = None,
+    progress: Any = None, window: Any | None = None,
 ) -> TemporalDeapResult:
     """(mu + lambda) evolution with quality-diversity (see the module docstring).
 
     ``evaluator.evaluate(genome, kind, need_base)`` must return a sealed record with ``.rejected``,
     ``.train`` (TrainView), ``.genome_hash``, ``.trades_per_day`` and ``.twin_hash``.
+    ``window`` (a ``SimWindow``; default: the evaluator's ``window``) restricts the genome time windows
+    to ``windows_for(entry_start, entry_end)``; with no window anywhere the legacy WINDOWS apply.
     """
     assert population >= 2 and generations >= 0 and hof_size >= 1 and 0.0 < lineage_cap <= 1.0
     pool = pool if pool is not None else EventPool.full()
@@ -743,6 +760,7 @@ def evolve_temporal(
         n_cap = niche_cap if niche_cap is not None else max(2, math.ceil(0.2 * population))
         archive = archive if archive is not None else NicheArchive()
         scorer = _Scorer(evaluator, max_evaluations, archive)
+        windows = search_windows(window, evaluator)
         strata = tuple(n for n in ARCHETYPES if _fillable(n, pool))
         toolbox = base.Toolbox()
         toolbox.register("clone", copy.deepcopy)
@@ -757,7 +775,7 @@ def evolve_temporal(
                 len({i.chash for i in pop}), dict(sorted(Counter(i.family for i in pop).items())),
                 len(scorer.memo), scorer.hit_rate(), archive.n_niches, archive.twins_rejected, relaxed)
 
-        pop = _stratified_seed(rng, pool, population, scorer, strata)
+        pop = _stratified_seed(rng, pool, population, scorer, strata, windows=windows)
         pop, relaxed = _select_survivors(pop, population, fam_cap, n_cap, scorer)
         _update_hof(hof, pop, scorer)
         history = [stats(0, pop, relaxed)]
@@ -784,11 +802,11 @@ def evolve_temporal(
                 ga, gb = crossover(a.genome, b.genome, rng) if rng.random() < cxpb else (a.genome, b.genome)
                 for g in (ga, gb):
                     if rng.random() < mutpb or canonical_hash(g) in taken:
-                        g = mutate_structure(g, rng, pool)
+                        g = mutate_structure(g, rng, pool, windows)
                     for _ in range(COLLISION_RETRIES):
                         if canonical_hash(g) not in taken:
                             break
-                        g = mutate_structure(g, rng, pool)
+                        g = mutate_structure(g, rng, pool, windows)
                     h = canonical_hash(g)
                     if h in taken or not is_valid(g):
                         continue
@@ -822,5 +840,5 @@ __all__ = (
     "LONG_TARGET_LEVELS", "MAX_TRIALS_PER_STRUCTURE", "ParamSpec", "TGenerationStats",
     "TIndividual", "TemporalCandidate", "TemporalDeapResult", "TemporalStudy", "crossover",
     "current_values", "evolve_temporal", "lineage_family", "mutate_structure",
-    "optimize_temporal_structure", "param_space", "with_params",
+    "optimize_temporal_structure", "param_space", "search_windows", "with_params",
 )

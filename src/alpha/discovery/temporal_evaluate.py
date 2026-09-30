@@ -62,6 +62,7 @@ from alpha.discovery.temporal_genome import (
     complexity,
 )
 from alpha.events import schema as ev_schema
+from alpha.fast import store as feature_store
 from alpha.fast.screen import RejectReason, reject_reason, screen_partition_trades
 from alpha.fast.sim import CandidateArrays, MarketArrays, SimWindow, TradeArrays, simulate_fast
 from alpha.temporal.batch import PrefixCache
@@ -72,7 +73,7 @@ EVALUATOR_VERSION = "td1-temporal-eval-v1"
 _SHARD_FLUSH_EVERY = 2000
 _SOURCE_PACKAGES = ("alpha.events", "alpha.temporal")
 _SOURCE_MODULES = (
-    "alpha.fast.sim", "alpha.fast.screen", "alpha.common.sim", "alpha.common.protocol",
+    "alpha.fast.sim", "alpha.fast.screen", "alpha.fast.store", "alpha.common.sim", "alpha.common.protocol",
     "alpha.discovery.evaluate", "alpha.discovery.fitness", "alpha.discovery.temporal_genome",
     "alpha.discovery.temporal_compile", "alpha.discovery.temporal_evaluate",
 )
@@ -210,6 +211,21 @@ def twin_hash_of(candidates: CandidateArrays) -> str:
     return h.hexdigest()
 
 
+def attach_min_space(cands: CandidateArrays, spec: Any) -> CandidateArrays:
+    """Carry ``spec.target.min_space_r`` into the sim path (per candidate, finite structural targets only).
+
+    The temporal kernel checks min_space_r against the decision close; the simulator fills at
+    o[i+1] + spread, so it re-checks the same requirement against the actual fill (skip label
+    ``space_below_min_at_fill``).  No-op (candidates returned unchanged) for fixed_r targets or a zero
+    requirement, keeping those streams bit-identical."""
+    rule = spec.target
+    req = float(getattr(rule, "min_space_r", 0.0))
+    if rule.kind != "next_structure" or not req > 0.0 or len(cands.decision_idx) == 0:
+        return cands
+    ms = np.where(np.isfinite(cands.target), req, np.nan)
+    return dataclasses.replace(cands, min_space_r=ms)
+
+
 def market_from_frame(frame: MarketFrame, bars_per_day: int = 288, spread: float = 0.0) -> MarketArrays:
     """Simple MarketArrays for SYNTHETIC frames (tests): day = index // bars_per_day, contiguity from run_start."""
     n = len(frame)
@@ -250,8 +266,19 @@ class TemporalEvaluator:
         min_train_trades: int = MIN_TRAIN_TRADES, ledger: TemporalTrialLedger | None = None,
         cache_dir: Path | str | None = None, data_fingerprint: str | None = None,
         max_cache_mb: float = 500.0, prefix_cache_mb: float = 256.0,
-        window: SimWindow | None = None,
+        window: SimWindow | None = None, events_cache_key: str | None = None,
+        features_cache_key: str | None = None,
     ) -> None:
+        # Provenance of the frame's event/feature arrays.  The frame itself carries no cache key, so the
+        # caller passes the EventSet cache key (``events.metadata['cache_key']`` /
+        # ``alpha.events.store.cache_key(features, params)``) and the FeatureSet one.  With an on-disk
+        # result cache the event key is MANDATORY (fail closed): OHLC alone cannot identify the event
+        # arrays a cached result was computed from.  In-memory-only evaluators (synthetic tests) may
+        # rely on ``data_fingerprint`` / the frame OHLC fingerprint instead.
+        if cache_dir is not None and not events_cache_key:
+            raise ValueError("TemporalEvaluator with an on-disk cache requires events_cache_key "
+                             "(the EventSet cache key); refusing to key results by OHLC alone")
+        self.events_cache_key, self.features_cache_key = events_cache_key, features_cache_key
         self.frame_provider = frame_provider
         self._frame: MarketFrame | None = None
         self.market, self.split, self.sizing, self.rules = market, split, sizing, rules
@@ -304,6 +331,8 @@ class TemporalEvaluator:
                 "evaluator": EVALUATOR_VERSION, "events": ev_schema.EVENT_SET_VERSION,
                 "registry": ev_schema.registry_fingerprint(),
                 "data": self._data_fp or _frame_fingerprint(self.frame),
+                "events_cache_key": self.events_cache_key, "features_cache_key": self.features_cache_key,
+                "feature_set_version": feature_store.FEATURE_SET_VERSION,
                 "market": hashlib.sha256(b"".join(np.ascontiguousarray(a).tobytes() for a in (
                     self.market.o, self.market.h, self.market.l, self.market.c, self.market.spread,
                     self.market.day, self.market.contig_next))).hexdigest(),
@@ -316,8 +345,10 @@ class TemporalEvaluator:
             })
         return self._fp_static
 
-    def fingerprint(self, genome_hash: str) -> str:
-        return stable_hash({"static": self._fp(), "genome": genome_hash})
+    def fingerprint(self, genome_hash: str, behavior_key: str = "") -> str:
+        """Per-genome result key = static provenance + canonical hash + behaviour key (the latter folds the
+        thresholds the frame actually resolved for this genome's feature clauses)."""
+        return stable_hash({"static": self._fp(), "genome": genome_hash, "behavior": behavior_key})
 
     # ------------------------------------------------------------------ cache
     def _load_shards(self) -> None:
@@ -372,7 +403,7 @@ class TemporalEvaluator:
             return self._invalid(genome)
         bkey = temporal_compile.behavior_key(spec)
         self.ledger.behaviors.add(bkey)
-        key = self.fingerprint(ghash)
+        key = self.fingerprint(ghash, bkey)
         raw = self._memory.get(key)
         if raw is not None:
             self.ledger.cache_hits += 1
@@ -395,11 +426,12 @@ class TemporalEvaluator:
         ghash = canonical_hash(canon)
         if ghash != e.genome_hash:
             raise ValueError("ensure_full: genome does not match the evaluation")
-        key = self.fingerprint(ghash)
+        spec = temporal_compile.compile_temporal(canon, self.resolver, canonical=True)
+        bkey = temporal_compile.behavior_key(spec)
+        key = self.fingerprint(ghash, bkey)
         raw = self._memory.get(key)
         if raw is None or not raw.get("full", True):
-            spec = temporal_compile.compile_temporal(canon, self.resolver, canonical=True)
-            raw = self._compute_raw(canon, ghash, spec, temporal_compile.behavior_key(spec), True)
+            raw = self._compute_raw(canon, ghash, spec, bkey, True)
             self._fresh = None  # diagnostics are only surfaced by evaluate()
             self._cache_put(key, raw)
         return dataclasses.replace(TemporalEval.from_dict(raw), lineage=e.lineage)
@@ -434,13 +466,13 @@ class TemporalEvaluator:
 
     def _compute(self, canon: TemporalGenome, ghash: str, spec: Any, bkey: str, need_full: bool) -> TemporalEval:
         cands = evaluate_temporal_many([spec], self.frame, use_cache=True, cache=self._prefix_cache)[0].candidates
+        cands = attach_min_space(cands, spec)
         n_cand = len(cands.decision_idx)
         cx = complexity(canon)
         empty = _empty_side()
         if n_cand:
             tm = self._tm_bar[cands.decision_idx]
-            train_cands = CandidateArrays(cands.decision_idx[tm], cands.direction[tm], cands.stop[tm],
-                                          cands.target[tm], cands.target_r[tm], cands.exit_kind[tm])
+            train_cands = cands.subset(tm)
         else:
             tm, train_cands = np.zeros(0, bool), cands
         n_train_cand = len(train_cands.decision_idx)
@@ -485,5 +517,5 @@ class TemporalEvaluator:
 
 __all__ = (
     "EVALUATOR_VERSION", "TemporalEval", "TemporalEvaluator", "TemporalTrialLedger",
-    "market_from_frame", "temporal_validation_gate_view", "twin_hash_of",
+    "attach_min_space", "market_from_frame", "temporal_validation_gate_view", "twin_hash_of",
 )

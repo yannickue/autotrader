@@ -66,9 +66,9 @@ def test_skip_label_appended_existing_unchanged() -> None:
         "no_next_bar", "gap_before_entry", "outside_window", "day_cap", "spread_filter",
         "stop_invalid", "risk_out_of_range", "size_below_min", "entry_gap_stop",
     )
-    assert SKIP_LABELS[9] == "target_crossed_at_fill" and len(SKIP_LABELS) == 10
+    assert SKIP_LABELS[9] == "target_crossed_at_fill" and len(SKIP_LABELS) == 11
     t = simulate_fast(_market(), _cands([(4, 1, 95.0, 99.0)]), COST)
-    assert len(t.skip_counts) == 10 and t.skips["target_crossed_at_fill"] == 1
+    assert len(t.skip_counts) == 11 and t.skips["target_crossed_at_fill"] == 1
 
 
 def test_long_and_short_target_crossed_at_fill_skipped_and_counted() -> None:
@@ -146,7 +146,8 @@ def _load_old_sim(tmp_path: Path):
 
 def _to_old(old, market: MarketArrays, cand: CandidateArrays):
     m = old.MarketArrays(**{f.name: getattr(market, f.name) for f in dataclasses.fields(market)})
-    c = old.CandidateArrays(**{f.name: getattr(cand, f.name) for f in dataclasses.fields(cand)})
+    fields = dataclasses.fields(old.CandidateArrays)  # the head kernel has no min_space_r
+    c = old.CandidateArrays(**{f.name: getattr(cand, f.name) for f in fields})
     return m, c
 
 
@@ -154,9 +155,9 @@ def _assert_identical(new_t, old_t) -> None:
     for f in dataclasses.fields(new_t):
         a, b = getattr(new_t, f.name), getattr(old_t, f.name)
         if f.name == "skip_counts":
-            assert len(a) == 10 and len(b) == 9
+            assert len(a) == 11 and len(b) == 9
             np.testing.assert_array_equal(a[:9], b)
-            assert a[9] == 0
+            assert a[9] == 0 and a[10] == 0
         else:
             np.testing.assert_array_equal(a, b, err_msg=f.name)
 
