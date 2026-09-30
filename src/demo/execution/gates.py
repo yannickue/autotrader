@@ -115,6 +115,8 @@ R_EXECUTION_DENIED = "execution_denied"
 R_NO_STOP = "no_stop"
 R_QUANTITY_PRECISION = "quantity_precision"
 R_CLOCK_SKEW = "clock_skew"
+R_SIZER_EVALUATOR_MISMATCH = "sizer_evaluator_mismatch"
+R_CANARY_POSITION_OPEN = "canary_position_open"
 
 # entry-drift tolerance default (parity.entry_tolerance): max(2 x current spread, 2 x tick)
 ENTRY_TOLERANCE_SPREAD_MULTIPLE = 2
@@ -167,12 +169,13 @@ _ENTRIES: tuple[Gate, ...] = (
     _G(R_MARGIN_LIQUIDATION, S, True, "structural stop too close to the (buffered) liquidation estimate"),
     _G(R_MARGIN_BEYOND, S, True, "structural stop beyond the liquidation estimate"),
     _G(R_EXPOSURE_LIMIT, S, True, "portfolio leverage / gross / net exposure capacity exhausted"),
-    _G(R_DATA_STALE, S, True, "market data older than the policy bound"),
-    _G(R_DATA_NOT_LIVE, S, True, "market data not LIVE quality"),
-    _G(R_SIGNAL_STALE, S, True, "signal older than the policy bound"),
-    _G(R_SPREAD_TOO_WIDE, S, True, "spread (bps) above the instrument bound"),
-    _G(R_ENTRY_DEVIATION, S, True, "sizing reference deviates from the executable price beyond tolerance"),
-    _G(R_LIQUIDITY, S, True, "no liquidity capacity"),
+    _G(R_DATA_STALE, S, True, "evaluator-level market data older than the policy bound (duplicate of the stack's stale_feed) [redundant defence in depth - never the first to fire]"),
+    _G(R_DATA_NOT_LIVE, S, True, "evaluator-level: market data not LIVE quality (the stack only ever builds LIVE snapshots) [redundant defence in depth - never the first to fire]"),
+    _G(R_SIGNAL_STALE, S, True, "evaluator-level: signal older than the policy bound (the stack checks the intent validity window first: stale_signal) [redundant defence in depth - never the first to fire]"),
+    _G(R_SPREAD_TOO_WIDE, S, True, "evaluator-level: spread (bps) above the instrument bound (the stack's spread_cap runs first: relative cost primary, 4x absolute cap) [redundant defence in depth - never the first to fire]"),
+    _G(R_ENTRY_DEVIATION, S, True, "evaluator-level: sizing reference deviates from the executable price beyond tolerance (entry_overshoot / spread_cap fire first) [redundant defence in depth - never the first to fire]"),
+    _G(R_LIQUIDITY, S, True, "evaluator-level: no liquidity capacity (the stack passes a constant, non-binding capacity) [redundant defence in depth - never the first to fire]"),
+    _G(R_SIZER_EVALUATOR_MISMATCH, S, True, "the evaluator's margin / liquidation check rejected a quantity the sizer had fitted to the same invariant: sizer and evaluator disagree (details: evaluator_reject_reason). Must never occur - a bug indicator, never silent"),
     _G(R_INSTRUMENT_MISMATCH, S, True, "instrument mismatch between request, snapshot and limits"),
     _G(R_RISK_ERROR, S, True, "internal risk-evaluation error: fail closed"),
     _G(R_PROTECTION_UNCONFIRMED, S, True, "mandatory broker-side protection could not be confirmed: reduce-only flatten + halt"),
@@ -188,6 +191,7 @@ _ENTRIES: tuple[Gate, ...] = (
     _G(R_EXECUTION_DENIED, S, True, "execution layer denied the order (see suffix)"),
     _G(R_NO_STOP, S, True, "a broker-side stop is mandatory for every entry"),
     _G(R_CLOCK_SKEW, S, True, "server quote ahead of the local clock by more than the tolerance but below the fatal threshold: this market is rejected temporarily (logged metric), the stack keeps running"),
+    _G(R_CANARY_POSITION_OPEN, T, True, "an open CANARY-magic test position exists on this symbol: new own exposure on the symbol is blocked until the operator closes it (canary scripts run only while the runner is stopped and flat)", lifting_condition="close the canary test position"),
     _G(R_QUANTITY_PRECISION, T, True, "quantity not representable on the instrument step"),
     # -- STRUCTURAL ----------------------------------------------------------------------------------------
     _G(R_ENTRY_OVERSHOOT, T, True, "intent geometry: the executable price drifted beyond the intended entry on the adverse side by MORE than the tolerance (TradeIntent.entry_tolerance, else max(2 x spread, 2 x tick))"),

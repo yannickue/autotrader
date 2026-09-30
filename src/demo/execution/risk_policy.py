@@ -61,6 +61,7 @@ from risk.sizing import ExposureCapacity, PositionSizer, RiskRejection, SizingRe
 ZERO = Decimal(0)
 TEN_THOUSAND = Decimal(10000)
 
+BINDING_TARGET_RISK = "target_risk"  # the requested risk (not a hard cap) bound the size
 POLICY_ID = "demo-discovery-policy-v1"
 POLICY_REVISION = "2-tunable-hard-caps"
 BROKER_LEVERAGE_CEILING = MAX_SYSTEM_LEVERAGE  # 30, hard, never a target
@@ -75,6 +76,10 @@ MAX_QUOTE_AGE = timedelta(seconds=30)
 
 REASON_SIZE_BELOW_MIN = G.R_SIZE_BELOW_MIN
 REASON_UNKNOWN_CLUSTER = G.R_UNKNOWN_CLUSTER
+# The evaluator's MARGIN check rejected a quantity the sizer had FITTED to the same invariant: the two
+# disagree. Must never happen (tests prove fitted => approved); reported distinctly so it is never silent.
+REASON_SIZER_EVALUATOR_MISMATCH = G.R_SIZER_EVALUATOR_MISMATCH
+_EVALUATOR_MARGIN_REASONS = frozenset({G.R_MARGIN_LIQUIDATION, G.R_MARGIN_BEYOND})
 
 
 def cluster_of(market: str) -> str | None:
@@ -214,7 +219,7 @@ class _PolicySizer(PositionSizer):
             quantity=units,
             notional=detail["notional_eur"],
             reference_price=reference_price,
-            binding_constraint=str(detail["binding_cap"]),
+            binding_constraint=str(detail["binding_cap"] or BINDING_TARGET_RISK),
             risk_budget=detail["equity"] * detail["target_risk_fraction"] * detail["risk_budget_multiplier"],
             per_unit_loss=detail["loss_per_lot_at_stop"] / detail["contract_size"],
             effective_risk_fraction=detail["equity_risk_fraction"],
@@ -229,6 +234,10 @@ class DemoRiskGate:
     """Facade: (intent, quote, broker-truth account) -> ``RiskOutcome`` with full risk detail."""
 
     caps: RiskCaps = field(default_factory=RiskCaps)
+    # Maintenance (stop-out) rate as a fraction of the instrument's initial margin (1/leverage). 1.0 =
+    # the conservative default (stop-out at full initial margin). The fit AND the evaluator use the same
+    # value, so changing it can never create a sizer/evaluator mismatch.
+    stopout_fraction_of_initial_margin: Decimal = Decimal(1)
     _decisions: int = field(default=0, init=False)
 
     def size(
@@ -287,7 +296,7 @@ class DemoRiskGate:
             # the PRIMARY cost gate (spread <= 20% of 1R) runs earlier in demo.execution.parity.
             max_spread_bps=(market.max_spread * G.SPREAD_EXTREME_MULTIPLE * fx) / mid * TEN_THOUSAND
             + Decimal("0.0001"),
-            maintenance_margin_rate=Decimal(1) / instrument_leverage,
+            maintenance_margin_rate=self.stopout_fraction_of_initial_margin / instrument_leverage,
         )
         risk_state = AccountRiskState(
             state_version=account.state_version,
@@ -336,6 +345,9 @@ class DemoRiskGate:
                 liquidation_safety_bps=(
                     policy.liquidation_uncertainty_buffer_bps + policy.min_stop_liquidation_distance_bps
                 ),
+                # the evaluator measures the liquidation distance from THIS price, not the executable one
+                liquidation_reference_price=executable
+                * (Decimal(1) + intent.direction * policy.reference_price_slippage_bps / TEN_THOUSAND),
             )
 
         policy = build_policy(account, caps, risk_fraction=min(target, Decimal(1)))
@@ -379,7 +391,15 @@ class DemoRiskGate:
         except (RiskRejection, ArithmeticError) as exc:  # fail closed on any internal error
             return self._skip(f"{G.R_RISK_ERROR}:{type(exc).__name__}", {**base, **self._sized(holder)})
         if isinstance(result, PolicyRejection):
-            return self._skip(machine_reason(result), {**base, **self._sized(holder)})
+            reason = machine_reason(result)
+            sized = self._sized(holder)
+            decision_made: SizingDecision | None = holder.get("decision")
+            if reason in _EVALUATOR_MARGIN_REASONS and decision_made is not None and decision_made.accepted:
+                # the sizer claimed a liquidation-safe fit and the evaluator disagrees: never silent
+                sized["evaluator_reject_reason"] = reason
+                sized["sizer_liquidation_safe_leverage"] = sized.get("liquidation_safe_leverage")
+                reason = REASON_SIZER_EVALUATOR_MISMATCH
+            return self._skip(reason, {**base, **sized})
         decision: SizingDecision = holder["decision"]
         detail = {**base, **decision.detail}
         detail.update(
@@ -394,7 +414,7 @@ class DemoRiskGate:
             leverage=detail["leverage"],
             notional=detail["notional_eur"],
             stop_risk_money=detail["stop_risk_eur"],
-            binding_constraint=str(detail["binding_cap"]),
+            binding_constraint=str(detail["binding_cap"] or BINDING_TARGET_RISK),
             min_lot_used=bool(detail["min_lot_used"]),
             detail=detail,
         )

@@ -40,6 +40,9 @@ REASON_INVALID_STOP = "invalid_stop"
 REASON_INVALID_MARKET_FACTS = "invalid_market_facts"
 REASON_EQUITY = "equity_non_positive"
 REASON_RISK_FRACTION_INVALID = "risk_fraction_invalid"
+# Extra clearance (bps) on the liquidation-safety fit so Decimal/step floor edge cases can never land on
+# the wrong side of the evaluator's ``distance_bps >= min_required`` boundary (fitted => approved).
+LIQUIDATION_FIT_EPSILON_BPS = Decimal("0.1")
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -134,6 +137,11 @@ class SizingInput:
     # liquidation price at the portfolio leverage after the fill.
     maintenance_margin_rate: Decimal | None = None
     liquidation_safety_bps: Decimal = Decimal("150")
+    # The price the EVALUATOR measures the stop->liquidation distance from (RiskPolicyEvaluator uses
+    # ask x (1 + slippage_bps) for BUY / bid x (1 - slippage_bps) for SELL, never the executable price).
+    # The fit MUST use the same reference or fitted quantities get rejected afterwards. ``None`` keeps
+    # the executable price (no slippage buffer).
+    liquidation_reference_price: Decimal | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -252,9 +260,15 @@ class DemoPositionSizer:
             )
         if inp.maintenance_margin_rate is not None:
             # 1/L >= mm + safety + d/entry  <=>  L <= 1 / (mm + safety + d/entry)
-            ratio = distance / inp.executable_price
+            # Same geometry as margin.engine.evaluate_stop_safety: distance measured from the reference
+            # price R, in the protective direction (BUY: (R - stop)/R, SELL: (stop - R)/R).
+            ref = inp.liquidation_reference_price or inp.executable_price
+            ratio = inp.direction * (ref - inp.structural_stop) / ref
+            detail["liquidation_reference_price"] = ref
             liq_lev = ONE / (
-                inp.maintenance_margin_rate + inp.liquidation_safety_bps / Decimal(10000) + ratio
+                inp.maintenance_margin_rate
+                + (inp.liquidation_safety_bps + LIQUIDATION_FIT_EPSILON_BPS) / Decimal(10000)
+                + ratio
             )
             limits["liquidation_safe_leverage"] = (
                 (min(liq_lev, port_lev) * equity - pf.gross_notional) / notional_per_lot,
@@ -271,11 +285,15 @@ class DemoPositionSizer:
         else:
             detail["margin_check"] = "unavailable"
 
-        binding = min(limits, key=lambda name: limits[name][0])
-        max_lots = limits[binding][0]
+        tightest = min(limits, key=lambda name: limits[name][0])
+        max_lots = limits[tightest][0]
+        binding = tightest  # name used by the below-min path (the tightest cap IS the violated one there)
         desired = equity * inp.target_risk_fraction * inp.risk_budget_multiplier / loss_per_lot
         detail["desired_quantity"] = desired
-        detail["binding_cap"] = binding
+        # ``binding_cap`` is reported only when the cap actually bound the size (target size > cap max);
+        # otherwise the target risk bound it and the tightest cap is informational (``tightest_cap``).
+        detail["tightest_cap"] = tightest
+        detail["binding_cap"] = tightest if desired > max_lots else None
         detail["max_quantity_by_cap"] = {name: lots for name, (lots, _) in limits.items()}
 
         if max_lots < inp.volume_min:
@@ -303,6 +321,7 @@ class DemoPositionSizer:
         notional_per_lot: Decimal,
     ) -> SizingDecision:
         minimum = inp.volume_min
+        detail["binding_cap"] = binding  # the minimum lot itself violates it
         risk = minimum * loss_per_lot
         notional = minimum * notional_per_lot
         self._fill_numbers(inp, detail, minimum, risk, notional, loss_per_lot)

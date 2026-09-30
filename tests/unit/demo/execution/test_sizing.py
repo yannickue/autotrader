@@ -239,3 +239,25 @@ def test_wrong_side_stop_and_bad_facts_are_rejected_with_machine_codes():
     assert sizer.size(ger(equity=D(0))).reason == "equity_non_positive"
     assert sizer.size(ger(contract_size=D(0))).reason == "invalid_market_facts"
     assert sizer.size(ger(target_risk_fraction=D(0))).reason == "risk_fraction_invalid"
+
+
+def test_binding_cap_only_reported_when_the_cap_actually_bound_the_size():
+    free = sizer.size(ger())  # target 1 % is far below every cap
+    assert free.detail["binding_cap"] is None and free.detail["tightest_cap"]
+    assert not free.detail["quantity_reduced_by_cap"]
+    capped = sizer.size(ger(free_margin=D(1_000), margin_per_lot=D(1_250)))
+    assert capped.detail["binding_cap"] == capped.detail["tightest_cap"] == "max_margin_fraction_of_free_margin"
+
+
+def test_liquidation_fit_uses_the_reference_price_in_the_protective_direction():
+    short = dict(direction=-1, executable_price=D("7693.64"), structural_stop=D("7702.745"),
+                 maintenance_margin_rate=D("0.05"), instrument_max_leverage=D(20))
+    plain = sizer.size(ger(**short))
+    ref = D("7693.64") * (1 - D("0.0005"))
+    shifted = sizer.size(ger(**short, liquidation_reference_price=ref))
+    ratio = (D("7702.745") - ref) / ref
+    assert shifted.detail["liquidation_safe_leverage"] == 1 / (D("0.05") + D("150.1") / 10000 + ratio)
+    assert shifted.detail["liquidation_safe_leverage"] < plain.detail["liquidation_safe_leverage"]
+    buy = sizer.size(ger(executable_price=D("100"), structural_stop=D("99"), maintenance_margin_rate=D("0.05"),
+                         liquidation_reference_price=D("100.05")))
+    assert buy.detail["liquidation_safe_leverage"] == 1 / (D("0.05") + D("150.1") / 10000 + D("1.05") / D("100.05"))
