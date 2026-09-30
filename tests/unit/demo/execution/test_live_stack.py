@@ -476,6 +476,35 @@ def test_eight_consecutive_losses_halt_and_a_win_resets_the_streak(tmp_path):
         stack2.stop()
 
 
+def test_manual_and_previous_day_losses_never_block_new_exposure(tmp_path):
+    """M3: the streak counts OUR OWN trades closed in the CURRENT UTC day only."""
+    broker = build_broker()
+    for _ in range(8):
+        inject_closed_trade(broker, profit=-0.1, magic=0)  # manual trades: not ours
+    for _ in range(8):
+        inject_closed_trade(broker, profit=-0.1, age_s=3 * 86_400)  # ours, but days ago
+    stack = make_stack(broker, tmp_path)
+    try:
+        stack.start()
+        assert stack.submit(make_intent())[-1].__class__.__name__ == "ProtectionConfirmed"
+    finally:
+        stack.stop()
+
+
+def test_foreign_win_neither_breaks_nor_extends_our_streak(tmp_path):
+    broker = build_broker()
+    for i in range(8):
+        inject_closed_trade(broker, profit=-0.1)
+        if i == 3:
+            inject_closed_trade(broker, profit=50.0, magic=0)  # a manual win in between
+    stack = make_stack(broker, tmp_path)
+    try:
+        stack.start()
+        assert reason(stack.submit(make_intent())) == "consecutive_loss_limit"
+    finally:
+        stack.stop()
+
+
 def test_max_drawdown_halt_is_25_percent_of_peak_equity(tmp_path):
     broker = build_broker()
     stack = make_stack(broker, tmp_path)

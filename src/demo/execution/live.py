@@ -186,7 +186,7 @@ class StackConfig:
     lock_heartbeat_s: float = 20.0  # lock is considered stale after 90 s
     sync_interval_s: float = 1.0
     start_timeout_s: float = 90.0
-    lookback_days: int = 30  # deal history for consecutive losses
+    lookback_days: int = 30  # deal history window (daily P&L, closures); the loss streak is UTC-day only
     close_grace_s: float = 90.0  # wait for exit deals to become visible before EXTERNAL/None
     flatten_max_failures: int = 3
     bar_settle_s: float = 1.0  # a bar counts as closed this long after its nominal close
@@ -1573,13 +1573,27 @@ class Mt5DemoStack:
                 realized_today += net
             elif not exact:
                 realized_today += min(net, ZERO)  # unknown day: losses only (fail closed)
-            by_position.setdefault(int(d.position_id), []).append((when, net, int(d.entry)))
+            by_position.setdefault(int(d.position_id), []).append(
+                (when, net, int(d.entry), int(getattr(d, "magic", 0) or 0) == self._cfg.magic)
+            )
         open_ids = {int(p.ticket) for p in positions}
+        # Consecutive-loss streak (limit ``max_consecutive_losses``): ONLY our own trades (deals
+        # carrying our magic; manual / foreign trades neither count nor break the streak) that
+        # CLOSED in the current UTC trading day. It therefore resets every UTC day and can never
+        # become a permanent block that only a win could lift (M3). The 30-day deal lookback is
+        # still used for other purposes, never for this counter.
         closed = []
         for pid, items in by_position.items():
-            if pid in open_ids or not any(e in (ENTRY_OUT, ENTRY_INOUT, ENTRY_OUT_BY) for _, _, e in items):
+            if pid in open_ids or not any(
+                e in (ENTRY_OUT, ENTRY_INOUT, ENTRY_OUT_BY) for _, _, e, _ in items
+            ):
                 continue
-            closed.append((max(t for t, _, _ in items), sum((n for _, n, _ in items), ZERO)))
+            if not any(own for _, _, _, own in items):
+                continue  # not ours
+            closed_at = max(t for t, _, _, _ in items)
+            if closed_at < day_start:
+                continue  # previous UTC day
+            closed.append((closed_at, sum((n for _, n, _, _ in items), ZERO)))
         closed.sort(key=lambda item: item[0])
         losses = 0
         for _, net in reversed(closed):

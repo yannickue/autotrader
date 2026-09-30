@@ -154,14 +154,19 @@ def m5_rows(broker: FakeMT5Broker, *, n: int = 40, base: float = 25000.0, end: d
     return make_rates(rows)
 
 
-def inject_closed_trade(broker: FakeMT5Broker, *, profit: float, symbol: str = "Ger40") -> None:
-    """A finished round trip TODAY (broker-truth deals) that realised ``profit`` (balance moves)."""
+def inject_closed_trade(
+    broker: FakeMT5Broker, *, profit: float, symbol: str = "Ger40", magic: int = 740_003,
+    age_s: int = 0,
+) -> None:
+    """A finished round trip (default TODAY, ``age_s`` seconds ago; broker-truth deals) that
+    realised ``profit`` (balance moves). ``magic`` != the stack's magic makes it a manual trade."""
     pid = broker._ticket()
+    when = broker.server_time - age_s
     for entry, kind, pnl in ((0, 0, 0.0), (1, 1, profit)):
         broker.deals.append(
             SimpleNamespace(
-                ticket=broker._ticket(), order=broker._ticket(), time=broker.server_time,
-                time_msc=broker.server_time * 1000, type=kind, entry=entry, magic=740_003,
+                ticket=broker._ticket(), order=broker._ticket(), time=when,
+                time_msc=when * 1000, type=kind, entry=entry, magic=magic,
                 position_id=pid, reason=3, volume=0.25, price=25000.0, commission=0.0, swap=0.0,
                 profit=pnl, fee=0.0, symbol=symbol, comment="injected", external_id="",
             )
