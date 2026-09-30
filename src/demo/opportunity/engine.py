@@ -36,7 +36,7 @@ from alpha.families.data import (
     atr14,
     round_steps,
 )
-from alpha.families.registry import generate_candidates
+from alpha.families.registry import describe_candidate, generate_candidates
 from alpha.families.spec import MarketCalendar
 from alpha.fast.sim import CandidateArrays
 from alpha.session import local_clock
@@ -55,6 +55,9 @@ from demo.opportunity.policy import (
     StaticDemoPolicy,
 )
 from demo.opportunity.production_spec import (
+    ALPHA_STATUS,
+    PHASE2_TAG,
+    ROLE_SHADOW,
     FrozenSpec,
     ProductionSpecSet,
     load_production_spec,
@@ -68,7 +71,7 @@ from demo.opportunity.snapshot import (
     git_commit,
     realized_vol,
 )
-from markets.spec import MarketSpec, load_market_spec
+from markets.spec import PHASE2_CANONICALS, MarketSpec, load_market_spec
 
 # Reason codes of a CATCH-UP decision: an opportunity found on a bar that is already older than one bar
 # when it is evaluated is NEVER tradable (no chasing of stale entries); it is recorded as a terminal,
@@ -78,6 +81,9 @@ EXPIRED_ENTRY = "EXPIRED_ENTRY"
 ALREADY_MOVED = "ALREADY_MOVED"
 CATCHUP_CODES: tuple[str, ...] = (CATCHUP_MISSED, EXPIRED_ENTRY, ALREADY_MOVED)
 ORIGIN_CATCHUP = "CATCHUP"
+# Lane F: a SHADOW-role spec (v1.2) is evaluated, snapshotted and counterfactually labelled like any rejected opportunity,
+# but an otherwise ACCEPTED decision is turned into this terminal non-trade: no intent, no broker order, ever.
+SHADOW_VARIANT = "SHADOW_VARIANT"
 
 
 @dataclass(frozen=True, slots=True)
@@ -337,7 +343,7 @@ class OpportunityEngine:
         ctx = build_context(frame, found[0][1].signal_ts, ms.calendar.tz)
         rvol = realized_vol(frame["close"].to_numpy(float))
         tick = tick_activity_of(self._source, market)
-        n_dir = {d: sum(1 for _, c in found if c.direction == d) for d in (1, -1)}
+        n_dir = {d: sum(1 for f, c in found if c.direction == d and f.role != ROLE_SHADOW) for d in (1, -1)}
         pairs: list[tuple[OpportunitySnapshot, Decision]] = []
         for fs, cand in found:
             oid = opportunity_id_of(cand)
@@ -348,7 +354,7 @@ class OpportunityEngine:
             # No one-position rule: every technically valid opportunity is emitted. ``position_open``
             # stays on the constructor for API compatibility only and is never consulted.
             assessment = self._policy.assess(cand, quote, now, ms, is_duplicate=not fresh)
-            same = [f for f, c in found if c.direction == cand.direction]
+            same = [f for f, c in found if c.direction == cand.direction and f.role != ROLE_SHADOW]
             signal_meta = {
                 "family": fs.family, "strategy_id": fs.strategy_id, "spec_hash": fs.spec_hash,
                 "spec": fs.spec.to_dict(),
@@ -359,7 +365,14 @@ class OpportunityEngine:
                 "quality": None,
                 "target_r": None if not math.isfinite(cand.target_r) else cand.target_r,
                 "structural_target": math.isfinite(cand.target),
+                "role": fs.role,
             }
+            if market in PHASE2_CANONICALS:  # persisted with every Phase-2 snapshot (and so with its outcome/label join)
+                signal_meta["phase"] = PHASE2_TAG
+                signal_meta["alpha_status"] = ALPHA_STATUS
+            levels = describe_candidate(data, fs.spec, i, cand.direction)
+            if levels:
+                signal_meta["structure_levels"] = levels
             if catchup is not None:
                 signal_meta["origin"] = ORIGIN_CATCHUP
                 signal_meta["catchup"] = {
@@ -379,6 +392,11 @@ class OpportunityEngine:
                 dec = self._policy.decision(snap.opportunity_id, self._phase, now, assessment)
             else:
                 dec = self._catchup_decision(snap, cand, assessment, catchup)
+            if fs.role == ROLE_SHADOW and dec.accepted:
+                dec = Decision(
+                    opportunity_id=dec.opportunity_id, phase=dec.phase, decided_utc=dec.decided_utc, accepted=False,
+                    reasons=(SHADOW_VARIANT,), policy_id=dec.policy_id, shadow=dec.shadow,
+                )
             if dec.accepted:
                 intent = self._policy.intent_for(snap, dec, ms, cand.window)
                 if intent is not None:

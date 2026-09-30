@@ -39,13 +39,13 @@ def test_default_runner_is_the_five_markets_on_the_frozen_v1_spec(tmp_path):
         r.store.close()
 
 
-def test_enabled_phase2_market_extends_the_universe_with_the_v1_1_superset(tmp_path):
+def test_enabled_phase2_market_extends_the_universe_with_the_v1_2_superset(tmp_path):
     seen: list = []
     r = rn.build_live_runner("shadow", artifacts_dir=tmp_path / "a", stack_factory=_factory(seen), learning=False,
                              phase2_markets=("BTCUSD",))
     try:
         assert set(r.cfg.markets) == set(CORE) | {"BTCUSD"} and "BRENT" not in r.cfg.markets  # per-market switch
-        assert r.engine.strategy_hash == "4f4b33e97966cd84"
+        assert r.engine.strategy_hash == "a4fe51b558d03274"  # Lane F: v1.2 supersedes v1.1 in the selector
     finally:
         r.store.close()
 

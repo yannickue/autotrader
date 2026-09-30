@@ -44,7 +44,8 @@ def test_v1_1_is_a_strict_superset_with_a_new_documented_hash():
     assert set(v11.market_names()) == set(CORE) | set(PHASE2)
     for m in CORE:  # verbatim: same specs, same thresholds, same order
         assert v11.specs_for(m) == v1.specs_for(m)
-    assert load_production_spec_for(("BTCUSD",)).strategy_hash == V1_1_HASH
+    # Lane F: the selector now picks the v1.2 superset when a Phase-2 market is enabled; v1.1 stays loadable by path
+    assert load_production_spec_for(("BTCUSD",)).strategy_hash != V1_1_HASH
     assert json.loads(DEFAULT_PATH_V1_1.read_text(encoding="utf-8"))["base_strategy_hash_v1"] == V1_HASH
 
 

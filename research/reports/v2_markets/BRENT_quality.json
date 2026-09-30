@@ -1,0 +1,442 @@
+{
+ "canonical": "BRENT",
+ "broker_symbol": "Brent",
+ "retrieved_at": "2026-09-30T22:57:34.385620+00:00",
+ "timezone_policy": {
+  "zone": "Europe/Berlin",
+  "basis": "INFERRED_FROM_LIVE_OFFSET_+7199s_2026-09-29_NOT_BROKER_CONFIRMED"
+ },
+ "timeframes": {
+  "M5": {
+   "files": 16,
+   "bytes": 1095887,
+   "rejected_or_error": [],
+   "no_data_months": [],
+   "validator_status": {
+    "PASSED_WITH_WARNINGS": 12,
+    "PASSED": 4
+   },
+   "validator_warning_kinds": {
+    "SUSPICIOUS_GAP": 17
+   },
+   "file_sha256": {
+    "ACTIVTRADES_MT5_CFD\\BRENT\\bars_5m\\2025-06-01T220000__2025-06-30T205500.parquet": "6a3842579f61d4e1b2cb4d1317f6c1ff11d9e80b5a999f22f4048933a55d3dce",
+    "ACTIVTRADES_MT5_CFD\\BRENT\\bars_5m\\2025-07-01T000000__2025-07-31T205500.parquet": "67a02a34c0ee7a305ed84fc9cbf725b072f671bd66041008159a5c9c5aee08be",
+    "ACTIVTRADES_MT5_CFD\\BRENT\\bars_5m\\2025-08-01T000000__2025-08-31T235500.parquet": "e43eb15bc46c01605272df6ec406cf361f883e6a74f5e2b8a6632837673b689d",
+    "ACTIVTRADES_MT5_CFD\\BRENT\\bars_5m\\2025-09-01T000000__2025-09-30T205500.parquet": "e23eeb490fe4989fb4a3274665a6dc1cfcf5da73d718a24a08c666b806cfcfaa",
+    "ACTIVTRADES_MT5_CFD\\BRENT\\bars_5m\\2025-10-01T000000__2025-10-31T205500.parquet": "a6dc8fdada5c34aa3c6a05c5fe85c3155d6e831b005716f0c3fab689f767510a",
+    "ACTIVTRADES_MT5_CFD\\BRENT\\bars_5m\\2025-11-02T230000__2025-11-30T235500.parquet": "7766dd22fa3ef87a9328e5ad1b9769320dbe13e8989477088a1b7c992095e21b",
+    "ACTIVTRADES_MT5_CFD\\BRENT\\bars_5m\\2025-12-01T000000__2025-12-31T195500.parquet": "a14baa866ed2cec2ff93f8cbf472d3d464478e590e744f287245943a1089e960",
+    "ACTIVTRADES_MT5_CFD\\BRENT\\bars_5m\\2026-01-02T010000__2026-01-30T215500.parquet": "f55221a56169413e9fe9f7d0bf435d37a14ef2cb4a303ff888cf6580c62786a7",
+    "ACTIVTRADES_MT5_CFD\\BRENT\\bars_5m\\2026-02-01T230000__2026-02-27T215500.parquet": "2f48592bde440df8a5a5381edabb763a25556e52f68ca0e5be37d45622c7df07",
+    "ACTIVTRADES_MT5_CFD\\BRENT\\bars_5m\\2026-03-01T230000__2026-03-31T205500.parquet": "4c212daae1283dd1266d5ef003a9ca1ec8d246192d5cad017d20159487cf15eb",
+    "ACTIVTRADES_MT5_CFD\\BRENT\\bars_5m\\2026-04-01T000000__2026-04-30T205500.parquet": "d9a0d804fd094295203fbcfda7ba4ec2f5dc9edadc666de7fc533cb5033e949f",
+    "ACTIVTRADES_MT5_CFD\\BRENT\\bars_5m\\2026-05-01T000000__2026-05-31T235500.parquet": "2396b2884a6796eeecffce542e983ecb6489070f0a0e3ca9b39c0079092ba1f8",
+    "ACTIVTRADES_MT5_CFD\\BRENT\\bars_5m\\2026-06-01T000000__2026-06-30T205500.parquet": "2cd4e0ddb10caf01f2b2d5b7709a18a8432ea920fe852bc2899e70a70efeef55",
+    "ACTIVTRADES_MT5_CFD\\BRENT\\bars_5m\\2026-07-01T000000__2026-07-31T205500.parquet": "786cc3c03f507e4340a871e771e7ba17853aa1167f17695eb8ac43c161f706b9",
+    "ACTIVTRADES_MT5_CFD\\BRENT\\bars_5m\\2026-08-02T220000__2026-08-31T205500.parquet": "fb6aa23b281479185851eac2ee4f75decb3873aebc69a4e8d073483a1726c0c1",
+    "ACTIVTRADES_MT5_CFD\\BRENT\\bars_5m\\2026-09-01T000000__2026-09-30T205500.parquet": "1cd7a788b5efb85187ad9fd315e7109c95172af3e086f5a63694e84ec0ce4d14"
+   },
+   "analysis": {
+    "rows": 88082,
+    "first_ts": "2025-06-01T22:00:00+00:00",
+    "last_ts": "2026-09-30T20:55:00+00:00",
+    "monotonic_strict": true,
+    "duplicate_ts": 0,
+    "future_ts": 0,
+    "tick_volume_peak_utc_by_season": {
+     "dst_summer": [
+      "13:00",
+      "18:25",
+      "08:25"
+     ],
+     "std_winter": [
+      "22:05",
+      "22:10",
+      "14:30"
+     ]
+    },
+    "off_grid_ts": 0,
+    "bad_ohlc_rows": 0,
+    "flat_bars": 57,
+    "flat_bar_ratio": 0.00065,
+    "zero_tick_volume": 0,
+    "spread_pts": {
+     "n": 88082,
+     "zero_or_neg": 0,
+     "median": 5.0,
+     "p95": 6.0,
+     "p99": 10.0,
+     "max": 28.0
+    },
+    "expected_bars_by_weekday_and_server_dst": {
+     "wd0_std": 276,
+     "wd0_dst": 276,
+     "wd1_std": 252,
+     "wd1_dst": 252,
+     "wd2_std": 240,
+     "wd2_dst": 252,
+     "wd3_std": 240,
+     "wd3_dst": 252,
+     "wd4_std": 240,
+     "wd4_dst": 252
+    },
+    "months": {
+     "2025-06": {
+      "bars": 5357,
+      "expected_on_present_days": 5412,
+      "ratio": 0.9898,
+      "days": 21
+     },
+     "2025-07": {
+      "bars": 5850,
+      "expected_on_present_days": 5892,
+      "ratio": 0.9929,
+      "days": 23
+     },
+     "2025-08": {
+      "bars": 5387,
+      "expected_on_present_days": 5388,
+      "ratio": 0.9998,
+      "days": 21
+     },
+     "2025-09": {
+      "bars": 5619,
+      "expected_on_present_days": 5664,
+      "ratio": 0.9921,
+      "days": 22
+     },
+     "2025-10": {
+      "bars": 5890,
+      "expected_on_present_days": 5856,
+      "ratio": 1.0058,
+      "days": 24
+     },
+     "2025-11": {
+      "bars": 5041,
+      "expected_on_present_days": 4992,
+      "ratio": 1.0098,
+      "days": 20
+     },
+     "2025-12": {
+      "bars": 5604,
+      "expected_on_present_days": 5520,
+      "ratio": 1.0152,
+      "days": 22
+     },
+     "2026-01": {
+      "bars": 5388,
+      "expected_on_present_days": 5232,
+      "ratio": 1.0298,
+      "days": 21
+     },
+     "2026-02": {
+      "bars": 5136,
+      "expected_on_present_days": 4992,
+      "ratio": 1.0288,
+      "days": 20
+     },
+     "2026-03": {
+      "bars": 5662,
+      "expected_on_present_days": 5520,
+      "ratio": 1.0257,
+      "days": 25
+     },
+     "2026-04": {
+      "bars": 5388,
+      "expected_on_present_days": 5388,
+      "ratio": 1.0,
+      "days": 21
+     },
+     "2026-05": {
+      "bars": 5328,
+      "expected_on_present_days": 5388,
+      "ratio": 0.9889,
+      "days": 21
+     },
+     "2026-06": {
+      "bars": 5580,
+      "expected_on_present_days": 5664,
+      "ratio": 0.9852,
+      "days": 22
+     },
+     "2026-07": {
+      "bars": 5846,
+      "expected_on_present_days": 5892,
+      "ratio": 0.9922,
+      "days": 23
+     },
+     "2026-08": {
+      "bars": 5411,
+      "expected_on_present_days": 5412,
+      "ratio": 0.9998,
+      "days": 21
+     },
+     "2026-09": {
+      "bars": 5595,
+      "expected_on_present_days": 5640,
+      "ratio": 0.992,
+      "days": 22
+     }
+    },
+    "short_days": [],
+    "n_short_days": 0,
+    "missing_weekdays": [
+     "2025-12-25",
+     "2026-01-01",
+     "2026-04-03"
+    ],
+    "n_missing_weekdays": 3,
+    "intraday_gaps_gt3bars": [
+     {
+      "start": "2025-11-12T06:25:00+00:00",
+      "end": "2025-11-12T06:45:00+00:00",
+      "minutes": 20.0
+     },
+     {
+      "start": "2025-11-12T06:45:00+00:00",
+      "end": "2025-11-12T08:00:00+00:00",
+      "minutes": 75.0
+     },
+     {
+      "start": "2026-07-27T14:00:00+00:00",
+      "end": "2026-07-27T14:20:00+00:00",
+      "minutes": 20.0
+     }
+    ],
+    "n_intraday_gaps_gt3bars": 3,
+    "dst_weeks": [
+     {
+      "kind": "EU_autumn",
+      "date": "2025-10-26",
+      "days": {
+       "2025-10-24": {
+        "bars": 252,
+        "expected": 252
+       },
+       "2025-10-25": {
+        "bars": 0,
+        "expected": 0
+       },
+       "2025-10-26": {
+        "bars": 12,
+        "expected": 0
+       },
+       "2025-10-27": {
+        "bars": 264,
+        "expected": 276
+       }
+      },
+      "worst_ratio": 0.957,
+      "ok": true
+     },
+     {
+      "kind": "US_autumn",
+      "date": "2025-11-02",
+      "days": {
+       "2025-10-31": {
+        "bars": 252,
+        "expected": 240
+       },
+       "2025-11-01": {
+        "bars": 0,
+        "expected": 0
+       },
+       "2025-11-02": {
+        "bars": 0,
+        "expected": 0
+       },
+       "2025-11-03": {
+        "bars": 276,
+        "expected": 276
+       }
+      },
+      "worst_ratio": 1.0,
+      "ok": true
+     },
+     {
+      "kind": "US_spring",
+      "date": "2026-03-08",
+      "days": {
+       "2026-03-06": {
+        "bars": 252,
+        "expected": 240
+       },
+       "2026-03-07": {
+        "bars": 0,
+        "expected": 0
+       },
+       "2026-03-08": {
+        "bars": 12,
+        "expected": 0
+       },
+       "2026-03-09": {
+        "bars": 264,
+        "expected": 276
+       }
+      },
+      "worst_ratio": 0.957,
+      "ok": true
+     },
+     {
+      "kind": "EU_spring",
+      "date": "2026-03-29",
+      "days": {
+       "2026-03-27": {
+        "bars": 252,
+        "expected": 240
+       },
+       "2026-03-28": {
+        "bars": 0,
+        "expected": 0
+       },
+       "2026-03-29": {
+        "bars": 0,
+        "expected": 0
+       },
+       "2026-03-30": {
+        "bars": 276,
+        "expected": 276
+       }
+      },
+      "worst_ratio": 1.0,
+      "ok": true
+     }
+    ],
+    "weekly_open_utc_hhmm_top": {
+     "22:00": 50,
+     "23:00": 18,
+     "22:15": 1,
+     "22:50": 1
+    }
+   }
+  },
+  "M1": {
+   "files": 4,
+   "bytes": 1065967,
+   "rejected_or_error": [],
+   "no_data_months": [],
+   "validator_status": {
+    "PASSED_WITH_WARNINGS": 4
+   },
+   "validator_warning_kinds": {
+    "SUSPICIOUS_GAP": 8
+   },
+   "file_sha256": {
+    "ACTIVTRADES_MT5_CFD\\BRENT\\bars_1m\\2026-06-12T103400__2026-06-30T205900.parquet": "0e47e7f869da4de69b6128d51689276d3a0598d40552a7964a53b4f81610a2fa",
+    "ACTIVTRADES_MT5_CFD\\BRENT\\bars_1m\\2026-07-01T000000__2026-07-31T205900.parquet": "b371c466314915a1eb79dd06fb1c8e07540d30bb2f9377459d42ae65cb7d195e",
+    "ACTIVTRADES_MT5_CFD\\BRENT\\bars_1m\\2026-08-02T220000__2026-08-31T205900.parquet": "202e79f1ec07f4ca2be8a18ad941f7ba61841d014179abd2d6e5c4bf5fc5ed42",
+    "ACTIVTRADES_MT5_CFD\\BRENT\\bars_1m\\2026-09-01T000000__2026-09-30T205900.parquet": "1bebdc0cb347134ad6fe04f6e25e2c43eba33abfe2926e7563ee5112b68dae7c"
+   },
+   "analysis": {
+    "rows": 100000,
+    "first_ts": "2026-06-12T10:34:00+00:00",
+    "last_ts": "2026-09-30T20:59:00+00:00",
+    "monotonic_strict": true,
+    "duplicate_ts": 0,
+    "future_ts": 0,
+    "tick_volume_peak_utc_by_season": {
+     "dst_summer": [
+      "08:29",
+      "18:28",
+      "22:00"
+     ]
+    },
+    "off_grid_ts": 0,
+    "bad_ohlc_rows": 0,
+    "flat_bars": 417,
+    "flat_bar_ratio": 0.00417,
+    "zero_tick_volume": 0,
+    "spread_pts": {
+     "n": 100000,
+     "zero_or_neg": 0,
+     "median": 6.0,
+     "p95": 7.0,
+     "p99": 8.0,
+     "max": 11.0
+    },
+    "expected_bars_by_weekday_and_server_dst": {
+     "wd0_dst": 1380,
+     "wd1_dst": 1260,
+     "wd2_dst": 1260,
+     "wd3_dst": 1260,
+     "wd4_dst": 1259
+    },
+    "months": {
+     "2026-06": {
+      "bars": 15856,
+      "expected_on_present_days": 16737,
+      "ratio": 0.9474,
+      "days": 13
+     },
+     "2026-07": {
+      "bars": 29160,
+      "expected_on_present_days": 29455,
+      "ratio": 0.99,
+      "days": 23
+     },
+     "2026-08": {
+      "bars": 27032,
+      "expected_on_present_days": 27056,
+      "ratio": 0.9991,
+      "days": 21
+     },
+     "2026-09": {
+      "bars": 27952,
+      "expected_on_present_days": 28196,
+      "ratio": 0.9913,
+      "days": 22
+     }
+    },
+    "short_days": [
+     {
+      "day": "2026-06-12",
+      "bars": 625,
+      "expected": 1259
+     }
+    ],
+    "n_short_days": 1,
+    "missing_weekdays": [],
+    "n_missing_weekdays": 0,
+    "intraday_gaps_gt3bars": [
+     {
+      "start": "2026-07-13T14:16:00+00:00",
+      "end": "2026-07-13T14:20:00+00:00",
+      "minutes": 4.0
+     },
+     {
+      "start": "2026-07-27T14:04:00+00:00",
+      "end": "2026-07-27T14:24:00+00:00",
+      "minutes": 20.0
+     },
+     {
+      "start": "2026-08-23T22:49:00+00:00",
+      "end": "2026-08-23T22:55:00+00:00",
+      "minutes": 6.0
+     },
+     {
+      "start": "2026-09-10T11:19:00+00:00",
+      "end": "2026-09-10T11:29:00+00:00",
+      "minutes": 10.0
+     },
+     {
+      "start": "2026-09-10T11:35:00+00:00",
+      "end": "2026-09-10T11:51:00+00:00",
+      "minutes": 16.0
+     },
+     {
+      "start": "2026-09-10T11:51:00+00:00",
+      "end": "2026-09-10T11:57:00+00:00",
+      "minutes": 6.0
+     }
+    ],
+    "n_intraday_gaps_gt3bars": 6,
+    "dst_weeks": [],
+    "weekly_open_utc_hhmm_top": {
+     "22:00": 16,
+     "10:34": 1
+    }
+   }
+  }
+ }
+}

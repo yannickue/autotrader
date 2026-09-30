@@ -1,0 +1,512 @@
+{
+ "canonical": "BTCUSD",
+ "broker_symbol": "BTCUSD",
+ "retrieved_at": "2026-09-30T22:57:34.385620+00:00",
+ "timezone_policy": {
+  "zone": "Europe/Berlin",
+  "basis": "INFERRED_FROM_LIVE_OFFSET_+7199s_2026-09-29_NOT_BROKER_CONFIRMED"
+ },
+ "timeframes": {
+  "M5": {
+   "files": 11,
+   "bytes": 1774664,
+   "rejected_or_error": [
+    {
+     "month": "2025-10",
+     "status": "ERROR",
+     "reason": "AmbiguousServerTime: ambiguous server time 2025-10-26T02:00:00 (Europe/Berlin)"
+    },
+    {
+     "month": "2026-03",
+     "status": "ERROR",
+     "reason": "AmbiguousServerTime: ambiguous server time 2026-03-29T02:00:00 (Europe/Berlin)"
+    }
+   ],
+   "no_data_months": [
+    "2025-06",
+    "2025-07",
+    "2025-08"
+   ],
+   "validator_status": {
+    "PASSED_WITH_WARNINGS": 11
+   },
+   "validator_warning_kinds": {
+    "SUSPICIOUS_GAP": 44
+   },
+   "file_sha256": {
+    "ACTIVTRADES_MT5_CFD\\BTCUSD\\bars_5m\\2025-09-24T104500__2025-09-30T235500.parquet": "0a5a6b81a4193a92009fbabf4be238f88bdd91ee7aa9f8fa4333ac781e14a458",
+    "ACTIVTRADES_MT5_CFD\\BTCUSD\\bars_5m\\2025-11-01T080000__2025-11-30T235500.parquet": "e07c6bc5bd8d0d1a9c89756b4309ea66d8aebd0cf5a04eeae02a7aa1a44915ee",
+    "ACTIVTRADES_MT5_CFD\\BTCUSD\\bars_5m\\2025-12-01T000000__2025-12-31T215500.parquet": "b584a82a007a9e081380d2733b21a0434956f6eb97242360b867e56c61e66a84",
+    "ACTIVTRADES_MT5_CFD\\BTCUSD\\bars_5m\\2026-01-01T220000__2026-01-31T235500.parquet": "f39674dce34b276298e9cacf0366817593a7135f855f41cca3ba9f71d0bf5914",
+    "ACTIVTRADES_MT5_CFD\\BTCUSD\\bars_5m\\2026-02-01T000000__2026-02-28T235500.parquet": "d3688439e57d00decc0d4baa1bb3b944f2db78c8f2d7fa6b59e7db3518ae41a8",
+    "ACTIVTRADES_MT5_CFD\\BTCUSD\\bars_5m\\2026-04-01T000000__2026-04-30T235500.parquet": "8a35b2570be13c2c249cfd0adcc20e6c16ad3e9588717d4b737218a6a5b6c9a6",
+    "ACTIVTRADES_MT5_CFD\\BTCUSD\\bars_5m\\2026-05-01T000000__2026-05-31T235500.parquet": "cea7b330e18afdcf986d4f35f0f521de501ecebce76dd08faf2816fc29163834",
+    "ACTIVTRADES_MT5_CFD\\BTCUSD\\bars_5m\\2026-06-01T000000__2026-06-30T235500.parquet": "f1d0a6e5c5c9881017fee7f34aa98dbc1324ade6a127de1f1d063c9a807bc37d",
+    "ACTIVTRADES_MT5_CFD\\BTCUSD\\bars_5m\\2026-07-01T000000__2026-07-31T205500.parquet": "9f684dd272ab1c18604726d94020d36fe775ef855fd0760347d3b7ec66fac461",
+    "ACTIVTRADES_MT5_CFD\\BTCUSD\\bars_5m\\2026-08-01T070000__2026-08-31T235500.parquet": "17efb46f47f11242b891b1a4c41052abf2388b3075268506395d4d7e07ed474a",
+    "ACTIVTRADES_MT5_CFD\\BTCUSD\\bars_5m\\2026-09-01T000000__2026-09-30T225500.parquet": "4e376be67463c45b428f18f07b5e2a4c4c6bf9fec01abfa0347bc499774a3205"
+   },
+   "analysis": {
+    "rows": 83187,
+    "first_ts": "2025-09-24T10:45:00+00:00",
+    "last_ts": "2026-09-30T22:55:00+00:00",
+    "monotonic_strict": true,
+    "duplicate_ts": 0,
+    "future_ts": 0,
+    "tick_volume_peak_utc_by_season": {
+     "dst_summer": [
+      "13:30",
+      "13:35",
+      "13:45"
+     ],
+     "std_winter": [
+      "01:30",
+      "01:15",
+      "04:15"
+     ]
+    },
+    "off_grid_ts": 0,
+    "bad_ohlc_rows": 0,
+    "flat_bars": 0,
+    "flat_bar_ratio": 0.0,
+    "zero_tick_volume": 0,
+    "spread_pts": {
+     "n": 83187,
+     "zero_or_neg": 0,
+     "median": 4569.0,
+     "p95": 9250.0,
+     "p99": 10357.0,
+     "max": 14454.0
+    },
+    "expected_bars_by_weekday_and_server_dst": {
+     "wd0_dst": 288,
+     "wd1_dst": 288,
+     "wd2_dst": 288,
+     "wd3_dst": 288,
+     "wd4_dst": 276,
+     "wd5_std": 180,
+     "wd5_dst": 180,
+     "wd6_std": 12,
+     "wd6_dst": 288
+    },
+    "months": {
+     "2025-09": {
+      "bars": 1743,
+      "expected_on_present_days": 1896,
+      "ratio": 0.9193,
+      "days": 7
+     },
+     "2025-10": {
+      "bars": 24,
+      "expected_on_present_days": 288,
+      "ratio": 0.0833,
+      "days": 1
+     },
+     "2025-11": {
+      "bars": 8052,
+      "expected_on_present_days": 960,
+      "ratio": 8.3875,
+      "days": 30
+     },
+     "2025-12": {
+      "bars": 8148,
+      "expected_on_present_days": 768,
+      "ratio": 10.6094,
+      "days": 31
+     },
+     "2026-01": {
+      "bars": 8052,
+      "expected_on_present_days": 948,
+      "ratio": 8.4937,
+      "days": 31
+     },
+     "2026-02": {
+      "bars": 7584,
+      "expected_on_present_days": 768,
+      "ratio": 9.875,
+      "days": 28
+     },
+     "2026-03": {
+      "bars": 12,
+      "expected_on_present_days": 12,
+      "ratio": 1.0,
+      "days": 1
+     },
+     "2026-04": {
+      "bars": 8136,
+      "expected_on_present_days": 8160,
+      "ratio": 0.9971,
+      "days": 30
+     },
+     "2026-05": {
+      "bars": 8328,
+      "expected_on_present_days": 8328,
+      "ratio": 1.0,
+      "days": 31
+     },
+     "2026-06": {
+      "bars": 8160,
+      "expected_on_present_days": 8160,
+      "ratio": 1.0,
+      "days": 30
+     },
+     "2026-07": {
+      "bars": 8436,
+      "expected_on_present_days": 8436,
+      "ratio": 1.0,
+      "days": 31
+     },
+     "2026-08": {
+      "bars": 8340,
+      "expected_on_present_days": 8340,
+      "ratio": 1.0,
+      "days": 31
+     },
+     "2026-09": {
+      "bars": 8160,
+      "expected_on_present_days": 8160,
+      "ratio": 1.0,
+      "days": 30
+     },
+     "2026-10": {
+      "bars": 12,
+      "expected_on_present_days": 288,
+      "ratio": 0.0417,
+      "days": 1
+     }
+    },
+    "short_days": [
+     {
+      "day": "2025-09-24",
+      "bars": 135,
+      "expected": 288
+     },
+     {
+      "day": "2025-10-01",
+      "bars": 24,
+      "expected": 288
+     },
+     {
+      "day": "2025-10-04",
+      "bars": 0,
+      "expected": 180
+     },
+     {
+      "day": "2025-10-05",
+      "bars": 0,
+      "expected": 288
+     },
+     {
+      "day": "2025-10-11",
+      "bars": 0,
+      "expected": 180
+     },
+     {
+      "day": "2025-10-12",
+      "bars": 0,
+      "expected": 288
+     },
+     {
+      "day": "2025-10-18",
+      "bars": 0,
+      "expected": 180
+     },
+     {
+      "day": "2025-10-19",
+      "bars": 0,
+      "expected": 288
+     },
+     {
+      "day": "2025-10-25",
+      "bars": 0,
+      "expected": 180
+     },
+     {
+      "day": "2025-10-26",
+      "bars": 0,
+      "expected": 12
+     },
+     {
+      "day": "2026-03-07",
+      "bars": 0,
+      "expected": 180
+     },
+     {
+      "day": "2026-03-08",
+      "bars": 0,
+      "expected": 12
+     },
+     {
+      "day": "2026-03-14",
+      "bars": 0,
+      "expected": 180
+     },
+     {
+      "day": "2026-03-15",
+      "bars": 0,
+      "expected": 12
+     },
+     {
+      "day": "2026-03-21",
+      "bars": 0,
+      "expected": 180
+     },
+     {
+      "day": "2026-03-22",
+      "bars": 0,
+      "expected": 12
+     },
+     {
+      "day": "2026-03-28",
+      "bars": 0,
+      "expected": 180
+     },
+     {
+      "day": "2026-03-29",
+      "bars": 0,
+      "expected": 288
+     },
+     {
+      "day": "2026-10-01",
+      "bars": 12,
+      "expected": 288
+     }
+    ],
+    "n_short_days": 19,
+    "missing_weekdays": [
+     "2025-10-02",
+     "2025-10-03",
+     "2025-10-06",
+     "2025-10-07",
+     "2025-10-08",
+     "2025-10-09",
+     "2025-10-10",
+     "2025-10-13",
+     "2025-10-14",
+     "2025-10-15",
+     "2025-10-16",
+     "2025-10-17",
+     "2025-10-20",
+     "2025-10-21",
+     "2025-10-22",
+     "2025-10-23",
+     "2025-10-24",
+     "2026-03-30",
+     "2026-03-31"
+    ],
+    "n_missing_weekdays": 19,
+    "intraday_gaps_gt3bars": [],
+    "n_intraday_gaps_gt3bars": 0,
+    "dst_weeks": [
+     {
+      "kind": "EU_autumn",
+      "date": "2025-10-26",
+      "days": {
+       "2025-10-24": {
+        "bars": 0,
+        "expected": 276
+       },
+       "2025-10-25": {
+        "bars": 0,
+        "expected": 180
+       },
+       "2025-10-26": {
+        "bars": 0,
+        "expected": 12
+       },
+       "2025-10-27": {
+        "bars": 0,
+        "expected": 0
+       }
+      },
+      "worst_ratio": 0.0,
+      "ok": false
+     },
+     {
+      "kind": "US_autumn",
+      "date": "2025-11-02",
+      "days": {
+       "2025-10-31": {
+        "bars": 0,
+        "expected": 0
+       },
+       "2025-11-01": {
+        "bars": 180,
+        "expected": 180
+       },
+       "2025-11-02": {
+        "bars": 288,
+        "expected": 12
+       },
+       "2025-11-03": {
+        "bars": 288,
+        "expected": 0
+       }
+      },
+      "worst_ratio": 1.0,
+      "ok": true
+     },
+     {
+      "kind": "US_spring",
+      "date": "2026-03-08",
+      "days": {
+       "2026-03-06": {
+        "bars": 0,
+        "expected": 0
+       },
+       "2026-03-07": {
+        "bars": 0,
+        "expected": 180
+       },
+       "2026-03-08": {
+        "bars": 0,
+        "expected": 12
+       },
+       "2026-03-09": {
+        "bars": 0,
+        "expected": 0
+       }
+      },
+      "worst_ratio": 0.0,
+      "ok": false
+     },
+     {
+      "kind": "EU_spring",
+      "date": "2026-03-29",
+      "days": {
+       "2026-03-27": {
+        "bars": 0,
+        "expected": 0
+       },
+       "2026-03-28": {
+        "bars": 0,
+        "expected": 180
+       },
+       "2026-03-29": {
+        "bars": 0,
+        "expected": 288
+       },
+       "2026-03-30": {
+        "bars": 0,
+        "expected": 288
+       }
+      },
+      "worst_ratio": 0.0,
+      "ok": false
+     }
+    ],
+    "weekly_open_utc_hhmm_top": {
+     "19:00": 27,
+     "20:00": 17,
+     "10:45": 1,
+     "08:00": 1,
+     "00:00": 1
+    }
+   }
+  },
+  "M1": {
+   "files": 3,
+   "bytes": 2071535,
+   "rejected_or_error": [],
+   "no_data_months": [
+    "2026-06"
+   ],
+   "validator_status": {
+    "PASSED_WITH_WARNINGS": 3
+   },
+   "validator_warning_kinds": {
+    "SUSPICIOUS_GAP": 9
+   },
+   "file_sha256": {
+    "ACTIVTRADES_MT5_CFD\\BTCUSD\\bars_1m\\2026-07-19T080300__2026-07-31T205900.parquet": "f9931c0aa65a33ec366b28cd0b4561929ededea4ff32db15f801f55d05e107b2",
+    "ACTIVTRADES_MT5_CFD\\BTCUSD\\bars_1m\\2026-08-01T070000__2026-08-31T235900.parquet": "5837df13be07bc26a08d96da61c0f7dae9da8b8a016917c37f771ab8b6190f42",
+    "ACTIVTRADES_MT5_CFD\\BTCUSD\\bars_1m\\2026-09-01T000000__2026-09-30T225700.parquet": "095e8cd97cd9a8be676b6016d2d7de3ad1383813357382ff2b99eb65a3015423"
+   },
+   "analysis": {
+    "rows": 100000,
+    "first_ts": "2026-07-19T08:03:00+00:00",
+    "last_ts": "2026-09-30T22:57:00+00:00",
+    "monotonic_strict": true,
+    "duplicate_ts": 0,
+    "future_ts": 0,
+    "tick_volume_peak_utc_by_season": {
+     "dst_summer": [
+      "13:35",
+      "13:47",
+      "13:31"
+     ]
+    },
+    "off_grid_ts": 0,
+    "bad_ohlc_rows": 0,
+    "flat_bars": 24,
+    "flat_bar_ratio": 0.00024,
+    "zero_tick_volume": 0,
+    "spread_pts": {
+     "n": 100000,
+     "zero_or_neg": 0,
+     "median": 5076.0,
+     "p95": 6919.0,
+     "p99": 8920.0,
+     "max": 16760.0
+    },
+    "expected_bars_by_weekday_and_server_dst": {
+     "wd0_dst": 1439,
+     "wd1_dst": 1440,
+     "wd2_dst": 1440,
+     "wd3_dst": 1439,
+     "wd4_dst": 1380,
+     "wd5_dst": 900,
+     "wd6_dst": 1440
+    },
+    "months": {
+     "2026-07": {
+      "bars": 17454,
+      "expected_on_present_days": 18056,
+      "ratio": 0.9667,
+      "days": 13
+     },
+     "2026-08": {
+      "bars": 41694,
+      "expected_on_present_days": 41691,
+      "ratio": 1.0001,
+      "days": 31
+     },
+     "2026-09": {
+      "bars": 40794,
+      "expected_on_present_days": 40792,
+      "ratio": 1.0,
+      "days": 30
+     },
+     "2026-10": {
+      "bars": 58,
+      "expected_on_present_days": 1439,
+      "ratio": 0.0403,
+      "days": 1
+     }
+    },
+    "short_days": [
+     {
+      "day": "2026-07-19",
+      "bars": 837,
+      "expected": 1440
+     },
+     {
+      "day": "2026-10-01",
+      "bars": 58,
+      "expected": 1439
+     }
+    ],
+    "n_short_days": 2,
+    "missing_weekdays": [],
+    "n_missing_weekdays": 0,
+    "intraday_gaps_gt3bars": [],
+    "n_intraday_gaps_gt3bars": 0,
+    "dst_weeks": [],
+    "weekly_open_utc_hhmm_top": {
+     "19:00": 11,
+     "08:03": 1
+    }
+   }
+  }
+ }
+}
