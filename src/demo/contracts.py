@@ -146,6 +146,8 @@ class TradeIntent(_Record):
     valid_until_utc: str  # stale-signal expiry
     forced_flat_utc: str | None
     risk_fraction: float  # of equity, <= policy cap
+    entry_tolerance: float | None = None  # adverse drift tolerated (price units)
+    context: dict[str, Any] | None = None  # family/confidence/atr etc.: logged only, never sizing
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
