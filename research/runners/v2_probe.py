@@ -1,0 +1,585 @@
+# ruff: noqa: E501
+"""V2 PROBE runner (Phase 12 prep): a cheap, Train-only structural probe per market.
+
+Research only.  Per market it builds the dev frame / FeatureStore / EventSet / MarketFrame, generates
+``--n-candidates`` unique temporal structures (DEAP/niche evolution with a small budget + random fill
+round-robin over all archetypes), evaluates them with the sealed ``TemporalEvaluator`` and writes a
+compact campaign report (``probe_summary.json`` + ``probe_summary.md`` + ``ledger.json`` +
+``candidate_pool.json``).
+
+SEALING.  The search path only ever calls ``evaluate(..., need_base=False)`` (lean, Train side
+only); ``ProbeEvaluator.evaluate`` refuses the full (non-lean) mode.  The fold TEST sides (see
+``alpha.discovery.folds``) are the evaluator's sealed "validation" view and are never computed
+here.  Nothing after 2026-08-31 can enter (forward holdout).  Every number in the summary is a
+Train number of the search fold (fold 0 train side).
+
+    python research/runners/v2_probe.py --markets GER40 --n-candidates 300 --tag smoke
+"""
+
+from __future__ import annotations
+
+import argparse
+import dataclasses
+import json
+import shutil
+import statistics
+import sys
+import time
+from collections import Counter
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+for _path in (str(REPO_ROOT), str(REPO_ROOT / "src")):
+    if _path not in sys.path:
+        sys.path.insert(0, _path)
+
+import numpy as np  # noqa: E402
+
+from alpha.common.frame import ENTRY_END_MIN, ENTRY_START_MIN  # noqa: E402
+from alpha.common.protocol import stable_hash  # noqa: E402
+from alpha.common.sim import (  # noqa: E402
+    COST_SCENARIOS,
+    CostScenario,
+    SimRules,
+    SizingSpec,
+)
+from alpha.discovery import temporal_compile  # noqa: E402
+from alpha.discovery.disk import assert_free_space  # noqa: E402
+from alpha.discovery.fitness import train_fitness  # noqa: E402
+from alpha.discovery.folds import (  # noqa: E402
+    SearchSplitPlan,
+    berlin_dates_from_ts_ns,
+    fold_report,
+    make_folds,
+)
+from alpha.discovery.temporal_archetypes import available_archetypes, random_genome  # noqa: E402
+from alpha.discovery.temporal_evaluate import (  # noqa: E402
+    TemporalEval,
+    TemporalEvaluator,
+    TemporalTrialLedger,
+)
+from alpha.discovery.temporal_genome import (  # noqa: E402
+    EventPool,
+    TemporalGenome,
+    canonicalize,
+    genome_tfs,
+)
+from alpha.discovery.temporal_niches import Elite, NicheArchive, niche_key, role_path  # noqa: E402
+from alpha.discovery.temporal_search import evolve_temporal, lineage_family  # noqa: E402
+from alpha.fast.screen import screen_partition_trades  # noqa: E402
+from alpha.fast.sim import (  # noqa: E402
+    EXIT_FIXED_R,
+    SKIP_LABELS,
+    CandidateArrays,
+    MarketArrays,
+    simulate_fast,
+)
+from alpha.temporal.evaluate import evaluate_temporal_many  # noqa: E402
+
+DEFAULT_CONFIG = REPO_ROOT / "research/configs/v2_probe.json"
+SUMMARY_VERSION = "v2-probe-summary-v1"
+ADVERSE = "COMBINED_ADVERSE"
+BASE = "BASE"
+POOL_KEEP = 100
+
+
+def log(msg: str) -> None:
+    print(msg, flush=True)
+
+
+# --------------------------------------------------------------------------- small helpers
+def peak_rss_mb() -> float | None:
+    """Peak resident set size of this process in MiB (Windows: PeakWorkingSetSize)."""
+    try:
+        import resource  # type: ignore[import-not-found]
+
+        return round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0, 1)
+    except ImportError:
+        pass
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class _PMC(ctypes.Structure):
+            _fields_ = [("cb", wintypes.DWORD), ("PageFaultCount", wintypes.DWORD),
+                        ("PeakWorkingSetSize", ctypes.c_size_t), ("WorkingSetSize", ctypes.c_size_t),
+                        ("QuotaPeakPagedPoolUsage", ctypes.c_size_t), ("QuotaPagedPoolUsage", ctypes.c_size_t),
+                        ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+                        ("QuotaNonPagedPoolUsage", ctypes.c_size_t), ("PagefileUsage", ctypes.c_size_t),
+                        ("PeakPagefileUsage", ctypes.c_size_t)]
+
+        pmc = _PMC()
+        pmc.cb = ctypes.sizeof(_PMC)
+        kernel32, psapi = ctypes.WinDLL("kernel32"), ctypes.WinDLL("psapi")
+        kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+        psapi.GetProcessMemoryInfo.argtypes = [wintypes.HANDLE, ctypes.POINTER(_PMC), wintypes.DWORD]
+        if not psapi.GetProcessMemoryInfo(kernel32.GetCurrentProcess(), ctypes.byref(pmc), pmc.cb):
+            return None
+        return round(pmc.PeakWorkingSetSize / 2**20, 1)
+    except Exception:
+        return None
+
+
+def _q(values: list[float] | np.ndarray, qs=(0.05, 0.25, 0.5, 0.75, 0.95)) -> dict[str, float] | None:
+    a = np.asarray([v for v in values if v is not None and np.isfinite(v)], dtype=float)
+    if len(a) == 0:
+        return None
+    out = {f"p{int(q * 100):02d}": round(float(np.quantile(a, q)), 6) for q in qs}
+    out["min"], out["max"], out["mean"], out["n"] = (round(float(a.min()), 6), round(float(a.max()), 6),
+                                                    round(float(a.mean()), 6), len(a))
+    return out
+
+
+def market_arrays(features: Any) -> MarketArrays:
+    """MarketArrays from a FeatureSet (same wiring as ``ar2_fast._market``)."""
+    contig = np.asarray(features["contig"], dtype=bool)
+    return MarketArrays(features["o"], features["h"], features["l"], features["c"], features["spread"],
+                        features["berlin_minute"], features["berlin_day_id"], np.r_[contig[1:], False])
+
+
+def market_sim_params(spec: Any, cfg: dict, median_atr_price: float
+                      ) -> tuple[SizingSpec, SimRules, dict[str, CostScenario], float]:
+    """(sizing, rules, {BASE, COMBINED_ADVERSE}, scale) for a market.
+
+    GER40 keeps the V1 constants (scale 1).  Other markets scale slippage and the risk-distance
+    bounds by ``median_atr / cfg.reference.ger40_median_atr_price`` and take contract size / lot
+    step / min lot from the MarketSpec; the spread cap is the spec's (PRICE units)."""
+    s = cfg["sizing"]
+    if spec.canonical == "GER40":
+        scale = 1.0
+        lot_step, min_lot, contract = s["lot_step"], s["min_lot"], spec.contract_size
+    else:
+        ref = cfg["reference"].get("ger40_median_atr_price")
+        if not ref:
+            raise ValueError("config reference.ger40_median_atr_price is required for non-GER40 markets")
+        scale = float(median_atr_price) / float(ref)
+        lot_step, min_lot, contract = spec.volume_step, spec.volume_min, spec.contract_size
+    sizing = SizingSpec(
+        equity_eur=s["equity_eur"], risk_fraction=s["risk_fraction"], lot_step=lot_step, min_lot=min_lot,
+        max_leverage=min(s["max_leverage"], spec.max_leverage), min_risk_pts=s["min_risk_pts"] * scale,
+        max_risk_pts=s["max_risk_pts"] * scale, contract_size=contract,
+    )
+    rules = SimRules(max_trades_per_day=cfg["rules"]["max_trades_per_day"],
+                     max_entry_spread_pts=spec.max_entry_spread_price)
+    costs = {n: dataclasses.replace(COST_SCENARIOS[n], slippage_pts=COST_SCENARIOS[n].slippage_pts * scale)
+             for n in (BASE, ADVERSE)}
+    return sizing, rules, costs, scale
+
+
+# --------------------------------------------------------------------------- evaluator
+class ProbeEvaluator(TemporalEvaluator):
+    """Sealed evaluator that also records every valid lean evaluation and sim skip totals."""
+
+    def __init__(self, *a: Any, **kw: Any) -> None:
+        super().__init__(*a, **kw)
+        self.skip_totals = np.zeros(len(SKIP_LABELS), dtype=np.int64)
+        self.records: dict[str, tuple[TemporalGenome, TemporalEval, str]] = {}
+        self.stage = "init"
+
+    def _reduce(self, trades, want_val):  # type: ignore[no-untyped-def]
+        self.skip_totals += np.asarray(trades.skip_counts, dtype=np.int64)
+        return super()._reduce(trades, want_val)
+
+    def evaluate(self, genome: TemporalGenome, kind: str = "structural", need_base: bool = False
+                 ) -> TemporalEval:
+        if need_base:
+            raise RuntimeError("the probe search path is Train-only: the full (non-lean) mode is forbidden")
+        res = super().evaluate(genome, kind, need_base=False)
+        if res.reject != "invalid_genome" and res.genome_hash not in self.records:
+            self.records[res.genome_hash] = (canonicalize(genome), res, self.stage)
+        return res
+
+
+# --------------------------------------------------------------------------- context
+@dataclass
+class ProbeContext:
+    """Everything the search needs; built from real data or from a synthetic frame (tests)."""
+
+    market_name: str
+    frame_provider: Callable[[], Any]
+    market: MarketArrays
+    dates: np.ndarray
+    plan: SearchSplitPlan
+    fold_rep: dict
+    pool: EventPool
+    sizing: SizingSpec
+    rules: SimRules
+    costs: dict[str, CostScenario]
+    scale: float
+    data_fingerprint: str
+    atr: np.ndarray
+    meta: dict = field(default_factory=dict)
+
+
+def build_real_context(canonical: str, cfg: dict, cache_dir: Path) -> ProbeContext:
+    from alpha.discovery.folds import assert_dev_only
+    from alpha.events.store import load_or_build_events
+    from alpha.temporal.frame import build_market_frame
+    from markets.spec import load_market_spec
+    from research.runners import v2_market_frame as mf
+
+    t0 = time.perf_counter()
+    spec = load_market_spec(canonical)
+    source = cfg["ger40_source"] if canonical == "GER40" else "v2"
+    dev = mf.build_dev_frame(spec, source)
+    features = mf.build_feature_store(dev, spec, cache_dir)
+    dates = berlin_dates_from_ts_ns(features["ts_ns"])
+    assert_dev_only(dates)
+    f = cfg["folds"]
+    folds = make_folds(dates, f["n_folds"], f["embargo_days"], f["purge_bars"],
+                       initial_train_frac=f["initial_train_frac"], min_test_days=f["min_test_days"])
+    plan = SearchSplitPlan.from_folds(dates, folds)
+    events = load_or_build_events(features, None, Path(cache_dir) / "events")
+    ev_mb = sum(p.stat().st_size for p in (Path(cache_dir) / "events").rglob("*.npy")) / 2**20
+    if ev_mb > cfg["max_event_cache_mb"]:
+        raise RuntimeError(f"EventSet cache is {ev_mb:.0f} MB > {cfg['max_event_cache_mb']} MB limit")
+    frame = build_market_frame(features, events, plan=plan)
+    atr = np.asarray(features["m5_atr14"], dtype=float)
+    med_atr = float(np.nanmedian(atr[plan.mask(dates, plan.train)]))
+    sizing, rules, costs, scale = market_sim_params(spec, cfg, med_atr)
+    sanity = mf.sanity_report(spec, dev, features, source)
+    keep = ("calendar_status", "calendar_provisional", "n_bars", "first_bar_utc", "last_bar_utc",
+            "n_local_days", "n_cash_session_days", "bars_per_day", "share_bars_in_entry_window",
+            "share_entry_window_bars_over_cap", "gaps")
+    meta = {
+        "source": source, "sanity": {k: sanity[k] for k in keep}, "median_atr14_price_train": med_atr,
+        "scale_vs_ger40": scale, "event_cache_mb": round(ev_mb, 1),
+        "features_cache_key": getattr(features, "metadata", {}).get("cache_key"),
+        "events_cache_key": getattr(events, "metadata", {}).get("cache_key"),
+        "build_s": round(time.perf_counter() - t0, 1),
+        "sim_window_note": ("simulate_fast uses the GER40 Berlin entry/flat constants (09:00-20:00 / "
+                            "21:30) for EVERY market" if canonical != "GER40" else "V1 constants"),
+    }
+    if sanity["calendar_provisional"]:
+        log(f"[{canonical}] WARNING provisional calendar (status={sanity['calendar_status']})")
+    fp = stable_hash({"f": meta["features_cache_key"], "e": meta["events_cache_key"], "m": canonical})
+    return ProbeContext(canonical, lambda: frame, market_arrays(features), dates, plan,
+                        fold_report(dates, folds, f["embargo_days"]),
+                        EventPool.from_array_names(events), sizing, rules, costs, scale, fp, atr, meta)
+
+
+# --------------------------------------------------------------------------- search
+def run_search(ev: ProbeEvaluator, ctx: ProbeContext, cfg: dict, n_candidates: int, seed: int,
+               timings: dict[str, float]) -> dict:
+    s = cfg["search"]
+    info: dict[str, Any] = {}
+    pool = ctx.pool
+    t0 = time.perf_counter()
+    ev.stage = "deap"
+    budget = min(int(s["deap_budget_fraction"] * n_candidates), s["deap_pop"] * (s["deap_gens"] + 1))
+    if budget >= s["deap_pop"] and s["deap_pop"] >= 2:
+        res = evolve_temporal(ev, pool, s["deap_pop"], s["deap_gens"], seed, s["deap_cxpb"], s["deap_mutpb"],
+                              max_evaluations=budget, hof_size=max(s["deap_pop"], 50))
+        info["deap"] = {"budget": budget, "unique_evaluations": res.evaluations_used,
+                        "budget_exhausted": res.budget_exhausted, "generations_run": len(res.stats) - 1,
+                        "niches_at_end": res.archive.n_niches, "twins_rejected": res.archive.twins_rejected}
+    else:
+        info["deap"] = {"budget": budget, "skipped": True}
+    timings["search_deap_s"] = round(time.perf_counter() - t0, 2)
+
+    t0 = time.perf_counter()
+    ev.stage = "random"
+    rng = np.random.default_rng(seed + 1)
+    names = available_archetypes(pool)
+    attempts, i = 0, 0
+    while ev.ledger.unique < n_candidates and attempts < 8 * n_candidates:
+        g = random_genome(rng, pool, archetype=names[i % len(names)])
+        i += 1
+        attempts += 1
+        ev.evaluate(g, kind="structural", need_base=False)
+        if attempts % 200 == 0:
+            log(f"[random] attempts={attempts} unique={ev.ledger.unique}/{n_candidates}")
+    info["random"] = {"attempts": attempts, "archetypes": list(names)}
+    timings["search_random_s"] = round(time.perf_counter() - t0, 2)
+    ev.flush()
+    return info
+
+
+# --------------------------------------------------------------------------- analysis (Train only)
+def _train_mask(ctx: ProbeContext) -> np.ndarray:
+    return ctx.plan.mask(ctx.dates, ctx.plan.train)
+
+
+def cofire_stats(ev: ProbeEvaluator, ctx: ProbeContext, passers: list[tuple[TemporalGenome, TemporalEval, str]],
+                 top_k: int) -> dict:
+    """Same-bar same-direction overlap between the top-K passers (by Train trade count) on Train bars.
+
+    Uses the candidate decision bars (what a SignalRecord's ``decision_idx``/``direction`` carry)."""
+    top = sorted(passers, key=lambda t: (-t[1].train.adverse.screen.n_trades, t[1].genome_hash))[:top_k]
+    if len(top) < 2:
+        return {"n_strategies": len(top), "note": "fewer than 2 passers"}
+    tm = _train_mask(ctx)
+    specs = [temporal_compile.compile_temporal(g, ev.resolver, canonical=True) for g, _, _ in top]
+    results = evaluate_temporal_many(specs, ev.frame, use_cache=False)
+    sets = []
+    for r in results:
+        c = r.candidates
+        keep = tm[c.decision_idx] if len(c.decision_idx) else np.zeros(0, bool)
+        sets.append(set((c.decision_idx[keep].astype(np.int64) * 2 + (c.direction[keep] > 0)).tolist()))
+    jac = []
+    for a in range(len(sets)):
+        for b in range(a + 1, len(sets)):
+            u = len(sets[a] | sets[b])
+            jac.append(len(sets[a] & sets[b]) / u if u else 0.0)
+    cnt: Counter[int] = Counter()
+    for s in sets:
+        cnt.update(s)
+    union = len(cnt)
+    multi = sum(1 for v in cnt.values() if v >= 2)
+    return {
+        "n_strategies": len(sets), "pairs": len(jac), "jaccard": _q(jac, (0.5, 0.9, 0.99)),
+        "share_pairs_jaccard_gt_0.1": round(float(np.mean(np.asarray(jac) > 0.1)), 4),
+        "union_decision_bars": union, "bars_with_ge2_same_direction": multi,
+        "share_bars_with_ge2_same_direction": round(multi / union, 4) if union else None,
+        "max_concurrent_same_direction": max(cnt.values()) if cnt else 0,
+        "note": "Jaccard on (decision bar, direction) sets of the top-K by Train trade count; Train bars only",
+    }
+
+
+def drift_baselines(ctx: ProbeContext, ev: ProbeEvaluator, cfg: dict, seed: int,
+                    tpd_median: float | None) -> dict:
+    """Train-only drift baselines: always long/short, random long/short, same-session random.
+
+    V1 ``alpha.discovery.baseline`` is bound to V1 ``StrategySpec`` genomes (reference spec of the
+    candidate) and cannot be reused for temporal specs; this is a market-level equivalent with a
+    fixed ATR stop and fixed-R target under the COMBINED_ADVERSE cost."""
+    b = cfg["baselines"]
+    m, tm = ctx.market, _train_mask(ctx)
+    atr = ctx.atr
+    ok = tm & np.isfinite(atr) & (atr > 0) & (m.minute >= ENTRY_START_MIN) & (m.minute < ENTRY_END_MIN)
+    idx = np.flatnonzero(ok)
+    n_days = len(np.unique(m.day[tm]))
+    cost = ev._costs[ADVERSE]
+
+    def sim(decision: np.ndarray, direction: np.ndarray) -> dict:
+        if len(decision) == 0:
+            return {"n_trades": 0, "expectancy_r": None, "trades_per_day": 0.0}
+        o = np.argsort(decision, kind="stable")
+        decision, direction = decision[o], direction[o]
+        stop = m.c[decision] - direction * b["stop_atr_mult"] * atr[decision]
+        c = CandidateArrays(decision, direction.astype(np.int8), stop, np.full(len(decision), np.nan),
+                            np.full(len(decision), float(b["target_r"])),
+                            np.full(len(decision), EXIT_FIXED_R, dtype=np.int8))
+        tr = simulate_fast(m, c, cost, ctx.sizing, ctx.rules)
+        mask = tm[tr.entry_idx] if len(tr) else np.zeros(0, bool)
+        sc = screen_partition_trades(tr, mask, n_days, contract_size=ctx.sizing.contract_size)
+        return {"n_trades": sc.n_trades,
+                "expectancy_r": None if sc.expectancy_r is None else round(sc.expectancy_r, 5),
+                "trades_per_day": None if sc.trades_per_day is None else round(sc.trades_per_day, 4)}
+
+    out: dict[str, Any] = {
+        "stop_atr_mult": b["stop_atr_mult"], "target_r": b["target_r"], "cost": ADVERSE,
+        "eligible_train_bars": len(idx), "train_days": n_days,
+        "always_long": sim(idx, np.ones(len(idx), np.int8)),
+        "always_short": sim(idx, -np.ones(len(idx), np.int8)),
+    }
+    rng = np.random.default_rng(seed + 7)
+    rl = [sim(idx, rng.choice(np.array([-1, 1], np.int8), len(idx))) for _ in range(b["draws"])]
+    out["random_long_short"] = _draws(rl)
+    k = max(1, round(tpd_median)) if tpd_median else 1
+    day_of = m.day[idx]
+    days, start = np.unique(day_of, return_index=True)
+    bounds = np.r_[start, len(idx)]
+    ss = []
+    for _ in range(b["draws"]):
+        pick = np.concatenate([bounds[i] + rng.choice(bounds[i + 1] - bounds[i],
+                                                       min(k, bounds[i + 1] - bounds[i]), replace=False)
+                               for i in range(len(days))]) if len(days) else np.zeros(0, int)
+        ss.append(sim(idx[pick], rng.choice(np.array([-1, 1], np.int8), len(pick))))
+    out["same_session_random"] = {**_draws(ss), "decisions_per_day": k}
+    return out
+
+
+def _draws(rows: list[dict]) -> dict:
+    e = [r["expectancy_r"] for r in rows if r["expectancy_r"] is not None]
+    return {"draws": len(rows), "expectancy_r_mean": round(float(np.mean(e)), 5) if e else None,
+            "expectancy_r_sd": round(float(np.std(e)), 5) if len(e) > 1 else None,
+            "trades_mean": round(float(np.mean([r["n_trades"] for r in rows])), 1) if rows else None}
+
+
+def summarize(ev: ProbeEvaluator, ctx: ProbeContext, cfg: dict, n_candidates: int, timings: dict[str, float],
+              search_info: dict, prior: dict) -> tuple[dict, list[dict]]:
+    led = ev.ledger
+    recs = list(ev.records.values())
+    n_days_train = len(np.unique(ctx.market.day[_train_mask(ctx)]))
+    reasons = Counter(r.reject or "pass" for _, r, _ in recs)
+    passers = [t for t in recs if not t[1].rejected]
+    dec = [r.n_train_candidates for _, r, _ in recs]
+    zero = sum(1 for d in dec if d == 0)
+    fam: dict[str, dict] = {}
+    for g, r, _ in recs:
+        f = fam.setdefault(lineage_family(r.lineage or g.lineage), {"n": 0, "pass": 0, "zero": 0, "e": []})
+        f["n"] += 1
+        f["zero"] += r.n_train_candidates == 0
+        if not r.rejected:
+            f["pass"] += 1
+            f["e"].append(r.train.adverse.screen.expectancy_r)
+    families = {k: {"n": v["n"], "passed_min_trades": v["pass"],
+                    "zero_train_decision_share": round(v["zero"] / v["n"], 4),
+                    "train_expectancy_r_adverse": _q(v["e"], (0.25, 0.5, 0.75))}
+                for k, v in sorted(fam.items())}
+    arch = Counter(lineage_family(g.lineage) for g, _, _ in recs)
+    tfsets = Counter("+".join(genome_tfs(g)) for g, _, _ in recs)
+    roles = Counter(role_path(g) for g, _, _ in recs)
+    archive = NicheArchive()
+    for g, r, _ in passers:
+        key = niche_key(g, r.trades_per_day)
+        archive.visit(key)
+        archive.insert(Elite(key, r.genome_hash, train_fitness(r.train, ev.min_trades), r.twin_hash))
+    tpd = [r.trades_per_day for _, r, _ in passers]
+    t0 = time.perf_counter()
+    cof = cofire_stats(ev, ctx, passers, cfg["confluence"]["top_k"])
+    timings["cofire_s"] = round(time.perf_counter() - t0, 2)
+    t0 = time.perf_counter()
+    base = drift_baselines(ctx, ev, cfg, cfg["seed"], statistics.median([t for t in tpd if t]) if any(tpd) else None)
+    timings["baselines_s"] = round(time.perf_counter() - t0, 2)
+    cum_trials = prior["trials"] + led.total_trials
+    cum_unique = prior["unique_specs"] + led.unique
+    exp = [r.train.adverse.screen.expectancy_r for _, r, _ in passers]
+    summary = {
+        "summary_version": SUMMARY_VERSION, "market": ctx.market_name,
+        "scope": "TRAIN side of search fold 0 only; no Validation/fold-test number anywhere",
+        "folds": ctx.fold_rep, "search_train_days": n_days_train, "min_train_trades": ev.min_trades,
+        "data": ctx.meta, "sizing": dataclasses.asdict(ctx.sizing), "rules": dataclasses.asdict(ctx.rules),
+        "counts": {
+            "n_candidates_target": n_candidates, "evaluations_total": led.total_trials,
+            "unique_specs": led.unique, "duplicate_rejects": led.duplicate_rejects,
+            "invalid_rejects": led.invalid_rejects, "cache_hits": led.cache_hits,
+            "structural_trials": led.structural_trials, "param_trials": led.param_trials,
+            "unique_behaviors": led.unique_behaviors, "behavioral_twins": led.behavioral_twins,
+            "unique_twin_streams": led.unique_twin_streams, "valid_evaluated": len(recs),
+            "sims_run": ev.sim_count, "reject_reasons": dict(reasons),
+            "passed_min_trades": len(passers),
+        },
+        "cumulative": {"prior_label": prior["label"], "prior_trials": prior["trials"],
+                       "prior_unique_specs": prior["unique_specs"], "cumulative_trials": cum_trials,
+                       "cumulative_unique_specs": cum_unique},
+        "zero_trade": {"share_zero_train_decisions": round(zero / len(recs), 4) if recs else None,
+                       "n_zero": zero, "share_zero_candidates_reject": round(
+                           reasons.get("zero_candidates", 0) / len(recs), 4) if recs else None},
+        "train_decisions": _q(dec),
+        "train_trades_passers": _q([r.train.adverse.screen.n_trades for _, r, _ in passers]),
+        "train_trades_per_day_passers": _q(tpd),
+        "train_expectancy_r_adverse_passers_informational": _q(exp),
+        "families": families, "family_counts": dict(sorted(arch.items())),
+        "tf_sets": dict(tfsets.most_common(15)), "n_tf_sets": len(tfsets),
+        "event_signatures_top": dict(roles.most_common(15)), "n_event_signatures": len(roles),
+        "niches": {**archive.stats(), "n_passer_niches": archive.n_niches},
+        "sim_skips": dict(zip(SKIP_LABELS, (int(x) for x in ev.skip_totals), strict=True)),
+        "sim_skips_note": "summed over the simulations actually run this campaign (cache hits excluded)",
+        "confluence_cofire": cof, "drift_baselines_train": base, "search": search_info,
+        "runtime_s": timings, "peak_rss_mb": peak_rss_mb(),
+    }
+    pool_rows = sorted(passers, key=lambda t: (-train_fitness(t[1].train, ev.min_trades), t[1].genome_hash))[:POOL_KEEP]
+    pool = [{"canonical_hash": r.genome_hash, "train_fitness": round(train_fitness(r.train, ev.min_trades), 8),
+             "stage": stage, "lineage": g.lineage, "genome": g.to_dict()} for g, r, stage in pool_rows]
+    return summary, pool
+
+
+def render_markdown(s: dict) -> str:
+    c, z = s["counts"], s["zero_trade"]
+    lines = [
+        f"# V2 probe: {s['market']}",
+        "", f"Scope: {s['scope']}.", "",
+        f"- unique specs {c['unique_specs']} (evaluations {c['evaluations_total']}, duplicates "
+        f"{c['duplicate_rejects']}, invalid {c['invalid_rejects']}, behavioural twins {c['behavioral_twins']})",
+        f"- cumulative trials incl. {s['cumulative']['prior_label']}: {s['cumulative']['cumulative_trials']} "
+        f"(unique specs {s['cumulative']['cumulative_unique_specs']})",
+        f"- passed min {s['min_train_trades']} Train trades: {c['passed_min_trades']}; reject reasons {c['reject_reasons']}",
+        f"- zero-Train-decision share {z['share_zero_train_decisions']}",
+        f"- Train trades/day (passers): {s['train_trades_per_day_passers']}",
+        f"- families {s['family_counts']}",
+        f"- TF sets {s['n_tf_sets']}, event signatures {s['n_event_signatures']}, niches {s['niches']['niches']}",
+        f"- sim skips {s['sim_skips']}",
+        f"- co-fire: {s['confluence_cofire']}",
+        f"- drift baselines (Train): {s['drift_baselines_train']}",
+        f"- runtime {s['runtime_s']}, peak RSS {s['peak_rss_mb']} MB",
+    ]
+    if s["data"].get("sanity", {}).get("calendar_provisional"):
+        lines.append("- WARNING: provisional calendar for this market")
+    return "\n".join(lines) + "\n"
+
+
+# --------------------------------------------------------------------------- driver
+def run_probe(ctx: ProbeContext, cfg: dict, n_candidates: int, seed: int, out_dir: Path,
+              cache_dir: Path | None = None, resume: bool = False) -> dict:
+    t_all = time.perf_counter()
+    timings: dict[str, float] = {}
+    out_dir.mkdir(parents=True, exist_ok=True)
+    prior = dict(cfg["prior"])
+    ledger_path = out_dir / "ledger.json"
+    ledger = TemporalTrialLedger()
+    carried = {"trials": 0, "unique_specs": 0}
+    if resume and ledger_path.exists():
+        old = json.loads(ledger_path.read_text(encoding="utf-8"))
+        ledger = TemporalTrialLedger.from_json(json.dumps(old["ledger"]))
+        carried = {"trials": ledger.total_trials, "unique_specs": ledger.unique}
+    ev = ProbeEvaluator(ctx.frame_provider, ctx.market, ctx.dates, ctx.plan, sizing=ctx.sizing, rules=ctx.rules,
+                        cost_scenarios=ctx.costs, min_train_trades=cfg["min_train_trades"], ledger=ledger,
+                        cache_dir=cache_dir, data_fingerprint=ctx.data_fingerprint)
+    log(f"[{ctx.market_name}] search: n_candidates={n_candidates} seed={seed} train_days="
+        f"{len(np.unique(ctx.market.day[_train_mask(ctx)]))}")
+    t0 = time.perf_counter()
+    search_info = run_search(ev, ctx, cfg, n_candidates, seed, timings)
+    timings["search_total_s"] = round(time.perf_counter() - t0, 2)
+    summary, pool = summarize(ev, ctx, cfg, n_candidates, timings, search_info, prior)
+    summary["ledger_carried_in"] = carried
+    timings["total_s"] = round(time.perf_counter() - t_all, 2)
+    summary["peak_rss_mb"] = peak_rss_mb()
+    led_json = json.loads(ledger.to_json())
+    header = {"v1_cumulative": prior, "this_campaign": {"seed": seed, "n_candidates": n_candidates,
+                                                       "carried_in": carried},
+              "config_hash": stable_hash(cfg), "fold_digest": ctx.plan.fold_digest}
+    ledger_path.write_text(json.dumps({"header": header, "ledger": led_json}, indent=1, sort_keys=True),
+                           encoding="utf-8")
+    (out_dir / "candidate_pool.json").write_text(json.dumps(
+        {"meta": {"scope": "Train-only ranking (search fold 0)", "fold_digest": ctx.plan.fold_digest,
+                  "prior": prior}, "candidates": pool}, indent=1, sort_keys=True, allow_nan=False),
+        encoding="utf-8")
+    (out_dir / "probe_summary.json").write_text(json.dumps(summary, indent=1, sort_keys=True, allow_nan=False),
+                                                encoding="utf-8")
+    (out_dir / "probe_summary.md").write_text(render_markdown(summary), encoding="utf-8")
+    log(f"[{ctx.market_name}] done: unique={summary['counts']['unique_specs']} "
+        f"passed={summary['counts']['passed_min_trades']} total {timings['total_s']}s -> {out_dir}")
+    return summary
+
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("--config", default=str(DEFAULT_CONFIG))
+    p.add_argument("--markets", nargs="*", default=None, help="subset/order of the config markets")
+    p.add_argument("--n-candidates", type=int, default=None, help="default: config n_candidates (1500)")
+    p.add_argument("--seed", type=int, default=None)
+    p.add_argument("--out-root", default=None)
+    p.add_argument("--cache-dir", default=None)
+    p.add_argument("--resume", action="store_true", help="carry the existing per-market ledger.json counts")
+    p.add_argument("--keep-cache", action="store_true", help="do not delete the feature/event caches at the end")
+    return p
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    cfg = json.loads(Path(args.config).read_text(encoding="utf-8"))
+    n = args.n_candidates if args.n_candidates is not None else cfg["n_candidates"]
+    seed = args.seed if args.seed is not None else cfg["seed"]
+    cache_dir = Path(args.cache_dir or REPO_ROOT / cfg["cache_dir"])
+    out_root = Path(args.out_root or REPO_ROOT / cfg["out_root"])
+    markets = args.markets or cfg["markets"]
+    assert_free_space(cache_dir)
+    try:
+        for m in markets:
+            ctx = build_real_context(m, cfg, cache_dir)
+            log(f"[{m}] median ATR14 (train) = {ctx.meta['median_atr14_price_train']:.6g}, "
+                f"scale vs GER40 = {ctx.scale:.4g}")
+            run_probe(ctx, cfg, n, seed, out_root / m, cache_dir / "evals", args.resume)
+    finally:
+        if not args.keep_cache:
+            shutil.rmtree(cache_dir, ignore_errors=True)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
