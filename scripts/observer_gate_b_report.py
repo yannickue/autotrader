@@ -42,6 +42,11 @@ CAVEATS = [
 ]
 
 
+def _init_worker(src: str) -> None:
+    """Pool initializer: put src/ in front of scripts/ (scripts/coverage_analysis.py would shadow the package of the same name in a spawned child)."""
+    sys.path.insert(0, src)
+
+
 def wilson(k: int, n: int, z: float = 1.96) -> tuple[float, float]:
     if n == 0:
         return (float("nan"), float("nan"))
@@ -363,6 +368,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--n-shallow", type=int, default=20)
     ap.add_argument("--seed", type=int, default=11)
     ap.add_argument("--force", action="store_true")
+    ap.add_argument("--jobs", type=int, default=1, help="markets in parallel worker processes (1..3; results identical to --jobs 1, markets share no state)")
     ap.add_argument("--reuse-audit", action="store_true", help="recompute everything except the (slow) leakage audit / parity results already cached per market")
     a = ap.parse_args(argv)
     import entry_exit_quality as X
@@ -370,20 +376,44 @@ def main(argv: list[str] | None = None) -> int:
     p2 = X._find_phase2_root(a.phase2_root)
     p2 = None if p2 is None else str(p2)
     root = Path(a.root)
-    results, missing = [], []
+    from research_speed.parallel import MAX_WORKERS, clamp_jobs
+
+    if not 1 <= a.jobs <= MAX_WORKERS:
+        raise SystemExit(f"--jobs must be 1..{MAX_WORKERS} (8 GB RAM)")
+    plan: dict[str, tuple[str, dict | None]] = {}  # market -> ("cached" | "missing" | "todo", cached json)
     for m in a.markets:
         cache = root / m / "gate_b.json"
         if cache.is_file() and not a.force and not a.reuse_audit:
-            results.append(json.loads(cache.read_text(encoding="utf-8")))
-            continue
-        if not (root / m / "manifest.json").is_file():
+            plan[m] = ("cached", json.loads(cache.read_text(encoding="utf-8")))
+        elif not (root / m / "manifest.json").is_file():
+            plan[m] = ("missing", None)
+        else:
+            plan[m] = ("todo", json.loads(cache.read_text(encoding="utf-8")) if cache.is_file() else None)
+    todo = [m for m in a.markets if plan[m][0] == "todo"]
+    fresh: dict[str, dict] = {}
+    if a.jobs > 1 and len(todo) > 1:
+        from concurrent.futures import ProcessPoolExecutor
+
+        with ProcessPoolExecutor(max_workers=clamp_jobs(a.jobs, len(todo)), initializer=_init_worker, initargs=(str(ROOT / "src"),)) as ex:
+            futs = {m: ex.submit(gate_b_market, m, root, p2, a, plan[m][1]) for m in todo}
+            for m in todo:  # collected in market order: the report never depends on completion order
+                fresh[m] = futs[m].result()
+    else:
+        for m in todo:
+            print(f"{m}: gate B ...", flush=True)
+            fresh[m] = gate_b_market(m, root, p2, a, plan[m][1])
+    results, missing = [], []
+    for m in a.markets:
+        kind, cached = plan[m]
+        if kind == "cached":
+            results.append(cached)
+        elif kind == "missing":
             missing.append(m)
-            continue
-        print(f"{m}: gate B ...", flush=True)
-        r = gate_b_market(m, root, p2, a, json.loads(cache.read_text(encoding="utf-8")) if cache.is_file() else None)
-        cache.write_text(json.dumps(r, indent=1, default=str), encoding="utf-8")
-        results.append(r)
-        print(f"{m}: {r['verdict']} blocking={r['blocking']} in {r['gate_b_seconds']}s", flush=True)
+        else:
+            r = fresh[m]
+            (root / m / "gate_b.json").write_text(json.dumps(r, indent=1, default=str), encoding="utf-8")
+            results.append(r)
+            print(f"{m}: {r['verdict']} blocking={r['blocking']} in {r['gate_b_seconds']}s", flush=True)
     sha = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
     verdict = "PASS" if results and not missing and all(r["verdict"] == "PASS" for r in results) and len(results) == len(ACTIVE) else "FAIL"
     meta = {"generated": time.strftime("%Y-%m-%d %H:%M"), "git_sha": sha, "root": a.root, "missing": missing, "verdict": verdict if not (missing or len(results) < len(ACTIVE)) else f"{verdict} (INCOMPLETE: {len(results)}/{len(ACTIVE)} markets)"}

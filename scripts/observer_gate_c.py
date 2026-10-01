@@ -14,7 +14,7 @@ What it does (see ``docs/OBSERVER_GATE_C_PREREGISTRATION.md``, the single source
 * reads the preregistration from the machine-readable block of that document and records the file hash and the block hash in the report;
 * PREFLIGHT (always first; ``--preflight`` runs only this): reads ONLY counts and the per-market ``controls_manifest.json`` (control method version, content
   fingerprint, balance gate). A failing preflight registers NOTHING and does not consume the stop rule (exit code 5);
-* per market (``--jobs`` worker processes, default 2, max 2; results independent of the number of workers): loads ONLY the rows of the stage's partition,
+* per market (``--jobs`` worker processes, default 2, max 3; results independent of the number of workers): loads ONLY the rows of the stage's partition,
   builds the derived features, freezes the cells on TRAIN (``fit``) or applies the stored ones, and calls ``observer_lab.enrichment.incremental_ablation``
   (``observer-stats-2``: controls blocked by the day of their EVENT, blocks counted per arm) for the predeclared contrasts, the random negative control,
   the A/A test (NC-A), the shift placebo (NC-B) and, for explore markets, the controls-3 vs controls-2 bridge (NC-C, descriptive);
@@ -58,7 +58,7 @@ DEFAULT_PREREG = ROOT / "docs" / "OBSERVER_GATE_C_PREREGISTRATION.md"
 REGISTRY_FILE = "observer_gate_c2_registry.json"
 REPORT_STEM = "observer_gate_c2_report"
 PREFLIGHT_STEM = "observer_gate_c2_preflight"
-MAX_JOBS = 2  # 8 GB machine
+MAX_JOBS = 3  # 8 GB machine (research_speed.parallel.MAX_WORKERS); the effective count is also capped by free memory
 FILE_PARTITION = {"TRAIN": "TRAIN", "VALIDATION": "VALIDATION", "OOS": "FROZEN_OOS"}  # partition names as written by the backfill
 UNUSABLE_TAGS = ("PURGED", "EMBARGO")
 BASE_COLS = ("event_id", "is_control", "control_of", "decision_ts_ns", "direction", "warmup_ok", "partition")
@@ -757,17 +757,32 @@ def register_stage(reg: Any, plan: list[dict[str, Any]], existing: dict[str, Any
     return False
 
 
+_CODE_HASH: str | None = None
+
+
+def code_hash() -> str:
+    """Content hash of this script and of every repo module it (transitively, also lazily) imports: a changed enrichment / stats / split module can never be served from the cache."""
+    global _CODE_HASH
+    if _CODE_HASH is None:
+        from research_speed.importgraph import code_hash as _ch
+
+        _CODE_HASH = _ch([Path(__file__).resolve()], [ROOT / "src", ROOT / "scripts"], ROOT)
+    return _CODE_HASH
+
+
 def fingerprint(prereg: Prereg, task: dict[str, Any]) -> str:
-    """Cache key: script version, prereg block, stage/market/parameters AND the CONTENT fingerprint of the data (file hashes, row counts, schema hash,
+    """Cache key: script version, CODE content hash, prereg block, stage/market/parameters AND the CONTENT fingerprint of the data (file hashes, row counts, schema hash,
     partition counts, manifest hash), never just size / mtime."""
-    body = {"v": SCRIPT_VERSION, "prereg": prereg.json_sha256, "stage": task["stage"], "market": task["market"], "B": task["B"], "B_week": task["B_week"], "seed": task["seed"], "data": task["data_fingerprint"],
+    body = {"v": SCRIPT_VERSION, "code": code_hash(), "prereg": prereg.json_sha256, "stage": task["stage"], "market": task["market"], "B": task["B"], "B_week": task["B_week"], "seed": task["seed"], "data": task["data_fingerprint"],
             "contrasts": [(c["id"], c["kind"], c["feature"], c["cell"]) for c in task["contrasts"]], "cell_defs": _sha(task.get("cell_defs")), "nc_base_alpha": task["nc_base_alpha"], "nc_b_tol_s": task["nc_b_tol_s"], "bridge": task.get("bridge")}
     return _sha(body)
 
 
 def _evaluate_markets(tasks: list[dict[str, Any]], jobs: int) -> list[dict[str, Any]]:
     if jobs > 1 and len(tasks) > 1:
-        with ProcessPoolExecutor(max_workers=min(jobs, len(tasks))) as ex:
+        from research_speed.parallel import clamp_jobs
+
+        with ProcessPoolExecutor(max_workers=clamp_jobs(jobs, len(tasks))) as ex:
             return list(ex.map(run_market, tasks))  # order preserved: the result never depends on completion order
     return [run_market(t) for t in tasks]
 

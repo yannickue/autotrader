@@ -542,7 +542,7 @@ def test_out_inside_root_and_bad_jobs_are_refused(tmp_path, prereg, prereg_path)
     with pytest.raises(SystemExit):
         G.main(["--root", str(root), "--out", str(root / "gate_c"), "--markets", "GER40", "--prereg", str(prereg_path)])
     with pytest.raises(SystemExit):
-        G.main(["--root", str(root), "--out", str(tmp_path / "o"), "--jobs", "3", "--prereg", str(prereg_path)])
+        G.main(["--root", str(root), "--out", str(tmp_path / "o"), "--jobs", "4", "--prereg", str(prereg_path)])
     with pytest.raises(ValueError):
         G.main(["--root", str(root), "--out", str(tmp_path / "o"), "--markets", "FOOBAR", "--prereg", str(prereg_path)])
 

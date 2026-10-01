@@ -90,6 +90,7 @@ from market_observer.schema import (
     SCHEMA_VERSION,
     ObserverBars,
 )
+from research_speed.segments import atomic_write_text
 
 if TYPE_CHECKING:  # pragma: no cover
     from coverage_analysis.entry_exit import MarketInputs
@@ -494,6 +495,7 @@ def _observe_pass(
 
 def _assemble_files(mdir: Path, parts_dir: Path, files: dict[str, str]) -> dict[str, int]:
     """Merge the chunk files into the final column-group files (table / events / features / labels)."""
+    mdir.mkdir(parents=True, exist_ok=True)
     tbl_parts = sorted(parts_dir.glob("table-*.parquet"))
     ev_parts = sorted(parts_dir.glob("events-*.parquet"))
     counts: dict[str, int] = {}
@@ -510,6 +512,13 @@ def _assemble_files(mdir: Path, parts_dir: Path, files: dict[str, str]) -> dict[
     counts["labels"] = _split_file(mdir / files["table"], mdir / files["labels"], ["event_id", "is_control", "control_of", *label_cols])
     counts["events"] = _merge_parts(ev_parts, mdir / files["events"], list(EVENT_BASE_COLS) + list(EVENT_EXTRA_COLS) + list(PARTITION_COLS))
     return counts
+
+
+def _promote_staged(stage_dir: Path, mdir: Path, files: dict[str, str]) -> None:
+    """Move the fully written staged files into place (``os.replace``); the manifest (commit marker) is still written afterwards."""
+    for f in files.values():
+        os.replace(stage_dir / f, mdir / f)
+    shutil.rmtree(stage_dir, ignore_errors=True)
 
 
 def _partition_summary(events_path: Path) -> dict[str, int]:
@@ -548,6 +557,7 @@ def run_events_step(
     for f in (*EVENT_FILES.values(), "manifest.json", "opportunity_bars.parquet"):
         (mdir / f).unlink(missing_ok=True)
     shutil.rmtree(mdir / "_parts", ignore_errors=True)
+    shutil.rmtree(mdir / "_stage", ignore_errors=True)
     parts_dir = mdir / "_parts"
     parts_dir.mkdir()
     fh = _attach_log(mdir)
@@ -566,8 +576,9 @@ def run_events_step(
         embargo_s = float(max_label_bars * bars.bar_seconds)
         n_rows, t_obs = _observe_pass(bars, cfg, items, run_id=run_id, plan=plan, embargo_s=embargo_s, parts_dir=parts_dir, chunk_rows=chunk_rows, max_label_bars=max_label_bars)
         log.info("observer pass done: %d rows in %.1fs (%.2f ms/row incl. registry)", n_rows, t_obs, 1000 * t_obs / max(n_rows, 1))
-        counts = _assemble_files(mdir, parts_dir, EVENT_FILES)
+        counts = _assemble_files(mdir / "_stage", parts_dir, EVENT_FILES)  # staged: an abort never leaves a half-written final file
         shutil.rmtree(parts_dir)
+        _promote_staged(mdir / "_stage", mdir, EVENT_FILES)
         fam_counts: Counter[str] = Counter(f"{e.family}|{e.variant or ''}|{'long' if e.direction > 0 else 'short'}" for e in events)
         manifest = {
             "status": "COMPLETE", "step": "events", "fingerprint": fp, "run_id": run_id, "backfill_version": BACKFILL_VERSION, "events_pipeline_version": EVENTS_PIPELINE_VERSION,
@@ -596,7 +607,7 @@ def run_events_step(
             ],
             **(extra_manifest or {}),
         }
-        (mdir / "manifest.json").write_text(json.dumps(manifest, indent=1, default=str), encoding="utf-8")
+        atomic_write_text(mdir / "manifest.json", json.dumps(manifest, indent=1, default=str))  # commit marker: written last, atomically
         log.info("events step done market=%s rows=%s runtime=%.1fs peak_mb=%s", market, counts, time.time() - t0, manifest["peak_memory_mb"])
         manifest["status_this_call"] = "BUILT"
         return manifest
@@ -659,6 +670,7 @@ def run_controls_step(
     for f in (*CONTROL_FILES.values(), "controls_manifest.json"):
         (mdir / f).unlink(missing_ok=True)
     shutil.rmtree(mdir / "_parts_controls", ignore_errors=True)
+    shutil.rmtree(mdir / "_stage_controls", ignore_errors=True)
     parts_dir = mdir / "_parts_controls"
     parts_dir.mkdir()
     fh = _attach_log(mdir)
@@ -688,8 +700,9 @@ def run_controls_step(
         embargo_s = float(max_label_bars * bars.bar_seconds)
         n_rows, t_obs = _observe_pass(bars, cfg, items, run_id=run_id, plan=plan, embargo_s=embargo_s, parts_dir=parts_dir, chunk_rows=chunk_rows, max_label_bars=max_label_bars)
         log.info("controls observer pass done: %d rows in %.1fs", n_rows, t_obs)
-        counts = _assemble_files(mdir, parts_dir, CONTROL_FILES)
+        counts = _assemble_files(mdir / "_stage_controls", parts_dir, CONTROL_FILES)
         shutil.rmtree(parts_dir)
+        _promote_staged(mdir / "_stage_controls", mdir, CONTROL_FILES)
         # partition agreement of control and event (the revised matching enforces it: expected 0)
         cpart = pd.read_parquet(mdir / CONTROL_FILES["events"], columns=["control_of", "partition"]) if counts.get("events") else pd.DataFrame({"control_of": [], "partition": []})
         joined = cpart.merge(events[["event_id", "partition"]].rename(columns={"event_id": "control_of", "partition": "event_partition"}), on="control_of", how="left")
@@ -716,7 +729,7 @@ def run_controls_step(
             ],
             **(extra_manifest or {}),
         }
-        (mdir / "controls_manifest.json").write_text(json.dumps(manifest, indent=1, default=str), encoding="utf-8")
+        atomic_write_text(mdir / "controls_manifest.json", json.dumps(manifest, indent=1, default=str))  # commit marker: written last, atomically
         log.info("controls step done market=%s rows=%s runtime=%.1fs", market, counts, time.time() - t0)
         manifest["status_this_call"] = "BUILT"
         return manifest

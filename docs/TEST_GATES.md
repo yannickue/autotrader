@@ -65,3 +65,35 @@ Paper mode requires all implemented gates to pass. Shadow and live promotion add
 recorded replay parity, reconciliation and restart tests, chaos tests, venue sandbox evidence,
 operational alerts, credential isolation, rollback/runbooks, and explicit human approval. A passing
 unit suite alone never enables live trading.
+
+## Named tiers T0-T3 and impact selection (additive; the segments above are unchanged)
+
+| Tier | What | Target | Command |
+|---|---|---|---|
+| **T0** | `ruff check` + `compileall` of the changed python files + the touched test files themselves | < 60 s, local inner loop | `run_tests.py t0` |
+| **T1** impact | the tests selected from the changed paths (`scripts/impact_tests.py`, conservative) | 2-5 min | `run_tests.py t1` (= `changed`) |
+| **T2** | INTEGRATION + SAFETY segments (merge gate) | ~15 min | `run_tests.py t2` |
+| **T3** release | FULL (fast + integration + slow) + SAFETY overlay; run the broker canary manually when execution / risk / exits changed | 20-45 min | `run_tests.py t3` |
+
+Impact mapping (every pre-existing `MATRIX` rule stays; the rules below are added on top, all matching rules count):
+
+| Changed path | Selected |
+|---|---|
+| `src/market_observer/`, `src/coverage_analysis/`, `src/research_speed/`, `src/demo/observer_store.py`, `scripts/observer_*` | observer tests, observer-lab tests (leakage / negative controls / controls / backfill / gate C), live-vs-batch parity, observer store, research tests, research_speed tests |
+| `src/execution/` | execution + reconciliation/persistence + risk + contracts + chaos + demo execution + the SAFETY overlay (+ canary note) |
+| `src/risk/` | risk + portfolio + property + contracts + execution + the SAFETY overlay |
+| `src/exits/` | exit engine + protective orders (execution) + execution integration + integration tier |
+| `docs/`, `reports/`, `*.md`, `*.txt` only | no pytest; `git diff --check` |
+| test helper / `conftest.py` below `tests/<a>/` | that directory; `tests/conftest.py`, `pyproject.toml`, `uv.lock`, top-level test helpers -> segmented FULL |
+| anything else (unknown path) | WIDER, never narrower: `-m "fast or integration or safety"` |
+
+No test is removed, deselected or weakened; FULL stays available (`full` / `t3`).
+
+### Green-result cache (opt-in, `run_tests.py changed --result-cache`; default OFF)
+
+A previous GREEN run of an explicit file list may be reused only when the test files, the conftest chain, the static import
+closure of repo modules, `pyproject.toml`, `uv.lock`, `configs/`, `tests/fixtures/`, the Python version and the pytest arguments
+are byte-identical (`scripts/test_result_cache.py`). In doubt: miss. It never serves `-m` selections, SAFETY / chaos / replay /
+parity / broker / serial suites, or the integration and slow tiers (so no safety segment is ever "proved" by the cache), and the
+`fast|integration|safety|slow|full|t2|t3` commands never consult it. A hit is printed as `CACHE HIT` with the original green
+time; a safety segment must always run for a release.

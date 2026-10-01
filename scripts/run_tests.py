@@ -12,7 +12,8 @@ Usage (from the repo root):
     uv run python scripts/run_tests.py safety
     uv run python scripts/run_tests.py slow
     uv run python scripts/run_tests.py full            # segmented FULL; see budget note
-    uv run python scripts/run_tests.py changed [--base REF] [PATH ...]
+    uv run python scripts/run_tests.py changed [--base REF] [PATH ...] [--result-cache]
+    uv run python scripts/run_tests.py t0|t1|t2|t3   # named tiers (TEST_GATES.md); t1 == changed
     uv run python scripts/run_tests.py <cmd> --dry-run # print the pytest commands only
 
 Extra pytest arguments go after `--`, e.g. `run_tests.py fast -- -x -k exits`.
@@ -27,6 +28,11 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+# impact_tests / test_result_cache live next to this file. APPENDED (not prepended): scripts/
+# holds modules (e.g. coverage_analysis.py) that must never shadow src/ packages of that name.
+sys.path.append(str(Path(__file__).resolve().parent))
+
+import impact_tests  # noqa: E402
 
 # Hard wall-clock guard per pytest invocation (seconds). Not a per-test timeout; it only
 # stops a hung segment from blocking the machine (live runner shares it).
@@ -176,29 +182,29 @@ def changed_paths(base: str) -> list[str]:
     out += subprocess.run(
         ["git", "diff", "--name-only"], cwd=ROOT, capture_output=True, text=True, check=False
     ).stdout.split()
+    # new files that are not added yet must select tests too (never select less)
+    out += subprocess.run(
+        ["git", "ls-files", "--others", "--exclude-standard"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    ).stdout.split()
     return sorted(set(out))
+
+
+def impact_plan(paths: list[str]) -> impact_tests.Plan:
+    """Impact selection (scripts/impact_tests.py): MATRIX + explicit additions, never narrower."""
+    return impact_tests.impact(paths, MATRIX)
 
 
 def plan_for(paths: list[str]) -> list[list[str]]:
     """Translate changed paths into pytest invocations (deduplicated, stable order)."""
-    targets: list[str] = []
-    marks: list[str] = []
-    for p in paths:
-        p = p.replace("\\", "/")
-        if (
-            p.startswith("tests/")
-            and p.endswith(".py")
-            and "/test_" in "/" + p.split("tests/", 1)[1]
-        ):
-            targets.append(p)
-            continue
-        for prefix, tgt in MATRIX:
-            if p.startswith(prefix):
-                for t in tgt:
-                    (marks if t.startswith("m:") else targets).append(
-                        t[2:] if t.startswith("m:") else t
-                    )
-                break
+    ip = impact_plan(paths)
+    if ip.full:  # global tooling / config change: the segmented FULL suite (separate processes)
+        return [["-m", "fast"], ["-m", "integration"], ["-m", "slow"]]
+    targets: list[str] = list(ip.targets)
+    marks: list[str] = list(ip.marks)
     plan: list[list[str]] = []
     expanded: list[str] = []
     for t in targets:
@@ -214,15 +220,79 @@ def plan_for(paths: list[str]) -> list[list[str]]:
     return plan
 
 
+def _run_planned(plan: list[list[str]], extra: list[str], dry: bool, use_cache: bool) -> int:
+    """Run the impact invocations. With ``use_cache`` an invocation that is an explicit, eligible
+    file list may be served from the green-result cache (scripts/test_result_cache.py); never for
+    -m selections."""
+    rc = 0
+    for p in plan:
+        cand = None
+        if use_cache:
+            import test_result_cache as trc
+
+            cand, why = trc.candidate(p, extra)
+            if cand is None:
+                print(f"result-cache: not eligible ({why})", flush=True)
+            else:
+                hit = trc.lookup(cand)
+                if hit is not None:
+                    print(
+                        f"result-cache: CACHE HIT {cand.fingerprint[:12]} "
+                        f"({len(cand.files)} files, green {hit['green_utc']}Z, "
+                        f"was {hit['wall_s']}s) "
+                        "- NOT re-run",
+                        flush=True,
+                    )
+                    continue
+                print(f"result-cache: MISS {cand.fingerprint[:12]}", flush=True)
+        cmd = pytest_cmd([*p, *extra])
+        t0 = time.monotonic()
+        r = run(cmd, SEGMENT_TIMEOUT_S["safety"], dry)
+        if r == 0 and cand is not None and not dry:
+            import test_result_cache as trc
+
+            trc.store(cand, cmd, time.monotonic() - t0)
+        rc |= r
+    return rc
+
+
+def _tier_t0(paths: list[str], dry: bool) -> int:
+    """T0 (< 60 s): ruff + compileall on changed python files + the touched test files."""
+    py = [
+        p
+        for p in (x.replace("\\", "/") for x in paths)
+        if p.endswith(".py") and (ROOT / p).is_file()
+    ]
+    tests = [p for p in py if p.startswith("tests/") and p.rsplit("/", 1)[-1].startswith("test_")]
+    rc = 0
+    if py:
+        rc |= run([sys.executable, "-m", "ruff", "check", *py], 120, dry)
+        rc |= run([sys.executable, "-m", "compileall", "-q", *py], 120, dry)
+    else:
+        print("T0: no changed python files (docs-only?) - lint/compile skipped")
+    if tests:
+        rc |= run(pytest_cmd(tests), 180, dry)
+    print("T0 is the inner loop only; it does not replace T1 (`changed`) before a merge.")
+    return rc
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    ap.add_argument("cmd", choices=[*SEGMENTS, "full", "changed"])
-    ap.add_argument("paths", nargs="*", help="changed paths (changed only; default: git diff)")
+    ap.add_argument("cmd", choices=[*SEGMENTS, "full", "changed", "t0", "t1", "t2", "t3"])
+    ap.add_argument(
+        "paths", nargs="*", help="changed paths (changed/t0/t1 only; default: git diff)"
+    )
     ap.add_argument("--base", default="main", help="git base ref for `changed` (default: main)")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--workers", type=int, default=None, help="xdist workers (0/1 = serial)")
+    ap.add_argument(
+        "--result-cache",
+        action="store_true",
+        help="changed/t1 only: reuse a previous GREEN run of an unchanged, eligible fast-tier file "
+        "set (default OFF; never for safety/integration/slow suites or -m selections)",
+    )
     args, rest = ap.parse_known_args()
     extra = [a for a in rest if a != "--"]
 
@@ -232,7 +302,7 @@ def main() -> int:
         return run(
             pytest_cmd([*SEGMENTS[args.cmd], *extra], w), SEGMENT_TIMEOUT_S[args.cmd], args.dry_run
         )
-    if args.cmd == "full":
+    if args.cmd in ("full", "t3"):
         print(
             "FULL = fast + integration + slow segments (separate processes). "
             "Expected ~10-14 min (docs/TEST_TIMING.md); defer if > 15 min."
@@ -240,18 +310,41 @@ def main() -> int:
         for seg in ("fast", "integration", "slow"):
             w = DEFAULT_WORKERS[seg] if args.workers is None else args.workers
             rc |= run(pytest_cmd([*SEGMENTS[seg], *extra], w), SEGMENT_TIMEOUT_S[seg], args.dry_run)
+        if args.cmd == "t3":
+            w = DEFAULT_WORKERS["safety"] if args.workers is None else args.workers
+            rc |= run(
+                pytest_cmd([*SEGMENTS["safety"], *extra], w),
+                SEGMENT_TIMEOUT_S["safety"],
+                args.dry_run,
+            )
+            print(
+                "T3 release: run the broker canary manually (scripts/e2_broker_canary.py) if "
+                "execution / risk / exits changed. This tier never uses the result cache."
+            )
+        return rc
+    if args.cmd == "t2":
+        for seg in ("integration", "safety"):
+            w = DEFAULT_WORKERS[seg] if args.workers is None else args.workers
+            rc |= run(pytest_cmd([*SEGMENTS[seg], *extra], w), SEGMENT_TIMEOUT_S[seg], args.dry_run)
         return rc
     paths = args.paths or changed_paths(args.base)
+    if args.cmd == "t0":
+        return _tier_t0(paths, args.dry_run)
+    ip = impact_plan(paths)
+    for n in ip.notes:
+        print(f"NOTE: {n}")
+    if ip.widened:
+        print(f"WIDENED (no specific rule; never select less): {', '.join(ip.widened)}")
+    if ip.docs_only:
+        print("Docs-only change: no pytest; running the doc checks (git diff --check).")
+        return run(["git", "diff", "--check"], 60, args.dry_run)
     plan = plan_for(paths)
     if not plan:
         print(
-            "No mapped test targets for the changed paths; "
-            "nothing to run (research-only/docs changes)."
+            "No changed paths (nothing to select); use a named segment or `full` for a wider run."
         )
         return 0
-    for p in plan:
-        rc |= run(pytest_cmd([*p, *extra]), SEGMENT_TIMEOUT_S["safety"], args.dry_run)
-    return rc
+    return _run_planned(plan, extra, args.dry_run, args.result_cache)
 
 
 if __name__ == "__main__":
