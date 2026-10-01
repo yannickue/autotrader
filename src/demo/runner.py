@@ -2028,6 +2028,11 @@ class DemoRunner:
             self.request_stop(RECOVERY_STOP_REASON)
             return True
         if self.fail_reason is not None:
+            if LANE_TIMEOUT_FATAL in self.fail_reason:
+                # Lane V (HIGH-2): a latched MT5-lane timeout is a no-action fatal - this process can never flatten again, and
+                # staying alive (open store intents count as exposure) would make the EOD recovery treat it as healthy.
+                # Exit 7 now: the supervisor's exposure continuation / the independent EOD recovery start a fresh lane.
+                return True
             # keep managing exits while a position may still be open, up to manage_after_halt_s
             if self._halted_since is None or not self._has_open_exposure():
                 return True
@@ -2147,6 +2152,7 @@ class DemoRunner:
 
 # ------------------------------------------------------------------------------------ factory
 RECOVERY_STOP_REASON = "eod_recovery_flat_confirmed"
+LANE_TIMEOUT_FATAL = "mt5_lane_timeout"
 
 
 class LiveStackRefused(RuntimeError):

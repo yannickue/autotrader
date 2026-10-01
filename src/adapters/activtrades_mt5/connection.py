@@ -115,6 +115,12 @@ class MT5Connection:
         `adapters/config.py`) -- never on a normal test/preflight/discovery/
         downloader run.
 
+        Note (Lane V): the MetaTrader5 Python API's `initialize()` is
+        attach-or-LAUNCH - it starts the terminal process if it is not
+        running, with or without a path; the API offers no attach-only
+        mode. This module never starts the terminal explicitly, but an
+        unattended terminal start is a possible side effect of the API.
+
         Also enforces single ownership: a real MT5 connection lock
         (`adapters/activtrades_mt5/lock.py`) is acquired before any
         `initialize()` call; if another process already holds it, this

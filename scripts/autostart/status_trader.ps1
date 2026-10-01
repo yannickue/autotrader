@@ -7,6 +7,7 @@ param([string]$ArtifactsDir = 'artifacts\demo_100k', [string]$TaskName = 'AutoTr
 $ErrorActionPreference = 'Continue'
 $RepoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 if ([System.IO.Path]::IsPathRooted($ArtifactsDir)) { $art = $ArtifactsDir } else { $art = Join-Path $RepoRoot $ArtifactsDir }
+Write-Host "NOTE: both tasks run with LogonType InteractiveToken = only while the user is LOGGED ON. After a reboot with no logon NO task runs (including the EOD recovery): positions would stay open overnight protected only by broker stops. See docs\AUTOSTART.md."
 foreach ($tn in @($TaskName, $EodTaskName)) {
     Write-Host "== scheduled task '$tn'"
     $t = Get-ScheduledTask -TaskName $tn -ErrorAction SilentlyContinue

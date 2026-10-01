@@ -394,7 +394,7 @@ class OpportunityEngine:
             overlay = live_spec(ms, self._op, signal_utc)
             if overlay is None:  # flatten runway / flatten phase: no entry can be generated on this bar
                 self.health[market] = "outside_live_entry_window"
-                self._last_bar[market] = last_ts
+                self._last_bar[bar_key] = last_ts
                 return []
             live_ms = overlay
         self.health[market] = "ok"

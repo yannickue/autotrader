@@ -6,6 +6,7 @@
     @@REPO_ROOT@@  the approved production checkout (working directory + script location)
     @@START_DATE@@ first day of the triggers (yyyy-MM-dd); the times below are LOCAL time (no zone suffix)
     @@WAKE@@       true|false  (WakeToRun)
+    @@ENABLED@@   true|false  (task-level Enabled; false when register_task.ps1 -Disabled: registered DISABLED from the start)
   PURPOSE: the 15-minute repetition of AutoTrader-DemoDaily must NOT be the last defence of the hard rule "22:00 Europe/Berlin = zero
   strategy exposure".  This task is an independent EOD recovery: Mon-Fri 21:45, 21:50, 21:55, 22:00 and then every 2 minutes until 22:30
   (local Berlin wall-clock; Task Scheduler follows DST because the OS zone is W. Europe Standard Time).  It runs
@@ -103,7 +104,7 @@
       <RestartOnIdle>false</RestartOnIdle>
     </IdleSettings>
     <AllowStartOnDemand>true</AllowStartOnDemand>
-    <Enabled>true</Enabled>
+    <Enabled>@@ENABLED@@</Enabled>
     <Hidden>false</Hidden>
     <RunOnlyIfIdle>false</RunOnlyIfIdle>
     <WakeToRun>@@WAKE@@</WakeToRun>

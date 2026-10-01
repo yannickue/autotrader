@@ -20,7 +20,7 @@
 .PARAMETER OutXml
   Also write the rendered DemoDaily XML to this path (for review); the EOD-recovery XML goes to <OutXml>.eod.xml.
 .PARAMETER Disabled
-  Register the tasks but leave them DISABLED (Disable-ScheduledTask right after registration): for technical validation without letting
+  Register the tasks DISABLED (the rendered XML carries <Enabled>false</Enabled>, so no trigger can fire even for an instant): for technical validation without letting
   any trigger fire. Enable later with enable_task.ps1 (the lead, at the final controlled deployment).
 .PARAMETER SkipEodRecovery
   Handle only AutoTrader-DemoDaily (NOT recommended: the 15-min repetition alone is not a sufficient EOD defence).
@@ -45,12 +45,13 @@ if (-not $RepoRoot) { $RepoRoot = Split-Path -Parent (Split-Path -Parent $PSScri
 if (-not $UserId) { $UserId = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name }
 $dry = $DryRun.IsPresent -or $WhatIf.IsPresent
 $wake = $WakeToRun.IsPresent.ToString().ToLowerInvariant()
+$enabled = (-not $Disabled.IsPresent).ToString().ToLowerInvariant()  # Lane V: -Disabled renders <Enabled>false</Enabled> (never registered enabled first)
 
 function New-TaskXml([string]$TemplateFile, [string]$DefaultName, [string]$Name) {
     $template = Get-Content -LiteralPath (Join-Path $PSScriptRoot $TemplateFile) -Raw -Encoding UTF8
     $xml = $template.Replace('@@USER_ID@@', [System.Security.SecurityElement]::Escape($UserId))
     $xml = $xml.Replace('@@REPO_ROOT@@', [System.Security.SecurityElement]::Escape($RepoRoot))
-    $xml = $xml.Replace('@@START_DATE@@', (Get-Date -Format 'yyyy-MM-dd')).Replace('@@WAKE@@', $wake)
+    $xml = $xml.Replace('@@START_DATE@@', (Get-Date -Format 'yyyy-MM-dd')).Replace('@@WAKE@@', $wake).Replace('@@ENABLED@@', $enabled)
     $xml = $xml.Replace("\$DefaultName</URI>", "\$Name</URI>")
     # placeholders may still appear in the explanatory XML comment; only the body matters
     $body = $xml -replace '(?s)<!--.*?-->', ''
