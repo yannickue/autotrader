@@ -98,7 +98,18 @@ class SegmentStore:
         changed = fp.diff(m.get("fingerprint") or {})
         if changed or m.get("artifact_id") != fp.artifact_id:
             return Lookup(False, "FINGERPRINT_CHANGED:" + (",".join(changed) or "artifact_id"))
-        for rel, meta in (m.get("files") or {}).items():
+        files = m.get("files")
+        if not isinstance(files, dict) or not files or not isinstance(m.get("artifact_id"), str):
+            return Lookup(False, "NOT_COMPLETE")  # a COMPLETE manifest names a non-empty expected file set
+        for meta in files.values():
+            if (
+                not isinstance(meta, dict)
+                or not isinstance(meta.get("size"), int)
+                or isinstance(meta.get("size"), bool)
+                or not isinstance(meta.get("sha256"), str)
+            ):
+                return Lookup(False, "NOT_COMPLETE")
+        for rel, meta in files.items():
             f = self.root / rel
             if not f.is_file():
                 return Lookup(False, f"FILE_MISSING:{rel}")

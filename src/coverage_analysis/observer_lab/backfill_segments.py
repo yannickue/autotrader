@@ -16,11 +16,14 @@ The step functions are the unchanged ``run_events_step`` / ``run_controls3_step(
 
 from __future__ import annotations
 
+import hashlib
 import time
 from dataclasses import asdict
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
+
+import pandas as pd
 
 from research_speed.artifact import NOT_APPLICABLE, ArtifactFingerprint, config_hash
 from research_speed.importgraph import code_hash, tree_hash
@@ -75,6 +78,15 @@ def control_code_hash() -> str:
 @lru_cache(maxsize=1)
 def configs_hash() -> str:
     return tree_hash(REPO / "configs", REPO)
+
+
+def data_identity(mi: Any) -> str:
+    """DATA_HASH of a segment: the frame bytes AND ``eval_from`` (it decides which events are included, so it must be part of the key)."""
+    from coverage_analysis.observer_lab import backfill as BF
+
+    ef = pd.Timestamp(mi.eval_from)
+    ef = ef.tz_localize("UTC") if ef.tzinfo is None else ef.tz_convert("UTC")
+    return hashlib.sha256(f"{BF.frame_fingerprint(mi.frame)}|eval_from={ef.isoformat()}".encode()).hexdigest()
 
 
 def events_fingerprint(spec: dict[str, Any], data_hash: str, observer_config_hash: str) -> ArtifactFingerprint:
@@ -142,7 +154,7 @@ def run_segment_with_inputs(spec: dict[str, Any], mi: Any, ms: Any, *, t0: float
     load_s = time.monotonic() - t0
     store = SegmentStore(out)
     sid = segment_id(market, stage)
-    data_hash = BF.frame_fingerprint(mi.frame)
+    data_hash = data_identity(mi)
     ocfg = BF.observer_config_for(ms).config_hash()
     if stage == "events":
         fp = events_fingerprint(spec, data_hash, ocfg)

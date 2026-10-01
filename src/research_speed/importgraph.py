@@ -106,6 +106,29 @@ def closure(
     return sorted(seen)
 
 
+_DYNAMIC_IMPORT_NAMES = frozenset({"__import__", "import_module", "spec_from_file_location", "spec_from_loader", "exec_module", "run_path", "run_module"})
+
+
+def dynamic_import_files(files: Iterable[Path]) -> list[Path]:
+    """Files that load code dynamically (``importlib.import_module``, ``__import__``, importlib.util spec loading, runpy): the static closure cannot see
+    what they load, so a result that depends on them must never be served from a cache keyed by the static closure."""
+    out = []
+    for f in files:
+        try:
+            tree = ast.parse(Path(f).read_bytes().replace(b"\r\n", b"\n"))
+        except (SyntaxError, ValueError, OSError):
+            out.append(Path(f))  # unparsable => unknown => treat as dynamic
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                fn = node.func
+                name = fn.id if isinstance(fn, ast.Name) else fn.attr if isinstance(fn, ast.Attribute) else None
+                if name in _DYNAMIC_IMPORT_NAMES:
+                    out.append(Path(f))
+                    break
+    return sorted(set(out))
+
+
 def hash_files(files: Iterable[Path], base: Path) -> str:
     """Order-independent hash over (posix relative path, content digest) pairs."""
     base = base.resolve()

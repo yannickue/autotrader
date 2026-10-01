@@ -54,7 +54,7 @@ EXTRA_RULES: list[tuple[str, list[str], str]] = [
     ("src/risk/", ["tests/unit/portfolio", "m:safety"], ""),
     (
         "src/exits/",
-        ["tests/unit/exits", "tests/unit/execution", "tests/unit/demo/execution"],
+        ["tests/unit/exits", "tests/unit/execution", "tests/unit/demo/execution", "m:safety"],
         "exits changed: exit engine + protection (stops/targets) + execution integration; "
         "canary manually before release",
     ),

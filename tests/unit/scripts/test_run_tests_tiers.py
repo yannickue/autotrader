@@ -210,3 +210,24 @@ def test_runner_uses_the_cache_only_when_asked_and_never_for_mark_selections(rt,
     assert rt._run_planned(plan, [], False, True) == 1 and len(calls) == n + 1
     monkeypatch.setattr(rt, "run", lambda cmd, timeout, dry: calls.append(cmd) or 0)
     assert rt._run_planned(plan, [], False, True) == 0 and len(calls) == n + 2  # the failed run was not stored: re-run, now green
+
+
+def test_exits_changes_also_select_the_safety_overlay_and_never_less_than_before(rt):
+    xt = rt.impact_plan(["src/exits/engine.py"])
+    assert "safety" in xt.marks
+    assert {"tests/unit/exits", "tests/unit/execution", "tests/unit/demo/execution", "tests/integration"} <= set(xt.targets)
+    assert ["-m", "safety"] in rt.plan_for(["src/exits/engine.py"])
+
+
+def test_dynamic_imports_make_a_test_uncacheable_so_a_changed_dynamic_dependency_is_always_a_miss(fake_repo):
+    r, trc = fake_repo
+    (r / "src" / "dyn_dep.py").write_text("z = 1\n")
+    (r / "src" / "dyn_mod.py").write_text("import importlib\n\n\ndef g():\n    return importlib.import_module('dyn_dep').z\n")
+    (r / "tests" / "unit" / "foo" / "test_dyn.py").write_text("from dyn_mod import g\n\n\ndef test_d():\n    assert g() >= 1\n")
+    (r / "tests" / "unit" / "foo" / "test_direct.py").write_text("def test_d():\n    m = __import__('dyn_dep')\n    assert m.z\n")
+    (r / "tests" / "unit" / "foo" / "test_spec.py").write_text("import importlib.util\n\n\ndef test_d():\n    s = importlib.util.spec_from_file_location('x', 'y.py')\n    assert s is None or s\n")
+    for f in ("test_dyn.py", "test_direct.py", "test_spec.py"):
+        c, why = trc.candidate([f"tests/unit/foo/{f}"], [])
+        assert c is None and "dynamic import" in why, (f, why)
+    c, _ = trc.candidate(["tests/unit/foo/test_a.py"], [])  # a static closure is still cached
+    assert c is not None

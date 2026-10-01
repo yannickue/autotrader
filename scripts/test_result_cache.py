@@ -113,12 +113,16 @@ class Candidate:
     fingerprint: str
 
 
-def fingerprint(files: list[str], extra_args: list[str]) -> str:
+def _closure(files: list[str]) -> list[Path]:
     entries = [ROOT / f for f in files]
     for f in files:
         entries += _conftests_above(f)
     roots = [ROOT / "src", ROOT / "scripts", ROOT, *{(ROOT / f).parent for f in files}]
-    closure = IG.closure(entries, roots)
+    return IG.closure(entries, roots)
+
+
+def fingerprint(files: list[str], extra_args: list[str]) -> str:
+    closure = _closure(files)
     code = IG.hash_files(closure, ROOT)
     h = hashlib.sha256()
     for part in (
@@ -155,6 +159,10 @@ def candidate(targets: list[str], extra_args: list[str]) -> tuple[Candidate | No
         why = ineligible_reason(f, conf)
         if why:
             return None, f"{f}: {why} (never served from the cache)"
+    dyn = IG.dynamic_import_files(_closure(files))
+    if dyn:
+        names = ", ".join(sorted(p.name for p in dyn)[:3])
+        return None, f"dynamic import (importlib / __import__) in the closure ({names}): its dependencies are not hashed (never served from the cache)"
     return Candidate(tuple(files), fingerprint(files, extra_args)), ""
 
 

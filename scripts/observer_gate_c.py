@@ -778,6 +778,24 @@ def fingerprint(prereg: Prereg, task: dict[str, Any]) -> str:
     return _sha(body)
 
 
+def read_cache_record(cp: Path, fp: str) -> dict[str, Any] | None:
+    """The cached per-market result when the record is readable, well-formed and carries ``fp``; any corruption / IO error is a cache miss (never an exception)."""
+    try:
+        c = json.loads(cp.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if isinstance(c, dict) and c.get("fingerprint") == fp and isinstance(c.get("result"), dict):
+        return c["result"]
+    return None
+
+
+def write_cache_record(cp: Path, fp: str, res: dict[str, Any]) -> None:
+    """Atomic write (tmp + os.replace): an interrupted write never leaves a truncated record behind."""
+    tmp = cp.with_name(f"{cp.name}.{os.getpid()}.tmp")
+    tmp.write_text(json.dumps({"fingerprint": fp, "result": res}, indent=1), encoding="utf-8")
+    os.replace(tmp, cp)
+
+
 def _evaluate_markets(tasks: list[dict[str, Any]], jobs: int) -> list[dict[str, Any]]:
     if jobs > 1 and len(tasks) > 1:
         from research_speed.parallel import clamp_jobs
@@ -943,16 +961,16 @@ def run_stage(a: argparse.Namespace, prereg: Prereg, stage: str, markets: list[s
         cp = cache_dir / f"{t['market']}.json"
         fp = fingerprint(prereg, t)
         if cp.is_file() and not a.force:
-            c = json.loads(cp.read_text(encoding="utf-8"))
-            if c.get("fingerprint") == fp:
-                results_by_market[t["market"]] = c["result"]
+            cached = read_cache_record(cp, fp)
+            if cached is not None:
+                results_by_market[t["market"]] = cached
                 continue
         todo.append((t, fp, cp))
     t0 = time.time()
     fresh = _evaluate_markets([x[0] for x in todo], a.jobs)
     for (t, fp, cp), res in zip(todo, fresh, strict=True):
         res = _clean(res)
-        cp.write_text(json.dumps({"fingerprint": fp, "result": res}, indent=1), encoding="utf-8")
+        write_cache_record(cp, fp, res)
         results_by_market[t["market"]] = res
     timing = {"evaluated_markets": [x[0]["market"] for x in todo], "cached_markets": [m for m in by_market if m not in {x[0]["market"] for x in todo}], "seconds": round(time.time() - t0, 2), "jobs": a.jobs}
     # ---- record p-values (a re-run must reproduce the registered ones exactly), Holm within the family
