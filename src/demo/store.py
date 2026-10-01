@@ -1329,6 +1329,8 @@ class DemoStore:
                 old = json.loads(row["json"])
                 old.pop("labelled_utc", None)
                 new.pop("labelled_utc", None)
+                if "entry_exit" not in old:  # legacy label written before Lane X: the additive field is not a difference
+                    new.pop("entry_exit", None)
                 if old == new:
                     return False
                 raise ImmutableRecordError("counterfactual label is immutable")

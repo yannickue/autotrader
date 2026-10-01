@@ -23,6 +23,20 @@ from pathlib import Path
 from typing import Any
 
 from demo.contracts import PHASES
+from demo.entry_exit_quality import (
+    ANALYSIS_VERSION as EEQ_VERSION,
+)
+from demo.entry_exit_quality import (
+    LABEL_SPEC_VERSION as EEQ_LABEL_SPEC,
+)
+from demo.entry_exit_quality import (
+    SMALL_N as EEQ_SMALL_N,
+)
+from demo.entry_exit_quality import (
+    assign_event_clusters,
+    classify,
+    summarise_entries,
+)
 from demo.store import DemoStore, parse_utc
 
 MILESTONES: tuple[int, ...] = (10, 25, 50, 100, 250, 500)
@@ -206,6 +220,65 @@ def _execution_analytics(store: DemoStore, phase: str | None, rows: list[dict[st
     }
 
 
+def _eeq_row(base: dict[str, Any], *, mfe: float, mae: float, final_r: float, ee: dict[str, Any] | None, t_mae: float | None) -> dict[str, Any]:
+    """One entry-vs-exit row: the stored path fields when present (Lane X hook), else classified from MFE / MAE / R alone."""
+    cls = classify(mfe_r=mfe, mae_r=mae, final_r=final_r, time_to_mae_s=(ee or {}).get("time_to_mae_s", t_mae))
+    row = {**base, "mfe_r": mfe, "mae_r": mae, "baseline_r": final_r, **cls}
+    if ee:
+        for k, v in ee.items():
+            if k.startswith(("time_to_", "first_touch", "tp1_", "tp2_", "max_structure", "mfe_before")):
+                row[k] = v
+    return row
+
+
+def entry_exit_section(store: DemoStore, phase: str | None, rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """'Entry quality vs exit quality' (Lane X): entry and profit-capture quality measured SEPARATELY, per
+    market x family x direction, for the closed STRATEGY trades and for the labelled counterfactuals.  A negative
+    final R is not a bad-entry verdict (MFE +0.6R then -1R = POTENTIAL_USEFUL_ENTRY + EXIT_GIVEBACK).  Small n flagged,
+    no edge claim.  Rows written before the hook (no ``entry_exit`` JSON) are classified from their stored MFE/MAE/R."""
+    real: list[dict[str, Any]] = []
+    for r in rows:
+        snap = store.get_snapshot(r["opportunity_id"]) if r.get("opportunity_id") else None
+        if snap is None:
+            continue
+        extra = store.get_outcome_extra(r["intent_id"]) or {}
+        ee = extra.get("entry_exit")
+        real.append(_eeq_row(
+            {"market": snap.market, "direction": snap.direction, "family": str(snap.signal.get("family", "unknown")),
+             "signal_ts": parse_utc(snap.signal_ts_utc), "kind": "REAL_TRADE"},
+            mfe=float((ee or {}).get("mfe_r", r["mfe_r"])), mae=float((ee or {}).get("mae_r", r["mae_r"])),
+            final_r=float(r["gross_r"]), ee=ee, t_mae=None,
+        ))
+    cf: list[dict[str, Any]] = []
+    for c in store.list_counterfactuals(phase):
+        snap = store.get_snapshot(c.opportunity_id)
+        if snap is None:
+            continue
+        cf.append(_eeq_row(
+            {"market": snap.market, "direction": snap.direction, "family": str(snap.signal.get("family", "unknown")),
+             "signal_ts": parse_utc(snap.signal_ts_utc), "kind": "COUNTERFACTUAL"},
+            mfe=float(c.hypothetical_mfe_r), mae=float(c.hypothetical_mae_r), final_r=float(c.hypothetical_r),
+            ee=c.entry_exit, t_mae=None,
+        ))
+
+    def block(items: list[dict[str, Any]]) -> dict[str, Any]:
+        groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for it in items:
+            groups[f"{it['market']}|{it['family']}|{'long' if it['direction'] > 0 else 'short'}"].append(it)
+        return {
+            "overall": summarise_entries(items, event_clusters=assign_event_clusters(items)) if items else {"n": 0},
+            "groups": {k: summarise_entries(g, event_clusters=assign_event_clusters(g)) for k, g in sorted(groups.items())},
+            "n_with_path_fields": sum(1 for it in items if "first_touch_0.5R" in it),
+        }
+
+    return {
+        "analysis_version": EEQ_VERSION, "label_spec_version": EEQ_LABEL_SPEC, "small_n": EEQ_SMALL_N,
+        "real_trades": block(real), "counterfactuals": block(cf),
+        "note": ("real trades: realised gross R (actual fills) vs the recorded path MFE/MAE; counterfactuals: hypothetical R "
+                 "(fill at intended entry, no costs). Entry and capture are separate axes; small n flagged; descriptive only, no edge claim."),
+    }
+
+
 def _side_group(store: DemoStore, phase: str | None, kind: str) -> dict[str, Any]:
     """Censored (manual / external / emergency flatten) or canary trades: shown SEPARATELY, never mixed
     into the strategy metrics."""
@@ -348,6 +421,7 @@ def build_report(store: DemoStore, phase: str | None = None) -> dict[str, Any]:
         "account": account,
         "generated_utc": datetime.now().astimezone().isoformat(),
         "execution_analytics": _execution_analytics(store, phase, rows),
+        "entry_exit_quality": entry_exit_section(store, phase, rows),
         "censored_exits": censored,
         "canary_trades": canary,
         "account_pnl_reconciliation": {
@@ -407,6 +481,30 @@ def _fmt(v: Any) -> str:
     return str(v)
 
 
+def _render_entry_exit(eeq: dict[str, Any]) -> list[str]:
+    L = ["", "## Entry quality vs exit quality", "",
+         f"`{eeq['analysis_version']}` / labels `{eeq['label_spec_version']}`. {eeq['note']}", ""]
+    for title, key in (("Closed strategy trades", "real_trades"), ("Labelled counterfactuals", "counterfactuals")):
+        blk = eeq[key]
+        ov = blk["overall"]
+        L += [f"### {title} (n={ov.get('n', 0)}; {blk['n_with_path_fields']} with path-level fields)", ""]
+        if not ov.get("n"):
+            L += ["No rows.", ""]
+            continue
+        L += ["| market|family|dir | n | clusters | flag | MFE mean/med | MAE mean/med | useful / failure share | poor capture of useful | capture (floored) | giveback | labels (good / giveback / failure / ambiguous) | verdict |",
+              "|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
+        for name, c in (("ALL", ov), *blk["groups"].items()):
+            lc = c["label_counts"]
+            L.append(
+                f"| {name} | {c['n']} | {c['n_event_clusters']} | {'low n' if c['n'] < EEQ_SMALL_N else ''} | {_fmt(c['mfe_mean'])}/{_fmt(c['mfe_median'])} | "
+                f"{_fmt(c['mae_mean'])}/{_fmt(c['mae_median'])} | {_fmt(c['useful_entry_share'])} / {_fmt(c['entry_failure_share'])} | "
+                f"{_fmt(c['poor_capture_share_of_useful'])} | {_fmt(c['capture_ratio_floored_mean'])} | {_fmt(c['mfe_giveback_mean'])} | "
+                f"{lc['GOOD_ENTRY_GOOD_CAPTURE']} / {lc['POTENTIAL_USEFUL_ENTRY_EXIT_GIVEBACK']} / {lc['ENTRY_FAILURE']} / {lc['AMBIGUOUS']} | {c['verdict']} |"
+            )
+        L.append("")
+    return L
+
+
 def render_markdown(report: dict[str, Any]) -> str:
     m = report["metrics"]
     acct = report.get("account") or {}
@@ -451,6 +549,9 @@ def render_markdown(report: dict[str, Any]) -> str:
     ea = report.get("execution_analytics")
     if ea:
         L += ["", "## Execution analytics (strategy trades)", "", f"- tca: {json.dumps(ea['tca'], default=str)}", f"- timing: {json.dumps(ea['timing'], default=str)}"]
+    eeq = report.get("entry_exit_quality")
+    if eeq:
+        L += _render_entry_exit(eeq)
     rec = report.get("account_pnl_reconciliation")
     if rec:
         L += ["", "## Account P/L reconciliation (closed trades)", "", f"- strategy {_fmt(rec['strategy_eur'])} | censored {_fmt(rec['censored_eur'])} | canary {_fmt(rec['canary_eur'])} | total {_fmt(rec['total_closed_eur'])} EUR"]

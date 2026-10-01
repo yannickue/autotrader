@@ -82,7 +82,14 @@ from demo.execution.events import (
     Rejected,
 )
 from demo.execution.stack_port import AccountSnapshot, StackFailClosed, StackPort
-from demo.labeling import Bar, PathPoint, label_counterfactuals, outcome_from_fills, path_analytics
+from demo.labeling import (
+    Bar,
+    PathPoint,
+    label_counterfactuals,
+    outcome_from_fills,
+    path_analytics,
+    realised_entry_exit,
+)
 from demo.labeling import Fill as LabelFill
 from demo.store import (
     CANCELLED,
@@ -1557,6 +1564,12 @@ class DemoRunner:
                 direction=intent.direction, entry_price=fill_price, initial_stop=intent.stop, entry_ts=_iso(entry_at),
                 exit_price=exit_px, exit_ts=_iso(closed_at), path=path,
             )
+            tp1, tp2 = self._structural_tps(intent.intent_id)
+            extra["entry_exit"] = realised_entry_exit(  # Lane X: entry quality vs exit quality (None = unusable input)
+                direction=intent.direction, entry_price=fill_price, initial_stop=intent.stop, entry_ts=_iso(entry_at),
+                exit_price=exit_px, exit_ts=_iso(closed_at), path=path, final_gross_r=float(extra["final_gross_r"]),
+                tp1=tp1, tp2=tp2,
+            )
             snap = self.store.get_snapshot(intent.opportunity_id)
             if snap is not None:
                 extra["signal_age_at_fill_s"] = (entry_at - parse_utc(snap.signal_ts_utc)).total_seconds()
@@ -1566,6 +1579,19 @@ class DemoRunner:
             raise
         except Exception as exc:
             self._note_error(now, f"outcome_extra:{intent.intent_id}: {type(exc).__name__}: {exc}")
+
+    def _structural_tps(self, intent_id: str) -> tuple[float | None, float | None]:
+        """Structural TP1 / TP2 prices of the recorded E2 GEOMETRY shadow (None when no geometry / no level)."""
+        try:
+            geo = self.store.get_tca(intent_id, "GEOMETRY") or {}
+            structure = geo.get("structure") or {}
+            out = []
+            for key in ("tp1", "tp2"):
+                level = structure.get(key)
+                out.append(None if not level else float(level["price"]))
+            return out[0], out[1]
+        except (KeyError, TypeError, ValueError):
+            return None, None
 
     # ------------------------------------------------------------------------------- periodic
     def _check_milestones(self) -> None:

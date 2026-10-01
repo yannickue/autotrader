@@ -27,6 +27,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 from demo.contracts import CounterfactualLabel, OpportunitySnapshot, OutcomeRecord
+from demo.entry_exit_quality import MFE_LEVELS_R, Step, entry_exit_fields
 from demo.store import DemoStore, parse_utc
 
 OPERATIONAL = "OPERATIONAL"  # gate class of cancelled / send-failed intents (halted, expired, restart, ...)
@@ -181,8 +182,33 @@ def label_one(
         hypothetical_r=res.r,
         target_before_stop=res.target_before_stop,
         labelled_utc=labelled_utc,
+        entry_exit=counterfactual_entry_exit(snap, causal, res, start),
     )
     return label, res
+
+
+def counterfactual_entry_exit(
+    snap: OpportunitySnapshot, causal: Sequence[Bar], res: HypotheticalResult, start: datetime,
+) -> dict | None:
+    """Lane X: entry-quality vs exit-quality fields of one counterfactual (additive; never raises into the labeller).
+    Same bars / fill assumption / stop-first semantics as ``simulate_hypothetical``; the judged final R is the
+    hypothetical R.  For a trailing exit the MFE / MAE path runs to the INITIAL stop (potential), final R is the trail's."""
+    try:
+        g = snap.geometry
+        long = snap.direction > 0
+        steps = [
+            Step(
+                parse_utc(b.ts_utc), b.open + (0.0 if long else b.spread), b.high + (0.0 if long else b.spread),
+                b.low + (0.0 if long else b.spread), b.close + (0.0 if long else b.spread),
+            )
+            for b in causal
+        ]
+        return entry_exit_fields(
+            direction=snap.direction, entry=g.intended_entry, stop=g.stop, steps=steps, entry_ts=start,
+            final_r=res.r, apply_stop=True, target=g.target if g.exit_kind != "trail" else None,
+        )
+    except (ValueError, ArithmeticError):
+        return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -298,7 +324,7 @@ class Fill:
     ts_utc: str
 
 
-PROGRESS_LEVELS_R: tuple[float, ...] = (0.25, 0.5, 1.0)
+PROGRESS_LEVELS_R: tuple[float, ...] = MFE_LEVELS_R  # 0.25 0.5 0.75 1 1.5 2 (Lane X extended the original 0.25 / 0.5 / 1)
 
 
 def path_analytics(
@@ -345,6 +371,37 @@ def path_analytics(
         final_gross_r=final_r, resolution="bar_5m",
     )
     return out
+
+
+def realised_entry_exit(
+    *,
+    direction: int,
+    entry_price: float,
+    initial_stop: float,
+    entry_ts: str,
+    exit_price: float,
+    exit_ts: str,
+    path: Iterable[PathPoint],
+    final_gross_r: float,
+    tp1: float | None = None,
+    tp2: float | None = None,
+) -> dict | None:
+    """Lane X: entry-quality vs exit-quality fields of one CLOSED real trade from its recorded path (exit-side prices,
+    as ``path_analytics``).  MFE / MAE run to the exit that really happened; ``final_gross_r`` is what was realised.
+    ``tp1`` / ``tp2`` (structural levels of the E2 geometry, when recorded) give the TP reached flags.  Additive
+    diagnostics: returns None instead of raising on unusable input."""
+    try:
+        t0, t1 = parse_utc(entry_ts), parse_utc(exit_ts)
+        pts = [(max(t0, parse_utc(p.ts_utc)), p.high, p.low) for p in path if t0 <= parse_utc(p.ts_utc) <= t1]
+        pts.append((t1, exit_price, exit_price))
+        pts.sort(key=lambda x: x[0])
+        steps = [Step(t, None, hi, lo, None) for t, hi, lo in pts]
+        return entry_exit_fields(
+            direction=direction, entry=entry_price, stop=initial_stop, steps=steps, entry_ts=t0, final_r=final_gross_r,
+            apply_stop=False, tp1=tp1, tp2=tp2,
+        )
+    except (ValueError, ArithmeticError):
+        return None
 
 
 @dataclass(frozen=True, slots=True)

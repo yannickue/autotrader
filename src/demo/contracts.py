@@ -217,6 +217,8 @@ class CounterfactualLabel(_Record):
     hypothetical_r: float
     target_before_stop: bool | None
     labelled_utc: str
+    # Lane X (additive, optional): entry vs exit quality fields; legacy labels: None
+    entry_exit: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
