@@ -17,8 +17,18 @@ MODES
                                read-only (shadow stack, ``order_send`` is hard-guarded), runs every refusal check and
                                prints the calibrated sizes.  No confirmation flag needed (nothing can be sent).
 
+SCENARIOS (``--scenario``, default ``base`` = the 10-step canary above, unchanged)
+  b1   CONTINUATION row, ``staged_profiles``: TP1 partial / structure trail / structure-failure close decided by the ENGINE
+       through the real ``stack.manage_exits`` path (real reduce-only / modify orders at the real market).
+  b2   REVERSION row with a broker TP and an engine single full-close stage at the same level.
+  b3   restart with an OPEN position: adoption, frozen profile / exit_state, no stage re-fire, tighten-only, flatten.
+  all  base, b1, b2, b3 sequentially with a read-only flat-account check between.
+  The engine's market-state INPUTS (quote / closed bars) are injected for the evaluation only, never order prices; every
+  injected value is logged as INJECTED_FOR_ENGINE_EVALUATION_ONLY (see docs/E2_CANARY.md).
+
 REFUSALS (exit 2, nothing sent): missing confirm flag; MT5_ALLOW_ACCOUNT_LOGIN=1; artifacts dir != artifacts/e2_canary
-(live); another runner / supervisor holds its lock or a fresh heartbeat exists; the MT5 terminal lock is busy; the
+(live); another runner / supervisor / eod_recovery lock is alive or a fresh heartbeat exists; (live) Berlin time 21:40-22:35
+(an EOD-recovery task may fire); the MT5 terminal lock is busy; the
 account is not DEMO (trade_mode 0), not the expected login/server, or its account_id_hash differs from the one the
 trader is bound to; market not tradable / quote not fresh / broker order_check refuses; ANY pre-existing position or
 order on the account (the symbol in particular); sizing cannot be calibrated to exactly 2 x min lot.
@@ -47,9 +57,11 @@ import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from datetime import time as dtime
 from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 for _p in (str(REPO_ROOT), str(REPO_ROOT / "src"), str(REPO_ROOT / "scripts" / "autostart")):
@@ -67,6 +79,8 @@ REQUIRED_ARTIFACTS = REPO_ROOT / "artifacts" / "e2_canary"
 TRADER_ARTIFACTS = REPO_ROOT / "artifacts" / "demo_trader"
 DEFAULT_MARKET = "EURUSD"
 DEFAULT_TIMEOUT_S = 120.0
+# b1 does more engine cycles, b3 restarts TWICE: their default hard timeout is longer (an explicit --timeout is always honoured)
+SCENARIO_DEFAULT_TIMEOUT_S = {"b1": 150.0, "b3": 240.0}
 SIZE_MULTIPLE = 2  # total canary size = SIZE_MULTIPLE x broker min lot (so a partial exists)
 STRUCTURAL_PLACEHOLDER_FRACTION = D("0.0015")  # initial-stop distance placeholder: 0.15 % of price (~17 pips EURUSD)
 MAX_NOTIONAL_EUR = D("30000")  # refuse sizes whose notional exceeds this (guards against a huge min lot)
@@ -87,6 +101,61 @@ STEP_NAMES = (
     "protection_after_partial", "stop_tighten", "stop_cannot_loosen", "second_partial",
     "final_close_flat", "restart_reconcile",
 )
+
+# -- Lane K scenarios (the base scenario above is unchanged and stays the default) ----------------------------------
+SCENARIO_BASE = "base"
+SCENARIOS = ("base", "b1", "b2", "b3")
+SCENARIO_ALL = "all"
+SCENARIO_CHOICES = (*SCENARIOS, SCENARIO_ALL)
+SCENARIO_ROUTE = {"b1": ("STRUCT", "breakout"), "b2": ("ROUND", "reject"), "b3": ("STRUCT", "breakout")}
+SCENARIO_PROFILE = {"b1": "CONTINUATION", "b2": "REVERSION", "b3": "CONTINUATION"}
+INJECTION_MARKER = "INJECTED_FOR_ENGINE_EVALUATION_ONLY"
+EOD_WINDOW_START = dtime(21, 40)  # Europe/Berlin: an AutoTrader-EodRecovery task may fire from 21:45 until 22:30
+EOD_WINDOW_END = dtime(22, 35)
+BERLIN = ZoneInfo("Europe/Berlin")
+B1_STEP_NAMES = (
+    "entry_profile_row", "broker_protective_stop", "engine_tp1_partial", "volume_broker_eq_local",
+    "protection_after_partial", "engine_structure_trail", "engine_cannot_loosen", "engine_final_close", "restart_reconcile",
+)
+B2_STEP_NAMES = (
+    "entry_profile_row_broker_tp", "broker_stop_and_far_tp", "engine_target_full_close", "clean_state_no_halt", "restart_reconcile",
+)
+B3_STEP_NAMES = (
+    "entry_profile_row", "broker_protective_stop", "engine_tp1_partial", "volume_broker_eq_local",
+    "protection_after_partial", "restart_with_open_position", "engine_no_refire_after_restart",
+    "restart_path_tighten_only", "flatten_verified_path", "final_restart_reconcile",
+)
+STATIC_PLAN_STEPS_B1 = (
+    "1  open 2 x min lot LONG with exit_policy=staged_profiles and a CONTINUATION row (STRUCT breakout; plan from produce_exit_context)",
+    "2  broker protective stop exists and covers the full volume; no broker TP (runner)",
+    "3  manage_exits (INJECTED quote at TP1): the ENGINE decides the TP1 partial -> real reduce-only partial of 1 x min lot",
+    "4  broker remaining == local remaining == expected",
+    "5  SL child resized, stop still covers the remaining volume, no orphan order",
+    "6  manage_exits (INJECTED confirmed higher swing): the ENGINE tightens the runner stop (real modify, tighten-only)",
+    "7  loosening is refused (engine tighten gate, no job sent, broker sl unchanged; ModifyStopJob(wider) denied)",
+    "8  manage_exits (INJECTED structure failure): the ENGINE closes the runner (real reduce-only close) -> broker 0, registry CLOSED",
+    "9  stop the stack, start a NEW stack on the same state dir: RECONCILED, flat, no orphans, registry terminal",
+)
+STATIC_PLAN_STEPS_B2 = (
+    "1  open 2 x min lot LONG with a REVERSION row (ROUND reject) carrying a broker TP at the target level T (engine stage at the SAME T)",
+    "2  broker stop covers the full volume; broker TP == T and far from the market (cannot fill by itself)",
+    "3  manage_exits (INJECTED quote at T): the ENGINE single full-close target stage fires -> real full reduce-only close",
+    "4  broker flat, no stray order (TP gone), registry terminal, no halt / flatten-failure / row-error counter",
+    "5  stop the stack, start a NEW stack on the same state dir: RECONCILED, flat, no orphans, registry terminal",
+)
+STATIC_PLAN_STEPS_B3 = (
+    "1  open 2 x min lot LONG with a CONTINUATION row (profile frozen at entry)",
+    "2  broker protective stop exists and covers the full volume",
+    "3  manage_exits (INJECTED quote at TP1): engine TP1 partial (stages_completed = 1 persisted)",
+    "4  broker remaining == local remaining",
+    "5  protection resized to the remaining volume",
+    "6  stop the stack (position stays open, broker SL stays), start a NEW stack on the same state dir: RECONCILED, position adopted with the SAME intent id / profile / exit_state, broker SL still present",
+    "7  manage_exits (INJECTED TP1 quote again): the stage does NOT re-fire (stages_completed is a lower bound)",
+    "8  manage_exits (INJECTED confirmed swing) on the restarted stack: the adopted-position path tightens the stop (tighten-only; loosening refused)",
+    "9  flatten through the verified path: broker 0, registry CLOSED",
+    "10 restart again: RECONCILED, flat, no orphans, registry terminal",
+)
+STATIC_PLAN_BY_SCENARIO = {"base": STATIC_PLAN_STEPS, "b1": STATIC_PLAN_STEPS_B1, "b2": STATIC_PLAN_STEPS_B2, "b3": STATIC_PLAN_STEPS_B3}
 
 _SECRET_KEYS = ("password", "passwd", "token", "secret", "api_key", "apikey", "login", "credential")
 
@@ -206,6 +275,9 @@ class CanaryEnv:
     stack_overrides: dict[str, Any] = field(default_factory=dict)  # tests: faster polling
     hooks: dict[str, Callable[[], None]] = field(default_factory=dict)  # TEST SEAM ONLY: after_action_<n> / before_restart
     now: Callable[[], datetime] = _utcnow
+    window_now: Callable[[], datetime] = _utcnow  # clock of the EOD-recovery window refusal only (tests inject it)
+    tolerate_tp_race: bool = False  # TEST ONLY (B2b): the broker TP may consume the position before the engine close
+    runtime: dict[str, Any] = field(default_factory=dict)  # TEST SEAM ONLY: run_canary publishes the live Canary under "canary"
     login_env: str | None = field(default_factory=lambda: os.environ.get("MT5_ALLOW_ACCOUNT_LOGIN"))
     install_signals: bool = False
     log: Callable[[str], None] = print
@@ -273,6 +345,14 @@ def local_preflight(env: CanaryEnv, *, plan_only: bool = False) -> list[dict[str
     for lock_name in ("runner.lock", "supervisor.lock"):
         status = instance_lock.lock_status(trader / lock_name)
         add(f"no_{lock_name.split('.')[0]}_alive", not status["alive"], f"{lock_name}: exists={status['exists']} alive={status['alive']}")
+    eod = instance_lock.lock_status(trader / "eod_recovery.lock")
+    add("no_eod_recovery_alive", not eod["alive"], f"eod_recovery.lock: exists={eod['exists']} alive={eod['alive']}")
+    if env.mode == "live" and not plan_only:
+        # an AutoTrader-EodRecovery task (flatten-only runner) may fire from 21:45 until 22:30 Berlin: it would flatten / race the canary
+        berlin = env.window_now().astimezone(BERLIN)
+        in_window = EOD_WINDOW_START <= berlin.time() <= EOD_WINDOW_END
+        add("outside_eod_recovery_window", not in_window,
+            f"Berlin time {berlin:%H:%M} (refused {EOD_WINDOW_START:%H:%M}-{EOD_WINDOW_END:%H:%M}: an EOD-recovery task could fire)")
     verdict = heartbeat_verdict(trader / "heartbeat.json", _utcnow())
     add("no_fresh_trader_heartbeat", verdict["verdict"] != RUNNING, f"heartbeat: {verdict['verdict']} ({verdict['reason']})")
     busy, detail = mt5_lock_busy(env.mt5_lock_path)
@@ -291,14 +371,18 @@ def failed(checks: list[dict[str, Any]]) -> list[str]:
 # ---------------------------------------------------------------------------------------------
 
 
-def build_stack(env: CanaryEnv, *, dry_run: bool, state_dir: Path) -> Any:
-    from demo.execution.exit_manager import default_staged_exit_policy
+def build_stack(env: CanaryEnv, *, dry_run: bool, state_dir: Path, scenario: str = SCENARIO_BASE) -> Any:
+    from demo.execution.exit_manager import (
+        EXIT_POLICY_PROFILES,
+        EXIT_POLICY_STAGED,
+        default_staged_exit_policy,
+    )
     from demo.execution.live import Mt5DemoStack, StackConfig
 
     cfg = StackConfig(
         magic=CANARY_MAGIC,
         canary_magic=UNUSED_CANARY_MAGIC,
-        exit_policy="staged",
+        exit_policy=EXIT_POLICY_STAGED if scenario == SCENARIO_BASE else EXIT_POLICY_PROFILES,
         staged_exit=default_staged_exit_policy(),
         expected_server=env.expected_server,
         **env.stack_overrides,
@@ -402,19 +486,29 @@ def local_state(view: BrokerView) -> dict[str, Any]:
 # ---------------------------------------------------------------------------------------------
 
 
-def make_intent(plan: Mapping[str, Any], intent_id: str, now: datetime, risk_fraction: float) -> Any:
+def make_intent(plan: Mapping[str, Any], intent_id: str, now: datetime, risk_fraction: float, scenario: str = SCENARIO_BASE) -> Any:
     from demo.contracts import TradeIntent
 
+    # B2 (REVERSION): the family target IS the broker TP level (the engine's single full-close stage sits at the same price)
+    target = float(plan["tp1_price"]) if scenario == "b2" else None
     return TradeIntent(
         opportunity_id="opp-" + intent_id, phase="DISCOVERY", intent_id=intent_id, market=plan["market"],
         broker_symbol=plan["broker_symbol"], direction=1, entry_ref=float(plan["ask"]), stop=float(plan["initial_stop"]),
-        target=None, min_space_r=0.0, valid_until_utc=(now + timedelta(seconds=60)).isoformat(),
+        target=target, min_space_r=0.0, valid_until_utc=(now + timedelta(seconds=60)).isoformat(),
         forced_flat_utc=(now + timedelta(minutes=10)).isoformat(), risk_fraction=risk_fraction,
         context={"trade_type": TRADE_TYPE_TAG},
     )
 
 
-def intent_context(plan: Mapping[str, Any]) -> dict[str, Any]:
+def empty_m5_frame() -> Any:
+    import pandas as pd
+
+    return pd.DataFrame({"ts": pd.DatetimeIndex([], tz="UTC"), "open": [], "high": [], "low": [], "close": []})
+
+
+def intent_context(plan: Mapping[str, Any], scenario: str = SCENARIO_BASE) -> dict[str, Any]:
+    if scenario != SCENARIO_BASE:
+        return profile_context(plan, scenario)
     return {
         "family": "e2_canary",
         "atr": None,
@@ -425,7 +519,38 @@ def intent_context(plan: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def build_plan(env: CanaryEnv, state_dir: Path) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+def profile_context(plan: Mapping[str, Any], scenario: str) -> dict[str, Any]:
+    """Registry context of a ``staged_profiles`` canary entry: the plan + profile attribution come from the REAL Lane Y producer
+    (``produce_exit_context`` with the route of the scenario's family/mode), exactly what the runner persists.  The TP1 / target
+    level is the canary's ``tp1_price`` (3 x the stop distance above the ask: never reached by the real market)."""
+    from demo import exit_profiles as xp
+    from demo.execution.exit_manager import ExitPlanConfig, produce_exit_context
+
+    family, mode = SCENARIO_ROUTE[scenario]
+    route = xp.route_for(family, mode)
+    reversion = route.profile == xp.PROFILE_REVERSION
+    tp = D(str(plan["tp1_price"]))
+    out = produce_exit_context(
+        direction=1, entry_ref=float(plan["ask"]), stop=float(plan["initial_stop"]),
+        target=float(tp) if reversion else None, family=family, market=plan["market"], atr=None, frame=empty_m5_frame(),
+        spread=float(plan["spread"]), tick_size=float(plan["tick_size"]),
+        structure_levels=None if reversion else [{"price": str(tp), "id": "canary_tp1"}],
+        target_is_structural=reversion, cfg=ExitPlanConfig(), staged=True, route=route,
+    )
+    exit_plan = out["exit_plan"]
+    stages = (exit_plan or {}).get("stages") or []
+    if len(stages) != 1 or D(str(stages[0]["target_price"])) != tp:
+        raise ValueError(f"producer plan does not carry the canary level {tp}: {exit_plan}")
+    if (out["exit_profile"] or {}).get("profile") != SCENARIO_PROFILE[scenario]:
+        raise ValueError(f"route {family}/{mode} is not {SCENARIO_PROFILE[scenario]}: {out['exit_profile']}")
+    return {
+        "family": "e2_canary", "atr": None, "exit_plan": exit_plan, "exit_profile": out["exit_profile"],
+        "exit_meta": {**(out["exit_meta"] or {}), "trade_type": TRADE_TYPE_TAG, "canary_scenario": scenario},
+        "geometry_source": out["source"],
+    }
+
+
+def build_plan(env: CanaryEnv, state_dir: Path, scenario: str = SCENARIO_BASE) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """Start a SHADOW stack, run every broker-side refusal check, compute and VERIFY the sizes. Places nothing."""
     from demo.execution.events import Rejected
     from demo.execution.stack_port import StackFailClosed
@@ -435,7 +560,7 @@ def build_plan(env: CanaryEnv, state_dir: Path) -> tuple[dict[str, Any], list[di
     def add(name: str, ok: bool, detail: str) -> None:
         checks.append({"name": name, "ok": bool(ok), "detail": detail})
 
-    shadow = build_stack(env, dry_run=True, state_dir=state_dir / "plan")
+    shadow = build_stack(env, dry_run=True, state_dir=state_dir / "plan", scenario=scenario)
     try:
         try:
             snap = shadow.start()
@@ -485,15 +610,24 @@ def build_plan(env: CanaryEnv, state_dir: Path) -> tuple[dict[str, Any], list[di
                 "structural_placeholder_0.15pct": geo["structural_placeholder"],
             },
             "broker_tp": None, "exit_plan": "TP1 price stage (close_fraction 0.5) + runner; no broker TP (sum of fractions < 1)",
-            "magic": CANARY_MAGIC, "trade_type": TRADE_TYPE_TAG,
+            "magic": CANARY_MAGIC, "trade_type": TRADE_TYPE_TAG, "scenario": scenario,
         }
+        if scenario != SCENARIO_BASE:
+            fam, mode = SCENARIO_ROUTE[scenario]
+            plan["exit_policy"] = "staged_profiles"
+            plan["exit_profile"] = f"{SCENARIO_PROFILE[scenario]} ({fam}/{mode}, plan from produce_exit_context)"
+            if scenario == "b2":
+                plan["broker_tp"] = geo["tp1_price"]
+                plan["exit_plan"] = "REVERSION: ONE full-close target stage at the broker TP level (same price), no runner"
+            else:
+                plan["exit_plan"] = "CONTINUATION: TP1 price stage (close_fraction 0.5) + runner; structure trail; no broker TP"
         if (lots / step) != (lots / step).to_integral_value():
             add("lots_on_step", False, f"{lots} not a multiple of step {step}")
             return plan, checks
         # -- calibrate the risk fraction through the REAL sizer until it fits EXACTLY 2 x min lot.  Every probe uses a
         # FRESH shadow stack: a dry-run submit leaves a local (never sent) order that a later venue comparison on the
         # same stack would report as a reconciliation mismatch. --
-        sizing = _probe_size(shadow, plan, D("0.001"), 0)
+        sizing = _probe_size(shadow, plan, D("0.001"), 0, scenario)
     finally:
         with contextlib.suppress(Exception):
             shadow.stop()
@@ -524,10 +658,10 @@ def build_plan(env: CanaryEnv, state_dir: Path) -> tuple[dict[str, Any], list[di
         else:
             rf *= 2
         rf = rf.quantize(D("0.000001"), rounding=ROUND_CEILING)
-        probe = build_stack(env, dry_run=True, state_dir=state_dir / f"plan{i}")
+        probe = build_stack(env, dry_run=True, state_dir=state_dir / f"plan{i}", scenario=scenario)
         try:
             probe.start()
-            sizing = _probe_size(probe, plan, rf, i)
+            sizing = _probe_size(probe, plan, rf, i, scenario)
         except StackFailClosed as exc:
             add("size_calibrated_to_2x_min_lot", False, f"probe stack refused: {exc}")
             return plan, checks
@@ -538,12 +672,12 @@ def build_plan(env: CanaryEnv, state_dir: Path) -> tuple[dict[str, Any], list[di
     return plan, checks
 
 
-def _probe_size(stack: Any, plan: Mapping[str, Any], rf: Decimal, i: int) -> tuple[Any, dict[str, Any], str | None]:
+def _probe_size(stack: Any, plan: Mapping[str, Any], rf: Decimal, i: int, scenario: str = SCENARIO_BASE) -> tuple[Any, dict[str, Any], str | None]:
     """One dry-run submit of the canary intent at risk fraction ``rf`` -> (head event, its risk_detail, refusal).
     A shadow stack answers ``[Accepted]`` when sizing AND the broker's order_check passed (the send itself is
     hard-guarded); ``[Accepted, Rejected(reason)]`` means the broker refused the order (market closed, margin, ...)."""
-    intent = make_intent(plan, f"e2canary-plan-{i}", stack._now(), float(rf))
-    events = stack.submit(intent, intent_context(plan))
+    intent = make_intent(plan, f"e2canary-plan-{i}", stack._now(), float(rf), scenario)
+    events = stack.submit(intent, intent_context(plan, scenario))
     head = events[0]
     refusal = events[1].reason if len(events) > 1 and type(events[1]).__name__ == "Rejected" else None
     return head, dict(head.risk_detail or {}), refusal
@@ -574,6 +708,9 @@ class Canary:
     data: dict[str, Any] = field(default_factory=dict)
     initial_stop: Decimal = field(default_factory=Decimal)
     current_stop: Decimal = field(default_factory=Decimal)
+    scenario: str = SCENARIO_BASE
+    step_no: int = 0
+    injected: list[dict[str, Any]] = field(default_factory=list)  # every INJECTED_FOR_ENGINE_EVALUATION_ONLY value, in order
 
     def check_abort(self) -> None:
         if self.abort.is_set():
@@ -622,9 +759,9 @@ def step1_entry(c: Canary) -> dict[str, Any]:
     plan = c.plan
     now = c.env.now()
     c.intent_id = f"e2canary-{_stamp(now)}"
-    intent = make_intent(plan, c.intent_id, now, float(plan["risk_fraction"]))
+    intent = make_intent(plan, c.intent_id, now, float(plan["risk_fraction"]), c.scenario)
     t0 = time.perf_counter()
-    events = c.stack.submit(intent, intent_context(plan))
+    events = c.stack.submit(intent, intent_context(plan, c.scenario))
     submit_ms = (time.perf_counter() - t0) * 1000.0
     c.events.extend(events)
     kinds = [type(e).__name__ for e in events]
@@ -642,7 +779,11 @@ def step1_entry(c: Canary) -> dict[str, Any]:
         _expect(c.lots_total == plan["total_lots"], f"broker volume {c.lots_total} != planned {plan['total_lots']}", problems)
         _expect(int(own[0].magic) == CANARY_MAGIC, "position magic is not the canary magic", problems)
         _expect(int(own[0].type) == 0, "position is not BUY", problems)
-        _expect(float(own[0].tp or 0.0) == 0.0, f"unexpected broker TP {own[0].tp} (a TP1+runner plan has none)", problems)
+        if c.scenario == "b2":  # REVERSION: the broker TP sits at the target level (the final / only stage)
+            _expect(abs(_dec(own[0].tp or 0) - plan["tp1_price"]) <= plan["tick_size"],
+                    f"broker TP {own[0].tp} != the REVERSION target level {plan['tp1_price']}", problems)
+        else:
+            _expect(float(own[0].tp or 0.0) == 0.0, f"unexpected broker TP {own[0].tp} (a TP1+runner plan has none)", problems)
     if fill is not None:
         _expect(_dec(fill.quantity) == plan["total_lots"], f"Fill quantity {fill.quantity} != planned", problems)
         c.latencies["order_submit_total_ms"] = submit_ms
@@ -657,9 +798,17 @@ def step1_entry(c: Canary) -> dict[str, Any]:
     if row is not None and row.context:
         ctx = json.loads(row.context)
         _expect(bool(ctx.get("exit_plan")), "registry context carries no staged exit_plan", problems)
+        if c.scenario != SCENARIO_BASE:
+            prof = (ctx.get("exit_profile") or {}).get("profile")
+            _expect(prof == SCENARIO_PROFILE[c.scenario], f"registry exit_profile {prof} != {SCENARIO_PROFILE[c.scenario]} (profile row not frozen at entry)", problems)
+            _expect(c.stack.exit_policy == "staged_profiles", f"stack exit_policy {c.stack.exit_policy} != staged_profiles", problems)
     if problems:
         raise StepFail("; ".join(problems))
-    return {"ticket": c.ticket, "events": kinds, "lots": c.lots_total}
+    data = {"ticket": c.ticket, "events": kinds, "lots": c.lots_total}
+    if c.scenario != SCENARIO_BASE:
+        data["exit_profile"] = ((json.loads(row.context) if row is not None and row.context else {}).get("exit_profile") or {}).get("profile")
+        data["broker_tp"] = None if not own else float(own[0].tp or 0.0)
+    return data
 
 
 def step2_protective_stop(c: Canary) -> dict[str, Any]:
@@ -885,7 +1034,7 @@ def step10_restart(c: Canary) -> dict[str, Any]:
     c.stack.stop()
     c.stack = None
     c.view = None
-    new = build_stack(c.env, dry_run=False, state_dir=c.state_dir)
+    new = build_stack(c.env, dry_run=False, state_dir=c.state_dir, scenario=c.scenario)
     c.stack = new
     snap = new.start()
     c.view = BrokerView(new, c.env.market)
@@ -902,7 +1051,7 @@ def step10_restart(c: Canary) -> dict[str, Any]:
     _expect(row is not None and row.status == "CLOSED", f"registry row not terminal after restart: {None if row is None else row.status}", problems)
     foreign = (snap.extra or {}).get("foreign_positions") or []
     _expect(not foreign, f"foreign positions seen after restart: {foreign}", problems)
-    c.hook("after_action_10")
+    c.hook(f"after_action_{c.step_no}")
     c.data["restart"] = {"reconciliation": snap.reconciliation, "open_positions": snap.open_positions, "open_orders": snap.open_orders,
                          "registry_status": row.status if row else None, "foreign_positions": list(foreign)}
     if problems:
@@ -910,16 +1059,539 @@ def step10_restart(c: Canary) -> dict[str, Any]:
     return {"reconciliation": snap.reconciliation, "registry_status": row.status if row else None}
 
 
+# -- Lane K: the REAL manage_exits path (StagedExitManager) with causal engine-input injection --------------------------
+#
+# INJECTION DESIGN.  The ENGINE decisions (TP1 partial, structure trail, structure failure, target close) need market state a real
+# market will not conveniently reach in a ~1 minute canary.  The canary therefore replaces, ONLY while ``manage_exits`` runs, the two
+# readers the StagedExitManager uses for its evaluation: ``stack.bar_source.latest_quote`` (the quote the engine prices TP stages /
+# stops against) and ``stack.bar_source.m5_frame`` (the closed bars the structure signals are derived from).  Everything else is the
+# production path: the engine decides, the manager routes the decision through its reduce-only admission to the REAL ``ReduceJob`` /
+# ``ModifyStopJob`` / ``_flatten`` -> broker orders at the REAL market (those paths never read the replaced readers, so no order price
+# can be affected; the fake-broker tests assert it on the request log).  Every injected value is logged with
+# ``INJECTED_FOR_ENGINE_EVALUATION_ONLY`` in the console and in the report.  No production code was changed for this.
+
+
+def synthetic_m5_frame(
+    entered_at: datetime, ref_price: Decimal, tick: Decimal, *, swing_low: Decimal | None = None, last_close: Decimal | None = None,
+) -> Any:
+    """Closed-bar frame for the ENGINE EVALUATION ONLY: bars strictly AFTER the entry (post-entry structure).
+
+    No ``swing_low`` -> flat bars (no confirmed swing).  With ``swing_low`` -> exactly one confirmed fractal swing LOW at that price
+    (bar 2 of 8, n = 2); ``last_close`` below it makes the newest closed bar break that swing (structure failure)."""
+    import pandas as pd
+
+    base = entered_at.astimezone(UTC).replace(second=0, microsecond=0)
+    base = base - timedelta(minutes=base.minute % 5)
+    ts0 = base + timedelta(minutes=5)
+    n, t, ref = 8, float(tick), float(ref_price)
+    low_ref = (float(swing_low) + 20 * t) if swing_low is not None else ref - 5 * t
+    lows = [low_ref] * n
+    if swing_low is not None:
+        lows[2] = float(swing_low)
+    closes = [ref] * n
+    if last_close is not None:
+        closes[-1] = float(last_close)
+        lows[-1] = min(lows[-1], closes[-1] - t)
+    highs = [max(low_ref, ref) + 40 * t] * n
+    return pd.DataFrame({
+        "ts": pd.DatetimeIndex([ts0 + timedelta(minutes=5 * i) for i in range(n)]),
+        "open": closes, "high": highs, "low": lows, "close": closes,
+    })
+
+
+@contextlib.contextmanager
+def inject_engine_inputs(
+    c: Canary, label: str, *, bid: Decimal | None = None, ask: Decimal | None = None, frame: Any = None, note: str = "",
+) -> Any:
+    """Replace the quote and / or closed-bar readers of the stack's bar source for the duration of ONE ``manage_exits`` call."""
+    from demo.opportunity.bar_source import Quote
+
+    src = c.stack.bar_source
+    now = c.env.now()
+    real_bid = real_ask = None
+    with contextlib.suppress(Exception):
+        real_bid, real_ask, _ = c.view.quote()
+    rec: dict[str, Any] = {
+        "marker": INJECTION_MARKER, "label": label, "scenario": c.scenario, "at_utc": _iso(now), "note": note,
+        "real_bid": real_bid, "real_ask": real_ask, "injected_bid": bid, "injected_ask": ask,
+        "frame": None if frame is None else {
+            "bars": len(frame), "first_bar_open_utc": str(frame["ts"].iloc[0]), "swing_low_in_frame": float(frame["low"].min()),
+            "last_close": float(frame["close"].iloc[-1]),
+        },
+        "quote_reads": 0, "frame_reads": 0,
+        "applies_to": "ExitEngine market-state inputs only (bar_source.latest_quote / m5_frame as read by StagedExitManager); "
+                      "orders keep the real market",
+    }
+    original_quote, original_frame = src.latest_quote, src.m5_frame
+
+    def quote_reader(market: str) -> Any:
+        if bid is None or ask is None:
+            return original_quote(market)
+        rec["quote_reads"] += 1
+        return Quote(ts_utc=now, bid=float(bid), ask=float(ask))
+
+    def frame_reader(market: str, n: int | None = None) -> Any:
+        if frame is None:
+            return original_frame(market, n)
+        rec["frame_reads"] += 1
+        return frame.copy()
+
+    src.latest_quote, src.m5_frame = quote_reader, frame_reader
+    c.injected.append(rec)
+    c.env.log(f"  {INJECTION_MARKER} [{c.scenario}/{label}] quote={'real' if bid is None else f'{bid}/{ask}'} "
+              f"bars={'real' if frame is None else rec['frame']} real_market={real_bid}/{real_ask} ({note})")
+    try:
+        yield rec
+    finally:
+        for name in ("latest_quote", "m5_frame"):
+            vars(src).pop(name, None)  # back to the class methods: the injection never outlives the call
+
+
+BAD_MANAGER_COUNTERS = (
+    "row_errors", "reduce_refused", "reduce_unknown", "stop_move_failed", "size_below_min", "quote_missing", "quote_stale",
+    "profile_mutation_refused", "fixed_rows_skipped",
+)
+
+
+def _manager_problems(c: Canary, baseline: Mapping[str, int] | None = None) -> list[str]:
+    mgr = c.stack._exit_manager
+    base = baseline or {}
+    return [f"manager counter {k}={mgr.counters[k]}" for k in BAD_MANAGER_COUNTERS if mgr.counters[k] > base.get(k, 0)]
+
+
+def run_manage(c: Canary, label: str, **inject: Any) -> tuple[list[Any], dict[str, Any], list[dict[str, Any]]]:
+    """ONE real ``stack.manage_exits(now)`` cycle with the engine inputs injected -> (events, injection record, new manager log)."""
+    c.hook(f"before_manage_{label}")
+    log0 = len(c.stack.exit_log())
+    with inject_engine_inputs(c, label, **inject) as rec:
+        t0 = time.perf_counter()
+        events = c.stack.manage_exits(c.env.now())
+        rec["manage_exits_ms"] = (time.perf_counter() - t0) * 1000.0
+    new_log = c.stack.exit_log()[log0:]
+    rec["engine_log"] = new_log
+    c.events.extend(events)
+    return events, rec, new_log
+
+
+def _entered_at(c: Canary) -> datetime:
+    row = c.stack._registry.get(c.intent_id)
+    return datetime.fromisoformat(row.created_utc)
+
+
+def _flat_frame(c: Canary, ref: Decimal) -> Any:
+    return synthetic_m5_frame(_entered_at(c), ref, c.plan["tick_size"])
+
+
+def _registry_ctx(c: Canary) -> dict[str, Any]:
+    row = c.stack._registry.get(c.intent_id)
+    return json.loads(row.context) if row is not None and row.context else {}
+
+
+def _record_close(c: Canary, events: list[Any]) -> None:
+    closed = [e for e in c.events if type(e).__name__ == "PositionClosed"]
+    row = c.stack._registry.get(c.intent_id)
+    c.data["registry_status_after_close"] = None if row is None else row.status
+    if closed:
+        e = closed[-1]
+        c.data["closed_event"] = {
+            "exit_reason": e.exit_reason, "exit_price": e.exit_price, "exit_quantity": e.exit_quantity, "commission": e.commission,
+            "swap": e.swap, "profit_eur": e.profit_eur, "net_pnl_eur": e.net_pnl_eur, "holding_seconds": e.holding_seconds,
+        }
+
+
+def _registry_closed(c: Canary) -> bool:
+    r = c.stack._registry.get(c.intent_id)
+    return r is not None and r.status == "CLOSED"
+
+
+def stepK_engine_tp1_partial(c: Canary) -> dict[str, Any]:
+    """The ENGINE (not a direct ReduceJob) decides the TP1 partial: injected quote at the TP1 level -> real reduce-only partial."""
+    plan = c.plan
+    bid, ask, _ = c.view.quote()
+    tp1 = plan["tp1_price"]
+    expected = c.lots_total - plan["partial_lots"]
+    _events, rec, log = run_manage(c, "tp1", bid=tp1, ask=tp1 + (ask - bid), frame=_flat_frame(c, bid), note="TP1 price stage reached")
+    c.latencies["engine_partial_ms"] = rec["manage_exits_ms"]
+    c.hook("after_action_3")
+    problems: list[str] = []
+    _expect(rec["quote_reads"] >= 1 and rec["frame_reads"] >= 1, "the engine never read the injected inputs (no evaluation happened)", problems)
+    partials = [e for e in log if e["kind"] == "partial_exit"]
+    _expect(len(partials) == 1, f"expected exactly 1 engine partial_exit, got {len(partials)}: {[e['kind'] for e in log]}", problems)
+    if partials:
+        p = partials[0]
+        _expect(p["exit_profile"] == SCENARIO_PROFILE[c.scenario], f"partial attributed to profile {p['exit_profile']}", problems)
+        _expect(p["stage_id"] == "tp1" and p["reason"] == "TAKE_PROFIT", f"partial stage {p['stage_id']} / {p['reason']}", problems)
+        _expect(D(p["quantity_reduced"]) == plan["partial_lots"], f"engine reduced {p['quantity_reduced']} != {plan['partial_lots']}", problems)
+        _expect(D(p["quantity_remaining"]) == expected, f"engine says remaining {p['quantity_remaining']} != {expected}", problems)
+        if p.get("fill_price") is not None:
+            c.quality["engine_partial_1"] = {"real_bid_before": bid, "fill_price": D(p["fill_price"]),
+                                             "slippage_adverse_positive": bid - D(p["fill_price"]), "spread": ask - bid}
+    problems.extend(_manager_problems(c))
+    _poll_until(c, lambda: _dec(_own_one(c).volume) == expected)
+    pos = _own_one(c)
+    _expect(pos is not None and _dec(pos.volume) == expected, f"broker volume after the engine partial != {expected}", problems)
+    if problems:
+        raise StepFail("; ".join(problems))
+    return {"engine_partial": partials[0], "broker_volume": _dec(pos.volume), "injected": rec["label"]}
+
+
+def _engine_trail(c: Canary, label: str, hook: str) -> dict[str, Any]:
+    """The ENGINE tightens the runner stop behind an injected confirmed higher swing (real modify, tighten-only)."""
+    pos = _own_one(c)
+    if pos is None:
+        raise StepFail("canary position vanished at the broker")
+    bid, ask, _ = c.view.quote()
+    sinfo = c.view.symbol_info()
+    before = _dec(pos.sl or 0)
+    target = compute_tighten_stop(
+        bid=bid, current_stop=before, initial_distance=c.plan["stop_distance"], tick=c.plan["tick_size"], point=c.plan["point"],
+        stops_level_pts=c.plan["stops_level_points"], freeze_level_pts=int(getattr(sinfo, "trade_freeze_level", 0) or 0), spread=ask - bid,
+    )
+    if target is None:
+        raise StepFail(f"no valid tighter stop exists at bid {bid} (market moved away; re-run) - not a contract verdict")
+    children_before = local_state(c.view)["n_stop_children"]
+    frame = synthetic_m5_frame(_entered_at(c), bid, c.plan["tick_size"], swing_low=target)
+    counters0 = dict(c.stack._exit_manager.counters)
+    _events, rec, log = run_manage(c, label, frame=frame, note=f"confirmed higher swing low {target} (real bid {bid})")
+    c.latencies[f"engine_modify_{label}_ms"] = rec["manage_exits_ms"]
+    c.hook(hook)
+    problems: list[str] = []
+    _expect(rec["frame_reads"] >= 1, "the engine never read the injected bars", problems)
+    moved = [e for e in log if e["kind"] == "stop_moved"]
+    _expect(len(moved) == 1, f"expected exactly 1 engine stop_moved, got {len(moved)}: {[e['kind'] for e in log]}", problems)
+    problems.extend(_manager_problems(c, counters0))
+    pos = _own_one(c)
+    expected = c.lots_total - c.plan["partial_lots"]
+    if pos is None:
+        problems.append("canary position vanished")
+    else:
+        seen = _dec(pos.sl or 0)
+        tick = c.plan["tick_size"]
+        if moved:
+            _expect(abs(seen - D(moved[0]["new"])) < tick, f"broker sl {seen} != the engine's new stop {moved[0]['new']}", problems)
+        _expect(seen > before, f"broker sl did not tighten: {before} -> {seen}", problems)
+        _expect(seen < bid, f"stop {seen} is not below the real bid {bid}", problems)
+        _expect(_dec(pos.volume) == expected, f"volume changed by the stop move: {pos.volume} != {expected}", problems)
+        if not problems:
+            c.current_stop = seen
+            if children_before:  # the strategy's stop child follows the broker stop
+                _poll_until(c, lambda: local_state(c.view)["stop_child_trigger"] == seen, timeout_s=8.0)
+                ls = local_state(c.view)
+                _expect(ls["stop_child_qty"] == expected, f"stop child qty {ls['stop_child_qty']} != remaining {expected}", problems)
+    if problems:
+        raise StepFail("; ".join(problems))
+    return {"old_sl": before, "new_sl": c.current_stop, "engine_target_swing": target,
+            "path": "ModifyStopJob" if children_before else "adopted-position protect path (no local stop child)"}
+
+
+def stepK_engine_structure_trail(c: Canary) -> dict[str, Any]:
+    return _engine_trail(c, "trail", "after_action_6")
+
+
+def _loosen_checks(c: Canary, hook: str) -> dict[str, Any]:
+    """Tighten-only through the ENGINE path: an injected LOOSER structure never moves the broker stop; the manager's own gate refuses
+    an attempted widening without sending a job; a widening ModifyStopJob (when a local stop child exists) is denied."""
+    from demo.execution.strategy import ModifyStopJob
+    from exits.models import PositionSide, StopStage
+
+    pos = _own_one(c)
+    if pos is None:
+        raise StepFail("canary position vanished at the broker")
+    mgr = c.stack._exit_manager
+    bid, _ask, _ = c.view.quote()
+    tick = c.plan["tick_size"]
+    before = _dec(pos.sl or 0)
+    problems: list[str] = []
+    # (a) a full engine cycle with a swing BELOW the current stop: the engine must offer / apply no stop change
+    lower = before - 10 * tick
+    counters0 = dict(mgr.counters)
+    _events, _rec, log = run_manage(c, "loosen_cycle", frame=synthetic_m5_frame(_entered_at(c), bid, tick, swing_low=lower),
+                                   note=f"swing low {lower} BELOW the current stop {before}: a loosen candidate")
+    _expect(not [e for e in log if e["kind"] in ("stop_moved", "stop_move_failed")], f"engine moved the stop on a loosen candidate: {log}", problems)
+    _expect(mgr.counters["stop_moves"] == counters0.get("stop_moves", 0), "stop_moves counter changed on a loosen candidate", problems)
+    after_a = _dec(_own_one(c).sl or 0)
+    _expect(after_a == before, f"broker sl changed by a loosen cycle: {before} -> {after_a}", problems)
+    # (b) the manager's tighten gate itself: an attempted widening sends NO job and returns nothing
+    row = c.stack._registry.get(c.intent_id)
+    ctx = mgr._ctx(row)
+    state = dict(ctx.get("exit_state") or {})
+    wider = _round_tick(before - c.plan["stop_distance"] / 2, tick, "down")
+    risk = abs(_dec(pos.price_open) - D(row.stop))
+    sends0 = dict(mgr.counters)
+    with c.stack._submit_lock:
+        out = mgr._tighten_stop(row, ctx, state, c.view.info, pos, PositionSide.LONG, before, wider, StopStage.TRAILING, risk)
+    _expect(out == [], f"widening attempt returned events {out}", problems)
+    _expect(mgr.counters["stop_moves"] == sends0.get("stop_moves", 0) and mgr.counters["stop_move_failed"] == sends0.get("stop_move_failed", 0),
+            "the widening attempt reached the modify path (counters moved)", problems)
+    after_b = _dec(_own_one(c).sl or 0)
+    _expect(after_b == before, f"broker sl changed by the refused widening: {before} -> {after_b}", problems)
+    # (c) strategy-level denial (only meaningful with a local stop child)
+    outcome_txt = "not_applicable(no local stop child: adopted position)"
+    if local_state(c.view)["n_stop_children"] == 1:
+        job = ModifyStopJob(instrument_id=c.view.info.instrument_id, new_stop=wider, tag=f"exit-stop-loosen-test:{c.intent_id}")
+        c.stack._strategy.enqueue(job)
+        outcome = job.future.result(timeout=c.stack._cfg.exposure_timeout_s)
+        outcome_txt = f"{outcome.status}:{outcome.reason}"
+        _expect(outcome.status == "denied" and "stop_not_tighter" in outcome.reason, f"widening ModifyStopJob not denied: {outcome_txt}", problems)
+    c.hook(hook)
+    final = _own_one(c)
+    _expect(final is not None and _dec(final.sl or 0) == before, f"broker sl changed during the loosen checks: {before} -> {None if final is None else final.sl}", problems)
+    if problems:
+        raise StepFail("; ".join(problems))
+    return {"broker_sl_unchanged": before, "attempted_wider_stop": wider, "strategy_denial": outcome_txt}
+
+
+def stepK_engine_cannot_loosen(c: Canary) -> dict[str, Any]:
+    return _loosen_checks(c, "after_action_7")
+
+
+def stepK_engine_final_close(c: Canary) -> dict[str, Any]:
+    """The ENGINE closes the runner: injected structure failure (a closed bar breaks the newest swing) -> real reduce-only close."""
+    pos = _own_one(c)
+    if pos is None:
+        raise StepFail("canary position vanished at the broker")
+    bid, _ask, _ = c.view.quote()
+    tick = c.plan["tick_size"]
+    sl_now = _dec(pos.sl or 0)
+    swing = sl_now - 10 * tick  # below the stop: no trail candidate in the same cycle
+    frame = synthetic_m5_frame(_entered_at(c), bid, tick, swing_low=swing, last_close=swing - tick)
+    t0 = time.perf_counter()
+    events, _rec, log = run_manage(c, "failure", frame=frame, note=f"closed bar {swing - tick} breaks the swing low {swing}")
+    c.latencies["engine_final_close_ms"] = (time.perf_counter() - t0) * 1000.0
+    c.hook("after_action_8")
+    problems: list[str] = []
+    closes = [e for e in log if e["kind"] == "full_close"]
+    _expect(len(closes) == 1, f"expected exactly 1 engine full_close, got {len(closes)}: {[e['kind'] for e in log]}", problems)
+    if closes:
+        _expect(closes[0]["exit_reason"] == "EXIT_ENGINE_STRUCTURE" and closes[0]["flat"] is True,
+                f"engine close {closes[0]['exit_reason']} flat={closes[0]['flat']}", problems)
+        _expect(closes[0]["exit_profile"] == SCENARIO_PROFILE[c.scenario], f"close attributed to {closes[0]['exit_profile']}", problems)
+    problems.extend(_manager_problems(c))
+    _poll_until(c, _registry_closed, timeout_s=12.0)
+    sym = c.view.positions(symbol_only=True)
+    _expect(not c.view.own(sym), f"{len(c.view.own(sym))} canary position(s) still at the broker", problems)
+    _expect(not sym, f"{len(sym)} position(s) on the symbol after the engine close", problems)
+    orders = [o for o in c.view.orders() if str(getattr(o, "symbol", "")) == c.view.symbol]
+    _expect(not orders, f"{len(orders)} order(s) left on the symbol", problems)
+    _record_close(c, events)
+    _expect(c.data["registry_status_after_close"] == "CLOSED", f"registry not terminal: {c.data['registry_status_after_close']}", problems)
+    if problems:
+        raise StepFail("; ".join(problems))
+    return {"flat": True, "exit_reason": closes[0]["exit_reason"], "registry_status": c.data["registry_status_after_close"]}
+
+
+# -- B2 ---------------------------------------------------------------------------------------------------------------
+
+
+def stepK_b2_stop_and_far_tp(c: Canary) -> dict[str, Any]:
+    data = step2_protective_stop(c)
+    pos = _own_one(c)
+    plan = c.plan
+    problems: list[str] = []
+    _bid, ask, _ = c.view.quote()
+    tp = _dec(pos.tp or 0)
+    _expect(tp > 0 and abs(tp - plan["tp1_price"]) <= plan["tick_size"], f"broker TP {tp} != target level {plan['tp1_price']}", problems)
+    _expect(tp - ask >= plan["stop_distance"], f"broker TP {tp} is not far from the market (ask {ask}): it could fill by itself", problems)
+    ctx = _registry_ctx(c)
+    stages = (ctx.get("exit_plan") or {}).get("stages") or []
+    _expect(len(stages) == 1 and D(str(stages[0]["target_price"])) == plan["tp1_price"] and D(str(stages[0]["close_fraction"])) == 1,
+            f"engine plan is not ONE full-close stage at the broker TP level: {stages}", problems)
+    row = c.stack._registry.get(c.intent_id)
+    _expect(row is not None and row.target is not None and D(row.target) == plan["tp1_price"], f"registry target {None if row is None else row.target}", problems)
+    if problems:
+        raise StepFail("; ".join(problems))
+    return {**data, "broker_tp": tp, "engine_stage_price": plan["tp1_price"], "distance_to_tp": tp - ask}
+
+
+def stepK_b2_engine_target_close(c: Canary) -> dict[str, Any]:
+    """The ENGINE's single full-close target stage fires (injected quote at the target) -> real full reduce-only close."""
+    plan = c.plan
+    bid, ask, _ = c.view.quote()
+    target = plan["tp1_price"]
+    t0 = time.perf_counter()
+    events, rec, log = run_manage(c, "target", bid=target, ask=target + (ask - bid), frame=_flat_frame(c, bid),
+                                  note="REVERSION target level reached (the same price as the broker TP)")
+    c.latencies["engine_target_close_ms"] = (time.perf_counter() - t0) * 1000.0
+    c.hook("after_action_3")
+    problems: list[str] = []
+    closes = [e for e in log if e["kind"] == "full_close"]
+    if c.env.tolerate_tp_race:  # B2b (fake only): the broker TP may have consumed the position before the engine close
+        _expect(len(closes) <= 1, f"more than one engine full_close: {len(closes)}", problems)
+    else:
+        _expect(rec["quote_reads"] >= 1, "the engine never read the injected quote", problems)
+        _expect(len(closes) == 1, f"expected exactly 1 engine full_close, got {len(closes)}: {[e['kind'] for e in log]}", problems)
+    if closes:
+        _expect(closes[0]["reason"] == "TAKE_PROFIT" and closes[0]["exit_reason"] == "EXIT_ENGINE_TP1",
+                f"engine close {closes[0]['reason']} / {closes[0]['exit_reason']}", problems)
+        _expect(closes[0]["exit_profile"] == "REVERSION", f"close attributed to {closes[0]['exit_profile']}", problems)
+        _expect(closes[0]["flat"] is True, "the engine close reported failure (flat=False)", problems)
+    problems.extend(_manager_problems(c))
+    _poll_until(c, lambda: not c.view.own(), timeout_s=12.0)
+    _expect(not c.view.own(), "canary position still open at the broker after the engine target close", problems)
+    _poll_until(c, _registry_closed, timeout_s=12.0)
+    _record_close(c, events)
+    if problems:
+        raise StepFail("; ".join(problems))
+    return {"closed_by": "engine" if closes else "broker_tp", "exit_reason": closes[0]["exit_reason"] if closes else None,
+            "registry_status": c.data["registry_status_after_close"]}
+
+
+def stepK_b2_clean_state(c: Canary) -> dict[str, Any]:
+    """After the engine close: flat, the broker TP is gone (cancelled or consumed), nothing stray, nothing halted or counted as failed."""
+    stack = c.stack
+
+    def clean() -> bool:
+        return (not c.view.own() and not [o for o in c.view.orders() if str(getattr(o, "symbol", "")) == c.view.symbol]
+                and not stack._strategy.cache.orders_open(instrument_id=c.view.info.instrument_id) and _registry_closed(c))
+
+    _poll_until(c, clean, timeout_s=12.0)
+    problems: list[str] = []
+    sym = c.view.positions(symbol_only=True)
+    _expect(not sym, f"{len(sym)} position(s) on the symbol", problems)
+    orders = [o for o in c.view.orders() if str(getattr(o, "symbol", "")) == c.view.symbol]
+    _expect(not orders, f"{len(orders)} stray order(s) at the broker (the TP must be gone)", problems)
+    local_orders = list(stack._strategy.cache.orders_open(instrument_id=c.view.info.instrument_id))
+    _expect(not local_orders, f"{len(local_orders)} local open order(s) (stale TP / stop child)", problems)
+    _expect(_registry_closed(c), "registry row not terminal", problems)
+    _expect(stack._halt_reason is None, f"stack halted new exposure: {stack._halt_reason}", problems)
+    _expect(not stack._fatal, f"stack latched a fatal: {stack._fatal}", problems)
+    _expect(not stack._flatten_failures, f"flatten failure counter incremented: {dict(stack._flatten_failures)}", problems)
+    problems.extend(_manager_problems(c))
+    if problems:
+        raise StepFail("; ".join(problems))
+    return {"flat": True, "stray_orders": 0, "halt_reason": None, "flatten_failures": {}, "manager_counters": dict(stack._exit_manager.counters)}
+
+
+# -- B3 ---------------------------------------------------------------------------------------------------------------
+
+
+def stepK_b3_restart_with_open_position(c: Canary) -> dict[str, Any]:
+    """Orderly stop with the position OPEN (protected by the broker SL), NEW stack on the same state dir: the position is adopted with
+    the SAME intent id / frozen profile / exit_state, the broker stop is still there."""
+    pos = _own_one(c)
+    row = c.stack._registry.get(c.intent_id)
+    if pos is None or row is None:
+        raise StepFail("no open canary position / registry row before the restart")
+    ctx = json.loads(row.context)
+    state = dict(ctx.get("exit_state") or {})
+    pre = {
+        "intent_id": c.intent_id, "ticket": int(pos.ticket), "volume": _dec(pos.volume), "broker_sl": _dec(pos.sl or 0),
+        "profile": ctx.get("exit_profile"), "state_profile": state.get("exit_profile"),
+        "stages_completed": int(state.get("stages_completed", 0)), "stop": row.stop, "exit_plan": ctx.get("exit_plan"),
+    }
+    c.data["b3_pre_restart"] = pre
+    c.hook("before_restart")
+    # Nautilus auto-generates reduce-only order ids as ``O-<yyyymmdd>-<hhmmss>-<trader>-<strategy>-<count>`` (count restarts per
+    # session).  Observed on the fake broker: when the new session starts within the SAME wall-clock second as the old session's
+    # last reduce order, its first reduce-only order is denied DUPLICATE_CLIENT_ORDER_ID_ALREADY_RECORDED (a real restart takes
+    # seconds).  Make the seconds differ so the canary tests the contract, not that coincidence.
+    time.sleep(1.1)
+    c.stack.stop()
+    c.stack = None
+    c.view = None
+    new = build_stack(c.env, dry_run=False, state_dir=c.state_dir, scenario=c.scenario)
+    c.stack = new
+    snap = new.start()
+    c.view = BrokerView(new, c.env.market)
+    c.hook("after_action_6")
+    problems: list[str] = []
+    _expect(snap.reconciliation == "RECONCILED", f"restart reconciliation {snap.reconciliation}", problems)
+    _expect(snap.is_demo and snap.account_id_hash == c.env.expected_account_hash, "restart: account / hash differs", problems)
+    _expect(snap.open_positions == 1, f"restart sees {snap.open_positions} open position(s), expected the canary position", problems)
+    foreign = (snap.extra or {}).get("foreign_positions") or []
+    _expect(not foreign, f"foreign positions seen after restart: {foreign}", problems)
+    pos2 = _own_one(c)
+    _expect(pos2 is not None, "the canary position is gone / not unique at the broker after the restart", problems)
+    if pos2 is not None:
+        _expect(int(pos2.ticket) == pre["ticket"] and _dec(pos2.volume) == pre["volume"], "position ticket / volume changed across the restart", problems)
+        _expect(_dec(pos2.sl or 0) == pre["broker_sl"] and _dec(pos2.sl or 0) > 0, f"broker SL after restart {pos2.sl} != before {pre['broker_sl']}", problems)
+    _expect(c.intent_id in new.open_intents(), f"registry does not list {c.intent_id} as a live intent: {list(new.open_intents())}", problems)
+    row2 = new._registry.get(c.intent_id)
+    ctx2 = json.loads(row2.context) if row2 is not None and row2.context else {}
+    state2 = dict(ctx2.get("exit_state") or {})
+    _expect(row2 is not None and row2.status == "OPEN", f"registry row {None if row2 is None else row2.status} (expected OPEN)", problems)
+    _expect(ctx2.get("exit_profile") == pre["profile"], f"frozen profile changed across the restart: {pre['profile']} -> {ctx2.get('exit_profile')}", problems)
+    _expect(ctx2.get("exit_plan") == pre["exit_plan"], "exit_plan changed across the restart", problems)
+    _expect(row2 is not None and row2.stop == pre["stop"], "registry stop changed across the restart", problems)
+    _expect(state2.get("exit_profile") == pre["state_profile"], f"exit_state profile {pre['state_profile']} -> {state2.get('exit_profile')}", problems)
+    _expect(int(state2.get("stages_completed", 0)) >= max(1, pre["stages_completed"]), f"stages_completed fell below its lower bound: {state2.get('stages_completed')}", problems)
+    owned = new._on_lane(new._lane_own_positions, strict=True)
+    adopted = [r.intent_id for (_p, _m, r) in owned if r is not None]
+    _expect(adopted == [c.intent_id], f"position not adopted by intent {c.intent_id}: {adopted}", problems)
+    c.data["restart_open"] = {
+        "reconciliation": snap.reconciliation, "open_positions": snap.open_positions, "adopted_intents": adopted,
+        "profile": ctx2.get("exit_profile", {}).get("profile") if isinstance(ctx2.get("exit_profile"), dict) else None,
+        "stages_completed": state2.get("stages_completed"), "broker_sl": None if pos2 is None else _dec(pos2.sl or 0),
+        "local": local_state(c.view),
+    }
+    if problems:
+        raise StepFail("; ".join(problems))
+    return {"pre": pre, "post": c.data["restart_open"]}
+
+
+def stepK_b3_no_refire(c: Canary) -> dict[str, Any]:
+    plan = c.plan
+    expected = c.lots_total - plan["partial_lots"]
+    bid, ask, _ = c.view.quote()
+    tp1 = plan["tp1_price"]
+    counters0 = dict(c.stack._exit_manager.counters)
+    _events, rec, log = run_manage(c, "norefire", bid=tp1, ask=tp1 + (ask - bid), frame=_flat_frame(c, bid),
+                                   note="TP1 level injected AGAIN after the restart: the stage must stay done")
+    c.hook("after_action_7")
+    problems: list[str] = []
+    _expect(rec["quote_reads"] >= 1, "the restarted engine never read the injected quote", problems)
+    _expect(not [e for e in log if e["kind"] in ("partial_exit", "full_close", "reduce_refused", "reduce_unknown")],
+            f"the restarted engine acted on an already-completed stage: {[e['kind'] for e in log]}", problems)
+    problems.extend(_manager_problems(c, counters0))
+    pos = _own_one(c)
+    _expect(pos is not None and _dec(pos.volume) == expected, f"broker volume {None if pos is None else pos.volume} != {expected} (stage re-fired?)", problems)
+    state = (_registry_ctx(c).get("exit_state") or {})
+    _expect(int(state.get("stages_completed", 0)) >= 1, f"stages_completed {state.get('stages_completed')} < 1", problems)
+    if problems:
+        raise StepFail("; ".join(problems))
+    return {"broker_volume": expected, "stages_completed": state.get("stages_completed")}
+
+
+def stepK_b3_restart_tighten(c: Canary) -> dict[str, Any]:
+    trail = _engine_trail(c, "restart_trail", "after_action_8")
+    loosen = _loosen_checks(c, "after_action_8_loosen")
+    return {"tighten": trail, "loosen": loosen}
+
+
+SCENARIO_STEPS: dict[str, tuple[tuple[str, ...], tuple[Callable[[Canary], dict[str, Any]], ...]]] = {}
+RESTART_STEP_NAMES = ("restart_reconcile", "restart_with_open_position", "final_restart_reconcile")
+
+
 STEP_FUNCS: tuple[Callable[[Canary], dict[str, Any]], ...] = (
     step1_entry, step2_protective_stop, step3_partial, step4_volume_equality, step5_protection_after_partial,
     step6_tighten, step7_cannot_loosen, step8_second_partial, step9_final_close, step10_restart,
 )
 
+SCENARIO_STEPS.update({
+    "base": (STEP_NAMES, STEP_FUNCS),
+    "b1": (B1_STEP_NAMES, (
+        step1_entry, step2_protective_stop, stepK_engine_tp1_partial, step4_volume_equality, step5_protection_after_partial,
+        stepK_engine_structure_trail, stepK_engine_cannot_loosen, stepK_engine_final_close, step10_restart,
+    )),
+    "b2": (B2_STEP_NAMES, (
+        step1_entry, stepK_b2_stop_and_far_tp, stepK_b2_engine_target_close, stepK_b2_clean_state, step10_restart,
+    )),
+    "b3": (B3_STEP_NAMES, (
+        step1_entry, step2_protective_stop, stepK_engine_tp1_partial, step4_volume_equality, step5_protection_after_partial,
+        stepK_b3_restart_with_open_position, stepK_b3_no_refire, stepK_b3_restart_tighten, step9_final_close, step10_restart,
+    )),
+})
+for _name, (_names, _funcs) in SCENARIO_STEPS.items():
+    assert len(_names) == len(_funcs), _name
+
 
 def run_sequence(c: Canary) -> None:
     """Steps 1..10 in order; stops at the first failure (later steps are recorded SKIPPED)."""
     failed_at: int | None = None
-    for n, (name, fn) in enumerate(zip(STEP_NAMES, STEP_FUNCS, strict=True), start=1):
+    names, funcs = SCENARIO_STEPS[c.scenario]
+    for n, (name, fn) in enumerate(zip(names, funcs, strict=True), start=1):
+        c.step_no = n
+        injected_before = len(c.injected)
         record: dict[str, Any] = {"n": n, "name": name, "status": "SKIPPED", "detail": "", "before": None, "after": None,
                                   "started_utc": None, "duration_ms": None, "data": None}
         c.steps.append(record)
@@ -930,7 +1602,7 @@ def run_sequence(c: Canary) -> None:
         t0 = time.perf_counter()
         try:
             c.check_abort()
-            if c.view is not None and n != 10:
+            if c.view is not None and name not in RESTART_STEP_NAMES:
                 with contextlib.suppress(Exception):
                     record["before"] = broker_snapshot(c.view, f"before_step_{n}")
             data = fn(c)
@@ -950,6 +1622,8 @@ def run_sequence(c: Canary) -> None:
             record["status"], record["detail"] = "FAIL", f"{type(exc).__name__}: {exc}"
             failed_at = n
         record["duration_ms"] = (time.perf_counter() - t0) * 1000.0
+        if len(c.injected) > injected_before:
+            record["injected"] = c.injected[injected_before:]  # INJECTED_FOR_ENGINE_EVALUATION_ONLY values used by this step
         if c.view is not None and c.stack is not None:
             with contextlib.suppress(Exception):
                 record["after"] = broker_snapshot(c.view, f"after_step_{n}")
@@ -1009,7 +1683,7 @@ def safety_flatten(c: Canary) -> dict[str, Any]:
                 stack.stop()
         recovery = None
         try:
-            recovery = build_stack(c.env, dry_run=False, state_dir=c.state_dir)
+            recovery = build_stack(c.env, dry_run=False, state_dir=c.state_dir, scenario=c.scenario)
             recovery.start()
             result["recovery_stack_used"] = True
             pos, _ = residual(recovery)
@@ -1031,7 +1705,7 @@ def safety_flatten(c: Canary) -> dict[str, Any]:
 # ---------------------------------------------------------------------------------------------
 
 
-def _verdict(steps: list[dict[str, Any]], flatten: dict[str, Any] | None, timed_out: bool) -> tuple[str, int]:
+def _verdict(steps: list[dict[str, Any]], flatten: dict[str, Any] | None, timed_out: bool, n_expected: int = len(STEP_NAMES)) -> tuple[str, int]:
     residual = None if flatten is None else flatten.get("residual_canary_positions")
     if flatten is not None and residual != []:
         return "FAIL(exposure_may_remain_at_broker: MANUAL ACTION REQUIRED)", 4
@@ -1040,14 +1714,15 @@ def _verdict(steps: list[dict[str, Any]], flatten: dict[str, Any] | None, timed_
             return f"FAIL(step {s['n']}, {s['detail'][:300]})", 1
     if timed_out:
         return "FAIL(timeout)", 1
-    if steps and all(s["status"] in ("PASS", "NOT_APPLICABLE") for s in steps) and len(steps) == len(STEP_NAMES):
+    if steps and all(s["status"] in ("PASS", "NOT_APPLICABLE") for s in steps) and len(steps) == n_expected:
         return "EXECUTION_CONTRACT_PASS", 0
     return "FAIL(incomplete)", 1
 
 
-def write_report(env: CanaryEnv, report: dict[str, Any], stamp: str) -> Path:
+def write_report(env: CanaryEnv, report: dict[str, Any], stamp: str, scenario: str = SCENARIO_BASE) -> Path:
     env.artifacts_dir.mkdir(parents=True, exist_ok=True)
-    path = env.artifacts_dir / f"canary_report_{stamp}.json"
+    suffix = "" if scenario == SCENARIO_BASE else f"_{scenario}"  # the base scenario keeps its historical file name
+    path = env.artifacts_dir / f"canary_report_{stamp}{suffix}.json"
     path.write_text(json.dumps(_scrub(report), indent=1, default=str), encoding="utf-8")
     return path
 
@@ -1069,24 +1744,37 @@ def _canary_trade_record(c: Canary, account_hash: str | None) -> dict[str, Any] 
     }
 
 
-def run_canary(env: CanaryEnv, *, plan_only: bool = False) -> tuple[int, dict[str, Any]]:
-    """Run (or, with ``plan_only``, only plan) the canary.  Returns ``(exit_code, report)``; the report is also written."""
+def scenario_timeout(env: CanaryEnv, scenario: str) -> float:
+    if env.timeout_s != DEFAULT_TIMEOUT_S:
+        return env.timeout_s
+    return SCENARIO_DEFAULT_TIMEOUT_S.get(scenario, env.timeout_s)
+
+
+def run_canary(env: CanaryEnv, *, plan_only: bool = False, scenario: str = SCENARIO_BASE) -> tuple[int, dict[str, Any]]:
+    """Run (or, with ``plan_only``, only plan) ONE scenario of the canary (``--scenario all`` is ``run_all``).
+    Returns ``(exit_code, report)``; the report is also written."""
+    if scenario not in SCENARIOS:
+        raise ValueError(f"unknown scenario {scenario!r}")
     started = _utcnow()
     stamp = _stamp(started)
     log = env.log
+    n_expected = len(SCENARIO_STEPS[scenario][0])
     report: dict[str, Any] = {
-        "schema": "e2_canary_report/1", "generated_utc": _iso(started), "mode": env.mode, "plan_only": plan_only,
+        "schema": "e2_canary_report/1", "generated_utc": _iso(started), "mode": env.mode, "plan_only": plan_only, "scenario": scenario,
         "demo_only": True, "market": env.market, "canary_magic": CANARY_MAGIC, "trade_type": TRADE_TYPE_TAG,
-        "timeout_s": env.timeout_s, "preflight": [], "plan": None, "steps": [], "latencies_ms": {}, "execution_quality": {},
+        "timeout_s": scenario_timeout(env, scenario), "preflight": [], "plan": None, "steps": [], "latencies_ms": {}, "execution_quality": {},
         "final_flatten": None, "verdict": None, "exit_code": None, "notes": [],
     }
-    log(f"E2 execution-contract canary [{env.mode}] market={env.market} {'(PLAN ONLY)' if plan_only else ''}")
+    log(f"E2 execution-contract canary [{env.mode}] scenario={scenario} market={env.market} {'(PLAN ONLY)' if plan_only else ''}")
     checks = local_preflight(env, plan_only=plan_only)
     report["preflight"] = checks
     plan: dict[str, Any] = {}
-    state_dir = env.artifacts_dir / f"state_{stamp}"
+    state_dir = env.artifacts_dir / (f"state_{stamp}" if scenario == SCENARIO_BASE else f"state_{stamp}_{scenario}")
     if not failed(checks):
-        plan, broker_checks = build_plan(env, state_dir)
+        try:
+            plan, broker_checks = build_plan(env, state_dir, scenario)
+        except ValueError as exc:  # e.g. the producer plan does not carry the canary level
+            plan, broker_checks = {}, [{"name": "scenario_plan_buildable", "ok": False, "detail": f"{type(exc).__name__}: {exc}"}]
         report["preflight"] = checks + broker_checks
         checks = report["preflight"]
         report["plan"] = plan
@@ -1095,17 +1783,18 @@ def run_canary(env: CanaryEnv, *, plan_only: bool = False) -> tuple[int, dict[st
     if failed(checks):
         report["verdict"] = "REFUSED(" + " | ".join(failed(checks))[:600] + ")"
         report["exit_code"] = 2
-        path = write_report(env, report, stamp)
+        path = write_report(env, report, stamp, scenario)
         log(f"{report['verdict']}\nreport: {path}")
         return 2, report
     if plan_only:
         report["verdict"], report["exit_code"] = "PLAN_OK (nothing was sent)", 0
-        path = write_report(env, report, stamp)
+        path = write_report(env, report, stamp, scenario)
         log("PLAN (nothing sent):\n" + json.dumps(_scrub(plan), indent=1, default=str) + f"\nreport: {path}")
         return 0, report
 
-    canary = Canary(env=env, plan=plan, state_dir=state_dir)
-    canary.stack = build_stack(env, dry_run=False, state_dir=state_dir)
+    canary = Canary(env=env, plan=plan, state_dir=state_dir, scenario=scenario)
+    env.runtime["canary"] = canary
+    canary.stack = build_stack(env, dry_run=False, state_dir=state_dir, scenario=scenario)
     refusal: str | None = None
     try:
         snap = canary.stack.start()
@@ -1123,7 +1812,7 @@ def run_canary(env: CanaryEnv, *, plan_only: bool = False) -> tuple[int, dict[st
                 canary.stack.stop()
         report["verdict"], report["exit_code"] = f"REFUSED({refusal})", 2
         report["final_flatten"] = {"skipped": "no order was attempted", "residual_canary_positions": []}
-        path = write_report(env, report, stamp)
+        path = write_report(env, report, stamp, scenario)
         log(f"{report['verdict']}\nreport: {path}")
         return 2, report
 
@@ -1142,7 +1831,7 @@ def run_canary(env: CanaryEnv, *, plan_only: bool = False) -> tuple[int, dict[st
                     with contextlib.suppress(ValueError, OSError):
                         old_handlers[sig] = signal.signal(sig, on_signal)
 
-        canary.deadline = time.monotonic() + env.timeout_s
+        canary.deadline = time.monotonic() + scenario_timeout(env, scenario)
         worker = threading.Thread(target=run_sequence, args=(canary,), name="e2-canary-seq", daemon=True)
         worker.start()
         while worker.is_alive():
@@ -1176,14 +1865,87 @@ def run_canary(env: CanaryEnv, *, plan_only: bool = False) -> tuple[int, dict[st
         report["final_flatten"] = flatten
         report["restart"] = canary.data.get("restart")
         report["registry_status_after_close"] = canary.data.get("registry_status_after_close")
-        verdict, code = _verdict(canary.steps, flatten, timed_out)
+        report["injected_values"] = canary.injected  # every INJECTED_FOR_ENGINE_EVALUATION_ONLY value (none in the base scenario)
+        report["engine_exit_log"] = [] if canary.stack is None else list(canary.stack.exit_log())[-40:]
+        verdict, code = _verdict(canary.steps, flatten, timed_out, n_expected)
         report["verdict"], report["exit_code"] = verdict, code
-        record = _canary_trade_record(canary, report.get("account_id_hash"))
-        path = write_report(env, report, stamp)
+        record = _canary_trade_record(canary, report.get("account_id_hash")) if scenario == SCENARIO_BASE else None
+        path = write_report(env, report, stamp, scenario)
         if record is not None:
             (env.artifacts_dir / f"canary_trade_{stamp}.json").write_text(json.dumps(record, indent=1, default=str), encoding="utf-8")
         log(f"VERDICT: {verdict}\nreport: {path}")
     return report["exit_code"], report
+
+
+def account_flat_check(env: CanaryEnv, state_dir: Path) -> dict[str, Any]:
+    """Read-only (shadow stack, ``order_send`` hard-guarded): is the WHOLE account flat (any magic) with no order?"""
+    from demo.execution.stack_port import StackFailClosed
+
+    result: dict[str, Any] = {"ok": False, "positions": None, "orders": None, "own_positions": None, "detail": ""}
+    stack = build_stack(env, dry_run=True, state_dir=state_dir, scenario=SCENARIO_BASE)
+    try:
+        stack.start()
+        view = BrokerView(stack, env.market)
+        positions, orders = view.positions(), view.orders()
+        result["positions"] = [_pos_dict(p) for p in positions]
+        result["orders"] = [_order_dict(o) for o in orders]
+        result["own_positions"] = [d for d in result["positions"] if d["magic"] == CANARY_MAGIC]
+        result["ok"] = not positions and not orders
+        result["detail"] = f"positions={len(positions)} orders={len(orders)}"
+    except StackFailClosed as exc:
+        result["detail"] = f"flat check could not attach: {exc}"
+    except Exception as exc:
+        result["detail"] = f"flat check failed: {type(exc).__name__}: {exc}"
+    finally:
+        with contextlib.suppress(Exception):
+            stack.stop()
+    return result
+
+
+def run_all(env: CanaryEnv, *, plan_only: bool = False) -> tuple[int, dict[str, Any]]:
+    """``--scenario all``: the scenarios run SEQUENTIALLY (each with its own stack, its own finally-flatten and its own report); a
+    read-only FLAT-ACCOUNT CHECK runs before the first and between / after every scenario.  The sequence stops at the first scenario
+    that is not a PASS and at the first non-flat account."""
+    started = _utcnow()
+    stamp = _stamp(started)
+    combined: dict[str, Any] = {
+        "schema": "e2_canary_report/1", "kind": "all", "generated_utc": _iso(started), "mode": env.mode, "plan_only": plan_only,
+        "market": env.market, "scenarios": [], "flat_checks": [], "verdict": None, "exit_code": None,
+    }
+    code, verdict = 0, ""
+    order = list(SCENARIOS)
+    for i, name in enumerate(order):
+        sc_code, sc_report = run_canary(env, plan_only=plan_only, scenario=name)
+        combined["scenarios"].append({
+            "scenario": name, "verdict": sc_report["verdict"], "exit_code": sc_code,
+            "steps": [{"n": s["n"], "name": s["name"], "status": s["status"], "detail": s["detail"], "duration_ms": s["duration_ms"]}
+                      for s in sc_report.get("steps", [])],
+            "injected_values": sc_report.get("injected_values", []), "latencies_ms": sc_report.get("latencies_ms", {}),
+            "final_flatten": sc_report.get("final_flatten"),
+        })
+        if sc_code != 0:
+            code, verdict = sc_code, f"FAIL(scenario {name}: {sc_report['verdict']})" if sc_code == 1 else sc_report["verdict"]
+            break
+        if not plan_only:
+            flat = account_flat_check(env, env.artifacts_dir / f"state_{stamp}_flat_{i}")
+            flat["after_scenario"] = name
+            combined["flat_checks"].append(flat)
+            env.log(f"  flat check after {name}: {'ok' if flat['ok'] else 'NOT FLAT'} ({flat['detail']})")
+            if not flat["ok"]:
+                own = flat.get("own_positions")
+                code = 4 if own else 2
+                if own:
+                    verdict = f"FAIL(account not flat after scenario {name}: {flat['detail']}; MANUAL ACTION REQUIRED)"
+                else:
+                    verdict = f"REFUSED(account not flat after scenario {name}: {flat['detail']})"
+                break
+    else:
+        verdict = ("PLAN_OK (nothing was sent)" if plan_only else
+                   "EXECUTION_CONTRACT_PASS(all: " + ",".join(order) + ")")
+    combined["verdict"], combined["exit_code"] = verdict, code
+    path = write_report(env, combined, stamp, SCENARIO_ALL)
+    env.log(f"VERDICT (all): {verdict}\nreport: {path}")
+    return code, combined
 
 
 # ---------------------------------------------------------------------------------------------
@@ -1191,7 +1953,7 @@ def run_canary(env: CanaryEnv, *, plan_only: bool = False) -> tuple[int, dict[st
 # ---------------------------------------------------------------------------------------------
 
 
-def _static_plan(market: str, price: Decimal | None) -> int:
+def _static_plan(market: str, price: Decimal | None, scenario: str = SCENARIO_BASE) -> int:
     from demo.execution.market_config import load_demo_market_specs
 
     specs = load_demo_market_specs()
@@ -1207,8 +1969,14 @@ def _static_plan(market: str, price: Decimal | None) -> int:
         dist = _round_tick(STRUCTURAL_PLACEHOLDER_FRACTION * price, spec.tick_size, "up")
         print(f"  at price {price}: structural placeholder distance {dist} -> stop {price - dist}, TP1 plan stage {price + 3 * dist} (spread / stops_level terms need the live broker)")
     print(f"  magic {CANARY_MAGIC}, tag {TRADE_TYPE_TAG}, exit policy staged (TP1 price stage close_fraction 0.5 + runner, no broker TP)")
-    for line in STATIC_PLAN_STEPS:
-        print("  " + line)
+    scenarios = SCENARIOS if scenario == SCENARIO_ALL else (scenario,)
+    for name in scenarios:
+        if scenario == SCENARIO_ALL or name != SCENARIO_BASE:
+            fam = SCENARIO_ROUTE.get(name)
+            print(f"  --- scenario {name}" + ("" if fam is None else f" ({SCENARIO_PROFILE[name]} row from {fam[0]}/{fam[1]}; exit_policy staged_profiles; "
+                  f"engine inputs INJECTED for the evaluation only: {INJECTION_MARKER}; orders stay real and reduce-only)"))
+        for line in STATIC_PLAN_BY_SCENARIO[name]:
+            print("  " + line)
     print("  ALWAYS: try/finally + signals + hard timeout -> flatten reduce-only (emergency_close by ticket as fallback)")
     return 0
 
@@ -1219,6 +1987,9 @@ def build_parser() -> argparse.ArgumentParser:
     modes.add_argument("--fake", action="store_true", help="FakeMT5Broker (tests / CI)")
     modes.add_argument("--live", action="store_true", help="real ActivTrades DEMO terminal (attach-only)")
     p.add_argument("--dry-run-plan", action="store_true", help="print steps + computed numbers; places nothing")
+    p.add_argument("--scenario", choices=SCENARIO_CHOICES, default=SCENARIO_BASE,
+                   help="base (default, the 10-step Lane C canary), b1 CONTINUATION via manage_exits, b2 REVERSION via manage_exits + "
+                        "broker TP, b3 restart with an open position, all (sequential with a flat-account check between)")
     p.add_argument("--market", default=DEFAULT_MARKET)
     p.add_argument("--confirm-demo-canary", default=None, metavar="PHRASE")
     p.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT_S)
@@ -1236,7 +2007,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     if not (args.fake or args.live):
         if args.dry_run_plan:
-            return _static_plan(args.market, args.plan_price)
+            return _static_plan(args.market, args.plan_price, args.scenario)
         print("REFUSED: choose --fake, --live or --dry-run-plan", file=sys.stderr)
         return 2
     plan_only = bool(args.dry_run_plan)
@@ -1280,7 +2051,10 @@ def main(argv: list[str] | None = None) -> int:
                                  disconnect_grace_s=0.5, close_grace_s=0.5, start_timeout_s=30.0),
         )
     try:
-        code, _report = run_canary(env, plan_only=plan_only)
+        if args.scenario == SCENARIO_ALL:
+            code, _report = run_all(env, plan_only=plan_only)
+        else:
+            code, _report = run_canary(env, plan_only=plan_only, scenario=args.scenario)
     except Exception as exc:
         print(f"INTERNAL ERROR: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 3
