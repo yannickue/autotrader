@@ -13,11 +13,12 @@ from __future__ import annotations
 
 import traceback
 from collections.abc import Callable
-from concurrent.futures import FIRST_COMPLETED, Future, ProcessPoolExecutor, wait
+from concurrent.futures import FIRST_COMPLETED, Future, wait
+from concurrent.futures.process import BrokenProcessPool
 from dataclasses import dataclass
 from typing import Any
 
-from research_speed.parallel import clamp_jobs
+from research_speed.parallel import clamp_jobs, managed_pool
 from research_speed.progress import CACHED, DONE, FAILED, SKIPPED, StatusFile
 
 
@@ -100,8 +101,15 @@ def run_dag(
         return results, errors
 
     running: dict[Future, Task] = {}
-    with ProcessPoolExecutor(max_workers=n, initializer=initializer, initargs=initargs) as ex:
-        while pending or running:
+
+    def fail(t: Task, why: str) -> None:
+        errors[t.id] = why
+        if status:
+            status.finish(t.id, FAILED, error=why.strip().splitlines()[-1] if why.strip() else "failed")
+
+    broken = False
+    with managed_pool(n, initializer, initargs) as ex:
+        while (pending or running) and not broken:
             settle_skips()
             for t in list(pending):
                 if len(running) >= n:
@@ -110,8 +118,13 @@ def run_dag(
                     pending.remove(t)
                     if status:
                         status.start(t.id)
-                    running[ex.submit(t.fn, t.arg)] = t
-            if not running:
+                    try:
+                        running[ex.submit(t.fn, t.arg)] = t
+                    except BrokenProcessPool:
+                        broken = True
+                        fail(t, traceback.format_exc())
+                        break
+            if broken or not running:
                 break
             done, _ = wait(list(running), return_when=FIRST_COMPLETED)
             for f in done:
@@ -121,10 +134,19 @@ def run_dag(
                     results[t.id] = res
                     if status:
                         status.finish(t.id, _state_of(res))
+                except BrokenProcessPool:
+                    broken = True
+                    fail(t, "BrokenProcessPool: a worker process died abruptly (killed / out of memory / os._exit)\n" + traceback.format_exc())
                 except Exception:
-                    errors[t.id] = traceback.format_exc()
-                    if status:
-                        status.finish(t.id, FAILED, error=errors[t.id].splitlines()[-1])
+                    fail(t, traceback.format_exc())
+        if broken:  # the pool is unusable: running and still open tasks are FAILED, nothing is silently dropped
+            for f, t in list(running.items()):
+                running.pop(f)
+                fail(t, "BrokenProcessPool: the pool broke while this task was running")
+            for t in list(pending):
+                pending.remove(t)
+                if t.id not in errors:
+                    fail(t, "NOT RUN: the worker pool broke (BrokenProcessPool)")
     for t in pending:  # deadlock guard (cannot happen with a validated acyclic graph)
         errors.setdefault(t.id, "NOT RUN: unsatisfied dependencies")
     return results, errors

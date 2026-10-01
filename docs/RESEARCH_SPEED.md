@@ -25,7 +25,7 @@ is reused; it never changes a computed number, a research result, a preregistrat
   features); this lane deliberately does not touch it.
 * Scheduler: ready segments start in list order, at most `clamp_jobs(...)` at a time; `jobs == 1` runs in-process with the same code. A failing segment only skips its own dependants.
 * Worker cap `MAX_WORKERS = 3`, further reduced by free memory: `(available_MB - reserve) // per_worker_MB` with `reserve = 1500 MB`, `per_worker = 300 MB` (measured peak working set 195-240 MB per
-  market; at least 1 worker). Env `RESEARCH_SPEED_RESERVE_MB` / `RESEARCH_SPEED_PER_WORKER_MB` (and `--reserve-mb`) exist for controlled benchmarks; the hard cap of 3 is not overridable.
+  market). FAIL CLOSED: known free memory below `reserve + per_worker` => exit 4, nothing started (never rounded up to 1 worker); unknown free memory => 1 worker; `reserve >= 0`, `per_worker >= 50`. Env `RESEARCH_SPEED_RESERVE_MB` / `RESEARCH_SPEED_PER_WORKER_MB` (and `--reserve-mb`) exist for controlled benchmarks; the hard cap of 3 is not overridable.
 * Spawned workers: `scripts/coverage_analysis.py` shadows the `src/coverage_analysis` package when `scripts/` is first on `sys.path` (it is, in a spawned child). The pool initializer
   `_init_worker` puts `src/` back in front before the first task is unpickled (found by a real 2-worker run; covered by the initializer test).
 
@@ -103,6 +103,16 @@ does it (`events` before its controls; B-only segment = B - A + 7 s selection):
 So, relative to the 73-80 min serial Controls-3: about 2.5-2.7x at 3 workers (about 1.4x over the previous legacy `--jobs 2`), and a re-run with identical inputs costs seconds. These figures assume enough free
 memory: with the 1500 MB reserve the guard allows 3 workers only when about 2.4 GB are free; on the benchmark day the machine had < 700 MB free, which limits a default run to 1 worker (correctly, and visibly in the log:
 `jobs={'requested': 2, 'effective': 1, ...}`). Not measured: a 3-worker multi-market run (no memory headroom on the shared machine) and a complete Gate B re-run.
+
+### Process hardening (never starve the live trader)
+
+**Research runs are NEVER to be started next to the live runner / MT5.** `research_speed.parallel.harden_process()` is the first call of `observer_backfill`, `observer_gate_b_report` and `observer_gate_c` and enforces it as far as a script can:
+
+* Windows: BELOW_NORMAL priority class (children inherit) and a job object with KILL_ON_JOB_CLOSE (workers die with the parent, also on a crash / kill); `OMP/OPENBLAS/MKL/NUMEXPR_NUM_THREADS=1` (set in the parent's environment, so every spawned worker inherits it; the parent's own BLAS may already be initialised when `main()` runs).
+* Fail closed: free RAM < reserve + one worker => exit 4 without starting anything; invalid reserve / per-worker => exit 2.
+* A python process whose command line contains `demo_trader.py` or `supervisor.py` (process table only, no artifacts/ access) or an unreadable process table => `jobs` forced to 1 with a log line; only `RESEARCH_SPEED_ALLOW_WITH_LIVE=1` overrides (default OFF).
+* All pools are `managed_pool`: on any exception (incl. Ctrl-C) queued work is cancelled and the workers are terminated; a dying worker (BrokenProcessPool) marks running and open segments FAILED (exit 3, no traceback).
+* Gate B writes every finished market's `gate_b.json` atomically at once and re-raises a failure only after all markets were attempted. The segmented backfill (`<out>/_run.lock`) and Gate B (`<root>/_run.lock`) take an exclusive lock (pid inside; a dead owner's lock is taken over); a second run on the same directory exits 5. A recycled pid of a long-dead owner reads as alive (the second run is refused, never doubled).
 
 ## Limits (read before relying on it)
 

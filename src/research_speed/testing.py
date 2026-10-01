@@ -30,6 +30,15 @@ def write_marker(arg: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def sleeper(seconds: float) -> None:
+    time.sleep(seconds)
+
+
+def die(_arg: Any) -> dict[str, Any]:
+    """A worker that dies abruptly (no exception, no cleanup) => BrokenProcessPool in the parent."""
+    os._exit(1)
+
+
 def set_env(name: str, value: str) -> None:
     os.environ[name] = value
 

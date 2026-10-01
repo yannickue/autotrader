@@ -18,6 +18,7 @@ import math
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -353,8 +354,42 @@ def render(results: list[dict], meta: dict) -> str:
     return "\n".join(lines)
 
 
+def compute_and_persist(todo: list[str], root: Path, p2: str | None, a: Any, plan: dict, jobs: int) -> dict[str, dict]:
+    """Gate-B results for ``todo`` markets. EVERY finished market is written to ``<root>/<M>/gate_b.json`` (atomically) the moment it is available; a failing market
+    never loses the others: the first error is re-raised only after all markets were attempted."""
+    from research_speed.parallel import clamp_jobs, managed_pool
+    from research_speed.segments import atomic_write_text
+
+    fresh: dict[str, dict] = {}
+    first_err: BaseException | None = None
+
+    def persist(m: str, r: dict) -> None:
+        atomic_write_text(root / m / "gate_b.json", json.dumps(r, indent=1, default=str))
+        fresh[m] = r
+
+    if jobs > 1 and len(todo) > 1:
+        with managed_pool(clamp_jobs(jobs, len(todo)), _init_worker, (str(ROOT / "src"),)) as ex:
+            futs = {m: ex.submit(gate_b_market, m, root, p2, a, plan[m][1]) for m in todo}
+            for m in todo:  # collected in market order: the report never depends on completion order
+                try:
+                    persist(m, futs[m].result())
+                except Exception as e:
+                    print(f"{m}: gate B FAILED: {e!r}", flush=True)
+                    first_err = first_err or e
+    else:
+        for m in todo:
+            print(f"{m}: gate B ...", flush=True)
+            try:
+                persist(m, gate_b_market(m, root, p2, a, plan[m][1]))
+            except Exception as e:
+                print(f"{m}: gate B FAILED: {e!r}", flush=True)
+                first_err = first_err or e
+    if first_err is not None:
+        raise first_err
+    return fresh
+
+
 def main(argv: list[str] | None = None) -> int:
-    import subprocess
 
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--root", required=True)
@@ -376,10 +411,23 @@ def main(argv: list[str] | None = None) -> int:
     p2 = X._find_phase2_root(a.phase2_root)
     p2 = None if p2 is None else str(p2)
     root = Path(a.root)
-    from research_speed.parallel import MAX_WORKERS, clamp_jobs
+    from research_speed.parallel import MAX_WORKERS, harden_process
+    from research_speed.runlock import EXIT_LOCKED, RunLock, RunLockError
 
     if not 1 <= a.jobs <= MAX_WORKERS:
         raise SystemExit(f"--jobs must be 1..{MAX_WORKERS} (8 GB RAM)")
+    a.jobs = harden_process(a.jobs)  # FIRST: low priority, 1 BLAS thread, fail-closed memory, jobs=1 next to the live trader, workers die with this process
+    try:
+        with RunLock(root / "_run.lock"):
+            return _main_locked(a, root, p2)
+    except RunLockError as e:
+        print(f"REFUSED: {e}", file=sys.stderr)
+        return EXIT_LOCKED
+
+
+def _main_locked(a: Any, root: Path, p2: str | None) -> int:
+    import subprocess
+
     plan: dict[str, tuple[str, dict | None]] = {}  # market -> ("cached" | "missing" | "todo", cached json)
     for m in a.markets:
         cache = root / m / "gate_b.json"
@@ -390,18 +438,7 @@ def main(argv: list[str] | None = None) -> int:
         else:
             plan[m] = ("todo", json.loads(cache.read_text(encoding="utf-8")) if cache.is_file() else None)
     todo = [m for m in a.markets if plan[m][0] == "todo"]
-    fresh: dict[str, dict] = {}
-    if a.jobs > 1 and len(todo) > 1:
-        from concurrent.futures import ProcessPoolExecutor
-
-        with ProcessPoolExecutor(max_workers=clamp_jobs(a.jobs, len(todo)), initializer=_init_worker, initargs=(str(ROOT / "src"),)) as ex:
-            futs = {m: ex.submit(gate_b_market, m, root, p2, a, plan[m][1]) for m in todo}
-            for m in todo:  # collected in market order: the report never depends on completion order
-                fresh[m] = futs[m].result()
-    else:
-        for m in todo:
-            print(f"{m}: gate B ...", flush=True)
-            fresh[m] = gate_b_market(m, root, p2, a, plan[m][1])
+    fresh = compute_and_persist(todo, root, p2, a, plan, a.jobs)
     results, missing = [], []
     for m in a.markets:
         kind, cached = plan[m]
@@ -411,7 +448,6 @@ def main(argv: list[str] | None = None) -> int:
             missing.append(m)
         else:
             r = fresh[m]
-            (root / m / "gate_b.json").write_text(json.dumps(r, indent=1, default=str), encoding="utf-8")
             results.append(r)
             print(f"{m}: {r['verdict']} blocking={r['blocking']} in {r['gate_b_seconds']}s", flush=True)
     sha = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()

@@ -38,7 +38,6 @@ import re
 import sys
 import time
 import zlib
-from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -796,11 +795,16 @@ def write_cache_record(cp: Path, fp: str, res: dict[str, Any]) -> None:
     os.replace(tmp, cp)
 
 
+def _init_worker(src: str) -> None:
+    """Pool initializer (same as the other entry points): ``scripts/`` is first on sys.path in a spawned child and scripts/coverage_analysis.py would shadow the src package."""
+    sys.path.insert(0, src)
+
+
 def _evaluate_markets(tasks: list[dict[str, Any]], jobs: int) -> list[dict[str, Any]]:
     if jobs > 1 and len(tasks) > 1:
-        from research_speed.parallel import clamp_jobs
+        from research_speed.parallel import clamp_jobs, managed_pool
 
-        with ProcessPoolExecutor(max_workers=clamp_jobs(jobs, len(tasks))) as ex:
+        with managed_pool(clamp_jobs(jobs, len(tasks)), _init_worker, (str(ROOT / "src"),)) as ex:
             return list(ex.map(run_market, tasks))  # order preserved: the result never depends on completion order
     return [run_market(t) for t in tasks]
 
@@ -1151,6 +1155,10 @@ def main(argv: list[str] | None = None) -> int:
     a = ap.parse_args(argv)
     if not 1 <= a.jobs <= MAX_JOBS:
         ap.error(f"--jobs must be 1..{MAX_JOBS}")
+    if not a.dry_run:
+        from research_speed.parallel import harden_process
+
+        a.jobs = harden_process(a.jobs)  # FIRST: low priority, 1 BLAS thread, fail-closed memory, jobs=1 next to the live trader, workers die with this process
     prereg = load_prereg(a.prereg)
     markets = a.markets or list(prereg.spec["markets"]["core"])
     for m in markets:

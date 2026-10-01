@@ -18,6 +18,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import threading
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -32,7 +33,7 @@ SEGMENT_SCHEMA = "research-speed-segment-1"
 def atomic_write_bytes(path: Path, data: bytes) -> None:
     """Write ``data`` to ``path`` so that a reader sees either the old or the complete new file, never a partial one."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f"{path.name}.tmp-{os.getpid()}")
+    tmp = path.with_name(f"{path.name}.tmp-{os.getpid()}-{threading.get_ident()}")
     try:
         with open(tmp, "wb") as f:
             f.write(data)

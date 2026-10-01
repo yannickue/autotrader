@@ -30,3 +30,13 @@ def build_bars(
 @pytest.fixture(scope="session")
 def make_bars():
     return build_bars
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _no_real_process_hardening():
+    """The CLI entry points call research_speed.parallel.harden_process() (priority class, job object, fail-closed memory, live-process check): never for real inside the test
+    process. Session scope because module-scoped fixtures run the CLIs; tests/unit/research_speed/test_hardening.py keeps its own reference to the real function (taken at import time)."""
+    mp = pytest.MonkeyPatch()
+    mp.setattr("research_speed.parallel.harden_process", lambda jobs=1, **_kw: jobs)
+    yield
+    mp.undo()

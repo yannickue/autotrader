@@ -109,14 +109,14 @@ def test_changed_data_code_config_or_version_never_hits(monkeypatch):
     w = _world_runs()
     store = SegmentStore(w["seg"])
     ocfg = BF.observer_config_for(w["ms"]).config_hash()
-    base_data = BF.frame_fingerprint(w["frame"])
+    base_data = SEG.data_identity(w["mi"])  # frame bytes + eval_from
     spec = _spec(w["seg"], "events")
     ok = SEG.events_fingerprint(spec, base_data, ocfg)
     assert store.lookup(f"{MARKET}/events", ok).hit
     # data: one close value differs
     f2 = w["frame"].copy()
     f2.loc[100, "close"] += 0.01
-    miss = store.lookup(f"{MARKET}/events", SEG.events_fingerprint(spec, BF.frame_fingerprint(f2), ocfg))
+    miss = store.lookup(f"{MARKET}/events", SEG.events_fingerprint(spec, SEG.data_identity(SimpleNamespace(frame=f2, eval_from=w["mi"].eval_from)), ocfg))
     assert not miss.hit and miss.reason == "FINGERPRINT_CHANGED:data_hash"
     # feature code
     monkeypatch.setattr(SEG, "feature_code_hash", lambda: "edited-feature-code")

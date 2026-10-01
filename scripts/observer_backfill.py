@@ -58,7 +58,6 @@ def run_one(market: str, out: str, seed: int, limit: int | None, data_root: str 
 
 def run_segmented(a: argparse.Namespace, markets: list[str], steps: tuple[str, ...], p2: str | None) -> int:
     """Segment-level run (see module docstring); returns 0 when every segment is built / cache hit, 2 on NO_DATA, 3 on a failed segment."""
-    import time
     from pathlib import Path as _P
 
     from coverage_analysis.observer_lab.backfill_segments import (
@@ -67,9 +66,8 @@ def run_segmented(a: argparse.Namespace, markets: list[str], steps: tuple[str, .
         segment_id,
     )
     from coverage_analysis.observer_lab.controls_sametime import SameTimeSpec
-    from research_speed.parallel import describe
-    from research_speed.progress import StatusFile
-    from research_speed.scheduler import Task, run_dag
+    from research_speed.runlock import EXIT_LOCKED, RunLock, RunLockError
+    from research_speed.scheduler import Task
 
     if a.control_method != "3":
         raise SystemExit("--segmented supports --control-method 3 only")
@@ -80,6 +78,21 @@ def run_segmented(a: argparse.Namespace, markets: list[str], steps: tuple[str, .
                                                 "with_b": with_b, "sametime_spec": st}, deps) for m, s, deps in plan]
     out = _P(a.out)
     out.mkdir(parents=True, exist_ok=True)
+    try:
+        with RunLock(out / "_run.lock"):
+            return _run_segmented_locked(a, markets, steps, tasks, out)
+    except RunLockError as e:
+        print(f"REFUSED: {e}", file=sys.stderr)
+        return EXIT_LOCKED
+
+
+def _run_segmented_locked(a: argparse.Namespace, markets: list[str], steps: tuple[str, ...], tasks: list, out: Path) -> int:
+    import time
+
+    from research_speed.parallel import describe
+    from research_speed.progress import StatusFile
+    from research_speed.scheduler import run_dag
+
     jobs = describe(a.jobs, len(tasks))
     print(f"segmented run: {len(tasks)} segments, jobs={jobs}", flush=True)
     t0 = time.monotonic()
@@ -118,7 +131,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--no-controls-b", action="store_true", help="controls-3: skip the disjoint A/A set B")
     ap.add_argument("--step", choices=("all", "events", "controls"), default="all", help="controls = re-run ONLY the control step (needs a complete events step)")
     a = ap.parse_args(argv)
-    from research_speed.parallel import MAX_WORKERS, clamp_jobs
+    from research_speed.parallel import MAX_WORKERS, clamp_jobs, harden_process, managed_pool
 
     if a.reserve_mb is not None:
         import os
@@ -127,6 +140,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if not 1 <= a.jobs <= MAX_WORKERS:
         raise SystemExit(f"--jobs must be 1..{MAX_WORKERS} (8 GB RAM)")
+    a.jobs = harden_process(a.jobs)  # FIRST: low priority, 1 BLAS thread, fail-closed memory, jobs=1 next to the live trader, workers die with this process
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s", stream=sys.stdout)
     import entry_exit_quality as X
 
@@ -140,9 +154,7 @@ def main(argv: list[str] | None = None) -> int:
     if a.segmented:
         return run_segmented(a, markets, steps, p2)
     if a.jobs > 1 and len(markets) > 1:
-        from concurrent.futures import ProcessPoolExecutor
-
-        with ProcessPoolExecutor(max_workers=clamp_jobs(a.jobs, len(markets)), initializer=_init_worker, initargs=(str(ROOT / "src"),)) as ex:
+        with managed_pool(clamp_jobs(a.jobs, len(markets)), _init_worker, (str(ROOT / "src"),)) as ex:
             res = [f.result() for f in [ex.submit(run_one, m, a.out, a.seed, a.limit, a.data_root, p2, a.force, steps, a.exclusion_bars, a.control_method, a.n_controls, not a.no_controls_b) for m in markets]]
     else:
         res = [run_one(m, a.out, a.seed, a.limit, a.data_root, p2, a.force, steps, a.exclusion_bars, a.control_method, a.n_controls, not a.no_controls_b) for m in markets]

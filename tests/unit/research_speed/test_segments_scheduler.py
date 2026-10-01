@@ -20,7 +20,8 @@ from research_speed.testing import read_env, set_env, square, write_marker
 def real_workers(monkeypatch):
     """Memory-guard parameters that let ``jobs > 1`` really start worker processes whatever the free memory of the machine is."""
     monkeypatch.setenv("RESEARCH_SPEED_RESERVE_MB", "0")
-    monkeypatch.setenv("RESEARCH_SPEED_PER_WORKER_MB", "1")
+    monkeypatch.setenv("RESEARCH_SPEED_PER_WORKER_MB", "50")
+    monkeypatch.setattr(P, "available_memory_mb", lambda: 100000.0)  # fail-closed guard: independent of this machine's free RAM
 
 
 FP = ArtifactFingerprint("data1", "feat1", "ctl1", "cfg1", "lab1", "pre1")
@@ -92,15 +93,16 @@ def test_clamp_jobs_never_exceeds_three_or_the_task_count_or_memory():
     assert P.clamp_jobs(8, 100, avail_mb=100000) == 3
     assert P.clamp_jobs(3, 2, avail_mb=100000) == 2
     assert P.clamp_jobs(3, 100, avail_mb=2100) == 2  # (2100 - 1500) // 300
-    assert P.clamp_jobs(3, 100, avail_mb=1700) == 1  # never below 1
+    assert P.clamp_jobs(3, 100, avail_mb=1800) == 1  # reserve + exactly one worker
+    with pytest.raises(P.InsufficientMemoryError):  # fail closed: never rounded up to one worker
+        P.clamp_jobs(3, 100, avail_mb=1700)
     with pytest.raises(ValueError):
         P.clamp_jobs(0, 5)
 
 
 def test_memory_guard_parameters_can_be_overridden_by_env_for_controlled_benchmarks(monkeypatch):
-    assert (
-        P.clamp_jobs(3, 100, avail_mb=700) == 1
-    )  # default reserve 1500: at least one worker, never zero
+    with pytest.raises(P.InsufficientMemoryError):  # default reserve 1500: 700 MB free => no run at all
+        P.clamp_jobs(3, 100, avail_mb=700)
     monkeypatch.setenv("RESEARCH_SPEED_RESERVE_MB", "0")
     assert P.clamp_jobs(3, 100, avail_mb=700) == 2  # 700 // 300
     monkeypatch.setenv("RESEARCH_SPEED_PER_WORKER_MB", "200")
