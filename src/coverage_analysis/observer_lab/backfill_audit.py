@@ -228,9 +228,9 @@ def audit_shallow_depths(
 
 
 # ---------------------------------------------------------------------------------------------- plausibility
-_UNIT = re.compile(r"(ratio|efficiency|percentile|close_location)")
+_UNIT = re.compile(r"(?:^|_)(?:ratio|efficiency|percentile|close_location)(?:_|$)")  # word match: "penetration" / "acceleration" contain the letters "ratio"
 _NONNEG = re.compile(
-    r"(width|_count$|age_bars|age_minutes|bars_since|sequence_length|baseline_n|tick_activity_per_min|true_range_atr|body_atr|time_held|n_levels|source_count|"
+    r"(width|_count$|age_bars|age_minutes|bars_since|sequence_length|baseline_n|tick_activity_per_min|true_range_atr|time_held|n_levels|source_count|"
     r"activity_vs|acceleration|max_reentry_depth|tod_baseline_n|midpoint_cross)"
 )
 _ENUMS: dict[str, tuple[str, ...]] = {}

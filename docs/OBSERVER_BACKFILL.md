@@ -111,7 +111,7 @@ uv run pytest tests/unit/observer_lab/test_ol_backfill.py tests/unit/observer_la
    decision bar and rebuilt through the batch adapter; (c) the same with 500 future bars present in the frame; (d) shallow histories (120/240/500 bars)
    must be flagged `warmup_ok = false`. The harness has a negative control (a deliberately leaky toy feature is detected; unit tests).
 3. Warm-up accounting per group (the documented MIN_HISTORY constants) and per family.
-4. Label sanity: base rates of events and controls against the zero-drift reference `P = fav / (fav + adv)`, censoring share, internal consistency
+4. Label sanity: base rates of events and controls against the zero-drift reference (gambler's ruin) `P(+fav before -adv) = adv / (fav + adv)` (the lane brief wrote fav/(fav+adv), which is the probability of the adverse side; measured control rates match adv/(fav+adv): 0.40 and 0.33 for the 0.75/0.50 and 1.00/0.50 labels), censoring share, internal consistency
    (first-passage vs MFE/MAE, monotone chain), horizon bounds.
 5. Matching quality: match rate, unmatched events, standardised mean differences of the matching variables, rate by family.
 6. Data coverage and the honest caveats (BTC/BRENT: no frozen split, short history, missing months; core thresholds partly fitted to 2026-06-30; the dev
@@ -125,3 +125,14 @@ uv run pytest tests/unit/observer_lab/test_ol_backfill.py tests/unit/observer_la
 * Percentile ranks used for matching are descriptive over the whole market sample (descriptive `match_*` columns of `events.parquet`; the matching itself uses partition-internal ranks), `match_*` columns must never be used as features.
 * The audit compares exact equality (NaN == None); records whose windowed history is not warm are skipped and counted, not hidden.
 * One market per run; the level registry costs ~1 ms per bar, an observed record ~30 ms, so a market takes minutes to tens of minutes.
+
+## Measured outcome (run of 2026-10-01, details in `docs/evidence/observer_backfill_report.md`)
+
+* Events: GER40 9546, NAS100 5387, SPX500 2991, XAUUSD 7181, EURUSD 2868, BTCUSD 2363, BRENT 2975. All Gate B BLOCKING checks pass (leakage audit, live==batch parity,
+  plausibility, label sanity) on all seven markets.
+* **Controls are structurally scarce for the five core markets.** The core generators fire on ~10 % of all bars; the +-48 bar exclusion around every
+  opportunity leaves almost no admissible bar: partition-aware match rates GER40 0.28 %, NAS100 0.06 %, SPX500 1.5 %, XAUUSD 0 %, EURUSD 1.1 % (pre-revision
+  rates were equally low: 0.37 %, 0.07 %, 1.6 %, 0 %, 1.1 %). BTCUSD (97 %) and BRENT (81 %) are fine. Sensitivity (controls step only, separate scratch root,
+  `--exclusion-bars`): GER40 12 bars -> 1166 controls (12.2 %), 4 bars -> 5454 (57.1 %); XAUUSD 12 -> 159 (2.2 %), 4 -> 2032 (28.3 %). A smaller exclusion makes
+  event and control label windows overlap, so it is a lead decision (alternatives: exclusion only around same-family opportunities, or a placebo / time-shifted
+  control design for the core markets). Until then control-based statistics exist only for BTCUSD and BRENT.

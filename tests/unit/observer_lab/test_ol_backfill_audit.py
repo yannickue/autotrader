@@ -91,11 +91,11 @@ def test_plausibility_flags_impossible_values_and_constants():
     df = pd.DataFrame({
         "decision_ts_ns": [1000, 2000, 3000], "f_levels__zone_width_atr": [1.0, -0.5, 2.0], "f_balance__bar_overlap_ratio_w24": [0.2, 1.4, 0.5],
         "f_levels__last_touch_ts_ns": [900, 2500, None], "f_levels__role": ["SUPPORT", "BOGUS", None], "f_swings__m5_sequence": ["UP_SEQUENCE"] * 3,
-        "f_levels__touch_count": [1, 2, 3],
+        "f_levels__touch_count": [1, 2, 3], "f_levels__penetration_count": [0, 5, 23], "f_acceptance__break_body_atr": [-0.2, 0.4, 1.0], "f_participation__activity_acceleration": [0.3, 1.8, 18.5],
     })
     p = plausibility(df)
     flagged = {x["column"]: x["flags"] for x in p["impossible_value_flags"]}
     assert set(flagged) == {"f_levels__zone_width_atr", "f_balance__bar_overlap_ratio_w24", "f_levels__last_touch_ts_ns", "f_levels__role"}
     assert p["columns"]["f_swings__m5_sequence"]["constant"] and p["columns"]["f_levels__touch_count"]["constant"] is False
     assert p["columns"]["f_levels__last_touch_ts_ns"]["missing_share"] == pytest.approx(1 / 3, abs=1e-5)
-    assert p["n_flagged"] == 4 and p["groups"]["levels"]["n_columns"] == 4
+    assert p["n_flagged"] == 4 and p["groups"]["levels"]["n_columns"] == 5 and p["groups"]["acceptance"]["n_columns"] == 1

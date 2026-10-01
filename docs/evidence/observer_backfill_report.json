@@ -1,0 +1,4387 @@
+{
+ "meta": {
+  "generated": "2026-10-01 17:11",
+  "git_sha": "70905f7a34037a81070a619e22efd33e994789d5",
+  "root": "C:/Users/yanni/AppData/Local/Temp/observer_backfill",
+  "missing": [],
+  "verdict": "PASS"
+ },
+ "caveats": [
+  "BTCUSD and BRENT have NO frozen split, a short history (BTC from 2025-09-24, BRENT from 2025-06) with missing months (BTC lacks Oct-2025 and Mar-2026) and provisional STRUCT constants.",
+  "The core thresholds (GER40 NAS100 SPX500 XAUUSD EURUSD) were partly fitted up to 2026-06-30: events before that date are in-sample for the family thresholds.",
+  "The dev window 2026-07-01..2026-08-31 is NOT a clean holdout for the core (other lanes validated on it); the forward period (>= 2026-09-01) is untouched and never read.",
+  "Bars are M5 bid bars: first-passage labels are bar-resolution, stop-first, cost-free; they are not P&L. Events are generator opportunities without the live operating policy filters.",
+  "Controls use the partition-aware matching (observer-controls-2): inside the event's partition, partition-internal percentile ranks, +-48 bars away from every generator opportunity. BTCUSD/BRENT have no frozen split, so their partitions are generic dev-date tags only. The pre-revision controls (whole-sample ranks) are kept under _prerevision/ for comparison.",
+  "Nothing here is an edge claim; OBSERVATION_ONLY_NOT_ALPHA_VALIDATED."
+ ],
+ "markets": [
+  {
+   "market": "GER40",
+   "frame_fingerprint_matches_manifest": true,
+   "n_rows": 9573,
+   "n_events": 9546,
+   "n_controls": 27,
+   "warmup": {
+    "events": {
+     "n": 9546,
+     "warmup_false": 0,
+     "warmup_false_share": 0.0,
+     "unmet_share_by_group": {
+      "levels": 0.0,
+      "swings": 0.0,
+      "acceptance": 0.0,
+      "balance": 0.0,
+      "participation": 0.0,
+      "atr": 0.0
+     }
+    },
+    "controls": {
+     "n": 27,
+     "warmup_false": 0,
+     "warmup_false_share": 0.0,
+     "unmet_share_by_group": {
+      "levels": 0.0,
+      "swings": 0.0,
+      "acceptance": 0.0,
+      "balance": 0.0,
+      "participation": 0.0,
+      "atr": 0.0
+     }
+    },
+    "events_warmup_false_share_by_family": {
+     "EOD": 0.0,
+     "GAP": 0.0,
+     "LEADLAG": 0.0,
+     "ORB": 0.0,
+     "OVERNIGHT": 0.0,
+     "ROUND": 0.0,
+     "VOLREV": 0.0
+    }
+   },
+   "labels": {
+    "rates": {
+     "y_fav025_before_adv025": {
+      "zero_drift_reference_P": 0.5,
+      "events": {
+       "n_rows": 9546,
+       "n_resolved": 8138,
+       "censored_share": 0.1474963335428452,
+       "rate": 0.3973949373310396,
+       "wilson95": [
+        0.3868135080427863,
+        0.4080731917918064
+       ],
+       "diff_to_reference": -0.10260506266896041
+      },
+      "controls": {
+       "n_rows": 27,
+       "n_resolved": 0,
+       "censored_share": 1.0,
+       "rate": null,
+       "wilson95": [
+        null,
+        null
+       ],
+       "diff_to_reference": null,
+       "tolerance_check": "not applied: only 0 resolved controls (< 100), INSUFFICIENT_EVIDENCE"
+      }
+     },
+     "y_fav050_before_adv050": {
+      "zero_drift_reference_P": 0.5,
+      "events": {
+       "n_rows": 9546,
+       "n_resolved": 8053,
+       "censored_share": 0.15640058663314482,
+       "rate": 0.48118713522910717,
+       "wilson95": [
+        0.47028581836732464,
+        0.4921063924960488
+       ],
+       "diff_to_reference": -0.018812864770892834
+      },
+      "controls": {
+       "n_rows": 27,
+       "n_resolved": 0,
+       "censored_share": 1.0,
+       "rate": null,
+       "wilson95": [
+        null,
+        null
+       ],
+       "diff_to_reference": null,
+       "tolerance_check": "not applied: only 0 resolved controls (< 100), INSUFFICIENT_EVIDENCE"
+      }
+     },
+     "y_fav075_before_adv050": {
+      "zero_drift_reference_P": 0.4,
+      "events": {
+       "n_rows": 9546,
+       "n_resolved": 7956,
+       "censored_share": 0.16656191074795723,
+       "rate": 0.3929110105580694,
+       "wilson95": [
+        0.38223312765393797,
+        0.40369226061006963
+       ],
+       "diff_to_reference": -0.007088989441930649
+      },
+      "controls": {
+       "n_rows": 27,
+       "n_resolved": 0,
+       "censored_share": 1.0,
+       "rate": null,
+       "wilson95": [
+        null,
+        null
+       ],
+       "diff_to_reference": null,
+       "tolerance_check": "not applied: only 0 resolved controls (< 100), INSUFFICIENT_EVIDENCE"
+      }
+     },
+     "y_fav100_before_adv050": {
+      "zero_drift_reference_P": 0.3333333333333333,
+      "events": {
+       "n_rows": 9546,
+       "n_resolved": 7876,
+       "censored_share": 0.17494238424470987,
+       "rate": 0.3237684103605891,
+       "wilson95": [
+        0.3135224958830013,
+        0.33418615856507805
+       ],
+       "diff_to_reference": -0.009564922972744194
+      },
+      "controls": {
+       "n_rows": 27,
+       "n_resolved": 0,
+       "censored_share": 1.0,
+       "rate": null,
+       "wilson95": [
+        null,
+        null
+       ],
+       "diff_to_reference": null,
+       "tolerance_check": "not applied: only 0 resolved controls (< 100), INSUFFICIENT_EVIDENCE"
+      }
+     }
+    },
+    "consistency": {
+     "violations": {
+      "y_fav025_before_adv025=1 but mfe_r<0.25": 0,
+      "y_fav025_before_adv025=0 but mae_r<0.25": 0,
+      "y_fav050_before_adv050=1 but mfe_r<0.5": 0,
+      "y_fav050_before_adv050=0 but mae_r<0.5": 0,
+      "y_fav075_before_adv050=1 but mfe_r<0.75": 0,
+      "y_fav075_before_adv050=0 but mae_r<0.5": 0,
+      "y_fav100_before_adv050=1 but mfe_r<1.0": 0,
+      "y_fav100_before_adv050=0 but mae_r<0.5": 0,
+      "fav100=1 but fav075=0": 0,
+      "fav075=1 but fav050=0": 0,
+      "negative mfe/mae": 0
+     },
+     "n_rows": 9573,
+     "total_violations": 0
+    },
+    "horizon": {
+     "max_horizon_s": 14400.0,
+     "min_horizon_s": 0.0,
+     "share_full_48_bars": 0.48762143528674395,
+     "horizon_bound_ok": true
+    },
+    "verdict": "PASS",
+    "reasons": []
+   },
+   "matching": {
+    "n_events": 9546,
+    "n_matched": 27,
+    "match_rate": 0.0028284098051539913,
+    "n_unmatched": 9519,
+    "n_controls": 27,
+    "smd": {
+     "local_minute": -0.7814493697697315,
+     "atr_pct": 1.3764423786038718,
+     "spread_pct": -0.8071803206194293
+    },
+    "session_share_diff_max": 0.0,
+    "method": "observer-controls-2",
+    "partition_mode": "PARTITIONED",
+    "rank_mode": "partition",
+    "by_partition": {
+     "OOS": {
+      "n_events": 1106.0,
+      "n_matched": 6.0,
+      "match_rate": 0.0054249547920434
+     },
+     "TRAIN": {
+      "n_events": 5929.0,
+      "n_matched": 21.0,
+      "match_rate": 0.0035419126328217238
+     },
+     "VALIDATION": {
+      "n_events": 2511.0,
+      "n_matched": 0.0,
+      "match_rate": 0.0
+     }
+    },
+    "n_events_in_excluded_partition": 0,
+    "n_exclusion_bars_blocked": 8960,
+    "n_rejected_partition": 0,
+    "by_family": {
+     "VOLREV": {
+      "n_events": 2199,
+      "n_matched": 13
+     },
+     "ROUND": {
+      "n_events": 5757,
+      "n_matched": 13
+     },
+     "ORB": {
+      "n_events": 681,
+      "n_matched": 0
+     },
+     "EOD": {
+      "n_events": 190,
+      "n_matched": 0
+     },
+     "GAP": {
+      "n_events": 179,
+      "n_matched": 0
+     },
+     "OVERNIGHT": {
+      "n_events": 186,
+      "n_matched": 0
+     },
+     "LEADLAG": {
+      "n_events": 354,
+      "n_matched": 1
+     }
+    },
+    "matching_revision": "partition-aware (match_controls partition=auto, rank_mode=partition, exclude_idx = every generator opportunity)",
+    "controls_in_other_partition": 0,
+    "verdict": "WARN",
+    "reasons": [
+     "match rate 0.003 < 0.5",
+     "|SMD(local_minute)|=-0.7814493697697315 > 0.1",
+     "|SMD(atr_pct)|=1.3764423786038718 > 0.1",
+     "|SMD(spread_pct)|=-0.8071803206194293 > 0.1"
+    ]
+   },
+   "matching_prerevision": {
+    "method": "observer-controls-1",
+    "n_controls": 35,
+    "match_rate": 0.0036664571548292476,
+    "smd": {
+     "local_minute": -1.0771418648351208,
+     "atr_pct": 1.5613950496402011,
+     "spread_pct": -0.8216503622314812
+    },
+    "control_label_rates": {
+     "y_fav025_before_adv025": {
+      "n": 0,
+      "rate": null
+     },
+     "y_fav050_before_adv050": {
+      "n": 0,
+      "rate": null
+     },
+     "y_fav075_before_adv050": {
+      "n": 0,
+      "rate": null
+     },
+     "y_fav100_before_adv050": {
+      "n": 0,
+      "rate": null
+     }
+    }
+   },
+   "leakage_audit": {
+    "history_window_bars": 6636,
+    "sample_seed": 11,
+    "live_style_incremental_full_history": {
+     "name": "live_buffer_prefix",
+     "n_compared": 327,
+     "pass": 327,
+     "fail": 0,
+     "skipped": 0,
+     "skipped_reasons": {},
+     "failures": [],
+     "verdict": "PASS",
+     "sample": {
+      "events": 300,
+      "controls": 27
+     },
+     "seconds": 185.6
+    },
+    "truncated_raw_frame_window": {
+     "name": "truncated_at_decision_bar_window_6636",
+     "n_compared": 60,
+     "pass": 60,
+     "fail": 0,
+     "skipped": 0,
+     "skipped_reasons": {},
+     "failures": [],
+     "verdict": "PASS",
+     "sample": 60
+    },
+    "extended_frame_future_bars_present": {
+     "name": "longer_frame_plus_500_future_bars_window_6636",
+     "n_compared": 30,
+     "pass": 30,
+     "fail": 0,
+     "skipped": 0,
+     "skipped_reasons": {},
+     "failures": [],
+     "verdict": "PASS",
+     "sample": 30
+    },
+    "shallow_histories_must_be_flagged_not_warm": {
+     "120": {
+      "n": 20,
+      "flagged_not_warm": 20,
+      "wrongly_flagged_warm": 0,
+      "still_equal_to_stored": 0,
+      "rule_ok": true
+     },
+     "240": {
+      "n": 20,
+      "flagged_not_warm": 20,
+      "wrongly_flagged_warm": 0,
+      "still_equal_to_stored": 0,
+      "rule_ok": true
+     },
+     "500": {
+      "n": 20,
+      "flagged_not_warm": 20,
+      "wrongly_flagged_warm": 0,
+      "still_equal_to_stored": 0,
+      "rule_ok": true
+     }
+    },
+    "window_seconds": 700.5,
+    "verdict": "PASS"
+   },
+   "parity_live_vs_batch": {
+    "n_compared": 327,
+    "pass": 327,
+    "fail": 0,
+    "verdict": "PASS",
+    "failures": [],
+    "note": "BarBuffer fed engine-style sliding 6000-bar frames bar by bar; the observer saw only physically truncated views; compared with the stored batch records EXACTLY"
+   },
+   "coverage": {
+    "data": {
+     "first_bar_utc": "2025-02-10T17:55:00+00:00",
+     "last_bar_utc": "2026-08-31T19:55:00+00:00",
+     "n_bars": 95011,
+     "missing_months_utc": [],
+     "gaps_longer_than_3_days": [
+      [
+       "2025-04-17T19:55:00+00:00",
+       100.3
+      ],
+      [
+       "2025-12-23T20:55:00+00:00",
+       123.3
+      ],
+      [
+       "2026-04-02T19:55:00+00:00",
+       100.3
+      ],
+      [
+       "2026-04-30T19:55:00+00:00",
+       76.3
+      ]
+     ],
+     "n_gaps": 397,
+     "n_intraday_gaps_gt3bars": 1,
+     "largest_gap_hours": 123.33,
+     "intraday_gap_starts": [
+      "2025-03-03T20:05:00+00:00"
+     ],
+     "frame_fingerprint": "b908cbc2f686c98d",
+     "eval_from_utc": "2025-03-12T17:55:00+00:00",
+     "eval_from_index": 5470
+    },
+    "dev_end_guard": {
+     "dev_end_berlin_date": "2026-08-31",
+     "assert_no_forward_holdout": "PASS",
+     "guard_dev_only": "PASS",
+     "last_bar_utc": "2026-08-31T19:55:00+00:00"
+    },
+    "partitions": {
+     "scheme": "observer_lab.splits (core fit end / dev end constants); OOS written as FROZEN_OOS; PURGED = horizon reaches another partition; EMBARGO = first label horizon after a boundary",
+     "plan": {
+      "train_start": "2025-02-10",
+      "train_end": "2026-02-23",
+      "validation_start": "2026-02-24",
+      "validation_end": "2026-06-30",
+      "oos_start": "2026-07-01",
+      "oos_end": "2026-08-31",
+      "forward_start": "2026-09-01",
+      "core_fit_end": "2026-06-30"
+     },
+     "regular_plan": true,
+     "embargo_s": 14400.0,
+     "has_frozen_split": true,
+     "note": "core thresholds were fitted up to the core fit end; the dev window 2026-07-01..2026-08-31 is a weaker OOS than a never-seen period",
+     "counts": {
+      "FROZEN_OOS": 1106,
+      "TRAIN": 5929,
+      "VALIDATION": 2511
+     }
+    },
+    "events_by_family_variant_direction": {
+     "EOD|continue|long": 54,
+     "EOD|continue|short": 41,
+     "EOD|reverse|long": 41,
+     "EOD|reverse|short": 54,
+     "GAP|fade|long": 42,
+     "GAP|fade|short": 50,
+     "GAP|go|long": 55,
+     "GAP|go|short": 32,
+     "LEADLAG||long": 161,
+     "LEADLAG||short": 193,
+     "ORB|breakout|long": 183,
+     "ORB|breakout|short": 187,
+     "ORB|fade|long": 166,
+     "ORB|fade|short": 145,
+     "OVERNIGHT|continue|long": 55,
+     "OVERNIGHT|continue|short": 38,
+     "OVERNIGHT|reverse|long": 38,
+     "OVERNIGHT|reverse|short": 55,
+     "ROUND|break|long": 874,
+     "ROUND|break|short": 859,
+     "ROUND|reject|long": 2034,
+     "ROUND|reject|short": 1990,
+     "VOLREV|expand|long": 905,
+     "VOLREV|expand|short": 783,
+     "VOLREV|fade|long": 270,
+     "VOLREV|fade|short": 241
+    },
+    "exclusions": {
+     "candidates": 10214,
+     "before_eval_start": 569,
+     "duplicate_family_variant_direction": 99,
+     "emitted": 9546,
+     "emitted_before_limit": 9546
+    },
+    "rows": {
+     "table": 9546,
+     "features": 9546,
+     "labels": 9546,
+     "events": 9546
+    },
+    "controls_rows": {
+     "table": 27,
+     "features": 27,
+     "labels": 27,
+     "events": 27
+    },
+    "runtime_s": {
+     "events_step": 462.5,
+     "controls_step": 98.7
+    },
+    "peak_memory_mb": {
+     "events_step": 268.2,
+     "controls_step": 211.1
+    },
+    "matching_revision": "partition-aware (match_controls partition=auto, rank_mode=partition, exclude_idx = every generator opportunity)"
+   },
+   "sample_record": {
+    "event_id": "64e9fe45270484ee37f640c697378748",
+    "market": "GER40",
+    "family": "ROUND",
+    "variant": "reject",
+    "direction": 1,
+    "is_control": false,
+    "decision_ts_ns": 1765290900000000000,
+    "observer_version": "market-structure-observer-v1",
+    "schema_version": "mso-schema-1",
+    "status": "OBSERVATION_ONLY_NOT_ALPHA_VALIDATED",
+    "v_acceptance": "mso-acceptance-1",
+    "v_balance": "mso-balance-1",
+    "v_levels": "mso-levels-1",
+    "v_participation": "mso-participation-1",
+    "v_swings": "mso-swings-1",
+    "f_levels__nearest_level_distance_atr": 0.14009636257739722,
+    "f_levels__nearest_level_source": "SWING_M5",
+    "f_levels__nearest_level_age_bars": 45,
+    "f_levels__touch_count": 12,
+    "f_levels__clean_rejection_count": 6,
+    "f_levels__penetration_count": 5,
+    "f_levels__first_touch": false,
+    "f_levels__break_count": 3,
+    "f_levels__reclaim_count": 2,
+    "f_levels__role": "FLIPPED_TO_RESISTANCE",
+    "f_levels__previous_role": "ACCEPTED_BELOW",
+    "f_levels__zone_source_count": 15,
+    "f_levels__zone_independent_source_count": 5,
+    "f_levels__zone_width_atr": 1.9328162227988326,
+    "f_levels__n_levels_within_1atr": 14,
+    "f_levels__last_touch_ts_ns": 1.7652903e+18,
+    "f_levels__last_break_ts_ns": 1.7652876e+18,
+    "f_levels__last_reclaim_ts_ns": 1.7652834e+18,
+    "f_swings__m5_sequence": "MIXED_TRANSITION",
+    "f_swings__m5_high_label": "LH",
+    "f_swings__m5_low_label": "HL",
+    "f_swings__m5_sequence_length": 0,
+    "f_swings__m5_structure_age_bars": 3.0,
+    "f_swings__m5_structure_age_minutes": 15.0,
+    "f_swings__m5_high_delta_atr": -0.4469741091758265,
+    "f_swings__m5_low_delta_atr": 0.11192883994270407,
+    "f_swings__m5_confirmed_at_ts_ns": 1.76529e+18,
+    "f_swings__m5_last_high_confirmed_at_ts_ns": 1.7652891e+18,
+    "f_swings__m5_last_low_confirmed_at_ts_ns": 1.76529e+18,
+    "f_swings__m5_close_beyond_last_swing_atr_high": 0.0,
+    "f_swings__m5_close_beyond_last_swing_atr_low": 0.0,
+    "f_swings__m5_bars_since_beyond_low": 1.0,
+    "f_swings__m15_sequence": "MIXED_TRANSITION",
+    "f_swings__m15_high_label": "LH",
+    "f_swings__m15_low_label": "HL",
+    "f_swings__m15_sequence_length": 0,
+    "f_swings__m15_structure_age_bars": 1.0,
+    "f_swings__m15_structure_age_minutes": 20.0,
+    "f_swings__m15_high_delta_atr": -1.5914650288557133,
+    "f_swings__m15_low_delta_atr": 0.2950177370680747,
+    "f_swings__m15_confirmed_at_ts_ns": 1.7652897e+18,
+    "f_swings__m15_last_high_confirmed_at_ts_ns": 1.7652879e+18,
+    "f_swings__m15_last_low_confirmed_at_ts_ns": 1.7652897e+18,
+    "f_swings__m15_close_beyond_last_swing_atr_high": 0.0,
+    "f_swings__m15_close_beyond_last_swing_atr_low": 0.0,
+    "f_swings__m15_bars_since_beyond_low": 1.0,
+    "f_swings__ema_trend": "down",
+    "f_swings__ema_swing_agreement": "UNDEFINED",
+    "f_acceptance__break_found": false,
+    "f_balance__range_width_atr_w24": 4.079843278445735,
+    "f_balance__directional_efficiency_w24": 0.04605212577841917,
+    "f_balance__bar_overlap_ratio_w24": 0.4804673255451453,
+    "f_balance__close_occupancy_ratio_w24": 0.8333333333333334,
+    "f_balance__midpoint_cross_count_w24": 3.0,
+    "f_balance__range_width_atr_w48": 4.930057711653616,
+    "f_balance__directional_efficiency_w48": 0.043153244988115395,
+    "f_balance__bar_overlap_ratio_w48": 0.5048114888763975,
+    "f_balance__close_occupancy_ratio_w48": 0.875,
+    "f_balance__midpoint_cross_count_w48": 11.0,
+    "f_participation__tick_activity_per_min": 127.2,
+    "f_participation__tick_activity_percentile": 0.4,
+    "f_participation__tick_activity_z": -0.39769308303208,
+    "f_participation__activity_vs_same_tod": 0.8658951667801226,
+    "f_participation__activity_vs_session_baseline": 5.530434782608696,
+    "f_participation__activity_acceleration": 2.9308755760368665,
+    "f_participation__tod_baseline_n": 20,
+    "f_participation__tod_baseline_oldest_ts_ns": 1762871400000000000,
+    "m_warmup_ok": true,
+    "m_bars_available": 51163,
+    "m_prev_days_available": 213,
+    "m_atr_ok": true,
+    "m_min_bars_levels": 603,
+    "m_min_bars_swings": 480,
+    "m_min_bars_acceptance": 98,
+    "m_min_bars_balance": 48,
+    "m_min_prev_days_participation": 21,
+    "m_event_price": 24128.86,
+    "m_reference_level_id": "77a7b1dda42e025a",
+    "m_config_hash": "9baff67cbb414f2a",
+    "m_hash_levels": "84a77f0a6266399f",
+    "m_hash_swings": "eb1857c684e21d19",
+    "m_hash_acceptance": "1608ec3fb935dc33ecc4874e1768289b3c0790e9bc3a0919f88e766e28f08060",
+    "m_hash_balance": "ddac1af18d7032ca1ee3acf276d5f2ccd6101710a5bd8476158872b7ca8d3aec",
+    "m_hash_participation": "452f5122fbfc26c12ed207281e1fcbd3152c3ecd265d25b5ce177c13529c92b3",
+    "warmup_ok": true,
+    "run_id": "fe32033bf7be",
+    "decision_idx": 51162,
+    "strategy_id": "ROUND-cada1b04da",
+    "entry": 24128.86,
+    "stop": 24108.62392857143,
+    "risk": 20.23607142857145,
+    "risk_atr": 1.5000000000000675,
+    "partition": "TRAIN"
+   },
+   "blocking": {
+    "plausibility": "PASS",
+    "leakage_audit": "PASS",
+    "parity_live_vs_batch": "PASS",
+    "label_sanity": "PASS"
+   },
+   "informational": {
+    "matching": "WARN",
+    "frame_fingerprint": "PASS"
+   },
+   "verdict": "PASS",
+   "gate_b_seconds": 8.5,
+   "plausibility": {
+    "n_feature_columns": 83,
+    "groups": {
+     "levels": {
+      "n_columns": 18,
+      "constant_columns": [],
+      "all_missing_columns": [],
+      "high_missing_columns": [
+       "f_levels__last_reclaim_ts_ns"
+      ],
+      "flagged_columns": 0
+     },
+     "swings": {
+      "n_columns": 32,
+      "constant_columns": [],
+      "all_missing_columns": [],
+      "high_missing_columns": [
+       "f_swings__m5_bars_since_beyond_high",
+       "f_swings__m5_bars_since_beyond_low",
+       "f_swings__m15_bars_since_beyond_high",
+       "f_swings__m15_bars_since_beyond_low"
+      ],
+      "flagged_columns": 0
+     },
+     "acceptance": {
+      "n_columns": 15,
+      "constant_columns": [],
+      "all_missing_columns": [],
+      "high_missing_columns": [
+       "f_acceptance__break_bar_ts_ns",
+       "f_acceptance__break_close_distance_atr",
+       "f_acceptance__break_body_atr",
+       "f_acceptance__break_true_range_atr",
+       "f_acceptance__closes_beyond_level_count",
+       "f_acceptance__bars_since_break",
+       "f_acceptance__max_reentry_depth_atr",
+       "f_acceptance__followthrough_high_atr",
+       "f_acceptance__followthrough_low_atr",
+       "f_acceptance__followthrough_dir_atr",
+       "f_acceptance__close_location_in_bar",
+       "f_acceptance__time_held_beyond_level_bars",
+       "f_acceptance__time_held_beyond_level_minutes",
+       "f_acceptance__reclaim_occurred"
+      ],
+      "flagged_columns": 0
+     },
+     "balance": {
+      "n_columns": 10,
+      "constant_columns": [],
+      "all_missing_columns": [],
+      "high_missing_columns": [],
+      "flagged_columns": 0
+     },
+     "participation": {
+      "n_columns": 8,
+      "constant_columns": [],
+      "all_missing_columns": [],
+      "high_missing_columns": [],
+      "flagged_columns": 0
+     }
+    },
+    "impossible_value_flags": [],
+    "n_flagged": 0,
+    "verdict": "PASS"
+   }
+  },
+  {
+   "market": "NAS100",
+   "frame_fingerprint_matches_manifest": true,
+   "n_rows": 5390,
+   "n_events": 5387,
+   "n_controls": 3,
+   "warmup": {
+    "events": {
+     "n": 5387,
+     "warmup_false": 0,
+     "warmup_false_share": 0.0,
+     "unmet_share_by_group": {
+      "levels": 0.0,
+      "swings": 0.0,
+      "acceptance": 0.0,
+      "balance": 0.0,
+      "participation": 0.0,
+      "atr": 0.0
+     }
+    },
+    "controls": {
+     "n": 3,
+     "warmup_false": 0,
+     "warmup_false_share": 0.0,
+     "unmet_share_by_group": {
+      "levels": 0.0,
+      "swings": 0.0,
+      "acceptance": 0.0,
+      "balance": 0.0,
+      "participation": 0.0,
+      "atr": 0.0
+     }
+    },
+    "events_warmup_false_share_by_family": {
+     "EOD": 0.0,
+     "GAP": 0.0,
+     "LEADLAG": 0.0,
+     "ORB": 0.0,
+     "OVERNIGHT": 0.0,
+     "ROUND": 0.0,
+     "VOLREV": 0.0
+    }
+   },
+   "labels": {
+    "rates": {
+     "y_fav025_before_adv025": {
+      "zero_drift_reference_P": 0.5,
+      "events": {
+       "n_rows": 5387,
+       "n_resolved": 5387,
+       "censored_share": 0.0,
+       "rate": 0.392054947094858,
+       "wilson95": [
+        0.37909897283254146,
+        0.40516476810171254
+       ],
+       "diff_to_reference": -0.107945052905142
+      },
+      "controls": {
+       "n_rows": 3,
+       "n_resolved": 2,
+       "censored_share": 0.33333333333333337,
+       "rate": 0.5,
+       "wilson95": [
+        0.09452865480086614,
+        0.9054713451991339
+       ],
+       "diff_to_reference": 0.0,
+       "tolerance_check": "not applied: only 2 resolved controls (< 100), INSUFFICIENT_EVIDENCE"
+      }
+     },
+     "y_fav050_before_adv050": {
+      "zero_drift_reference_P": 0.5,
+      "events": {
+       "n_rows": 5387,
+       "n_resolved": 5376,
+       "censored_share": 0.002041952849452411,
+       "rate": 0.4693080357142857,
+       "wilson95": [
+        0.4559940571103502,
+        0.4826658469284601
+       ],
+       "diff_to_reference": -0.0306919642857143
+      },
+      "controls": {
+       "n_rows": 3,
+       "n_resolved": 0,
+       "censored_share": 1.0,
+       "rate": null,
+       "wilson95": [
+        null,
+        null
+       ],
+       "diff_to_reference": null,
+       "tolerance_check": "not applied: only 0 resolved controls (< 100), INSUFFICIENT_EVIDENCE"
+      }
+     },
+     "y_fav075_before_adv050": {
+      "zero_drift_reference_P": 0.4,
+      "events": {
+       "n_rows": 5387,
+       "n_resolved": 5356,
+       "censored_share": 0.005754594393911239,
+       "rate": 0.3805078416728902,
+       "wilson95": [
+        0.36759510606959733,
+        0.3935918663215271
+       ],
+       "diff_to_reference": -0.01949215832710982
+      },
+      "controls": {
+       "n_rows": 3,
+       "n_resolved": 0,
+       "censored_share": 1.0,
+       "rate": null,
+       "wilson95": [
+        null,
+        null
+       ],
+       "diff_to_reference": null,
+       "tolerance_check": "not applied: only 0 resolved controls (< 100), INSUFFICIENT_EVIDENCE"
+      }
+     },
+     "y_fav100_before_adv050": {
+      "zero_drift_reference_P": 0.3333333333333333,
+      "events": {
+       "n_rows": 5387,
+       "n_resolved": 5325,
+       "censored_share": 0.011509188787822588,
+       "rate": 0.3215023474178404,
+       "wilson95": [
+        0.30909012553231413,
+        0.3341719297706622
+       ],
+       "diff_to_reference": -0.01183098591549292
+      },
+      "controls": {
+       "n_rows": 3,
+       "n_resolved": 0,
+       "censored_share": 1.0,
+       "rate": null,
+       "wilson95": [
+        null,
+        null
+       ],
+       "diff_to_reference": null,
+       "tolerance_check": "not applied: only 0 resolved controls (< 100), INSUFFICIENT_EVIDENCE"
+      }
+     }
+    },
+    "consistency": {
+     "violations": {
+      "y_fav025_before_adv025=1 but mfe_r<0.25": 0,
+      "y_fav025_before_adv025=0 but mae_r<0.25": 0,
+      "y_fav050_before_adv050=1 but mfe_r<0.5": 0,
+      "y_fav050_before_adv050=0 but mae_r<0.5": 0,
+      "y_fav075_before_adv050=1 but mfe_r<0.75": 0,
+      "y_fav075_before_adv050=0 but mae_r<0.5": 0,
+      "y_fav100_before_adv050=1 but mfe_r<1.0": 0,
+      "y_fav100_before_adv050=0 but mae_r<0.5": 0,
+      "fav100=1 but fav075=0": 0,
+      "fav075=1 but fav050=0": 0,
+      "negative mfe/mae": 0
+     },
+     "n_rows": 5390,
+     "total_violations": 0
+    },
+    "horizon": {
+     "max_horizon_s": 14400.0,
+     "min_horizon_s": 0.0,
+     "share_full_48_bars": 0.6198515769944342,
+     "horizon_bound_ok": true
+    },
+    "verdict": "PASS",
+    "reasons": []
+   },
+   "matching": {
+    "n_events": 5387,
+    "n_matched": 3,
+    "match_rate": 0.0005568962316688324,
+    "n_unmatched": 5384,
+    "n_controls": 3,
+    "smd": {
+     "local_minute": 4.32049379893858,
+     "atr_pct": -1.3942544967621457,
+     "spread_pct": -0.7395510652703426
+    },
+    "session_share_diff_max": 0.0,
+    "method": "observer-controls-2",
+    "partition_mode": "PARTITIONED",
+    "rank_mode": "partition",
+    "by_partition": {
+     "OOS": {
+      "n_events": 813.0,
+      "n_matched": 0.0,
+      "match_rate": 0.0
+     },
+     "PURGED": {
+      "n_events": 4.0,
+      "n_matched": 0.0,
+      "match_rate": 0.0
+     },
+     "TRAIN": {
+      "n_events": 3200.0,
+      "n_matched": 0.0,
+      "match_rate": 0.0
+     },
+     "VALIDATION": {
+      "n_events": 1370.0,
+      "n_matched": 3.0,
+      "match_rate": 0.0021897810218978104
+     }
+    },
+    "n_events_in_excluded_partition": 4,
+    "n_exclusion_bars_blocked": 4860,
+    "n_rejected_partition": 0,
+    "by_family": {
+     "VOLREV": {
+      "n_events": 1034,
+      "n_matched": 2
+     },
+     "GAP": {
+      "n_events": 169,
+      "n_matched": 0
+     },
+     "ROUND": {
+      "n_events": 3104,
+      "n_matched": 1
+     },
+     "ORB": {
+      "n_events": 582,
+      "n_matched": 0
+     },
+     "LEADLAG": {
+      "n_events": 180,
+      "n_matched": 0
+     },
+     "EOD": {
+      "n_events": 152,
+      "n_matched": 0
+     },
+     "OVERNIGHT": {
+      "n_events": 166,
+      "n_matched": 0
+     }
+    },
+    "matching_revision": "partition-aware (match_controls partition=auto, rank_mode=partition, exclude_idx = every generator opportunity)",
+    "controls_in_other_partition": 0,
+    "verdict": "WARN",
+    "reasons": [
+     "match rate 0.001 < 0.5",
+     "|SMD(local_minute)|=4.32049379893858 > 0.1",
+     "|SMD(atr_pct)|=-1.3942544967621457 > 0.1",
+     "|SMD(spread_pct)|=-0.7395510652703426 > 0.1"
+    ]
+   },
+   "matching_prerevision": {
+    "method": "observer-controls-1",
+    "n_controls": 4,
+    "match_rate": 0.0007425283088917765,
+    "smd": {
+     "local_minute": 4.929503017546495,
+     "atr_pct": -0.5525411993845394,
+     "spread_pct": -0.5261815881023961
+    },
+    "control_label_rates": {
+     "y_fav025_before_adv025": {
+      "n": 3,
+      "rate": 0.6666666666666666
+     },
+     "y_fav050_before_adv050": {
+      "n": 0,
+      "rate": null
+     },
+     "y_fav075_before_adv050": {
+      "n": 0,
+      "rate": null
+     },
+     "y_fav100_before_adv050": {
+      "n": 0,
+      "rate": null
+     }
+    }
+   },
+   "leakage_audit": {
+    "history_window_bars": 7728,
+    "sample_seed": 11,
+    "live_style_incremental_full_history": {
+     "name": "live_buffer_prefix",
+     "n_compared": 303,
+     "pass": 303,
+     "fail": 0,
+     "skipped": 0,
+     "skipped_reasons": {},
+     "failures": [],
+     "verdict": "PASS",
+     "sample": {
+      "events": 300,
+      "controls": 3
+     },
+     "seconds": 178.8
+    },
+    "truncated_raw_frame_window": {
+     "name": "truncated_at_decision_bar_window_7728",
+     "n_compared": 60,
+     "pass": 60,
+     "fail": 0,
+     "skipped": 0,
+     "skipped_reasons": {},
+     "failures": [],
+     "verdict": "PASS",
+     "sample": 60
+    },
+    "extended_frame_future_bars_present": {
+     "name": "longer_frame_plus_500_future_bars_window_7728",
+     "n_compared": 30,
+     "pass": 30,
+     "fail": 0,
+     "skipped": 0,
+     "skipped_reasons": {},
+     "failures": [],
+     "verdict": "PASS",
+     "sample": 30
+    },
+    "shallow_histories_must_be_flagged_not_warm": {
+     "120": {
+      "n": 20,
+      "flagged_not_warm": 20,
+      "wrongly_flagged_warm": 0,
+      "still_equal_to_stored": 0,
+      "rule_ok": true
+     },
+     "240": {
+      "n": 20,
+      "flagged_not_warm": 20,
+      "wrongly_flagged_warm": 0,
+      "still_equal_to_stored": 0,
+      "rule_ok": true
+     },
+     "500": {
+      "n": 20,
+      "flagged_not_warm": 20,
+      "wrongly_flagged_warm": 0,
+      "still_equal_to_stored": 0,
+      "rule_ok": true
+     }
+    },
+    "window_seconds": 939.4,
+    "verdict": "PASS"
+   },
+   "parity_live_vs_batch": {
+    "n_compared": 303,
+    "pass": 303,
+    "fail": 0,
+    "verdict": "PASS",
+    "failures": [],
+    "note": "BarBuffer fed engine-style sliding 6000-bar frames bar by bar; the observer saw only physically truncated views; compared with the stored batch records EXACTLY"
+   },
+   "coverage": {
+    "data": {
+     "first_bar_utc": "2025-05-02T09:35:00+00:00",
+     "last_bar_utc": "2026-08-31T20:55:00+00:00",
+     "n_bars": 94213,
+     "missing_months_utc": [],
+     "gaps_longer_than_3_days": [],
+     "n_gaps": 346,
+     "n_intraday_gaps_gt3bars": 272,
+     "largest_gap_hours": 56.83,
+     "intraday_gap_starts": [
+      "2025-05-05T20:55:00+00:00",
+      "2025-05-06T20:55:00+00:00",
+      "2025-05-07T20:55:00+00:00",
+      "2025-05-08T20:55:00+00:00",
+      "2025-05-12T20:55:00+00:00"
+     ],
+     "frame_fingerprint": "593acb007ac30d88",
+     "eval_from_utc": "2025-06-01T09:35:00+00:00",
+     "eval_from_index": 5609
+    },
+    "dev_end_guard": {
+     "dev_end_berlin_date": "2026-08-31",
+     "assert_no_forward_holdout": "PASS",
+     "guard_dev_only": "PASS",
+     "last_bar_utc": "2026-08-31T20:55:00+00:00"
+    },
+    "partitions": {
+     "scheme": "observer_lab.splits (core fit end / dev end constants); OOS written as FROZEN_OOS; PURGED = horizon reaches another partition; EMBARGO = first label horizon after a boundary",
+     "plan": {
+      "train_start": "2025-05-02",
+      "train_end": "2026-03-16",
+      "validation_start": "2026-03-17",
+      "validation_end": "2026-06-30",
+      "oos_start": "2026-07-01",
+      "oos_end": "2026-08-31",
+      "forward_start": "2026-09-01",
+      "core_fit_end": "2026-06-30"
+     },
+     "regular_plan": true,
+     "embargo_s": 14400.0,
+     "has_frozen_split": true,
+     "note": "core thresholds were fitted up to the core fit end; the dev window 2026-07-01..2026-08-31 is a weaker OOS than a never-seen period",
+     "counts": {
+      "FROZEN_OOS": 814,
+      "TRAIN": 3200,
+      "VALIDATION": 1373
+     }
+    },
+    "events_by_family_variant_direction": {
+     "EOD|continue|long": 56,
+     "EOD|continue|short": 20,
+     "EOD|reverse|long": 20,
+     "EOD|reverse|short": 56,
+     "GAP|fade|long": 30,
+     "GAP|fade|short": 43,
+     "GAP|go|long": 59,
+     "GAP|go|short": 37,
+     "LEADLAG||long": 93,
+     "LEADLAG||short": 87,
+     "ORB|breakout|long": 167,
+     "ORB|breakout|short": 155,
+     "ORB|fade|long": 138,
+     "ORB|fade|short": 122,
+     "OVERNIGHT|continue|long": 58,
+     "OVERNIGHT|continue|short": 25,
+     "OVERNIGHT|reverse|long": 25,
+     "OVERNIGHT|reverse|short": 58,
+     "ROUND|break|long": 491,
+     "ROUND|break|short": 459,
+     "ROUND|reject|long": 1143,
+     "ROUND|reject|short": 1011,
+     "VOLREV|expand|long": 455,
+     "VOLREV|expand|short": 314,
+     "VOLREV|fade|long": 146,
+     "VOLREV|fade|short": 119
+    },
+    "exclusions": {
+     "candidates": 5734,
+     "before_eval_start": 341,
+     "duplicate_family_variant_direction": 6,
+     "emitted": 5387,
+     "emitted_before_limit": 5387
+    },
+    "rows": {
+     "table": 5387,
+     "features": 5387,
+     "labels": 5387,
+     "events": 5387
+    },
+    "controls_rows": {
+     "table": 3,
+     "features": 3,
+     "labels": 3,
+     "events": 3
+    },
+    "runtime_s": {
+     "events_step": 365.6,
+     "controls_step": 76.5
+    },
+    "peak_memory_mb": {
+     "events_step": 268.2,
+     "controls_step": 217.6
+    },
+    "matching_revision": "partition-aware (match_controls partition=auto, rank_mode=partition, exclude_idx = every generator opportunity)"
+   },
+   "sample_record": {
+    "event_id": "66a33f829602d49d3de1a99a0da05c3a",
+    "market": "NAS100",
+    "family": "ORB",
+    "variant": "fade",
+    "direction": -1,
+    "is_control": false,
+    "decision_ts_ns": 1770303000000000000,
+    "observer_version": "market-structure-observer-v1",
+    "schema_version": "mso-schema-1",
+    "status": "OBSERVATION_ONLY_NOT_ALPHA_VALIDATED",
+    "v_acceptance": "mso-acceptance-1",
+    "v_balance": "mso-balance-1",
+    "v_levels": "mso-levels-1",
+    "v_participation": "mso-participation-1",
+    "v_swings": "mso-swings-1",
+    "f_levels__nearest_level_distance_atr": -0.040026225561321106,
+    "f_levels__nearest_level_source": "SWING_M5",
+    "f_levels__nearest_level_age_bars": 129,
+    "f_levels__touch_count": 3,
+    "f_levels__clean_rejection_count": 0,
+    "f_levels__penetration_count": 2,
+    "f_levels__first_touch": false,
+    "f_levels__break_count": 1,
+    "f_levels__reclaim_count": 0,
+    "f_levels__role": "ACCEPTED_BELOW",
+    "f_levels__previous_role": "BROKEN_DOWN",
+    "f_levels__zone_source_count": 46,
+    "f_levels__zone_independent_source_count": 5,
+    "f_levels__zone_width_atr": 2.340089639828421,
+    "f_levels__n_levels_within_1atr": 22,
+    "f_levels__last_touch_ts_ns": 1.7703027e+18,
+    "f_levels__last_break_ts_ns": 1.7702943e+18,
+    "f_swings__m5_sequence": "DOWN_SEQUENCE",
+    "f_swings__m5_high_label": "LH",
+    "f_swings__m5_low_label": "LL",
+    "f_swings__m5_sequence_length": 3,
+    "f_swings__m5_structure_age_bars": 1.0,
+    "f_swings__m5_structure_age_minutes": 5.0,
+    "f_swings__m5_high_delta_atr": -0.4165135050892634,
+    "f_swings__m5_low_delta_atr": -1.255258547490797,
+    "f_swings__m5_confirmed_at_ts_ns": 1.7703027e+18,
+    "f_swings__m5_last_high_confirmed_at_ts_ns": 1.7703009e+18,
+    "f_swings__m5_last_low_confirmed_at_ts_ns": 1.7703027e+18,
+    "f_swings__m5_close_beyond_last_swing_atr_high": 1.3113855479959542,
+    "f_swings__m5_close_beyond_last_swing_atr_low": 0.0,
+    "f_swings__m5_bars_since_beyond_high": 2.0,
+    "f_swings__m15_sequence": "DOWN_SEQUENCE",
+    "f_swings__m15_high_label": "LH",
+    "f_swings__m15_low_label": "LL",
+    "f_swings__m15_sequence_length": 3,
+    "f_swings__m15_structure_age_bars": 2.0,
+    "f_swings__m15_structure_age_minutes": 35.0,
+    "f_swings__m15_high_delta_atr": -2.8492352669310184,
+    "f_swings__m15_low_delta_atr": -4.25120648330266,
+    "f_swings__m15_confirmed_at_ts_ns": 1.7703009e+18,
+    "f_swings__m15_last_high_confirmed_at_ts_ns": 1.7703009e+18,
+    "f_swings__m15_last_low_confirmed_at_ts_ns": 1.7702982e+18,
+    "f_swings__m15_close_beyond_last_swing_atr_high": 0.8948720429066909,
+    "f_swings__m15_close_beyond_last_swing_atr_low": 0.0,
+    "f_swings__m15_bars_since_beyond_high": 2.0,
+    "f_swings__ema_trend": "up",
+    "f_swings__ema_swing_agreement": "DISAGREE",
+    "f_acceptance__break_found": false,
+    "f_balance__range_width_atr_w24": 4.309891550854943,
+    "f_balance__directional_efficiency_w24": 0.24291828340188906,
+    "f_balance__bar_overlap_ratio_w24": 0.4748546307164919,
+    "f_balance__close_occupancy_ratio_w24": 0.875,
+    "f_balance__midpoint_cross_count_w24": 9.0,
+    "f_balance__range_width_atr_w48": 6.212942959404042,
+    "f_balance__directional_efficiency_w48": 0.08935933429445994,
+    "f_balance__bar_overlap_ratio_w48": 0.47430055718681574,
+    "f_balance__close_occupancy_ratio_w48": 0.5625,
+    "f_balance__midpoint_cross_count_w48": 2.0,
+    "f_participation__tick_activity_per_min": 2463.4,
+    "f_participation__tick_activity_percentile": 1.0,
+    "f_participation__tick_activity_z": 2.236989422365172,
+    "f_participation__activity_vs_same_tod": 1.349216781684741,
+    "f_participation__activity_vs_session_baseline": 3.7054753309265944,
+    "f_participation__activity_acceleration": 0.8942209960795702,
+    "f_participation__tod_baseline_n": 17,
+    "f_participation__tod_baseline_oldest_ts_ns": 1768315500000000000,
+    "m_warmup_ok": true,
+    "m_bars_available": 53869,
+    "m_prev_days_available": 239,
+    "m_atr_ok": true,
+    "m_min_bars_levels": 603,
+    "m_min_bars_swings": 480,
+    "m_min_bars_acceptance": 98,
+    "m_min_bars_balance": 48,
+    "m_min_prev_days_participation": 21,
+    "m_event_price": 24841.26,
+    "m_reference_level_id": "d2e75d357ad49764",
+    "m_config_hash": "9baff67cbb414f2a",
+    "m_hash_levels": "84a77f0a6266399f",
+    "m_hash_swings": "eb1857c684e21d19",
+    "m_hash_acceptance": "1608ec3fb935dc33ecc4874e1768289b3c0790e9bc3a0919f88e766e28f08060",
+    "m_hash_balance": "ddac1af18d7032ca1ee3acf276d5f2ccd6101710a5bd8476158872b7ca8d3aec",
+    "m_hash_participation": "452f5122fbfc26c12ed207281e1fcbd3152c3ecd265d25b5ce177c13529c92b3",
+    "warmup_ok": true,
+    "run_id": "11e7f0c949cd",
+    "decision_idx": 53868,
+    "strategy_id": "ORB-f881dee654",
+    "entry": 24841.26,
+    "stop": 24870.184107142857,
+    "risk": 28.924107142858702,
+    "risk_atr": 0.43523414912028,
+    "partition": "TRAIN"
+   },
+   "blocking": {
+    "plausibility": "PASS",
+    "leakage_audit": "PASS",
+    "parity_live_vs_batch": "PASS",
+    "label_sanity": "PASS"
+   },
+   "informational": {
+    "matching": "WARN",
+    "frame_fingerprint": "PASS"
+   },
+   "verdict": "PASS",
+   "gate_b_seconds": 7.1,
+   "plausibility": {
+    "n_feature_columns": 83,
+    "groups": {
+     "levels": {
+      "n_columns": 18,
+      "constant_columns": [],
+      "all_missing_columns": [],
+      "high_missing_columns": [
+       "f_levels__last_reclaim_ts_ns"
+      ],
+      "flagged_columns": 0
+     },
+     "swings": {
+      "n_columns": 32,
+      "constant_columns": [],
+      "all_missing_columns": [],
+      "high_missing_columns": [
+       "f_swings__m5_bars_since_beyond_high",
+       "f_swings__m5_bars_since_beyond_low",
+       "f_swings__m15_bars_since_beyond_high",
+       "f_swings__m15_bars_since_beyond_low"
+      ],
+      "flagged_columns": 0
+     },
+     "acceptance": {
+      "n_columns": 15,
+      "constant_columns": [],
+      "all_missing_columns": [],
+      "high_missing_columns": [
+       "f_acceptance__break_bar_ts_ns",
+       "f_acceptance__break_close_distance_atr",
+       "f_acceptance__break_body_atr",
+       "f_acceptance__break_true_range_atr",
+       "f_acceptance__closes_beyond_level_count",
+       "f_acceptance__bars_since_break",
+       "f_acceptance__max_reentry_depth_atr",
+       "f_acceptance__followthrough_high_atr",
+       "f_acceptance__followthrough_low_atr",
+       "f_acceptance__followthrough_dir_atr",
+       "f_acceptance__close_location_in_bar",
+       "f_acceptance__time_held_beyond_level_bars",
+       "f_acceptance__time_held_beyond_level_minutes",
+       "f_acceptance__reclaim_occurred"
+      ],
+      "flagged_columns": 0
+     },
+     "balance": {
+      "n_columns": 10,
+      "constant_columns": [],
+      "all_missing_columns": [],
+      "high_missing_columns": [],
+      "flagged_columns": 0
+     },
+     "participation": {
+      "n_columns": 8,
+      "constant_columns": [],
+      "all_missing_columns": [],
+      "high_missing_columns": [],
+      "flagged_columns": 0
+     }
+    },
+    "impossible_value_flags": [],
+    "n_flagged": 0,
+    "verdict": "PASS"
+   }
+  },
+  {
+   "market": "SPX500",
+   "frame_fingerprint_matches_manifest": true,
+   "n_rows": 3035,
+   "n_events": 2991,
+   "n_controls": 44,
+   "warmup": {
+    "events": {
+     "n": 2991,
+     "warmup_false": 0,
+     "warmup_false_share": 0.0,
+     "unmet_share_by_group": {
+      "levels": 0.0,
+      "swings": 0.0,
+      "acceptance": 0.0,
+      "balance": 0.0,
+      "participation": 0.0,
+      "atr": 0.0
+     }
+    },
+    "controls": {
+     "n": 44,
+     "warmup_false": 0,
+     "warmup_false_share": 0.0,
+     "unmet_share_by_group": {
+      "levels": 0.0,
+      "swings": 0.0,
+      "acceptance": 0.0,
+      "balance": 0.0,
+      "participation": 0.0,
+      "atr": 0.0
+     }
+    },
+    "events_warmup_false_share_by_family": {
+     "EOD": 0.0,
+     "GAP": 0.0,
+     "LEADLAG": 0.0,
+     "ORB": 0.0,
+     "OVERNIGHT": 0.0,
+     "ROUND": 0.0,
+     "VOLREV": 0.0
+    }
+   },
+   "labels": {
+    "rates": {
+     "y_fav025_before_adv025": {
+      "zero_drift_reference_P": 0.5,
+      "events": {
+       "n_rows": 2991,
+       "n_resolved": 2991,
+       "censored_share": 0.0,
+       "rate": 0.379806084921431,
+       "wilson95": [
+        0.36257701398654174,
+        0.3973435106916249
+       ],
+       "diff_to_reference": -0.12019391507856902
+      },
+      "controls": {
+       "n_rows": 44,
+       "n_resolved": 43,
+       "censored_share": 0.022727272727272707,
+       "rate": 0.4186046511627907,
+       "wilson95": [
+        0.2838433433748524,
+        0.5667168424428823
+       ],
+       "diff_to_reference": -0.08139534883720928,
+       "tolerance_check": "not applied: only 43 resolved controls (< 100), INSUFFICIENT_EVIDENCE"
+      }
+     },
+     "y_fav050_before_adv050": {
+      "zero_drift_reference_P": 0.5,
+      "events": {
+       "n_rows": 2991,
+       "n_resolved": 2988,
+       "censored_share": 0.0010030090270812808,
+       "rate": 0.4755689424364123,
+       "wilson95": [
+        0.45770503720969097,
+        0.4934955878501383
+       ],
+       "diff_to_reference": -0.02443105756358771
+      },
+      "controls": {
+       "n_rows": 44,
+       "n_resolved": 43,
+       "censored_share": 0.022727272727272707,
+       "rate": 0.4418604651162791,
+       "wilson95": [
+        0.3043308562392133,
+        0.5889264193448829
+       ],
+       "diff_to_reference": -0.05813953488372092,
+       "tolerance_check": "not applied: only 43 resolved controls (< 100), INSUFFICIENT_EVIDENCE"
+      }
+     },
+     "y_fav075_before_adv050": {
+      "zero_drift_reference_P": 0.4,
+      "events": {
+       "n_rows": 2991,
+       "n_resolved": 2977,
+       "censored_share": 0.004680708793045829,
+       "rate": 0.4017467248908297,
+       "wilson95": [
+        0.3842731917006246,
+        0.419473508560134
+       ],
+       "diff_to_reference": 0.001746724890829665
+      },
+      "controls": {
+       "n_rows": 44,
+       "n_resolved": 43,
+       "censored_share": 0.022727272727272707,
+       "rate": 0.3488372093023256,
+       "wilson95": [
+        0.22418398748963103,
+        0.49828492902901905
+       ],
+       "diff_to_reference": -0.05116279069767443,
+       "tolerance_check": "not applied: only 43 resolved controls (< 100), INSUFFICIENT_EVIDENCE"
+      }
+     },
+     "y_fav100_before_adv050": {
+      "zero_drift_reference_P": 0.3333333333333333,
+      "events": {
+       "n_rows": 2991,
+       "n_resolved": 2960,
+       "censored_share": 0.010364426613172828,
+       "rate": 0.34493243243243243,
+       "wilson95": [
+        0.3280187516911628,
+        0.36224809657765156
+       ],
+       "diff_to_reference": 0.01159909909909912
+      },
+      "controls": {
+       "n_rows": 44,
+       "n_resolved": 41,
+       "censored_share": 0.06818181818181823,
+       "rate": 0.17073170731707318,
+       "wilson95": [
+        0.08525143995273898,
+        0.31262909954629764
+       ],
+       "diff_to_reference": -0.16260162601626013,
+       "tolerance_check": "not applied: only 41 resolved controls (< 100), INSUFFICIENT_EVIDENCE"
+      }
+     }
+    },
+    "consistency": {
+     "violations": {
+      "y_fav025_before_adv025=1 but mfe_r<0.25": 0,
+      "y_fav025_before_adv025=0 but mae_r<0.25": 0,
+      "y_fav050_before_adv050=1 but mfe_r<0.5": 0,
+      "y_fav050_before_adv050=0 but mae_r<0.5": 0,
+      "y_fav075_before_adv050=1 but mfe_r<0.75": 0,
+      "y_fav075_before_adv050=0 but mae_r<0.5": 0,
+      "y_fav100_before_adv050=1 but mfe_r<1.0": 0,
+      "y_fav100_before_adv050=0 but mae_r<0.5": 0,
+      "fav100=1 but fav075=0": 0,
+      "fav075=1 but fav050=0": 0,
+      "negative mfe/mae": 0
+     },
+     "n_rows": 3035,
+     "total_violations": 0
+    },
+    "horizon": {
+     "max_horizon_s": 14400.0,
+     "min_horizon_s": 0.0,
+     "share_full_48_bars": 0.6622734761120264,
+     "horizon_bound_ok": true
+    },
+    "verdict": "PASS",
+    "reasons": []
+   },
+   "matching": {
+    "n_events": 2991,
+    "n_matched": 44,
+    "match_rate": 0.014710799063858242,
+    "n_unmatched": 2947,
+    "n_controls": 44,
+    "smd": {
+     "local_minute": -0.15976762546407272,
+     "atr_pct": 0.11458240740781261,
+     "spread_pct": 0.07583974696975536
+    },
+    "session_share_diff_max": 0.0,
+    "method": "observer-controls-2",
+    "partition_mode": "PARTITIONED",
+    "rank_mode": "partition",
+    "by_partition": {
+     "OOS": {
+      "n_events": 396.0,
+      "n_matched": 5.0,
+      "match_rate": 0.012626262626262626
+     },
+     "PURGED": {
+      "n_events": 1.0,
+      "n_matched": 0.0,
+      "match_rate": 0.0
+     },
+     "TRAIN": {
+      "n_events": 1843.0,
+      "n_matched": 29.0,
+      "match_rate": 0.015735214324470972
+     },
+     "VALIDATION": {
+      "n_events": 751.0,
+      "n_matched": 10.0,
+      "match_rate": 0.013315579227696404
+     }
+    },
+    "n_events_in_excluded_partition": 1,
+    "n_exclusion_bars_blocked": 2702,
+    "n_rejected_partition": 0,
+    "by_family": {
+     "VOLREV": {
+      "n_events": 1040,
+      "n_matched": 26
+     },
+     "ROUND": {
+      "n_events": 708,
+      "n_matched": 13
+     },
+     "GAP": {
+      "n_events": 164,
+      "n_matched": 0
+     },
+     "ORB": {
+      "n_events": 587,
+      "n_matched": 0
+     },
+     "LEADLAG": {
+      "n_events": 184,
+      "n_matched": 0
+     },
+     "EOD": {
+      "n_events": 150,
+      "n_matched": 5
+     },
+     "OVERNIGHT": {
+      "n_events": 158,
+      "n_matched": 0
+     }
+    },
+    "matching_revision": "partition-aware (match_controls partition=auto, rank_mode=partition, exclude_idx = every generator opportunity)",
+    "controls_in_other_partition": 0,
+    "verdict": "WARN",
+    "reasons": [
+     "match rate 0.015 < 0.5",
+     "|SMD(local_minute)|=-0.15976762546407272 > 0.1",
+     "|SMD(atr_pct)|=0.11458240740781261 > 0.1"
+    ]
+   },
+   "matching_prerevision": {
+    "method": "observer-controls-1",
+    "n_controls": 47,
+    "match_rate": 0.015713808090939484,
+    "smd": {
+     "local_minute": -0.198959774256959,
+     "atr_pct": 0.0431533734292116,
+     "spread_pct": 0.09761269336425604
+    },
+    "control_label_rates": {
+     "y_fav025_before_adv025": {
+      "n": 47,
+      "rate": 0.48936170212765956
+     },
+     "y_fav050_before_adv050": {
+      "n": 45,
+      "rate": 0.5111111111111111
+     },
+     "y_fav075_before_adv050": {
+      "n": 45,
+      "rate": 0.3333333333333333
+     },
+     "y_fav100_before_adv050": {
+      "n": 45,
+      "rate": 0.2
+     }
+    }
+   },
+   "leakage_audit": {
+    "history_window_bars": 7728,
+    "sample_seed": 11,
+    "live_style_incremental_full_history": {
+     "name": "live_buffer_prefix",
+     "n_compared": 330,
+     "pass": 330,
+     "fail": 0,
+     "skipped": 0,
+     "skipped_reasons": {},
+     "failures": [],
+     "verdict": "PASS",
+     "sample": {
+      "events": 300,
+      "controls": 30
+     },
+     "seconds": 227.4
+    },
+    "truncated_raw_frame_window": {
+     "name": "truncated_at_decision_bar_window_7728",
+     "n_compared": 60,
+     "pass": 60,
+     "fail": 0,
+     "skipped": 0,
+     "skipped_reasons": {},
+     "failures": [],
+     "verdict": "PASS",
+     "sample": 60
+    },
+    "extended_frame_future_bars_present": {
+     "name": "longer_frame_plus_500_future_bars_window_7728",
+     "n_compared": 30,
+     "pass": 30,
+     "fail": 0,
+     "skipped": 0,
+     "skipped_reasons": {},
+     "failures": [],
+     "verdict": "PASS",
+     "sample": 30
+    },
+    "shallow_histories_must_be_flagged_not_warm": {
+     "120": {
+      "n": 20,
+      "flagged_not_warm": 20,
+      "wrongly_flagged_warm": 0,
+      "still_equal_to_stored": 0,
+      "rule_ok": true
+     },
+     "240": {
+      "n": 20,
+      "flagged_not_warm": 20,
+      "wrongly_flagged_warm": 0,
+      "still_equal_to_stored": 0,
+      "rule_ok": true
+     },
+     "500": {
+      "n": 20,
+      "flagged_not_warm": 20,
+      "wrongly_flagged_warm": 0,
+      "still_equal_to_stored": 0,
+      "rule_ok": true
+     }
+    },
+    "window_seconds": 1064.6,
+    "verdict": "PASS"
+   },
+   "parity_live_vs_batch": {
+    "n_compared": 330,
+    "pass": 330,
+    "fail": 0,
+    "verdict": "PASS",
+    "failures": [],
+    "note": "BarBuffer fed engine-style sliding 6000-bar frames bar by bar; the observer saw only physically truncated views; compared with the stored batch records EXACTLY"
+   },
+   "coverage": {
+    "data": {
+     "first_bar_utc": "2025-05-02T09:40:00+00:00",
+     "last_bar_utc": "2026-08-31T20:55:00+00:00",
+     "n_bars": 94212,
+     "missing_months_utc": [],
+     "gaps_longer_than_3_days": [],
+     "n_gaps": 346,
+     "n_intraday_gaps_gt3bars": 272,
+     "largest_gap_hours": 56.83,
+     "intraday_gap_starts": [
+      "2025-05-05T20:55:00+00:00",
+      "2025-05-06T20:55:00+00:00",
+      "2025-05-07T20:55:00+00:00",
+      "2025-05-08T20:55:00+00:00",
+      "2025-05-12T20:55:00+00:00"
+     ],
+     "frame_fingerprint": "84063b6a24b6d2f6",
+     "eval_from_utc": "2025-06-01T09:40:00+00:00",
+     "eval_from_index": 5608
+    },
+    "dev_end_guard": {
+     "dev_end_berlin_date": "2026-08-31",
+     "assert_no_forward_holdout": "PASS",
+     "guard_dev_only": "PASS",
+     "last_bar_utc": "2026-08-31T20:55:00+00:00"
+    },
+    "partitions": {
+     "scheme": "observer_lab.splits (core fit end / dev end constants); OOS written as FROZEN_OOS; PURGED = horizon reaches another partition; EMBARGO = first label horizon after a boundary",
+     "plan": {
+      "train_start": "2025-05-02",
+      "train_end": "2026-03-16",
+      "validation_start": "2026-03-17",
+      "validation_end": "2026-06-30",
+      "oos_start": "2026-07-01",
+      "oos_end": "2026-08-31",
+      "forward_start": "2026-09-01",
+      "core_fit_end": "2026-06-30"
+     },
+     "regular_plan": true,
+     "embargo_s": 14400.0,
+     "has_frozen_split": true,
+     "note": "core thresholds were fitted up to the core fit end; the dev window 2026-07-01..2026-08-31 is a weaker OOS than a never-seen period",
+     "counts": {
+      "FROZEN_OOS": 396,
+      "TRAIN": 1843,
+      "VALIDATION": 752
+     }
+    },
+    "events_by_family_variant_direction": {
+     "EOD|continue|long": 55,
+     "EOD|continue|short": 20,
+     "EOD|reverse|long": 20,
+     "EOD|reverse|short": 55,
+     "GAP|fade|long": 29,
+     "GAP|fade|short": 45,
+     "GAP|go|long": 58,
+     "GAP|go|short": 32,
+     "LEADLAG||long": 80,
+     "LEADLAG||short": 104,
+     "ORB|breakout|long": 175,
+     "ORB|breakout|short": 147,
+     "ORB|fade|long": 135,
+     "ORB|fade|short": 130,
+     "OVERNIGHT|continue|long": 54,
+     "OVERNIGHT|continue|short": 25,
+     "OVERNIGHT|reverse|long": 25,
+     "OVERNIGHT|reverse|short": 54,
+     "ROUND|break|long": 104,
+     "ROUND|break|short": 114,
+     "ROUND|reject|long": 243,
+     "ROUND|reject|short": 247,
+     "VOLREV|expand|long": 459,
+     "VOLREV|expand|short": 340,
+     "VOLREV|fade|long": 140,
+     "VOLREV|fade|short": 101
+    },
+    "exclusions": {
+     "candidates": 3209,
+     "before_eval_start": 218,
+     "emitted": 2991,
+     "emitted_before_limit": 2991
+    },
+    "rows": {
+     "table": 2991,
+     "features": 2991,
+     "labels": 2991,
+     "events": 2991
+    },
+    "controls_rows": {
+     "table": 44,
+     "features": 44,
+     "labels": 44,
+     "events": 44
+    },
+    "runtime_s": {
+     "events_step": 236.7,
+     "controls_step": 96.1
+    },
+    "peak_memory_mb": {
+     "events_step": 268.2,
+     "controls_step": 221.4
+    },
+    "matching_revision": "partition-aware (match_controls partition=auto, rank_mode=partition, exclude_idx = every generator opportunity)"
+   },
+   "sample_record": {
+    "event_id": "efaa92680b7efb4a0ee12ef3ea28f9f7",
+    "market": "SPX500",
+    "family": "LEADLAG",
+    "direction": -1,
+    "is_control": false,
+    "decision_ts_ns": 1769179200000000000,
+    "observer_version": "market-structure-observer-v1",
+    "schema_version": "mso-schema-1",
+    "status": "OBSERVATION_ONLY_NOT_ALPHA_VALIDATED",
+    "v_acceptance": "mso-acceptance-1",
+    "v_balance": "mso-balance-1",
+    "v_levels": "mso-levels-1",
+    "v_participation": "mso-participation-1",
+    "v_swings": "mso-swings-1",
+    "f_levels__nearest_level_distance_atr": -0.08969010727062468,
+    "f_levels__nearest_level_source": "SWING_M5",
+    "f_levels__nearest_level_age_bars": 11,
+    "f_levels__touch_count": 3,
+    "f_levels__clean_rejection_count": 1,
+    "f_levels__penetration_count": 3,
+    "f_levels__first_touch": false,
+    "f_levels__break_count": 0,
+    "f_levels__reclaim_count": 0,
+    "f_levels__role": "SUPPORT",
+    "f_levels__zone_source_count": 12,
+    "f_levels__zone_independent_source_count": 4,
+    "f_levels__zone_width_atr": 0.9490464839093042,
+    "f_levels__n_levels_within_1atr": 17,
+    "f_levels__last_touch_ts_ns": 1.7691792e+18,
+    "f_swings__m5_sequence": "DOWN_SEQUENCE",
+    "f_swings__m5_high_label": "LH",
+    "f_swings__m5_low_label": "LL",
+    "f_swings__m5_sequence_length": 3,
+    "f_swings__m5_structure_age_bars": 5.0,
+    "f_swings__m5_structure_age_minutes": 25.0,
+    "f_swings__m5_high_delta_atr": -1.7750297973779512,
+    "f_swings__m5_low_delta_atr": -0.6486889153754061,
+    "f_swings__m5_confirmed_at_ts_ns": 1.7691777e+18,
+    "f_swings__m5_last_high_confirmed_at_ts_ns": 1.7691765e+18,
+    "f_swings__m5_last_low_confirmed_at_ts_ns": 1.7691777e+18,
+    "f_swings__m5_close_beyond_last_swing_atr_high": 0.0,
+    "f_swings__m5_close_beyond_last_swing_atr_low": 0.0,
+    "f_swings__m5_bars_since_beyond_high": 2.0,
+    "f_swings__m15_sequence": "DOWN_SEQUENCE",
+    "f_swings__m15_high_label": "LH",
+    "f_swings__m15_low_label": "LL",
+    "f_swings__m15_sequence_length": 2,
+    "f_swings__m15_structure_age_bars": 4.0,
+    "f_swings__m15_structure_age_minutes": 70.0,
+    "f_swings__m15_high_delta_atr": -0.25238379022647833,
+    "f_swings__m15_low_delta_atr": -0.14183551847444095,
+    "f_swings__m15_confirmed_at_ts_ns": 1.769175e+18,
+    "f_swings__m15_last_high_confirmed_at_ts_ns": 1.769175e+18,
+    "f_swings__m15_last_low_confirmed_at_ts_ns": 1.7691741e+18,
+    "f_swings__m15_close_beyond_last_swing_atr_high": 0.0,
+    "f_swings__m15_close_beyond_last_swing_atr_low": -0.7404648390942289,
+    "f_swings__m15_bars_since_beyond_low": 14.0,
+    "f_swings__ema_trend": "down",
+    "f_swings__ema_swing_agreement": "AGREE_DOWN",
+    "f_acceptance__break_found": false,
+    "f_balance__range_width_atr_w24": 3.6585220500597417,
+    "f_balance__directional_efficiency_w24": 0.23645220215142393,
+    "f_balance__bar_overlap_ratio_w24": 0.4694855719740131,
+    "f_balance__close_occupancy_ratio_w24": 0.5,
+    "f_balance__midpoint_cross_count_w24": 3.0,
+    "f_balance__range_width_atr_w48": 3.91090584028622,
+    "f_balance__directional_efficiency_w48": 0.008765597607501662,
+    "f_balance__bar_overlap_ratio_w48": 0.4516705465363459,
+    "f_balance__close_occupancy_ratio_w48": 0.5833333333333334,
+    "f_balance__midpoint_cross_count_w48": 10.0,
+    "f_participation__tick_activity_per_min": 794.2,
+    "f_participation__tick_activity_percentile": 0.625,
+    "f_participation__tick_activity_z": 0.1491926444751944,
+    "f_participation__activity_vs_same_tod": 1.1311778948867683,
+    "f_participation__activity_vs_session_baseline": 8.466950959488273,
+    "f_participation__activity_acceleration": 4.260729613733906,
+    "f_participation__tod_baseline_n": 16,
+    "f_participation__tod_baseline_oldest_ts_ns": 1767191700000000000,
+    "m_warmup_ok": true,
+    "m_bars_available": 51382,
+    "m_prev_days_available": 228,
+    "m_atr_ok": true,
+    "m_min_bars_levels": 603,
+    "m_min_bars_swings": 480,
+    "m_min_bars_acceptance": 98,
+    "m_min_bars_balance": 48,
+    "m_min_prev_days_participation": 21,
+    "m_event_price": 6900.48,
+    "m_reference_level_id": "91e45fa758249c87",
+    "m_config_hash": "9baff67cbb414f2a",
+    "m_hash_levels": "84a77f0a6266399f",
+    "m_hash_swings": "eb1857c684e21d19",
+    "m_hash_acceptance": "1608ec3fb935dc33ecc4874e1768289b3c0790e9bc3a0919f88e766e28f08060",
+    "m_hash_balance": "ddac1af18d7032ca1ee3acf276d5f2ccd6101710a5bd8476158872b7ca8d3aec",
+    "m_hash_participation": "452f5122fbfc26c12ed207281e1fcbd3152c3ecd265d25b5ce177c13529c92b3",
+    "warmup_ok": true,
+    "run_id": "a7ccbdaa4a23",
+    "decision_idx": 51381,
+    "strategy_id": "LEADLAG-c3be0a92bd",
+    "entry": 6900.48,
+    "stop": 6907.671428571428,
+    "risk": 7.191428571428332,
+    "risk_atr": 1.5000000000000133,
+    "partition": "TRAIN"
+   },
+   "blocking": {
+    "plausibility": "PASS",
+    "leakage_audit": "PASS",
+    "parity_live_vs_batch": "PASS",
+    "label_sanity": "PASS"
+   },
+   "informational": {
+    "matching": "WARN",
+    "frame_fingerprint": "PASS"
+   },
+   "verdict": "PASS",
+   "gate_b_seconds": 6.9,
+   "plausibility": {
+    "n_feature_columns": 83,
+    "groups": {
+     "levels": {
+      "n_columns": 18,
+      "constant_columns": [],
+      "all_missing_columns": [],
+      "high_missing_columns": [
+       "f_levels__previous_role",
+       "f_levels__last_break_ts_ns",
+       "f_levels__last_reclaim_ts_ns"
+      ],
+      "flagged_columns": 0
+     },
+     "swings": {
+      "n_columns": 32,
+      "constant_columns": [],
+      "all_missing_columns": [],
+      "high_missing_columns": [
+       "f_swings__m5_bars_since_beyond_high",
+       "f_swings__m5_bars_since_beyond_low",
+       "f_swings__m15_bars_since_beyond_high",
+       "f_swings__m15_bars_since_beyond_low"
+      ],
+      "flagged_columns": 0
+     },
+     "acceptance": {
+      "n_columns": 15,
+      "constant_columns": [],
+      "all_missing_columns": [],
+      "high_missing_columns": [
+       "f_acceptance__break_bar_ts_ns",
+       "f_acceptance__break_close_distance_atr",
+       "f_acceptance__break_body_atr",
+       "f_acceptance__break_true_range_atr",
+       "f_acceptance__closes_beyond_level_count",
+       "f_acceptance__bars_since_break",
+       "f_acceptance__max_reentry_depth_atr",
+       "f_acceptance__followthrough_high_atr",
+       "f_acceptance__followthrough_low_atr",
+       "f_acceptance__followthrough_dir_atr",
+       "f_acceptance__close_location_in_bar",
+       "f_acceptance__time_held_beyond_level_bars",
+       "f_acceptance__time_held_beyond_level_minutes",
+       "f_acceptance__reclaim_occurred"
+      ],
+      "flagged_columns": 0
+     },
+     "balance": {
+      "n_columns": 10,
+      "constant_columns": [],
+      "all_missing_columns": [],
+      "high_missing_columns": [],
+      "flagged_columns": 0
+     },
+     "participation": {
+      "n_columns": 8,
+      "constant_columns": [],
+      "all_missing_columns": [],
+      "high_missing_columns": [],
+      "flagged_columns": 0
+     }
+    },
+    "impossible_value_flags": [],
+    "n_flagged": 0,
+    "verdict": "PASS"
+   }
+  },
+  {
+   "market": "XAUUSD",
+   "frame_fingerprint_matches_manifest": true,
+   "n_rows": 7181,
+   "n_events": 7181,
+   "n_controls": 0,
+   "warmup": {
+    "events": {
+     "n": 7181,
+     "warmup_false": 0,
+     "warmup_false_share": 0.0,
+     "unmet_share_by_group": {
+      "levels": 0.0,
+      "swings": 0.0,
+      "acceptance": 0.0,
+      "balance": 0.0,
+      "participation": 0.0,
+      "atr": 0.0
+     }
+    },
+    "controls": {
+     "n": 0,
+     "warmup_false": 0,
+     "warmup_false_share": null,
+     "unmet_share_by_group": {
+      "levels": null,
+      "swings": null,
+      "acceptance": null,
+      "balance": null,
+      "participation": null,
+      "atr": null
+     }
+    },
+    "events_warmup_false_share_by_family": {
+     "EOD": 0.0,
+     "GAP": 0.0,
+     "ORB": 0.0,
+     "OVERNIGHT": 0.0,
+     "ROUND": 0.0,
+     "VOLREV": 0.0
+    }
+   },
+   "labels": {
+    "rates": {
+     "y_fav025_before_adv025": {
+      "zero_drift_reference_P": 0.5,
+      "events": {
+       "n_rows": 7181,
+       "n_resolved": 7181,
+       "censored_share": 0.0,
+       "rate": 0.38755048043447987,
+       "wilson95": [
+        0.3763450408890232,
+        0.39887616927655645
+       ],
+       "diff_to_reference": -0.11244951956552013
+      },
+      "controls": {
+       "n_rows": 0,
+       "n_resolved": 0,
+       "censored_share": null,
+       "rate": null,
+       "wilson95": [
+        null,
+        null
+       ],
+       "diff_to_reference": null,
+       "tolerance_check": "not applied: only 0 resolved controls (< 100), INSUFFICIENT_EVIDENCE"
+      }
+     },
+     "y_fav050_before_adv050": {
+      "zero_drift_reference_P": 0.5,
+      "events": {
+       "n_rows": 7181,
+       "n_resolved": 7180,
+       "censored_share": 0.0001392563709790018,
+       "rate": 0.47896935933147633,
+       "wilson95": [
+        0.46742844011461016,
+        0.490532771056861
+       ],
+       "diff_to_reference": -0.02103064066852367
+      },
+      "controls": {
+       "n_rows": 0,
+       "n_resolved": 0,
+       "censored_share": null,
+       "rate": null,
+       "wilson95": [
+        null,
+        null
+       ],
+       "diff_to_reference": null,
+       "tolerance_check": "not applied: only 0 resolved controls (< 100), INSUFFICIENT_EVIDENCE"
+      }
+     },
+     "y_fav075_before_adv050": {
+      "zero_drift_reference_P": 0.4,
+      "events": {
+       "n_rows": 7181,
+       "n_resolved": 7178,
+       "censored_share": 0.00041776911293689434,
+       "rate": 0.38826971301198104,
+       "wilson95": [
+        0.3770577367204419,
+        0.3996012193890885
+       ],
+       "diff_to_reference": -0.011730286988018979
+      },
+      "controls": {
+       "n_rows": 0,
+       "n_resolved": 0,
+       "censored_share": null,
+       "rate": null,
+       "wilson95": [
+        null,
+        null
+       ],
+       "diff_to_reference": null,
+       "tolerance_check": "not applied: only 0 resolved controls (< 100), INSUFFICIENT_EVIDENCE"
+      }
+     },
+     "y_fav100_before_adv050": {
+      "zero_drift_reference_P": 0.3333333333333333,
+      "events": {
+       "n_rows": 7181,
+       "n_resolved": 7176,
+       "censored_share": 0.0006962818548948979,
+       "rate": 0.3242753623188406,
+       "wilson95": [
+        0.313541169522834,
+        0.33519759931017196
+       ],
+       "diff_to_reference": -0.009057971014492738
+      },
+      "controls": {
+       "n_rows": 0,
+       "n_resolved": 0,
+       "censored_share": null,
+       "rate": null,
+       "wilson95": [
+        null,
+        null
+       ],
+       "diff_to_reference": null,
+       "tolerance_check": "not applied: only 0 resolved controls (< 100), INSUFFICIENT_EVIDENCE"
+      }
+     }
+    },
+    "consistency": {
+     "violations": {
+      "y_fav025_before_adv025=1 but mfe_r<0.25": 0,
+      "y_fav025_before_adv025=0 but mae_r<0.25": 0,
+      "y_fav050_before_adv050=1 but mfe_r<0.5": 0,
+      "y_fav050_before_adv050=0 but mae_r<0.5": 0,
+      "y_fav075_before_adv050=1 but mfe_r<0.75": 0,
+      "y_fav075_before_adv050=0 but mae_r<0.5": 0,
+      "y_fav100_before_adv050=1 but mfe_r<1.0": 0,
+      "y_fav100_before_adv050=0 but mae_r<0.5": 0,
+      "fav100=1 but fav075=0": 0,
+      "fav075=1 but fav050=0": 0,
+      "negative mfe/mae": 0
+     },
+     "n_rows": 7181,
+     "total_violations": 0
+    },
+    "horizon": {
+     "max_horizon_s": 14400.0,
+     "min_horizon_s": 7500.0,
+     "share_full_48_bars": 0.7028269043308731,
+     "horizon_bound_ok": true
+    },
+    "verdict": "PASS",
+    "reasons": []
+   },
+   "matching": {
+    "n_events": 7181,
+    "n_matched": 0,
+    "match_rate": 0.0,
+    "n_unmatched": 7181,
+    "n_controls": 0,
+    "smd": {
+     "local_minute": null,
+     "atr_pct": null,
+     "spread_pct": null
+    },
+    "session_share_diff_max": 0.0,
+    "method": "observer-controls-2",
+    "partition_mode": "PARTITIONED",
+    "rank_mode": "partition",
+    "by_partition": {
+     "OOS": {
+      "n_events": 1036.0,
+      "n_matched": 0.0,
+      "match_rate": 0.0
+     },
+     "TRAIN": {
+      "n_events": 4255.0,
+      "n_matched": 0.0,
+      "match_rate": 0.0
+     },
+     "VALIDATION": {
+      "n_events": 1890.0,
+      "n_matched": 0.0,
+      "match_rate": 0.0
+     }
+    },
+    "n_events_in_excluded_partition": 0,
+    "n_exclusion_bars_blocked": 6732,
+    "n_rejected_partition": 0,
+    "by_family": {
+     "VOLREV": {
+      "n_events": 1265,
+      "n_matched": 0
+     },
+     "ROUND": {
+      "n_events": 4844,
+      "n_matched": 0
+     },
+     "ORB": {
+      "n_events": 601,
+      "n_matched": 0
+     },
+     "GAP": {
+      "n_events": 157,
+      "n_matched": 0
+     },
+     "OVERNIGHT": {
+      "n_events": 158,
+      "n_matched": 0
+     },
+     "EOD": {
+      "n_events": 156,
+      "n_matched": 0
+     }
+    },
+    "matching_revision": "partition-aware (match_controls partition=auto, rank_mode=partition, exclude_idx = every generator opportunity)",
+    "controls_in_other_partition": 0,
+    "verdict": "WARN",
+    "reasons": [
+     "match rate 0.000 < 0.5",
+     "|SMD(local_minute)|=None > 0.1",
+     "|SMD(atr_pct)|=None > 0.1",
+     "|SMD(spread_pct)|=None > 0.1"
+    ]
+   },
+   "matching_prerevision": {
+    "method": "observer-controls-1",
+    "n_controls": 0,
+    "match_rate": 0.0,
+    "smd": {
+     "local_minute": null,
+     "atr_pct": null,
+     "spread_pct": null
+    },
+    "control_label_rates": {}
+   },
+   "leakage_audit": {
+    "history_window_bars": 7728,
+    "sample_seed": 11,
+    "live_style_incremental_full_history": {
+     "name": "live_buffer_prefix",
+     "n_compared": 300,
+     "pass": 300,
+     "fail": 0,
+     "skipped": 0,
+     "skipped_reasons": {},
+     "failures": [],
+     "verdict": "PASS",
+     "sample": {
+      "events": 300,
+      "controls": 0
+     },
+     "seconds": 187.6
+    },
+    "truncated_raw_frame_window": {
+     "name": "truncated_at_decision_bar_window_7728",
+     "n_compared": 60,
+     "pass": 60,
+     "fail": 0,
+     "skipped": 0,
+     "skipped_reasons": {},
+     "failures": [],
+     "verdict": "PASS",
+     "sample": 60
+    },
+    "extended_frame_future_bars_present": {
+     "name": "longer_frame_plus_500_future_bars_window_7728",
+     "n_compared": 30,
+     "pass": 30,
+     "fail": 0,
+     "skipped": 0,
+     "skipped_reasons": {},
+     "failures": [],
+     "verdict": "PASS",
+     "sample": 30
+    },
+    "shallow_histories_must_be_flagged_not_warm": {
+     "120": {
+      "n": 20,
+      "flagged_not_warm": 20,
+      "wrongly_flagged_warm": 0,
+      "still_equal_to_stored": 0,
+      "rule_ok": true
+     },
+     "240": {
+      "n": 20,
+      "flagged_not_warm": 20,
+      "wrongly_flagged_warm": 0,
+      "still_equal_to_stored": 0,
+      "rule_ok": true
+     },
+     "500": {
+      "n": 20,
+      "flagged_not_warm": 20,
+      "wrongly_flagged_warm": 0,
+      "still_equal_to_stored": 0,
+      "rule_ok": true
+     }
+    },
+    "window_seconds": 994.0,
+    "verdict": "PASS"
+   },
+   "parity_live_vs_batch": {
+    "n_compared": 300,
+    "pass": 300,
+    "fail": 0,
+    "verdict": "PASS",
+    "failures": [],
+    "note": "BarBuffer fed engine-style sliding 6000-bar frames bar by bar; the observer saw only physically truncated views; compared with the stored batch records EXACTLY"
+   },
+   "coverage": {
+    "data": {
+     "first_bar_utc": "2025-05-05T02:25:00+00:00",
+     "last_bar_utc": "2026-08-31T20:55:00+00:00",
+     "n_bars": 94194,
+     "missing_months_utc": [],
+     "gaps_longer_than_3_days": [
+      [
+       "2026-04-02T20:55:00+00:00",
+       73.1
+      ]
+     ],
+     "n_gaps": 342,
+     "n_intraday_gaps_gt3bars": 271,
+     "largest_gap_hours": 73.08,
+     "intraday_gap_starts": [
+      "2025-05-05T20:55:00+00:00",
+      "2025-05-06T20:55:00+00:00",
+      "2025-05-07T20:55:00+00:00",
+      "2025-05-08T20:55:00+00:00",
+      "2025-05-12T20:55:00+00:00"
+     ],
+     "frame_fingerprint": "35ee4765557d2c65",
+     "eval_from_utc": "2025-06-04T02:25:00+00:00",
+     "eval_from_index": 6042
+    },
+    "dev_end_guard": {
+     "dev_end_berlin_date": "2026-08-31",
+     "assert_no_forward_holdout": "PASS",
+     "guard_dev_only": "PASS",
+     "last_bar_utc": "2026-08-31T20:55:00+00:00"
+    },
+    "partitions": {
+     "scheme": "observer_lab.splits (core fit end / dev end constants); OOS written as FROZEN_OOS; PURGED = horizon reaches another partition; EMBARGO = first label horizon after a boundary",
+     "plan": {
+      "train_start": "2025-05-05",
+      "train_end": "2026-03-16",
+      "validation_start": "2026-03-17",
+      "validation_end": "2026-06-30",
+      "oos_start": "2026-07-01",
+      "oos_end": "2026-08-31",
+      "forward_start": "2026-09-01",
+      "core_fit_end": "2026-06-30"
+     },
+     "regular_plan": true,
+     "embargo_s": 14400.0,
+     "has_frozen_split": true,
+     "note": "core thresholds were fitted up to the core fit end; the dev window 2026-07-01..2026-08-31 is a weaker OOS than a never-seen period",
+     "counts": {
+      "FROZEN_OOS": 1036,
+      "TRAIN": 4255,
+      "VALIDATION": 1890
+     }
+    },
+    "events_by_family_variant_direction": {
+     "EOD|continue|long": 47,
+     "EOD|continue|short": 31,
+     "EOD|reverse|long": 31,
+     "EOD|reverse|short": 47,
+     "GAP|fade|long": 36,
+     "GAP|fade|short": 41,
+     "GAP|go|long": 51,
+     "GAP|go|short": 29,
+     "ORB|breakout|long": 169,
+     "ORB|breakout|short": 150,
+     "ORB|fade|long": 135,
+     "ORB|fade|short": 147,
+     "OVERNIGHT|continue|long": 49,
+     "OVERNIGHT|continue|short": 30,
+     "OVERNIGHT|reverse|long": 30,
+     "OVERNIGHT|reverse|short": 49,
+     "ROUND|break|long": 824,
+     "ROUND|break|short": 796,
+     "ROUND|reject|long": 1649,
+     "ROUND|reject|short": 1575,
+     "VOLREV|expand|long": 498,
+     "VOLREV|expand|short": 421,
+     "VOLREV|fade|long": 182,
+     "VOLREV|fade|short": 164
+    },
+    "exclusions": {
+     "candidates": 7663,
+     "before_eval_start": 482,
+     "emitted": 7181,
+     "emitted_before_limit": 7181
+    },
+    "rows": {
+     "table": 7181,
+     "features": 7181,
+     "labels": 7181,
+     "events": 7181
+    },
+    "controls_rows": {
+     "table": 0,
+     "events": 0,
+     "features": 0,
+     "labels": 0
+    },
+    "runtime_s": {
+     "events_step": 327.0,
+     "controls_step": 7.8
+    },
+    "peak_memory_mb": {
+     "events_step": 268.2,
+     "controls_step": 221.4
+    },
+    "matching_revision": "partition-aware (match_controls partition=auto, rank_mode=partition, exclude_idx = every generator opportunity)"
+   },
+   "sample_record": {
+    "event_id": "753179baed5ee43e25934b0505b91728",
+    "market": "XAUUSD",
+    "family": "ORB",
+    "variant": "breakout",
+    "direction": 1.0,
+    "is_control": false,
+    "decision_ts_ns": 1.770366e+18,
+    "observer_version": "market-structure-observer-v1",
+    "schema_version": "mso-schema-1",
+    "status": "OBSERVATION_ONLY_NOT_ALPHA_VALIDATED",
+    "v_acceptance": "mso-acceptance-1",
+    "v_balance": "mso-balance-1",
+    "v_levels": "mso-levels-1",
+    "v_participation": "mso-participation-1",
+    "v_swings": "mso-swings-1",
+    "f_levels__nearest_level_distance_atr": 0.007678595913883065,
+    "f_levels__nearest_level_source": "SWING_M5",
+    "f_levels__nearest_level_age_bars": 11.0,
+    "f_levels__touch_count": 3.0,
+    "f_levels__clean_rejection_count": 0.0,
+    "f_levels__penetration_count": 2.0,
+    "f_levels__first_touch": false,
+    "f_levels__break_count": 0.0,
+    "f_levels__reclaim_count": 0.0,
+    "f_levels__role": "RESISTANCE",
+    "f_levels__zone_source_count": 74.0,
+    "f_levels__zone_independent_source_count": 6.0,
+    "f_levels__zone_width_atr": 17.53948306595366,
+    "f_levels__n_levels_within_1atr": 13.0,
+    "f_levels__last_touch_ts_ns": 1.7703657e+18,
+    "f_swings__m5_sequence": "MIXED_TRANSITION",
+    "f_swings__m5_high_label": "LH",
+    "f_swings__m5_low_label": "HL",
+    "f_swings__m5_sequence_length": 0.0,
+    "f_swings__m5_structure_age_bars": 1.0,
+    "f_swings__m5_structure_age_minutes": 5.0,
+    "f_swings__m5_high_delta_atr": -0.18332647744411093,
+    "f_swings__m5_low_delta_atr": 0.3868092691621867,
+    "f_swings__m5_confirmed_at_ts_ns": 1.7703657e+18,
+    "f_swings__m5_last_high_confirmed_at_ts_ns": 1.7703645e+18,
+    "f_swings__m5_last_low_confirmed_at_ts_ns": 1.7703657e+18,
+    "f_swings__m5_close_beyond_last_swing_atr_high": 0.0,
+    "f_swings__m5_close_beyond_last_swing_atr_low": 0.0,
+    "f_swings__m15_sequence": "MIXED_TRANSITION",
+    "f_swings__m15_high_label": "LH",
+    "f_swings__m15_low_label": "HL",
+    "f_swings__m15_sequence_length": 0.0,
+    "f_swings__m15_structure_age_bars": 1.0,
+    "f_swings__m15_structure_age_minutes": 20.0,
+    "f_swings__m15_high_delta_atr": -3.9957493486905444,
+    "f_swings__m15_low_delta_atr": 1.6710544357603079,
+    "f_swings__m15_confirmed_at_ts_ns": 1.7703648e+18,
+    "f_swings__m15_last_high_confirmed_at_ts_ns": 1.7703648e+18,
+    "f_swings__m15_last_low_confirmed_at_ts_ns": 1.770363e+18,
+    "f_swings__m15_close_beyond_last_swing_atr_high": 0.0,
+    "f_swings__m15_close_beyond_last_swing_atr_low": 0.0,
+    "f_swings__ema_trend": "down",
+    "f_swings__ema_swing_agreement": "UNDEFINED",
+    "f_acceptance__break_found": false,
+    "f_balance__range_width_atr_w24": 4.1733168791992865,
+    "f_balance__directional_efficiency_w24": 0.012321943546271528,
+    "f_balance__bar_overlap_ratio_w24": 0.44460035433264306,
+    "f_balance__close_occupancy_ratio_w24": 0.9583333333333334,
+    "f_balance__midpoint_cross_count_w24": 8.0,
+    "f_balance__range_width_atr_w48": 9.237350884409794,
+    "f_balance__directional_efficiency_w48": 0.145943966306539,
+    "f_balance__bar_overlap_ratio_w48": 0.41646010372788134,
+    "f_balance__close_occupancy_ratio_w48": 0.7083333333333334,
+    "f_balance__midpoint_cross_count_w48": 6.0,
+    "f_participation__tick_activity_per_min": 352.0,
+    "f_participation__tick_activity_percentile": 0.47058823529411764,
+    "f_participation__tick_activity_z": -0.3021239980164353,
+    "f_participation__activity_vs_same_tod": 0.9482758620689655,
+    "f_participation__activity_vs_session_baseline": 0.5615826419910658,
+    "f_participation__activity_acceleration": 0.7227926078028748,
+    "f_participation__tod_baseline_n": 17.0,
+    "f_participation__tod_baseline_oldest_ts_ns": 1.7683785e+18,
+    "m_warmup_ok": true,
+    "m_bars_available": 54166.0,
+    "m_prev_days_available": 238.0,
+    "m_atr_ok": true,
+    "m_min_bars_levels": 603.0,
+    "m_min_bars_swings": 480.0,
+    "m_min_bars_acceptance": 98.0,
+    "m_min_bars_balance": 48.0,
+    "m_min_prev_days_participation": 21.0,
+    "m_event_price": 4854.79,
+    "m_reference_level_id": "ed90cc212923fbfd",
+    "m_config_hash": "75802aa12e9c221a",
+    "m_hash_levels": "ea89adc947741019",
+    "m_hash_swings": "eb1857c684e21d19",
+    "m_hash_acceptance": "1608ec3fb935dc33ecc4874e1768289b3c0790e9bc3a0919f88e766e28f08060",
+    "m_hash_balance": "ddac1af18d7032ca1ee3acf276d5f2ccd6101710a5bd8476158872b7ca8d3aec",
+    "m_hash_participation": "452f5122fbfc26c12ed207281e1fcbd3152c3ecd265d25b5ce177c13529c92b3",
+    "warmup_ok": true,
+    "run_id": "146ff3fa85df",
+    "decision_idx": 54165.0,
+    "strategy_id": "ORB-c3663c7d30",
+    "entry": 4854.79,
+    "stop": 4829.15,
+    "risk": 25.640000000000327,
+    "risk_atr": 2.460989990401792,
+    "partition": "TRAIN"
+   },
+   "blocking": {
+    "plausibility": "PASS",
+    "leakage_audit": "PASS",
+    "parity_live_vs_batch": "PASS",
+    "label_sanity": "PASS"
+   },
+   "informational": {
+    "matching": "WARN",
+    "frame_fingerprint": "PASS"
+   },
+   "verdict": "PASS",
+   "gate_b_seconds": 2.8,
+   "plausibility": {
+    "n_feature_columns": 83,
+    "groups": {
+     "levels": {
+      "n_columns": 18,
+      "constant_columns": [],
+      "all_missing_columns": [],
+      "high_missing_columns": [
+       "f_levels__last_reclaim_ts_ns"
+      ],
+      "flagged_columns": 0
+     },
+     "swings": {
+      "n_columns": 32,
+      "constant_columns": [],
+      "all_missing_columns": [],
+      "high_missing_columns": [
+       "f_swings__m5_bars_since_beyond_high",
+       "f_swings__m5_bars_since_beyond_low",
+       "f_swings__m15_bars_since_beyond_high",
+       "f_swings__m15_bars_since_beyond_low"
+      ],
+      "flagged_columns": 0
+     },
+     "acceptance": {
+      "n_columns": 15,
+      "constant_columns": [],
+      "all_missing_columns": [],
+      "high_missing_columns": [
+       "f_acceptance__break_bar_ts_ns",
+       "f_acceptance__break_close_distance_atr",
+       "f_acceptance__break_body_atr",
+       "f_acceptance__break_true_range_atr",
+       "f_acceptance__closes_beyond_level_count",
+       "f_acceptance__bars_since_break",
+       "f_acceptance__max_reentry_depth_atr",
+       "f_acceptance__followthrough_high_atr",
+       "f_acceptance__followthrough_low_atr",
+       "f_acceptance__followthrough_dir_atr",
+       "f_acceptance__close_location_in_bar",
+       "f_acceptance__time_held_beyond_level_bars",
+       "f_acceptance__time_held_beyond_level_minutes",
+       "f_acceptance__reclaim_occurred"
+      ],
+      "flagged_columns": 0
+     },
+     "balance": {
+      "n_columns": 10,
+      "constant_columns": [],
+      "all_missing_columns": [],
+      "high_missing_columns": [],
+      "flagged_columns": 0
+     },
+     "participation": {
+      "n_columns": 8,
+      "constant_columns": [],
+      "all_missing_columns": [],
+      "high_missing_columns": [],
+      "flagged_columns": 0
+     }
+    },
+    "impossible_value_flags": [],
+    "n_flagged": 0,
+    "verdict": "PASS"
+   }
+  },
+  {
+   "market": "EURUSD",
+   "frame_fingerprint_matches_manifest": true,
+   "n_rows": 2899,
+   "n_events": 2868,
+   "n_controls": 31,
+   "warmup": {
+    "events": {
+     "n": 2868,
+     "warmup_false": 0,
+     "warmup_false_share": 0.0,
+     "unmet_share_by_group": {
+      "levels": 0.0,
+      "swings": 0.0,
+      "acceptance": 0.0,
+      "balance": 0.0,
+      "participation": 0.0,
+      "atr": 0.0
+     }
+    },
+    "controls": {
+     "n": 31,
+     "warmup_false": 0,
+     "warmup_false_share": 0.0,
+     "unmet_share_by_group": {
+      "levels": 0.0,
+      "swings": 0.0,
+      "acceptance": 0.0,
+      "balance": 0.0,
+      "participation": 0.0,
+      "atr": 0.0
+     }
+    },
+    "events_warmup_false_share_by_family": {
+     "EOD": 0.0,
+     "GAP": 0.0,
+     "ORB": 0.0,
+     "OVERNIGHT": 0.0,
+     "ROUND": 0.0,
+     "VOLREV": 0.0
+    }
+   },
+   "labels": {
+    "rates": {
+     "y_fav025_before_adv025": {
+      "zero_drift_reference_P": 0.5,
+      "events": {
+       "n_rows": 2868,
+       "n_resolved": 2868,
+       "censored_share": 0.0,
+       "rate": 0.4027196652719665,
+       "wilson95": [
+        0.3849116395483231,
+        0.42078795056834617
+       ],
+       "diff_to_reference": -0.09728033472803349
+      },
+      "controls": {
+       "n_rows": 31,
+       "n_resolved": 31,
+       "censored_share": 0.0,
+       "rate": 0.4838709677419355,
+       "wilson95": [
+        0.3196998603127883,
+        0.6515988171302683
+       ],
+       "diff_to_reference": -0.016129032258064502,
+       "tolerance_check": "not applied: only 31 resolved controls (< 100), INSUFFICIENT_EVIDENCE"
+      }
+     },
+     "y_fav050_before_adv050": {
+      "zero_drift_reference_P": 0.5,
+      "events": {
+       "n_rows": 2868,
+       "n_resolved": 2865,
+       "censored_share": 0.0010460251046024993,
+       "rate": 0.47783595113438043,
+       "wilson95": [
+        0.4595868905852293,
+        0.4961443704226981
+       ],
+       "diff_to_reference": -0.022164048865619568
+      },
+      "controls": {
+       "n_rows": 31,
+       "n_resolved": 31,
+       "censored_share": 0.0,
+       "rate": 0.4838709677419355,
+       "wilson95": [
+        0.3196998603127883,
+        0.6515988171302683
+       ],
+       "diff_to_reference": -0.016129032258064502,
+       "tolerance_check": "not applied: only 31 resolved controls (< 100), INSUFFICIENT_EVIDENCE"
+      }
+     },
+     "y_fav075_before_adv050": {
+      "zero_drift_reference_P": 0.4,
+      "events": {
+       "n_rows": 2868,
+       "n_resolved": 2862,
+       "censored_share": 0.0020920502092049986,
+       "rate": 0.37910552061495456,
+       "wilson95": [
+        0.3615037308102631,
+        0.3970314234006326
+       ],
+       "diff_to_reference": -0.02089447938504546
+      },
+      "controls": {
+       "n_rows": 31,
+       "n_resolved": 31,
+       "censored_share": 0.0,
+       "rate": 0.45161290322580644,
+       "wilson95": [
+        0.29161482836586106,
+        0.6222812039633085
+       ],
+       "diff_to_reference": 0.05161290322580642,
+       "tolerance_check": "not applied: only 31 resolved controls (< 100), INSUFFICIENT_EVIDENCE"
+      }
+     },
+     "y_fav100_before_adv050": {
+      "zero_drift_reference_P": 0.3333333333333333,
+      "events": {
+       "n_rows": 2868,
+       "n_resolved": 2853,
+       "censored_share": 0.005230125523012608,
+       "rate": 0.3119523308797757,
+       "wilson95": [
+        0.29521437363476866,
+        0.32919602419757876
+       ],
+       "diff_to_reference": -0.021381002453557618
+      },
+      "controls": {
+       "n_rows": 31,
+       "n_resolved": 31,
+       "censored_share": 0.0,
+       "rate": 0.2903225806451613,
+       "wilson95": [
+        0.1609562071843287,
+        0.4659265995754067
+       ],
+       "diff_to_reference": -0.043010752688172005,
+       "tolerance_check": "not applied: only 31 resolved controls (< 100), INSUFFICIENT_EVIDENCE"
+      }
+     }
+    },
+    "consistency": {
+     "violations": {
+      "y_fav025_before_adv025=1 but mfe_r<0.25": 0,
+      "y_fav025_before_adv025=0 but mae_r<0.25": 0,
+      "y_fav050_before_adv050=1 but mfe_r<0.5": 0,
+      "y_fav050_before_adv050=0 but mae_r<0.5": 0,
+      "y_fav075_before_adv050=1 but mfe_r<0.75": 0,
+      "y_fav075_before_adv050=0 but mae_r<0.5": 0,
+      "y_fav100_before_adv050=1 but mfe_r<1.0": 0,
+      "y_fav100_before_adv050=0 but mae_r<0.5": 0,
+      "fav100=1 but fav075=0": 0,
+      "fav075=1 but fav050=0": 0,
+      "negative mfe/mae": 0
+     },
+     "n_rows": 2899,
+     "total_violations": 0
+    },
+    "horizon": {
+     "max_horizon_s": 14400.0,
+     "min_horizon_s": 5700.0,
+     "share_full_48_bars": 0.7402552604346326,
+     "horizon_bound_ok": true
+    },
+    "verdict": "PASS",
+    "reasons": []
+   },
+   "matching": {
+    "n_events": 2868,
+    "n_matched": 31,
+    "match_rate": 0.010808926080892609,
+    "n_unmatched": 2837,
+    "n_controls": 31,
+    "smd": {
+     "local_minute": -0.8001313827447635,
+     "atr_pct": -0.38618400415438464,
+     "spread_pct": 0.4826593294882545
+    },
+    "session_share_diff_max": 0.0,
+    "method": "observer-controls-2",
+    "partition_mode": "PARTITIONED",
+    "rank_mode": "partition",
+    "by_partition": {
+     "OOS": {
+      "n_events": 390.0,
+      "n_matched": 0.0,
+      "match_rate": 0.0
+     },
+     "TRAIN": {
+      "n_events": 1719.0,
+      "n_matched": 28.0,
+      "match_rate": 0.016288539848749273
+     },
+     "VALIDATION": {
+      "n_events": 759.0,
+      "n_matched": 3.0,
+      "match_rate": 0.003952569169960474
+     }
+    },
+    "n_events_in_excluded_partition": 0,
+    "n_exclusion_bars_blocked": 2677,
+    "n_rejected_partition": 0,
+    "by_family": {
+     "ROUND": {
+      "n_events": 566,
+      "n_matched": 13
+     },
+     "GAP": {
+      "n_events": 150,
+      "n_matched": 0
+     },
+     "OVERNIGHT": {
+      "n_events": 148,
+      "n_matched": 0
+     },
+     "ORB": {
+      "n_events": 568,
+      "n_matched": 0
+     },
+     "VOLREV": {
+      "n_events": 1282,
+      "n_matched": 16
+     },
+     "EOD": {
+      "n_events": 154,
+      "n_matched": 2
+     }
+    },
+    "matching_revision": "partition-aware (match_controls partition=auto, rank_mode=partition, exclude_idx = every generator opportunity)",
+    "controls_in_other_partition": 0,
+    "verdict": "WARN",
+    "reasons": [
+     "match rate 0.011 < 0.5",
+     "|SMD(local_minute)|=-0.8001313827447635 > 0.1",
+     "|SMD(atr_pct)|=-0.38618400415438464 > 0.1",
+     "|SMD(spread_pct)|=0.4826593294882545 > 0.1"
+    ]
+   },
+   "matching_prerevision": {
+    "method": "observer-controls-1",
+    "n_controls": 31,
+    "match_rate": 0.010808926080892609,
+    "smd": {
+     "local_minute": -0.868197421981565,
+     "atr_pct": -0.4340936143474357,
+     "spread_pct": 0.5318267367628551
+    },
+    "control_label_rates": {
+     "y_fav025_before_adv025": {
+      "n": 31,
+      "rate": 0.3225806451612903
+     },
+     "y_fav050_before_adv050": {
+      "n": 31,
+      "rate": 0.45161290322580644
+     },
+     "y_fav075_before_adv050": {
+      "n": 31,
+      "rate": 0.3225806451612903
+     },
+     "y_fav100_before_adv050": {
+      "n": 31,
+      "rate": 0.25806451612903225
+     }
+    }
+   },
+   "leakage_audit": {
+    "history_window_bars": 8064,
+    "sample_seed": 11,
+    "live_style_incremental_full_history": {
+     "name": "live_buffer_prefix",
+     "n_compared": 330,
+     "pass": 330,
+     "fail": 0,
+     "skipped": 0,
+     "skipped_reasons": {},
+     "failures": [],
+     "verdict": "PASS",
+     "sample": {
+      "events": 300,
+      "controls": 30
+     },
+     "seconds": 377.2
+    },
+    "truncated_raw_frame_window": {
+     "name": "truncated_at_decision_bar_window_8064",
+     "n_compared": 60,
+     "pass": 60,
+     "fail": 0,
+     "skipped": 0,
+     "skipped_reasons": {},
+     "failures": [],
+     "verdict": "PASS",
+     "sample": 60
+    },
+    "extended_frame_future_bars_present": {
+     "name": "longer_frame_plus_500_future_bars_window_8064",
+     "n_compared": 30,
+     "pass": 30,
+     "fail": 0,
+     "skipped": 0,
+     "skipped_reasons": {},
+     "failures": [],
+     "verdict": "PASS",
+     "sample": 30
+    },
+    "shallow_histories_must_be_flagged_not_warm": {
+     "120": {
+      "n": 20,
+      "flagged_not_warm": 20,
+      "wrongly_flagged_warm": 0,
+      "still_equal_to_stored": 0,
+      "rule_ok": true
+     },
+     "240": {
+      "n": 20,
+      "flagged_not_warm": 20,
+      "wrongly_flagged_warm": 0,
+      "still_equal_to_stored": 0,
+      "rule_ok": true
+     },
+     "500": {
+      "n": 20,
+      "flagged_not_warm": 20,
+      "wrongly_flagged_warm": 0,
+      "still_equal_to_stored": 0,
+      "rule_ok": true
+     }
+    },
+    "window_seconds": 2105.2,
+    "verdict": "PASS"
+   },
+   "parity_live_vs_batch": {
+    "n_compared": 330,
+    "pass": 330,
+    "fail": 0,
+    "verdict": "PASS",
+    "failures": [],
+    "note": "BarBuffer fed engine-style sliding 6000-bar frames bar by bar; the observer saw only physically truncated views; compared with the stored batch records EXACTLY"
+   },
+   "coverage": {
+    "data": {
+     "first_bar_utc": "2025-05-26T22:00:00+00:00",
+     "last_bar_utc": "2026-08-31T21:55:00+00:00",
+     "n_bars": 94458,
+     "missing_months_utc": [],
+     "gaps_longer_than_3_days": [],
+     "n_gaps": 72,
+     "n_intraday_gaps_gt3bars": 0,
+     "largest_gap_hours": 49.08,
+     "intraday_gap_starts": [],
+     "frame_fingerprint": "9294881e512be13f",
+     "eval_from_utc": "2025-06-25T22:00:00+00:00",
+     "eval_from_index": 6336
+    },
+    "dev_end_guard": {
+     "dev_end_berlin_date": "2026-08-31",
+     "assert_no_forward_holdout": "PASS",
+     "guard_dev_only": "PASS",
+     "last_bar_utc": "2026-08-31T21:55:00+00:00"
+    },
+    "partitions": {
+     "scheme": "observer_lab.splits (core fit end / dev end constants); OOS written as FROZEN_OOS; PURGED = horizon reaches another partition; EMBARGO = first label horizon after a boundary",
+     "plan": {
+      "train_start": "2025-05-27",
+      "train_end": "2026-03-22",
+      "validation_start": "2026-03-23",
+      "validation_end": "2026-06-30",
+      "oos_start": "2026-07-01",
+      "oos_end": "2026-08-31",
+      "forward_start": "2026-09-01",
+      "core_fit_end": "2026-06-30"
+     },
+     "regular_plan": true,
+     "embargo_s": 14400.0,
+     "has_frozen_split": true,
+     "note": "core thresholds were fitted up to the core fit end; the dev window 2026-07-01..2026-08-31 is a weaker OOS than a never-seen period",
+     "counts": {
+      "FROZEN_OOS": 390,
+      "TRAIN": 1719,
+      "VALIDATION": 759
+     }
+    },
+    "events_by_family_variant_direction": {
+     "EOD|continue|long": 40,
+     "EOD|continue|short": 37,
+     "EOD|reverse|long": 37,
+     "EOD|reverse|short": 40,
+     "GAP|fade|long": 40,
+     "GAP|fade|short": 38,
+     "GAP|go|long": 33,
+     "GAP|go|short": 39,
+     "ORB|breakout|long": 147,
+     "ORB|breakout|short": 159,
+     "ORB|fade|long": 136,
+     "ORB|fade|short": 126,
+     "OVERNIGHT|continue|long": 39,
+     "OVERNIGHT|continue|short": 35,
+     "OVERNIGHT|reverse|long": 35,
+     "OVERNIGHT|reverse|short": 39,
+     "ROUND|break|long": 74,
+     "ROUND|break|short": 85,
+     "ROUND|reject|long": 212,
+     "ROUND|reject|short": 195,
+     "VOLREV|expand|long": 491,
+     "VOLREV|expand|short": 482,
+     "VOLREV|fade|long": 161,
+     "VOLREV|fade|short": 148
+    },
+    "exclusions": {
+     "candidates": 3104,
+     "before_eval_start": 236,
+     "emitted": 2868,
+     "emitted_before_limit": 2868
+    },
+    "rows": {
+     "table": 2868,
+     "features": 2868,
+     "labels": 2868,
+     "events": 2868
+    },
+    "controls_rows": {
+     "table": 31,
+     "features": 31,
+     "labels": 31,
+     "events": 31
+    },
+    "runtime_s": {
+     "events_step": 297.6,
+     "controls_step": 83.6
+    },
+    "peak_memory_mb": {
+     "events_step": 268.2,
+     "controls_step": 221.4
+    },
+    "matching_revision": "partition-aware (match_controls partition=auto, rank_mode=partition, exclude_idx = every generator opportunity)"
+   },
+   "sample_record": {
+    "event_id": "083730934bfdec8f14486f4276681e43",
+    "market": "EURUSD",
+    "family": "VOLREV",
+    "variant": "expand",
+    "direction": 1,
+    "is_control": false,
+    "decision_ts_ns": 1770806700000000000,
+    "observer_version": "market-structure-observer-v1",
+    "schema_version": "mso-schema-1",
+    "status": "OBSERVATION_ONLY_NOT_ALPHA_VALIDATED",
+    "v_acceptance": "mso-acceptance-1",
+    "v_balance": "mso-balance-1",
+    "v_levels": "mso-levels-1",
+    "v_participation": "mso-participation-1",
+    "v_swings": "mso-swings-1",
+    "f_levels__nearest_level_distance_atr": -0.24623115577895335,
+    "f_levels__nearest_level_source": "SWING_M15",
+    "f_levels__nearest_level_age_bars": 459,
+    "f_levels__touch_count": 4,
+    "f_levels__clean_rejection_count": 1,
+    "f_levels__penetration_count": 3,
+    "f_levels__first_touch": false,
+    "f_levels__break_count": 2,
+    "f_levels__reclaim_count": 2,
+    "f_levels__role": "RECLAIMED_FROM_ABOVE",
+    "f_levels__previous_role": "BROKEN_UP",
+    "f_levels__zone_source_count": 190,
+    "f_levels__zone_independent_source_count": 6,
+    "f_levels__zone_width_atr": 15.20452261306636,
+    "f_levels__n_levels_within_1atr": 6,
+    "f_levels__last_touch_ts_ns": 1.7708067e+18,
+    "f_levels__last_break_ts_ns": 1.7707902e+18,
+    "f_levels__last_reclaim_ts_ns": 1.7707911e+18,
+    "f_swings__m5_sequence": "RANGE_OR_UNDEFINED",
+    "f_swings__m5_high_label": "HH",
+    "f_swings__m5_low_label": "EQ",
+    "f_swings__m5_sequence_length": 0,
+    "f_swings__m5_structure_age_bars": 2,
+    "f_swings__m5_structure_age_minutes": 10.0,
+    "f_swings__m5_high_delta_atr": 0.28140703517616983,
+    "f_swings__m5_low_delta_atr": 0.035175879397216496,
+    "f_swings__m5_confirmed_at_ts_ns": 1770806100000000000,
+    "f_swings__m5_last_high_confirmed_at_ts_ns": 1770804900000000000,
+    "f_swings__m5_last_low_confirmed_at_ts_ns": 1770806100000000000,
+    "f_swings__m5_close_beyond_last_swing_atr_high": 1.0904522613066818,
+    "f_swings__m5_close_beyond_last_swing_atr_low": 0.0,
+    "f_swings__m5_bars_since_beyond_high": 0.0,
+    "f_swings__m15_sequence": "DOWN_SEQUENCE",
+    "f_swings__m15_high_label": "LH",
+    "f_swings__m15_low_label": "LL",
+    "f_swings__m15_sequence_length": 3,
+    "f_swings__m15_structure_age_bars": 4,
+    "f_swings__m15_structure_age_minutes": 60.0,
+    "f_swings__m15_high_delta_atr": -0.14070351758808491,
+    "f_swings__m15_low_delta_atr": -0.42211055276425474,
+    "f_swings__m15_confirmed_at_ts_ns": 1770803100000000000,
+    "f_swings__m15_last_high_confirmed_at_ts_ns": 1770803100000000000,
+    "f_swings__m15_last_low_confirmed_at_ts_ns": 1770803100000000000,
+    "f_swings__m15_close_beyond_last_swing_atr_high": 1.1608040201011147,
+    "f_swings__m15_close_beyond_last_swing_atr_low": 0.0,
+    "f_swings__m15_bars_since_beyond_high": 0.0,
+    "f_swings__ema_trend": "up",
+    "f_swings__ema_swing_agreement": "UNDEFINED",
+    "f_acceptance__break_found": false,
+    "f_balance__range_width_atr_w24": 5.0301507537691545,
+    "f_balance__directional_efficiency_w24": 0.233226837060818,
+    "f_balance__bar_overlap_ratio_w24": 0.5584010201993739,
+    "f_balance__close_occupancy_ratio_w24": 0.8333333333333334,
+    "f_balance__midpoint_cross_count_w24": 5,
+    "f_balance__range_width_atr_w48": 5.0301507537691545,
+    "f_balance__directional_efficiency_w48": 0.14044943820229328,
+    "f_balance__bar_overlap_ratio_w48": 0.5504552687825003,
+    "f_balance__close_occupancy_ratio_w48": 0.7916666666666666,
+    "f_balance__midpoint_cross_count_w48": 9,
+    "f_participation__tick_activity_per_min": 98.8,
+    "f_participation__tick_activity_percentile": 0.5294117647058824,
+    "f_participation__tick_activity_z": -0.01629889992814761,
+    "f_participation__activity_vs_same_tod": 1.1076233183856503,
+    "f_participation__activity_vs_session_baseline": 1.5608214849921012,
+    "f_participation__activity_acceleration": 1.54375,
+    "f_participation__tod_baseline_n": 17,
+    "f_participation__tod_baseline_oldest_ts_ns": 1768819200000000000,
+    "m_warmup_ok": true,
+    "m_bars_available": 53133,
+    "m_prev_days_available": 224,
+    "m_atr_ok": true,
+    "m_min_bars_levels": 603,
+    "m_min_bars_swings": 480,
+    "m_min_bars_acceptance": 98,
+    "m_min_bars_balance": 48,
+    "m_min_prev_days_participation": 21,
+    "m_event_price": 1.19226,
+    "m_reference_level_id": "6a8908d5f98459a8",
+    "m_config_hash": "3880e131817c8caf",
+    "m_hash_levels": "304b356dae8d39d4",
+    "m_hash_swings": "eb1857c684e21d19",
+    "m_hash_acceptance": "1608ec3fb935dc33ecc4874e1768289b3c0790e9bc3a0919f88e766e28f08060",
+    "m_hash_balance": "ddac1af18d7032ca1ee3acf276d5f2ccd6101710a5bd8476158872b7ca8d3aec",
+    "m_hash_participation": "452f5122fbfc26c12ed207281e1fcbd3152c3ecd265d25b5ce177c13529c92b3",
+    "warmup_ok": true,
+    "run_id": "42b3c47f7d89",
+    "decision_idx": 53132,
+    "strategy_id": "VOLREV-18ead2008e",
+    "entry": 1.19226,
+    "stop": 1.1918335714285715,
+    "risk": 0.00042642857142860535,
+    "risk_atr": 1.5000000000001674,
+    "partition": "TRAIN"
+   },
+   "blocking": {
+    "plausibility": "PASS",
+    "leakage_audit": "PASS",
+    "parity_live_vs_batch": "PASS",
+    "label_sanity": "PASS"
+   },
+   "informational": {
+    "matching": "WARN",
+    "frame_fingerprint": "PASS"
+   },
+   "verdict": "PASS",
+   "gate_b_seconds": 2.8,
+   "plausibility": {
+    "n_feature_columns": 83,
+    "groups": {
+     "levels": {
+      "n_columns": 18,
+      "constant_columns": [],
+      "all_missing_columns": [],
+      "high_missing_columns": [
+       "f_levels__last_reclaim_ts_ns"
+      ],
+      "flagged_columns": 0
+     },
+     "swings": {
+      "n_columns": 32,
+      "constant_columns": [],
+      "all_missing_columns": [],
+      "high_missing_columns": [
+       "f_swings__m5_bars_since_beyond_high",
+       "f_swings__m5_bars_since_beyond_low",
+       "f_swings__m15_bars_since_beyond_high",
+       "f_swings__m15_bars_since_beyond_low"
+      ],
+      "flagged_columns": 0
+     },
+     "acceptance": {
+      "n_columns": 15,
+      "constant_columns": [],
+      "all_missing_columns": [],
+      "high_missing_columns": [
+       "f_acceptance__break_bar_ts_ns",
+       "f_acceptance__break_close_distance_atr",
+       "f_acceptance__break_body_atr",
+       "f_acceptance__break_true_range_atr",
+       "f_acceptance__closes_beyond_level_count",
+       "f_acceptance__bars_since_break",
+       "f_acceptance__max_reentry_depth_atr",
+       "f_acceptance__followthrough_high_atr",
+       "f_acceptance__followthrough_low_atr",
+       "f_acceptance__followthrough_dir_atr",
+       "f_acceptance__close_location_in_bar",
+       "f_acceptance__time_held_beyond_level_bars",
+       "f_acceptance__time_held_beyond_level_minutes",
+       "f_acceptance__reclaim_occurred"
+      ],
+      "flagged_columns": 0
+     },
+     "balance": {
+      "n_columns": 10,
+      "constant_columns": [],
+      "all_missing_columns": [],
+      "high_missing_columns": [],
+      "flagged_columns": 0
+     },
+     "participation": {
+      "n_columns": 8,
+      "constant_columns": [],
+      "all_missing_columns": [],
+      "high_missing_columns": [],
+      "flagged_columns": 0
+     }
+    },
+    "impossible_value_flags": [],
+    "n_flagged": 0,
+    "verdict": "PASS"
+   }
+  },
+  {
+   "market": "BTCUSD",
+   "frame_fingerprint_matches_manifest": true,
+   "n_rows": 4666,
+   "n_events": 2363,
+   "n_controls": 2303,
+   "warmup": {
+    "events": {
+     "n": 2363,
+     "warmup_false": 97,
+     "warmup_false_share": 0.04104951333051206,
+     "unmet_share_by_group": {
+      "levels": 0.0,
+      "swings": 0.0,
+      "acceptance": 0.0,
+      "balance": 0.0,
+      "participation": 0.04104951333051206,
+      "atr": 0.0
+     }
+    },
+    "controls": {
+     "n": 2303,
+     "warmup_false": 191,
+     "warmup_false_share": 0.08293530178028659,
+     "unmet_share_by_group": {
+      "levels": 0.0,
+      "swings": 0.0,
+      "acceptance": 0.0,
+      "balance": 0.0,
+      "participation": 0.08293530178028659,
+      "atr": 0.0
+     }
+    },
+    "events_warmup_false_share_by_family": {
+     "STRUCT": 0.04104951333051206
+    }
+   },
+   "labels": {
+    "rates": {
+     "y_fav025_before_adv025": {
+      "zero_drift_reference_P": 0.5,
+      "events": {
+       "n_rows": 2363,
+       "n_resolved": 2350,
+       "censored_share": 0.00550148116800675,
+       "rate": 0.47829787234042553,
+       "wilson95": [
+        0.45815294338965884,
+        0.498513639442423
+       ],
+       "diff_to_reference": -0.021702127659574466
+      },
+      "controls": {
+       "n_rows": 2303,
+       "n_resolved": 2263,
+       "censored_share": 0.017368649587494622,
+       "rate": 0.47105612019443216,
+       "wilson95": [
+        0.45055630588033296,
+        0.4916540364744218
+       ],
+       "diff_to_reference": -0.02894387980556784
+      }
+     },
+     "y_fav050_before_adv050": {
+      "zero_drift_reference_P": 0.5,
+      "events": {
+       "n_rows": 2363,
+       "n_resolved": 2231,
+       "censored_share": 0.0558611933982226,
+       "rate": 0.4899148363962349,
+       "wilson95": [
+        0.46920622020447716,
+        0.5106581245437145
+       ],
+       "diff_to_reference": -0.010085163603765102
+      },
+      "controls": {
+       "n_rows": 2303,
+       "n_resolved": 2153,
+       "censored_share": 0.0651324359531047,
+       "rate": 0.4923362749651649,
+       "wilson95": [
+        0.47125072347140223,
+        0.5134491265314908
+       ],
+       "diff_to_reference": -0.007663725034835089
+      }
+     },
+     "y_fav075_before_adv050": {
+      "zero_drift_reference_P": 0.4,
+      "events": {
+       "n_rows": 2363,
+       "n_resolved": 2166,
+       "censored_share": 0.08336859923825646,
+       "rate": 0.3864265927977839,
+       "wilson95": [
+        0.3661382456425011,
+        0.4071170924430071
+       ],
+       "diff_to_reference": -0.013573407202216115
+      },
+      "controls": {
+       "n_rows": 2303,
+       "n_resolved": 2070,
+       "censored_share": 0.10117238384715588,
+       "rate": 0.39565217391304347,
+       "wilson95": [
+        0.37479863068219,
+        0.4168923065620045
+       ],
+       "diff_to_reference": -0.004347826086956552
+      }
+     },
+     "y_fav100_before_adv050": {
+      "zero_drift_reference_P": 0.3333333333333333,
+      "events": {
+       "n_rows": 2363,
+       "n_resolved": 2089,
+       "censored_share": 0.11595429538721969,
+       "rate": 0.3125897558640498,
+       "wilson95": [
+        0.2930706014154167,
+        0.33279692721169024
+       ],
+       "diff_to_reference": -0.020743577469283514
+      },
+      "controls": {
+       "n_rows": 2303,
+       "n_resolved": 1982,
+       "censored_share": 0.13938341293964396,
+       "rate": 0.322401614530777,
+       "wilson95": [
+        0.3021848895571781,
+        0.3433054657662273
+       ],
+       "diff_to_reference": -0.010931718802556334
+      }
+     }
+    },
+    "consistency": {
+     "violations": {
+      "y_fav025_before_adv025=1 but mfe_r<0.25": 0,
+      "y_fav025_before_adv025=0 but mae_r<0.25": 0,
+      "y_fav050_before_adv050=1 but mfe_r<0.5": 0,
+      "y_fav050_before_adv050=0 but mae_r<0.5": 0,
+      "y_fav075_before_adv050=1 but mfe_r<0.75": 0,
+      "y_fav075_before_adv050=0 but mae_r<0.5": 0,
+      "y_fav100_before_adv050=1 but mfe_r<1.0": 0,
+      "y_fav100_before_adv050=0 but mae_r<0.5": 0,
+      "fav100=1 but fav075=0": 0,
+      "fav075=1 but fav050=0": 0,
+      "negative mfe/mae": 0
+     },
+     "n_rows": 4666,
+     "total_violations": 0
+    },
+    "horizon": {
+     "max_horizon_s": 14400.0,
+     "min_horizon_s": 0.0,
+     "share_full_48_bars": 0.8448349764252036,
+     "horizon_bound_ok": true
+    },
+    "verdict": "PASS",
+    "reasons": []
+   },
+   "matching": {
+    "n_events": 2363,
+    "n_matched": 2303,
+    "match_rate": 0.9746085484553534,
+    "n_unmatched": 60,
+    "n_controls": 2303,
+    "smd": {
+     "local_minute": 0.00018258497080635033,
+     "atr_pct": -0.015385589876532423,
+     "spread_pct": 0.015284728639857878
+    },
+    "session_share_diff_max": 0.0,
+    "method": "observer-controls-2",
+    "partition_mode": "PARTITIONED",
+    "rank_mode": "partition",
+    "by_partition": {
+     "EMBARGO": {
+      "n_events": 4.0,
+      "n_matched": 0.0,
+      "match_rate": 0.0
+     },
+     "OOS": {
+      "n_events": 521.0,
+      "n_matched": 507.0,
+      "match_rate": 0.9731285988483686
+     },
+     "PURGED": {
+      "n_events": 12.0,
+      "n_matched": 0.0,
+      "match_rate": 0.0
+     },
+     "TRAIN": {
+      "n_events": 1347.0,
+      "n_matched": 1343.0,
+      "match_rate": 0.9970304380103935
+     },
+     "VALIDATION": {
+      "n_events": 479.0,
+      "n_matched": 453.0,
+      "match_rate": 0.9457202505219207
+     }
+    },
+    "n_events_in_excluded_partition": 16,
+    "n_exclusion_bars_blocked": 2049,
+    "n_rejected_partition": 0,
+    "by_family": {
+     "STRUCT": {
+      "n_events": 2363,
+      "n_matched": 2303
+     }
+    },
+    "matching_revision": "partition-aware (match_controls partition=auto, rank_mode=partition, exclude_idx = every generator opportunity)",
+    "controls_in_other_partition": 0,
+    "verdict": "PASS",
+    "reasons": []
+   },
+   "leakage_audit": {
+    "history_window_bars": 8064,
+    "sample_seed": 11,
+    "live_style_incremental_full_history": {
+     "name": "live_buffer_prefix",
+     "n_compared": 330,
+     "pass": 330,
+     "fail": 0,
+     "skipped": 0,
+     "skipped_reasons": {},
+     "failures": [],
+     "verdict": "PASS",
+     "sample": {
+      "events": 300,
+      "controls": 30
+     },
+     "seconds": 161.5
+    },
+    "truncated_raw_frame_window": {
+     "name": "truncated_at_decision_bar_window_8064",
+     "n_compared": 60,
+     "pass": 60,
+     "fail": 0,
+     "skipped": 0,
+     "skipped_reasons": {},
+     "failures": [],
+     "verdict": "PASS",
+     "sample": 60
+    },
+    "extended_frame_future_bars_present": {
+     "name": "longer_frame_plus_500_future_bars_window_8064",
+     "n_compared": 30,
+     "pass": 30,
+     "fail": 0,
+     "skipped": 0,
+     "skipped_reasons": {},
+     "failures": [],
+     "verdict": "PASS",
+     "sample": 30
+    },
+    "shallow_histories_must_be_flagged_not_warm": {
+     "120": {
+      "n": 20,
+      "flagged_not_warm": 20,
+      "wrongly_flagged_warm": 0,
+      "still_equal_to_stored": 0,
+      "rule_ok": true
+     },
+     "240": {
+      "n": 20,
+      "flagged_not_warm": 20,
+      "wrongly_flagged_warm": 0,
+      "still_equal_to_stored": 0,
+      "rule_ok": true
+     },
+     "500": {
+      "n": 20,
+      "flagged_not_warm": 20,
+      "wrongly_flagged_warm": 0,
+      "still_equal_to_stored": 1,
+      "rule_ok": true
+     }
+    },
+    "window_seconds": 1142.3,
+    "verdict": "PASS"
+   },
+   "parity_live_vs_batch": {
+    "n_compared": 330,
+    "pass": 330,
+    "fail": 0,
+    "verdict": "PASS",
+    "failures": [],
+    "note": "BarBuffer fed engine-style sliding 6000-bar frames bar by bar; the observer saw only physically truncated views; compared with the stored batch records EXACTLY"
+   },
+   "coverage": {
+    "data": {
+     "first_bar_utc": "2025-09-24T10:45:00+00:00",
+     "last_bar_utc": "2026-08-31T21:55:00+00:00",
+     "n_bars": 75015,
+     "missing_months_utc": [
+      "2025-10",
+      "2026-03"
+     ],
+     "gaps_longer_than_3_days": [
+      [
+       "2025-09-30T23:55:00+00:00",
+       752.1
+      ],
+      [
+       "2026-02-28T23:55:00+00:00",
+       744.1
+      ]
+     ],
+     "n_gaps": 44,
+     "n_intraday_gaps_gt3bars": 0,
+     "largest_gap_hours": 752.08,
+     "intraday_gap_starts": [],
+     "frame_fingerprint": "c4483acbc8dc1efb",
+     "eval_from_utc": "2025-10-24T10:45:00+00:00",
+     "eval_from_index": 1767
+    },
+    "dev_end_guard": {
+     "dev_end_berlin_date": "2026-08-31",
+     "assert_no_forward_holdout": "PASS",
+     "guard_dev_only": "PASS",
+     "last_bar_utc": "2026-08-31T21:55:00+00:00"
+    },
+    "partitions": {
+     "scheme": "observer_lab.splits (core fit end / dev end constants); OOS written as FROZEN_OOS; PURGED = horizon reaches another partition; EMBARGO = first label horizon after a boundary",
+     "plan": {
+      "train_start": "2025-09-24",
+      "train_end": "2026-05-06",
+      "validation_start": "2026-05-07",
+      "validation_end": "2026-06-30",
+      "oos_start": "2026-07-01",
+      "oos_end": "2026-08-31",
+      "forward_start": "2026-09-01",
+      "core_fit_end": "2026-06-30"
+     },
+     "regular_plan": true,
+     "embargo_s": 14400.0,
+     "has_frozen_split": false,
+     "note": "BTCUSD/BRENT: NO frozen split exists (short history, placeholder STRUCT constants); the boundaries above are the repo's generic dev dates, TRAIN/VALIDATION here are NOT a frozen train/validation of any fitted parameter",
+     "counts": {
+      "EMBARGO": 4,
+      "FROZEN_OOS": 525,
+      "PURGED": 8,
+      "TRAIN": 1347,
+      "VALIDATION": 479
+     }
+    },
+    "events_by_family_variant_direction": {
+     "STRUCT|breakout|long": 373,
+     "STRUCT|breakout|short": 402,
+     "STRUCT|confirmed|long": 299,
+     "STRUCT|confirmed|short": 302,
+     "STRUCT|fade|long": 282,
+     "STRUCT|fade|short": 224,
+     "STRUCT|retest|long": 242,
+     "STRUCT|retest|short": 239
+    },
+    "exclusions": {
+     "candidates": 2423,
+     "before_eval_start": 60,
+     "emitted": 2363,
+     "emitted_before_limit": 2363
+    },
+    "rows": {
+     "table": 2363,
+     "features": 2363,
+     "labels": 2363,
+     "events": 2363
+    },
+    "controls_rows": {
+     "table": 2303,
+     "features": 2303,
+     "labels": 2303,
+     "events": 2303
+    },
+    "runtime_s": {
+     "events_step": 228.6,
+     "controls_step": 210.4
+    },
+    "peak_memory_mb": {
+     "events_step": 212.0,
+     "controls_step": 221.5
+    },
+    "matching_revision": "partition-aware (match_controls partition=auto, rank_mode=partition, exclude_idx = every generator opportunity)"
+   },
+   "sample_record": {
+    "event_id": "4432224951f6084941aa8a3ce1f76bb0",
+    "market": "BTCUSD",
+    "family": "STRUCT",
+    "variant": "retest",
+    "direction": 1,
+    "is_control": false,
+    "decision_ts_ns": 1776956400000000000,
+    "observer_version": "market-structure-observer-v1",
+    "schema_version": "mso-schema-1",
+    "status": "OBSERVATION_ONLY_NOT_ALPHA_VALIDATED",
+    "v_acceptance": "mso-acceptance-1",
+    "v_balance": "mso-balance-1",
+    "v_levels": "mso-levels-1",
+    "v_participation": "mso-participation-1",
+    "v_swings": "mso-swings-1",
+    "f_levels__nearest_level_distance_atr": 0.01725386365130051,
+    "f_levels__nearest_level_source": "PREV_DAY_CLOSE",
+    "f_levels__nearest_level_age_bars": 180,
+    "f_levels__touch_count": 14,
+    "f_levels__clean_rejection_count": 4,
+    "f_levels__penetration_count": 6,
+    "f_levels__first_touch": false,
+    "f_levels__break_count": 4,
+    "f_levels__reclaim_count": 3,
+    "f_levels__role": "FLIPPED_TO_RESISTANCE",
+    "f_levels__previous_role": "ACCEPTED_BELOW",
+    "f_levels__zone_source_count": 142,
+    "f_levels__zone_independent_source_count": 4,
+    "f_levels__zone_width_atr": 8.358959355777902,
+    "f_levels__n_levels_within_1atr": 45,
+    "f_levels__last_touch_ts_ns": 1.7769564e+18,
+    "f_levels__last_break_ts_ns": 1.776927e+18,
+    "f_levels__last_reclaim_ts_ns": 1.7769246e+18,
+    "f_swings__m5_sequence": "DOWN_SEQUENCE",
+    "f_swings__m5_high_label": "LH",
+    "f_swings__m5_low_label": "LL",
+    "f_swings__m5_sequence_length": 3,
+    "f_swings__m5_structure_age_bars": 8.0,
+    "f_swings__m5_structure_age_minutes": 40.0,
+    "f_swings__m5_high_delta_atr": -0.25906394681212513,
+    "f_swings__m5_low_delta_atr": -0.845029731647221,
+    "f_swings__m5_confirmed_at_ts_ns": 1.776954e+18,
+    "f_swings__m5_last_high_confirmed_at_ts_ns": 1.776954e+18,
+    "f_swings__m5_last_low_confirmed_at_ts_ns": 1.7769531e+18,
+    "f_swings__m5_close_beyond_last_swing_atr_high": 2.7082934107648327,
+    "f_swings__m5_close_beyond_last_swing_atr_low": 0.0,
+    "f_swings__m5_bars_since_beyond_high": 7.0,
+    "f_swings__m15_sequence": "DOWN_SEQUENCE",
+    "f_swings__m15_high_label": "LH",
+    "f_swings__m15_low_label": "LL",
+    "f_swings__m15_sequence_length": 2,
+    "f_swings__m15_structure_age_bars": 2.0,
+    "f_swings__m15_structure_age_minutes": 30.0,
+    "f_swings__m15_high_delta_atr": -2.1643615192762455,
+    "f_swings__m15_low_delta_atr": -0.845029731647221,
+    "f_swings__m15_confirmed_at_ts_ns": 1.7769546e+18,
+    "f_swings__m15_last_high_confirmed_at_ts_ns": 1.7769519e+18,
+    "f_swings__m15_last_low_confirmed_at_ts_ns": 1.7769546e+18,
+    "f_swings__m15_close_beyond_last_swing_atr_high": 1.3797459096129052,
+    "f_swings__m15_close_beyond_last_swing_atr_low": 0.0,
+    "f_swings__m15_bars_since_beyond_high": 1.0,
+    "f_swings__ema_trend": "up",
+    "f_swings__ema_swing_agreement": "DISAGREE",
+    "f_acceptance__break_found": false,
+    "f_balance__range_width_atr_w24": 4.252386211537266,
+    "f_balance__directional_efficiency_w24": 0.21374961089269964,
+    "f_balance__bar_overlap_ratio_w24": 0.5427672690552824,
+    "f_balance__close_occupancy_ratio_w24": 0.625,
+    "f_balance__midpoint_cross_count_w24": 2.0,
+    "f_balance__range_width_atr_w48": 4.324166380199399,
+    "f_balance__directional_efficiency_w48": 0.230830135000936,
+    "f_balance__bar_overlap_ratio_w48": 0.5142653662136133,
+    "f_balance__close_occupancy_ratio_w48": 0.6458333333333334,
+    "f_balance__midpoint_cross_count_w48": 3.0,
+    "f_participation__tick_activity_per_min": 637.0,
+    "f_participation__tick_activity_percentile": 1.0,
+    "f_participation__tick_activity_z": 1.9959692046101662,
+    "f_participation__activity_vs_same_tod": 2.155668358714044,
+    "f_participation__activity_vs_session_baseline": 1.4174454828660437,
+    "f_participation__activity_acceleration": 1.0814940577249577,
+    "f_participation__tod_baseline_n": 20.0,
+    "f_participation__tod_baseline_oldest_ts_ns": 1.7752281e+18,
+    "m_warmup_ok": true,
+    "m_bars_available": 39771,
+    "m_prev_days_available": 149,
+    "m_atr_ok": true,
+    "m_min_bars_levels": 603,
+    "m_min_bars_swings": 480,
+    "m_min_bars_acceptance": 98,
+    "m_min_bars_balance": 48,
+    "m_min_prev_days_participation": 21,
+    "m_event_price": 78193.42,
+    "m_reference_level_id": "93c8f69ef0789995",
+    "m_config_hash": "a88e7e30087b202c",
+    "m_structure_event_id": "BTCUSD:1:2026-04-23T14:50:00+00:00",
+    "m_hash_levels": "8fe16129e7aa61e0",
+    "m_hash_swings": "eb1857c684e21d19",
+    "m_hash_acceptance": "1608ec3fb935dc33ecc4874e1768289b3c0790e9bc3a0919f88e766e28f08060",
+    "m_hash_balance": "ddac1af18d7032ca1ee3acf276d5f2ccd6101710a5bd8476158872b7ca8d3aec",
+    "m_hash_participation": "452f5122fbfc26c12ed207281e1fcbd3152c3ecd265d25b5ce177c13529c92b3",
+    "warmup_ok": true,
+    "run_id": "a4f806fbafff",
+    "decision_idx": 39770,
+    "strategy_id": "STRUCT-8f4ac39e81",
+    "structure_event_id": "BTCUSD:1:2026-04-23T14:50:00+00:00",
+    "entry": 78193.42,
+    "stop": 77349.35035714284,
+    "risk": 844.0696428571537,
+    "risk_atr": 4.321502234444917,
+    "partition": "TRAIN"
+   },
+   "blocking": {
+    "plausibility": "PASS",
+    "leakage_audit": "PASS",
+    "parity_live_vs_batch": "PASS",
+    "label_sanity": "PASS"
+   },
+   "informational": {
+    "matching": "PASS",
+    "frame_fingerprint": "PASS"
+   },
+   "verdict": "PASS",
+   "gate_b_seconds": 2.2,
+   "plausibility": {
+    "n_feature_columns": 83,
+    "groups": {
+     "levels": {
+      "n_columns": 18,
+      "constant_columns": [],
+      "all_missing_columns": [],
+      "high_missing_columns": [
+       "f_levels__last_reclaim_ts_ns"
+      ],
+      "flagged_columns": 0
+     },
+     "swings": {
+      "n_columns": 32,
+      "constant_columns": [],
+      "all_missing_columns": [],
+      "high_missing_columns": [
+       "f_swings__m5_bars_since_beyond_high",
+       "f_swings__m5_bars_since_beyond_low",
+       "f_swings__m15_bars_since_beyond_high",
+       "f_swings__m15_bars_since_beyond_low"
+      ],
+      "flagged_columns": 0
+     },
+     "acceptance": {
+      "n_columns": 15,
+      "constant_columns": [],
+      "all_missing_columns": [],
+      "high_missing_columns": [
+       "f_acceptance__break_bar_ts_ns",
+       "f_acceptance__break_close_distance_atr",
+       "f_acceptance__break_body_atr",
+       "f_acceptance__break_true_range_atr",
+       "f_acceptance__closes_beyond_level_count",
+       "f_acceptance__bars_since_break",
+       "f_acceptance__max_reentry_depth_atr",
+       "f_acceptance__followthrough_high_atr",
+       "f_acceptance__followthrough_low_atr",
+       "f_acceptance__followthrough_dir_atr",
+       "f_acceptance__close_location_in_bar",
+       "f_acceptance__time_held_beyond_level_bars",
+       "f_acceptance__time_held_beyond_level_minutes",
+       "f_acceptance__reclaim_occurred"
+      ],
+      "flagged_columns": 0
+     },
+     "balance": {
+      "n_columns": 10,
+      "constant_columns": [],
+      "all_missing_columns": [],
+      "high_missing_columns": [],
+      "flagged_columns": 0
+     },
+     "participation": {
+      "n_columns": 8,
+      "constant_columns": [],
+      "all_missing_columns": [],
+      "high_missing_columns": [],
+      "flagged_columns": 0
+     }
+    },
+    "impossible_value_flags": [],
+    "n_flagged": 0,
+    "verdict": "PASS"
+   }
+  },
+  {
+   "market": "BRENT",
+   "frame_fingerprint_matches_manifest": true,
+   "n_rows": 5383,
+   "n_events": 2975,
+   "n_controls": 2408,
+   "warmup": {
+    "events": {
+     "n": 2975,
+     "warmup_false": 0,
+     "warmup_false_share": 0.0,
+     "unmet_share_by_group": {
+      "levels": 0.0,
+      "swings": 0.0,
+      "acceptance": 0.0,
+      "balance": 0.0,
+      "participation": 0.0,
+      "atr": 0.0
+     }
+    },
+    "controls": {
+     "n": 2408,
+     "warmup_false": 0,
+     "warmup_false_share": 0.0,
+     "unmet_share_by_group": {
+      "levels": 0.0,
+      "swings": 0.0,
+      "acceptance": 0.0,
+      "balance": 0.0,
+      "participation": 0.0,
+      "atr": 0.0
+     }
+    },
+    "events_warmup_false_share_by_family": {
+     "STRUCT": 0.0
+    }
+   },
+   "labels": {
+    "rates": {
+     "y_fav025_before_adv025": {
+      "zero_drift_reference_P": 0.5,
+      "events": {
+       "n_rows": 2975,
+       "n_resolved": 2626,
+       "censored_share": 0.11731092436974788,
+       "rate": 0.4706778370144707,
+       "wilson95": [
+        0.4516434853267781,
+        0.4897978547143864
+       ],
+       "diff_to_reference": -0.02932216298552931
+      },
+      "controls": {
+       "n_rows": 2408,
+       "n_resolved": 2046,
+       "censored_share": 0.15033222591362128,
+       "rate": 0.48484848484848486,
+       "wilson95": [
+        0.46324138671996146,
+        0.5065123737657268
+       ],
+       "diff_to_reference": -0.015151515151515138
+      }
+     },
+     "y_fav050_before_adv050": {
+      "zero_drift_reference_P": 0.5,
+      "events": {
+       "n_rows": 2975,
+       "n_resolved": 2520,
+       "censored_share": 0.15294117647058825,
+       "rate": 0.5035714285714286,
+       "wilson95": [
+        0.48405928517205393,
+        0.5230726996561539
+       ],
+       "diff_to_reference": 0.0035714285714285587
+      },
+      "controls": {
+       "n_rows": 2408,
+       "n_resolved": 1927,
+       "censored_share": 0.19975083056478404,
+       "rate": 0.491437467566165,
+       "wilson95": [
+        0.4691553084719464,
+        0.5137536986677382
+       ],
+       "diff_to_reference": -0.00856253243383498
+      }
+     },
+     "y_fav075_before_adv050": {
+      "zero_drift_reference_P": 0.4,
+      "events": {
+       "n_rows": 2975,
+       "n_resolved": 2455,
+       "censored_share": 0.1747899159663866,
+       "rate": 0.4044806517311609,
+       "wilson95": [
+        0.38522994424811824,
+        0.4240298307613822
+       ],
+       "diff_to_reference": 0.004480651731160856
+      },
+      "controls": {
+       "n_rows": 2408,
+       "n_resolved": 1852,
+       "censored_share": 0.23089700996677742,
+       "rate": 0.3957883369330454,
+       "wilson95": [
+        0.3737539497985384,
+        0.41825416123852444
+       ],
+       "diff_to_reference": -0.004211663066954641
+      }
+     },
+     "y_fav100_before_adv050": {
+      "zero_drift_reference_P": 0.3333333333333333,
+      "events": {
+       "n_rows": 2975,
+       "n_resolved": 2358,
+       "censored_share": 0.2073949579831933,
+       "rate": 0.3273960983884648,
+       "wilson95": [
+        0.308749271340757,
+        0.34660441537557485
+       ],
+       "diff_to_reference": -0.00593723494486853
+      },
+      "controls": {
+       "n_rows": 2408,
+       "n_resolved": 1787,
+       "censored_share": 0.25789036544850497,
+       "rate": 0.3284834918858422,
+       "wilson95": [
+        0.30709563519077177,
+        0.3506072012856647
+       ],
+       "diff_to_reference": -0.004849841447491121
+      }
+     }
+    },
+    "consistency": {
+     "violations": {
+      "y_fav025_before_adv025=1 but mfe_r<0.25": 0,
+      "y_fav025_before_adv025=0 but mae_r<0.25": 0,
+      "y_fav050_before_adv050=1 but mfe_r<0.5": 0,
+      "y_fav050_before_adv050=0 but mae_r<0.5": 0,
+      "y_fav075_before_adv050=1 but mfe_r<0.75": 0,
+      "y_fav075_before_adv050=0 but mae_r<0.5": 0,
+      "y_fav100_before_adv050=1 but mfe_r<1.0": 0,
+      "y_fav100_before_adv050=0 but mae_r<0.5": 0,
+      "fav100=1 but fav075=0": 0,
+      "fav075=1 but fav050=0": 0,
+      "negative mfe/mae": 0
+     },
+     "n_rows": 5383,
+     "total_violations": 0
+    },
+    "horizon": {
+     "max_horizon_s": 14400.0,
+     "min_horizon_s": 0.0,
+     "share_full_48_bars": 0.6373769273639235,
+     "horizon_bound_ok": true
+    },
+    "verdict": "PASS",
+    "reasons": []
+   },
+   "matching": {
+    "n_events": 2975,
+    "n_matched": 2408,
+    "match_rate": 0.8094117647058824,
+    "n_unmatched": 567,
+    "n_controls": 2408,
+    "smd": {
+     "local_minute": 0.005693940738369814,
+     "atr_pct": -0.015634117362142097,
+     "spread_pct": -0.008041219700057129
+    },
+    "session_share_diff_max": 0.0,
+    "method": "observer-controls-2",
+    "partition_mode": "PARTITIONED",
+    "rank_mode": "partition",
+    "by_partition": {
+     "EMBARGO": {
+      "n_events": 4.0,
+      "n_matched": 0.0,
+      "match_rate": 0.0
+     },
+     "OOS": {
+      "n_events": 392.0,
+      "n_matched": 343.0,
+      "match_rate": 0.875
+     },
+     "TRAIN": {
+      "n_events": 2008.0,
+      "n_matched": 1502.0,
+      "match_rate": 0.74800796812749
+     },
+     "VALIDATION": {
+      "n_events": 571.0,
+      "n_matched": 563.0,
+      "match_rate": 0.9859894921190894
+     }
+    },
+    "n_events_in_excluded_partition": 4,
+    "n_exclusion_bars_blocked": 2655,
+    "n_rejected_partition": 0,
+    "by_family": {
+     "STRUCT": {
+      "n_events": 2975,
+      "n_matched": 2408
+     }
+    },
+    "matching_revision": "partition-aware (match_controls partition=auto, rank_mode=partition, exclude_idx = every generator opportunity)",
+    "controls_in_other_partition": 0,
+    "verdict": "PASS",
+    "reasons": []
+   },
+   "leakage_audit": {
+    "history_window_bars": 7056,
+    "sample_seed": 11,
+    "live_style_incremental_full_history": {
+     "name": "live_buffer_prefix",
+     "n_compared": 330,
+     "pass": 330,
+     "fail": 0,
+     "skipped": 0,
+     "skipped_reasons": {},
+     "failures": [],
+     "verdict": "PASS",
+     "sample": {
+      "events": 300,
+      "controls": 30
+     },
+     "seconds": 195.2
+    },
+    "truncated_raw_frame_window": {
+     "name": "truncated_at_decision_bar_window_7056",
+     "n_compared": 60,
+     "pass": 60,
+     "fail": 0,
+     "skipped": 0,
+     "skipped_reasons": {},
+     "failures": [],
+     "verdict": "PASS",
+     "sample": 60
+    },
+    "extended_frame_future_bars_present": {
+     "name": "longer_frame_plus_500_future_bars_window_7056",
+     "n_compared": 30,
+     "pass": 30,
+     "fail": 0,
+     "skipped": 0,
+     "skipped_reasons": {},
+     "failures": [],
+     "verdict": "PASS",
+     "sample": 30
+    },
+    "shallow_histories_must_be_flagged_not_warm": {
+     "120": {
+      "n": 20,
+      "flagged_not_warm": 20,
+      "wrongly_flagged_warm": 0,
+      "still_equal_to_stored": 0,
+      "rule_ok": true
+     },
+     "240": {
+      "n": 20,
+      "flagged_not_warm": 20,
+      "wrongly_flagged_warm": 0,
+      "still_equal_to_stored": 0,
+      "rule_ok": true
+     },
+     "500": {
+      "n": 20,
+      "flagged_not_warm": 20,
+      "wrongly_flagged_warm": 0,
+      "still_equal_to_stored": 0,
+      "rule_ok": true
+     }
+    },
+    "window_seconds": 969.8,
+    "verdict": "PASS"
+   },
+   "parity_live_vs_batch": {
+    "n_compared": 330,
+    "pass": 330,
+    "fail": 0,
+    "verdict": "PASS",
+    "failures": [],
+    "note": "BarBuffer fed engine-style sliding 6000-bar frames bar by bar; the observer saw only physically truncated views; compared with the stored batch records EXACTLY"
+   },
+   "coverage": {
+    "data": {
+     "first_bar_utc": "2025-06-01T22:00:00+00:00",
+     "last_bar_utc": "2026-08-31T20:55:00+00:00",
+     "n_bars": 82487,
+     "missing_months_utc": [],
+     "gaps_longer_than_3_days": [
+      [
+       "2026-04-02T20:55:00+00:00",
+       73.1
+      ]
+     ],
+     "n_gaps": 332,
+     "n_intraday_gaps_gt3bars": 3,
+     "largest_gap_hours": 73.08,
+     "intraday_gap_starts": [
+      "2025-11-12T06:25:00+00:00",
+      "2025-11-12T06:45:00+00:00",
+      "2026-07-27T14:00:00+00:00"
+     ],
+     "frame_fingerprint": "69c115183ec9be71",
+     "eval_from_utc": "2025-07-01T22:00:00+00:00",
+     "eval_from_index": 5609
+    },
+    "dev_end_guard": {
+     "dev_end_berlin_date": "2026-08-31",
+     "assert_no_forward_holdout": "PASS",
+     "guard_dev_only": "PASS",
+     "last_bar_utc": "2026-08-31T20:55:00+00:00"
+    },
+    "partitions": {
+     "scheme": "observer_lab.splits (core fit end / dev end constants); OOS written as FROZEN_OOS; PURGED = horizon reaches another partition; EMBARGO = first label horizon after a boundary",
+     "plan": {
+      "train_start": "2025-06-02",
+      "train_end": "2026-03-22",
+      "validation_start": "2026-03-23",
+      "validation_end": "2026-06-30",
+      "oos_start": "2026-07-01",
+      "oos_end": "2026-08-31",
+      "forward_start": "2026-09-01",
+      "core_fit_end": "2026-06-30"
+     },
+     "regular_plan": true,
+     "embargo_s": 14400.0,
+     "has_frozen_split": false,
+     "note": "BTCUSD/BRENT: NO frozen split exists (short history, placeholder STRUCT constants); the boundaries above are the repo's generic dev dates, TRAIN/VALIDATION here are NOT a frozen train/validation of any fitted parameter",
+     "counts": {
+      "EMBARGO": 4,
+      "FROZEN_OOS": 392,
+      "TRAIN": 2008,
+      "VALIDATION": 571
+     }
+    },
+    "events_by_family_variant_direction": {
+     "STRUCT|breakout|long": 488,
+     "STRUCT|breakout|short": 490,
+     "STRUCT|confirmed|long": 388,
+     "STRUCT|confirmed|short": 380,
+     "STRUCT|fade|long": 313,
+     "STRUCT|fade|short": 286,
+     "STRUCT|retest|long": 315,
+     "STRUCT|retest|short": 315
+    },
+    "exclusions": {
+     "candidates": 3143,
+     "before_eval_start": 168,
+     "emitted": 2975,
+     "emitted_before_limit": 2975
+    },
+    "rows": {
+     "table": 2975,
+     "features": 2975,
+     "labels": 2975,
+     "events": 2975
+    },
+    "controls_rows": {
+     "table": 2408,
+     "features": 2408,
+     "labels": 2408,
+     "events": 2408
+    },
+    "runtime_s": {
+     "events_step": 147.4,
+     "controls_step": 141.1
+    },
+    "peak_memory_mb": {
+     "events_step": 229.7,
+     "controls_step": 233.4
+    },
+    "matching_revision": "partition-aware (match_controls partition=auto, rank_mode=partition, exclude_idx = every generator opportunity)"
+   },
+   "sample_record": {
+    "event_id": "0e99d4f399528b5cdf6f697ef54f5763",
+    "market": "BRENT",
+    "family": "STRUCT",
+    "variant": "breakout",
+    "direction": 1,
+    "is_control": false,
+    "decision_ts_ns": 1767781500000000000,
+    "observer_version": "market-structure-observer-v1",
+    "schema_version": "mso-schema-1",
+    "status": "OBSERVATION_ONLY_NOT_ALPHA_VALIDATED",
+    "v_acceptance": "mso-acceptance-1",
+    "v_balance": "mso-balance-1",
+    "v_levels": "mso-levels-1",
+    "v_participation": "mso-participation-1",
+    "v_swings": "mso-swings-1",
+    "f_levels__nearest_level_distance_atr": 0.0,
+    "f_levels__nearest_level_source": "PREV_DAY_LOW",
+    "f_levels__nearest_level_age_bars": 113,
+    "f_levels__touch_count": 3,
+    "f_levels__clean_rejection_count": 0,
+    "f_levels__penetration_count": 0,
+    "f_levels__first_touch": false,
+    "f_levels__break_count": 1,
+    "f_levels__reclaim_count": 0,
+    "f_levels__role": "ACCEPTED_BELOW",
+    "f_levels__previous_role": "BROKEN_DOWN",
+    "f_levels__zone_source_count": 48,
+    "f_levels__zone_independent_source_count": 6,
+    "f_levels__zone_width_atr": 5.411042944785252,
+    "f_levels__n_levels_within_1atr": 7,
+    "f_levels__last_touch_ts_ns": 1.7677815e+18,
+    "f_levels__last_break_ts_ns": 1.7677479e+18,
+    "f_swings__m5_sequence": "DOWN_SEQUENCE",
+    "f_swings__m5_high_label": "LH",
+    "f_swings__m5_low_label": "LL",
+    "f_swings__m5_sequence_length": 2,
+    "f_swings__m5_structure_age_bars": 2.0,
+    "f_swings__m5_structure_age_minutes": 10.0,
+    "f_swings__m5_high_delta_atr": -1.5460122699386523,
+    "f_swings__m5_low_delta_atr": -1.2024539877300695,
+    "f_swings__m5_confirmed_at_ts_ns": 1.7677809e+18,
+    "f_swings__m5_last_high_confirmed_at_ts_ns": 1.7677809e+18,
+    "f_swings__m5_last_low_confirmed_at_ts_ns": 1.7677806e+18,
+    "f_swings__m5_close_beyond_last_swing_atr_high": 1.717791411042974,
+    "f_swings__m5_close_beyond_last_swing_atr_low": 0.0,
+    "f_swings__m5_bars_since_beyond_high": 1.0,
+    "f_swings__m15_sequence": "UP_SEQUENCE",
+    "f_swings__m15_high_label": "HH",
+    "f_swings__m15_low_label": "HL",
+    "f_swings__m15_sequence_length": 3,
+    "f_swings__m15_structure_age_bars": 1.0,
+    "f_swings__m15_structure_age_minutes": 25.0,
+    "f_swings__m15_high_delta_atr": 2.147239263803687,
+    "f_swings__m15_low_delta_atr": 1.717791411042974,
+    "f_swings__m15_confirmed_at_ts_ns": 1.76778e+18,
+    "f_swings__m15_last_high_confirmed_at_ts_ns": 1.76778e+18,
+    "f_swings__m15_last_low_confirmed_at_ts_ns": 1.7677791e+18,
+    "f_swings__m15_close_beyond_last_swing_atr_high": 0.1717791411043218,
+    "f_swings__m15_close_beyond_last_swing_atr_low": 0.0,
+    "f_swings__m15_bars_since_beyond_high": 0.0,
+    "f_swings__m15_bars_since_beyond_low": 7.0,
+    "f_swings__ema_trend": "up",
+    "f_swings__ema_swing_agreement": "DISAGREE",
+    "f_acceptance__break_found": false,
+    "f_balance__range_width_atr_w24": 3.5214723926380174,
+    "f_balance__directional_efficiency_w24": 0.15702479338842867,
+    "f_balance__bar_overlap_ratio_w24": 0.5097389080610233,
+    "f_balance__close_occupancy_ratio_w24": 0.7916666666666666,
+    "f_balance__midpoint_cross_count_w24": 6.0,
+    "f_balance__range_width_atr_w48": 4.638036809815956,
+    "f_balance__directional_efficiency_w48": 0.15639810426540313,
+    "f_balance__bar_overlap_ratio_w48": 0.45909940572097785,
+    "f_balance__close_occupancy_ratio_w48": 0.7083333333333334,
+    "f_balance__midpoint_cross_count_w48": 3.0,
+    "f_participation__tick_activity_per_min": 22.0,
+    "f_participation__tick_activity_percentile": 0.9375,
+    "f_participation__tick_activity_z": 1.9152416279126687,
+    "f_participation__activity_vs_same_tod": 1.5277777777777777,
+    "f_participation__activity_vs_session_baseline": 1.6541353383458646,
+    "f_participation__activity_acceleration": 1.1,
+    "f_participation__tod_baseline_n": 16,
+    "f_participation__tod_baseline_oldest_ts_ns": 1765534800000000000,
+    "m_warmup_ok": true,
+    "m_bars_available": 39641,
+    "m_prev_days_available": 187,
+    "m_atr_ok": true,
+    "m_min_bars_levels": 603,
+    "m_min_bars_swings": 480,
+    "m_min_bars_acceptance": 98,
+    "m_min_bars_balance": 48,
+    "m_min_prev_days_participation": 21,
+    "m_event_price": 60.21,
+    "m_reference_level_id": "b44026715d6930f5",
+    "m_config_hash": "9f2a4b3a080201a1",
+    "m_structure_event_id": "BRENT:1:2026-01-07T10:20:00+00:00",
+    "m_hash_levels": "2e831b19f634d411",
+    "m_hash_swings": "eb1857c684e21d19",
+    "m_hash_acceptance": "1608ec3fb935dc33ecc4874e1768289b3c0790e9bc3a0919f88e766e28f08060",
+    "m_hash_balance": "ddac1af18d7032ca1ee3acf276d5f2ccd6101710a5bd8476158872b7ca8d3aec",
+    "m_hash_participation": "452f5122fbfc26c12ed207281e1fcbd3152c3ecd265d25b5ce177c13529c92b3",
+    "warmup_ok": true,
+    "run_id": "5c876abdf7d5",
+    "decision_idx": 39640,
+    "strategy_id": "STRUCT-2004a99997",
+    "structure_event_id": "BRENT:1:2026-01-07T10:20:00+00:00",
+    "entry": 60.21,
+    "stop": 59.78089285714286,
+    "risk": 0.42910714285714135,
+    "risk_atr": 3.685582822085887,
+    "partition": "TRAIN"
+   },
+   "blocking": {
+    "plausibility": "PASS",
+    "leakage_audit": "PASS",
+    "parity_live_vs_batch": "PASS",
+    "label_sanity": "PASS"
+   },
+   "informational": {
+    "matching": "PASS",
+    "frame_fingerprint": "PASS"
+   },
+   "verdict": "PASS",
+   "gate_b_seconds": 2.5,
+   "plausibility": {
+    "n_feature_columns": 83,
+    "groups": {
+     "levels": {
+      "n_columns": 18,
+      "constant_columns": [],
+      "all_missing_columns": [],
+      "high_missing_columns": [
+       "f_levels__last_break_ts_ns",
+       "f_levels__last_reclaim_ts_ns"
+      ],
+      "flagged_columns": 0
+     },
+     "swings": {
+      "n_columns": 32,
+      "constant_columns": [],
+      "all_missing_columns": [],
+      "high_missing_columns": [
+       "f_swings__m5_bars_since_beyond_high",
+       "f_swings__m5_bars_since_beyond_low",
+       "f_swings__m15_bars_since_beyond_high",
+       "f_swings__m15_bars_since_beyond_low"
+      ],
+      "flagged_columns": 0
+     },
+     "acceptance": {
+      "n_columns": 15,
+      "constant_columns": [],
+      "all_missing_columns": [],
+      "high_missing_columns": [
+       "f_acceptance__break_bar_ts_ns",
+       "f_acceptance__break_close_distance_atr",
+       "f_acceptance__break_body_atr",
+       "f_acceptance__break_true_range_atr",
+       "f_acceptance__closes_beyond_level_count",
+       "f_acceptance__bars_since_break",
+       "f_acceptance__max_reentry_depth_atr",
+       "f_acceptance__followthrough_high_atr",
+       "f_acceptance__followthrough_low_atr",
+       "f_acceptance__followthrough_dir_atr",
+       "f_acceptance__close_location_in_bar",
+       "f_acceptance__time_held_beyond_level_bars",
+       "f_acceptance__time_held_beyond_level_minutes",
+       "f_acceptance__reclaim_occurred"
+      ],
+      "flagged_columns": 0
+     },
+     "balance": {
+      "n_columns": 10,
+      "constant_columns": [],
+      "all_missing_columns": [],
+      "high_missing_columns": [],
+      "flagged_columns": 0
+     },
+     "participation": {
+      "n_columns": 8,
+      "constant_columns": [],
+      "all_missing_columns": [],
+      "high_missing_columns": [],
+      "flagged_columns": 0
+     }
+    },
+    "impossible_value_flags": [],
+    "n_flagged": 0,
+    "verdict": "PASS"
+   }
+  }
+ ]
+}

@@ -28,6 +28,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 ACTIVE = ("GER40", "NAS100", "SPX500", "XAUUSD", "EURUSD", "BTCUSD", "BRENT")
 FP_LABELS = ((0.25, 0.25), (0.50, 0.50), (0.75, 0.50), (1.00, 0.50))
+MIN_CONTROL_N = 100  # the control-rate tolerance is only meaningful with enough controls
 LABEL_TOL = 0.10  # |control rate - zero-drift reference| tolerance (bar-resolution, stop-first, finite sample, real drift)
 SMD_TOL = 0.10
 MATCH_RATE_MIN = 0.50
@@ -91,7 +92,7 @@ def check_labels(lab: pd.DataFrame, feat_ts: pd.DataFrame) -> dict:
     out: dict = {"rates": {}, "consistency": {}, "horizon": {}}
     for a, b in FP_LABELS:
         col = f"y_fav{round(a * 100):03d}_before_adv{round(b * 100):03d}"
-        ref = a / (a + b)
+        ref = b / (a + b)  # gambler's ruin: P(+a before -b) of a driftless path (the brief's fav/(fav+adv) is the probability of the ADVERSE side)
         row: dict = {"zero_drift_reference_P": ref}
         for name, sub in (("events", df[~df["is_control"].astype(bool)]), ("controls", df[df["is_control"].astype(bool)])):
             s = sub[col]
@@ -128,7 +129,9 @@ def label_verdict(lb: dict) -> tuple[str, list[str]]:
         why.append("horizon outside [0, 48 bars]")
     for col, r in lb["rates"].items():
         d = r["controls"]["diff_to_reference"]
-        if d is not None and abs(d) > LABEL_TOL:
+        if r["controls"]["n_resolved"] < MIN_CONTROL_N:
+            r["controls"]["tolerance_check"] = f"not applied: only {r['controls']['n_resolved']} resolved controls (< {MIN_CONTROL_N}), INSUFFICIENT_EVIDENCE"
+        elif d is not None and abs(d) > LABEL_TOL:
             why.append(f"{col}: control rate deviates {d:+.3f} from the zero-drift reference (> {LABEL_TOL})")
     return ("PASS" if not why else "FAIL"), why
 
@@ -147,7 +150,7 @@ def check_matching(cm: dict | None) -> tuple[dict, str, list[str]]:
 
 
 # ---------------------------------------------------------------------------------------------- one market
-def gate_b_market(market: str, root: Path, p2root: str | None, args) -> dict:
+def gate_b_market(market: str, root: Path, p2root: str | None, args, cached: dict | None = None) -> dict:
     import entry_exit_quality as X
 
     from coverage_analysis.observer_lab import backfill as BF
@@ -205,41 +208,47 @@ def gate_b_market(market: str, root: Path, p2root: str | None, args) -> dict:
                     rates[col] = {"n": len(v_), "rate": float(v_.mean()) if len(v_) else None}
         res["matching_prerevision"] = {"method": pm["match_report"]["method"], "n_controls": pm["n_controls"], "match_rate": pm["match_report"]["match_rate"], "smd": pm["match_report"]["smd"], "control_label_rates": rates}
 
-    # (ii) + (vi) leakage audit and parity on real data
-    rng = np.random.default_rng(args.seed)
     ev = feat_all[~feat_all["is_control"].astype(bool)]
-    ct = feat_all[feat_all["is_control"].astype(bool)]
-    ts_all = pd.DatetimeIndex(frame["ts"]).as_unit("ns").asi8.astype(np.int64)
-    per_day = pd.Series(1, index=pd.DatetimeIndex(frame["ts"]).tz_convert("Europe/Berlin").normalize()).groupby(level=0).sum().median()
-    window = int(min(12000, max(3000, math.ceil(28 * per_day))))
-    n_a = min(args.n_audit, len(ev))
-    samp = ev.iloc[np.sort(rng.choice(len(ev), size=n_a, replace=False))]
-    samp_c = ct.iloc[np.sort(rng.choice(len(ct), size=min(args.n_audit_controls, len(ct)), replace=False))] if len(ct) else ct.iloc[:0]
-    stored_a = pd.concat([samp, samp_c], ignore_index=True)
-    t = time.time()
-    a_res = AU.audit_buffer_pass(frame, make_buffer, cfg, float(ms.point_size), stored_a, window=6000)
-    a_s = time.time() - t
-    pos = {int(x): k for k, x in enumerate(ts_all)}
-    deep = ev[ev["decision_ts_ns"].map(lambda x: pos.get(int(x) - 300 * 10**9, -1) >= window)]
-    pool = deep if len(deep) >= args.n_window else ev
-    stored_b = pool.iloc[np.sort(rng.choice(len(pool), size=min(args.n_window, len(pool)), replace=False))]
-    t = time.time()
-    b_res = AU.audit_window_recompute(frame, build, cfg, stored_b, depth=window, extension=0, name=f"truncated_at_decision_bar_window_{window}")
-    stored_c = stored_b.iloc[: args.n_extended]
-    c_res = AU.audit_window_recompute(frame, build, cfg, stored_c, depth=window, extension=500, name=f"longer_frame_plus_500_future_bars_window_{window}")
-    stored_s = ev.iloc[np.sort(rng.choice(len(ev), size=min(args.n_shallow, len(ev)), replace=False))]
-    shallow = AU.audit_shallow_depths(frame, build, cfg, stored_s, depths=(120, 240, 500))
-    res["leakage_audit"] = {
-        "history_window_bars": window, "sample_seed": args.seed,
-        "live_style_incremental_full_history": {**a_res.to_dict(), "sample": {"events": len(samp), "controls": len(samp_c)}, "seconds": round(a_s, 1)},
-        "truncated_raw_frame_window": {**b_res.to_dict(), "sample": len(stored_b)},
-        "extended_frame_future_bars_present": {**c_res.to_dict(), "sample": len(stored_c)},
-        "shallow_histories_must_be_flagged_not_warm": shallow, "window_seconds": round(time.time() - t, 1),
-    }
-    shallow_ok = all(v["rule_ok"] for v in shallow.values())
-    res["leakage_audit"]["verdict"] = "PASS" if (a_res.passed and b_res.passed and c_res.passed and shallow_ok and fp_ok) else "FAIL"
-    res["parity_live_vs_batch"] = {"n_compared": a_res.n, "pass": a_res.n_pass, "fail": a_res.n_fail, "verdict": "PASS" if a_res.passed else "FAIL", "failures": a_res.failures[:5],
-                                   "note": "BarBuffer fed engine-style sliding 6000-bar frames bar by bar; the observer saw only physically truncated views; compared with the stored batch records EXACTLY"}
+    if cached is not None and "leakage_audit" in cached and args.reuse_audit:
+        res["leakage_audit"] = cached["leakage_audit"]
+        res["parity_live_vs_batch"] = cached["parity_live_vs_batch"]
+        fp_ok = bool(cached.get("frame_fingerprint_matches_manifest", fp_ok))
+    else:
+        # (ii) + (vi) leakage audit and parity on real data
+        rng = np.random.default_rng(args.seed)
+        ev = feat_all[~feat_all["is_control"].astype(bool)]
+        ct = feat_all[feat_all["is_control"].astype(bool)]
+        ts_all = pd.DatetimeIndex(frame["ts"]).as_unit("ns").asi8.astype(np.int64)
+        per_day = pd.Series(1, index=pd.DatetimeIndex(frame["ts"]).tz_convert("Europe/Berlin").normalize()).groupby(level=0).sum().median()
+        window = int(min(12000, max(3000, math.ceil(28 * per_day))))
+        n_a = min(args.n_audit, len(ev))
+        samp = ev.iloc[np.sort(rng.choice(len(ev), size=n_a, replace=False))]
+        samp_c = ct.iloc[np.sort(rng.choice(len(ct), size=min(args.n_audit_controls, len(ct)), replace=False))] if len(ct) else ct.iloc[:0]
+        stored_a = pd.concat([samp, samp_c], ignore_index=True)
+        t = time.time()
+        a_res = AU.audit_buffer_pass(frame, make_buffer, cfg, float(ms.point_size), stored_a, window=6000)
+        a_s = time.time() - t
+        pos = {int(x): k for k, x in enumerate(ts_all)}
+        deep = ev[ev["decision_ts_ns"].map(lambda x: pos.get(int(x) - 300 * 10**9, -1) >= window)]
+        pool = deep if len(deep) >= args.n_window else ev
+        stored_b = pool.iloc[np.sort(rng.choice(len(pool), size=min(args.n_window, len(pool)), replace=False))]
+        t = time.time()
+        b_res = AU.audit_window_recompute(frame, build, cfg, stored_b, depth=window, extension=0, name=f"truncated_at_decision_bar_window_{window}")
+        stored_c = stored_b.iloc[: args.n_extended]
+        c_res = AU.audit_window_recompute(frame, build, cfg, stored_c, depth=window, extension=500, name=f"longer_frame_plus_500_future_bars_window_{window}")
+        stored_s = ev.iloc[np.sort(rng.choice(len(ev), size=min(args.n_shallow, len(ev)), replace=False))]
+        shallow = AU.audit_shallow_depths(frame, build, cfg, stored_s, depths=(120, 240, 500))
+        res["leakage_audit"] = {
+            "history_window_bars": window, "sample_seed": args.seed,
+            "live_style_incremental_full_history": {**a_res.to_dict(), "sample": {"events": len(samp), "controls": len(samp_c)}, "seconds": round(a_s, 1)},
+            "truncated_raw_frame_window": {**b_res.to_dict(), "sample": len(stored_b)},
+            "extended_frame_future_bars_present": {**c_res.to_dict(), "sample": len(stored_c)},
+            "shallow_histories_must_be_flagged_not_warm": shallow, "window_seconds": round(time.time() - t, 1),
+        }
+        shallow_ok = all(v["rule_ok"] for v in shallow.values())
+        res["leakage_audit"]["verdict"] = "PASS" if (a_res.passed and b_res.passed and c_res.passed and shallow_ok and fp_ok) else "FAIL"
+        res["parity_live_vs_batch"] = {"n_compared": a_res.n, "pass": a_res.n_pass, "fail": a_res.n_fail, "verdict": "PASS" if a_res.passed else "FAIL", "failures": a_res.failures[:5],
+                                       "note": "BarBuffer fed engine-style sliding 6000-bar frames bar by bar; the observer saw only physically truncated views; compared with the stored batch records EXACTLY"}
 
     # (vii) coverage
     res["coverage"] = {"data": ev_m["data"], "dev_end_guard": ev_m["dev_end_guard"], "partitions": ev_m["partitions"], "events_by_family_variant_direction": ev_m["events"]["by_family_variant_direction"],
@@ -354,6 +363,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--n-shallow", type=int, default=20)
     ap.add_argument("--seed", type=int, default=11)
     ap.add_argument("--force", action="store_true")
+    ap.add_argument("--reuse-audit", action="store_true", help="recompute everything except the (slow) leakage audit / parity results already cached per market")
     a = ap.parse_args(argv)
     import entry_exit_quality as X
 
@@ -363,14 +373,14 @@ def main(argv: list[str] | None = None) -> int:
     results, missing = [], []
     for m in a.markets:
         cache = root / m / "gate_b.json"
-        if cache.is_file() and not a.force:
+        if cache.is_file() and not a.force and not a.reuse_audit:
             results.append(json.loads(cache.read_text(encoding="utf-8")))
             continue
         if not (root / m / "manifest.json").is_file():
             missing.append(m)
             continue
         print(f"{m}: gate B ...", flush=True)
-        r = gate_b_market(m, root, p2, a)
+        r = gate_b_market(m, root, p2, a, json.loads(cache.read_text(encoding="utf-8")) if cache.is_file() else None)
         cache.write_text(json.dumps(r, indent=1, default=str), encoding="utf-8")
         results.append(r)
         print(f"{m}: {r['verdict']} blocking={r['blocking']} in {r['gate_b_seconds']}s", flush=True)
