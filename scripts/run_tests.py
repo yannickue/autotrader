@@ -172,24 +172,21 @@ def run(cmd: list[str], timeout: int, dry: bool) -> int:
 
 
 def changed_paths(base: str) -> list[str]:
-    out = subprocess.run(
-        ["git", "diff", "--name-only", f"{base}...HEAD"],
-        cwd=ROOT,
-        capture_output=True,
-        text=True,
-        check=False,
-    ).stdout.split()
-    out += subprocess.run(
-        ["git", "diff", "--name-only"], cwd=ROOT, capture_output=True, text=True, check=False
-    ).stdout.split()
+    """Changed paths vs ``base`` (committed + working tree + untracked).
+    A failing git command RAISES: a broken ``git diff`` must never look like "nothing changed"."""
+
+    def _git(args: list[str]) -> list[str]:
+        res = subprocess.run(["git", *args], cwd=ROOT, capture_output=True, text=True, check=False)
+        if res.returncode != 0:
+            raise RuntimeError(
+                f"`git {' '.join(args)}` failed (rc={res.returncode}): {(res.stderr or '').strip()}"
+            )
+        return res.stdout.split()
+
+    out = _git(["diff", "--name-only", f"{base}...HEAD"])
+    out += _git(["diff", "--name-only"])
     # new files that are not added yet must select tests too (never select less)
-    out += subprocess.run(
-        ["git", "ls-files", "--others", "--exclude-standard"],
-        cwd=ROOT,
-        capture_output=True,
-        text=True,
-        check=False,
-    ).stdout.split()
+    out += _git(["ls-files", "--others", "--exclude-standard"])
     return sorted(set(out))
 
 

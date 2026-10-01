@@ -87,6 +87,50 @@ Impact mapping (every pre-existing `MATRIX` rule stays; the rules below are adde
 | test helper / `conftest.py` below `tests/<a>/` | that directory; `tests/conftest.py`, `pyproject.toml`, `uv.lock`, top-level test helpers -> segmented FULL |
 | anything else (unknown path) | WIDER, never narrower: `-m "fast or integration or safety"` |
 
+Production-reachable paths (added 2026-10-02, port of the semantics of `dc6346c` onto the union mapping in `scripts/impact_tests.py`,
+`PRODUCTION_SAFETY_RULES`):
+
+| Changed path | Selected (in addition to the pre-existing rule) |
+|---|---|
+| `src/alpha/{families,fast,common,signals}/`, `src/alpha/{session.py,context*,timeframe*,regime*,__init__.py}` (production-live alpha) | `tests/unit/demo` + the SAFETY overlay; `src/alpha/common/` also `tests/unit/markets` |
+| `src/nautilus_mt5/`, `src/adapters/`, `src/persistence/`, `src/demo/` (whole), `src/data/`, `src/markets/`, `src/instruments/`, `src/margin/`, `src/market_observer/`, `src/research_speed/`, `scripts/autostart/`, `scripts/demo_trader.py` | the SAFETY overlay (`-m safety`) |
+| `src/exits/`, `src/risk/`, `src/execution/` | SAFETY overlay (already) |
+| research-only alpha (`src/alpha/discovery/` ...) | `tests/unit/alpha`, strategies, contracts: no demo tests, no safety overlay |
+
+Invariants of the impact selection (enforced by `tests/unit/scripts/test_impact_live_alpha_and_safety.py` and `test_run_tests_tiers.py`):
+
+* **Never narrower:** rules only ever ADD targets (union of the `MATRIX` rule and every matching `EXTRA_RULES` entry); an unknown
+  non-doc path widens to `-m "fast or integration or safety"`; global config (`pyproject.toml`, `uv.lock`, `tests/conftest.py`)
+  selects the segmented FULL suite; docs-only changes select no pytest.
+* **Loud git failure:** `run_tests.changed_paths` raises `RuntimeError` when `git diff --name-only <base>...HEAD`, `git diff --name-only`
+  or `git ls-files --others` fails (unknown base ref, not a repo). A broken git call can never turn into an empty plan / "nothing changed".
+* **Drift guard:** every file in the production runtime closure (below) must select `-m safety`; every reachable `src/alpha/` file must
+  also select `tests/unit/demo`. A module that becomes reachable without a rule fails the test, so the prefix lists cannot rot silently.
+  A module being UNREACHABLE never removes a test: FULL still collects everything.
+
+### Production runtime import manifest (`scripts/runtime_import_manifest.py`)
+
+`uv run python scripts/runtime_import_manifest.py [--check] [--summary] [--out PATH]` writes
+`artifacts/research/runtime_import_manifest.json` (never committed) with `entry_points`, `modules` (sorted; file, loc, package),
+`packages` / `subpackages` (reachable vs unreachable LOC and files), `dynamic_import_sites`, `generated_commit`.
+
+* Entry points (explicit list `ENTRY_POINTS`): `scripts/demo_trader.py`, `scripts/autostart/{supervisor,eod_recovery,deploy_gate,instance_lock}.py`;
+  python files named by `scripts/autostart/*.ps1` / `*.task.xml` launchers are parsed and must be in that list (or in `EXCLUDED_AUTOSTART`, today
+  `approve_deploy.py`, an operator tool). A new `scripts/autostart/*.py` that is neither fails `test_every_autostart_python_file_is_an_entry_point_or_explicitly_excluded`.
+* Closure: re-uses `src/research_speed/importgraph.py` (AST, lazy/function-level imports, relative imports, `from x import y` submodules, parent
+  packages). A constant `importlib.import_module("a.b")` / `__import__("a.b")` is resolved and followed; every other dynamic loader
+  (`import_module(var)`, `spec_from_file_location`, `runpy`, `exec`/`eval` of import strings) is listed as an unresolved site.
+* `--check` exits non-zero on an unresolved dynamic import (unless reviewed in `REVIEWED_DYNAMIC_SITES` with a reason), a missing entry
+  point or an unlisted autostart script. Measured at 2026-10-02: 0 dynamic import sites in the production closure.
+
+### Observer parity classification
+
+`tests/unit/demo/test_observer_parity.py` (GATE A: the real `OpportunityEngine` replayed bar by bar over real DEV slices with the observer on/off,
+12 tests, ~130 s) is a real-data parity suite and lives in the **slow** tier (`SLOW_FILES` in `tests/conftest.py`); it used to run in FAST and dominated the
+< 2 min loop. `tests/unit/demo/opportunity/test_observer_hook.py` is already slow (directory rule); `tests/unit/demo/runner/test_runner_observer.py` stays
+INTEGRATION (runner directory rule, fake stack, no measured evidence that it is heavy) and `tests/unit/demo/test_observer_store.py` stays FAST (store
+unit tests). The impact rules for observer paths still select all of them (`OBSERVER_TESTS`). Tiers still partition the suite (FULL == fast + integration + slow).
+
 No test is removed, deselected or weakened; FULL stays available (`full` / `t3`).
 
 ### Green-result cache (opt-in, `run_tests.py changed --result-cache`; default OFF)

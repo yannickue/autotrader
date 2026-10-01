@@ -60,6 +60,11 @@ FULL is a sum of segment runs measured on a loaded machine; expect 9-14 min. It 
 deferral threshold, but only just when serial; use xdist for `fast` and `slow` (the default of
 `scripts/run_tests.py`).
 
+Reclassification 2026-10-02: `tests/unit/demo/test_observer_parity.py` (12 tests, real OpportunityEngine over real DEV
+slices, ~130 s measured by the lead) moved FAST -> SLOW (`SLOW_FILES`). Collected at that base (6318 tests with the
+research-workbench additions): fast 4500 -> 4488, slow 759 -> 771, integration 1059 -> 1114 (+55 = the new impact/manifest guard tests in `tests/unit/scripts`, not a move); the FAST serial time drops by
+~130 s. `test_runner_observer.py` (integration tier, same engine behind a fake stack) was not re-measured and stays put.
+
 ## 4. xdist decision
 
 `pytest-xdist==3.8.0` added as a DEV dependency (uv.lock updated): measured gain is real on the

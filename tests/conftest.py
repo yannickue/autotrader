@@ -64,6 +64,9 @@ SLOW_FILES = frozenset(
         "tests/test_temporal_discovery_genome.py",
         "tests/test_temporal_discovery_evaluate.py",
         "tests/test_v2_session_levels.py",
+        # GATE A: real OpportunityEngine replayed over real DEV slices, observer on/off
+        # (~130 s, 12 tests): real-data parity suite, kept out of the < 2 min FAST loop.
+        "tests/unit/demo/test_observer_parity.py",
     }
 )
 

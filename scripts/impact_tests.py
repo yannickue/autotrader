@@ -36,7 +36,52 @@ OBSERVER_TESTS = [
     "tests/unit/demo/runner/test_runner_observer.py",
     "tests/unit/research",
 ]
+# Production-reachable code (static import closure of the production entry points; scripts/runtime_import_manifest.py and the drift-guard
+# test tests/unit/scripts/test_impact_live_alpha_and_safety.py keep this list honest): a change there must pull the safety overlay.
+# Production-live alpha modules additionally pull the demo tests (the live engine runs them) and, for alpha/common, the markets tests.
+_LIVE_ALPHA_PREFIXES = (
+    "src/alpha/families/",
+    "src/alpha/fast/",
+    "src/alpha/common/",
+    "src/alpha/session.py",
+    "src/alpha/context",
+    "src/alpha/timeframe",
+    "src/alpha/regime",
+    "src/alpha/signals/",
+    "src/alpha/__init__.py",
+)
+_SAFETY_PRODUCTION_PREFIXES = (
+    "src/nautilus_mt5/",
+    "src/adapters/",
+    "src/persistence/",
+    "src/demo/",
+    "src/data/",
+    "src/markets/",
+    "src/instruments/",
+    "src/margin/",
+    "src/market_observer/",  # reachable from the live runner (observer hook)
+    "src/research_speed/",  # importgraph is reachable from src/demo
+    "scripts/autostart/",
+    "scripts/demo_trader.py",
+)
+PRODUCTION_SAFETY_RULES: list[tuple[str, list[str], str]] = [
+    *(
+        (
+            p,
+            ["tests/unit/demo", "m:safety"],
+            "production-live alpha module: demo tests + safety overlay",
+        )
+        for p in _LIVE_ALPHA_PREFIXES
+    ),
+    ("src/alpha/common/", ["tests/unit/markets"], ""),
+    *(
+        (p, ["m:safety"], "production-reachable path: safety overlay")
+        for p in _SAFETY_PRODUCTION_PREFIXES
+    ),
+]
+
 EXTRA_RULES: list[tuple[str, list[str], str]] = [
+    *PRODUCTION_SAFETY_RULES,
     ("src/market_observer/", OBSERVER_TESTS, ""),
     ("src/coverage_analysis/", OBSERVER_TESTS, ""),
     ("src/research_speed/", OBSERVER_TESTS, ""),
