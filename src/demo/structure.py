@@ -363,19 +363,48 @@ def management_signals(
       The engine ratchets it forward only (a stop never loosens).
     * structure failure: the newest closed bar closed beyond that swing against the trade.
     * momentum score: ``direction * (close[-1] - close[-1-k]) / ATR`` (signed, in ATR units)."""
-    atr_d = None if atr is None or _dec(atr) <= 0 else _dec(atr)
-    n_bars = len(bars)
-    if n_bars == 0:
+    if len(bars) == 0:
         return ManagementSignals(None, None, False, None, None, None)
     ts = _ts(bars)
-    as_of = ts[-1] + timedelta(seconds=M5_SECONDS)
     closes = [float(x) for x in bars["close"]]
+    # M5 swings only: the M15 confirmation lag (two more 15-minute bars) is too slow for management
+    swings = confirmed_swings(bars, swing_n, "M5")
+    return management_signals_from_swings(
+        direction, closes=closes, as_of=ts[-1] + timedelta(seconds=M5_SECONDS), swings=swings,
+        entered_at=entered_at, current_stop=current_stop, price=price, atr=atr, spread=spread,
+        atr_buffer_mult=atr_buffer_mult, momentum_bars=momentum_bars,
+    )
+
+
+def management_signals_from_swings(
+    direction: int,
+    *,
+    closes: list[float],
+    as_of: datetime,
+    swings: list[Swing],
+    entered_at: datetime,
+    current_stop: float | Decimal,
+    price: float | Decimal,
+    atr: float | Decimal | None,
+    spread: float | Decimal = 0,
+    atr_buffer_mult: float = 0.25,
+    momentum_bars: int = 3,
+) -> ManagementSignals:
+    """The tail of ``management_signals`` over PRECOMPUTED M5 swings and the closes up to ``as_of``.
+
+    Only swings already CONFIRMED at ``as_of`` (``confirmed_at <= as_of``) are used, so passing the swings of a longer
+    frame gives exactly the result of ``management_signals`` on the frame truncated at ``as_of`` (a confirmed
+    fractal never changes when later bars are appended; the offline exit-policy harness relies on this to avoid
+    recomputing the fractals every bar, and a test pins the equality)."""
+    atr_d = None if atr is None or _dec(atr) <= 0 else _dec(atr)
+    n_bars = len(closes)
+    if n_bars == 0:
+        return ManagementSignals(None, None, False, None, None, None)
     momentum: Decimal | None = None
     if atr_d is not None and n_bars > momentum_bars:
         momentum = (_dec(closes[-1]) - _dec(closes[-1 - momentum_bars])) * Decimal(direction) / atr_d
     kind = "LOW" if direction == 1 else "HIGH"
-    # M5 swings only: the M15 confirmation lag (two more 15-minute bars) is too slow for management
-    mine = [s for s in confirmed_swings(bars, swing_n, "M5") if s.kind == kind and s.bar_open >= entered_at]
+    mine = [s for s in swings if s.kind == kind and s.bar_open >= entered_at and s.confirmed_at <= as_of]
     if not mine:
         return ManagementSignals(None, None, False, None, momentum, as_of)
     latest = max(mine, key=lambda s: (s.bar_open, s.timeframe))  # newest structure the trade built
@@ -393,6 +422,6 @@ def management_signals(
 __all__ = [
     "ATR_UNAVAILABLE", "INSUFFICIENT_BARS", "NO_STRUCTURAL_STOP", "NO_STRUCTURAL_TP1",
     "SECOND_TARGET_NOT_STRUCTURALLY_JUSTIFIED", "STOP_TOO_FAR", "Level", "ManagementSignals", "StructuralGeometry",
-    "Swing", "all_swings", "confirmed_swings", "levels_beyond", "management_signals", "prior_range_edges",
+    "Swing", "all_swings", "confirmed_swings", "levels_beyond", "management_signals", "management_signals_from_swings", "prior_range_edges",
     "resample_m15", "structural_geometry",
 ]
