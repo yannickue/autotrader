@@ -71,6 +71,17 @@ def draw_features(rng: np.random.Generator, cols: list[str]) -> dict:
     return feats
 
 
+def pin(man: dict, mdir: Path) -> dict:
+    """The builder writes ``controls_sha256`` (mandatory for the preflight): pin the manifest to the control files that are on disk (flat layout: set B via ``controls_b_sha256``)."""
+    man = json.loads(json.dumps(man))
+    a, b = G.resolve_file(mdir.parent, mdir.name, "controls.parquet"), G.resolve_file(mdir.parent, mdir.name, "controls_b.parquet")
+    if a.is_file():
+        man["controls_sha256"] = G.file_sha256(a)
+    if b.is_file() and not (mdir / "controls3_b").is_dir():
+        man["controls_b_sha256"] = G.file_sha256(b)
+    return man
+
+
 def make_market(mdir: Path, prereg: G.Prereg, seed: int, planted: float, extra_ts_ns: int | None = None, ctlb_bias: float = 0.0, with_b: bool = True, with_v2: bool = False, manifest: dict | bool | None = True) -> None:
     rng = np.random.default_rng(seed)
     cols = raw_feature_columns(prereg)
@@ -99,7 +110,7 @@ def make_market(mdir: Path, prereg: G.Prereg, seed: int, planted: float, extra_t
     if with_v2:
         pd.DataFrame(c2_rows).to_parquet(mdir / "controls_v2.parquet", index=False)
     if manifest is not False and manifest is not None:
-        man = manifest_for() if manifest is True else manifest
+        man = pin(manifest_for() if manifest is True else manifest, mdir)
         (mdir / G.MANIFEST_NAME).write_text(json.dumps(man), encoding="utf-8")
 
 
@@ -220,7 +231,7 @@ def test_preflight_only_registers_nothing_and_records_version_and_fingerprint(tm
 def test_failing_preflight_registers_nothing_and_does_not_consume_the_stop_rule(tmp_path, prereg, prereg_path, case):
     root = build_root(tmp_path, prereg)
     mp = root / "GER40" / G.MANIFEST_NAME
-    man = manifest_for()
+    man = pin(manifest_for(), root / "GER40")
     if case == "no_manifest":
         mp.unlink()
     elif case == "wrong_version":
@@ -264,7 +275,7 @@ def test_fingerprint_is_content_based_not_size_or_mtime(tmp_path, prereg, prereg
 def test_failed_balance_gate_is_descriptive_only_not_registered_and_not_in_m(tmp_path, prereg, prereg_path):
     root = build_root(tmp_path, prereg)
     bad = good_balance(match_rate=0.55, passed=False, status="descriptive_only")
-    (root / "NAS100" / G.MANIFEST_NAME).write_text(json.dumps(manifest_for(balance=bad)), encoding="utf-8")
+    (root / "NAS100" / G.MANIFEST_NAME).write_text(json.dumps(pin(manifest_for(balance=bad), root / "NAS100")), encoding="utf-8")
     out = tmp_path / "o"
     assert run(root, out, prereg_path) == 0
     st = stage_of(out, "fit")
@@ -287,7 +298,7 @@ def test_balance_gate_censoring_threshold_and_all_markets_descriptive_stops(tmp_
     root = build_root(tmp_path, prereg)
     bad = good_balance(censoring_diff_pp=6.0, passed=False, status="descriptive_only")
     for m in CORE2:
-        (root / m / G.MANIFEST_NAME).write_text(json.dumps(manifest_for(balance=bad)), encoding="utf-8")
+        (root / m / G.MANIFEST_NAME).write_text(json.dumps(pin(manifest_for(balance=bad), root / m)), encoding="utf-8")
     out = tmp_path / "o"
     assert run(root, out, prereg_path) == G.EXIT_STOP
     assert not (out / G.REGISTRY_FILE).exists() and not G.lock_path(prereg).exists()
@@ -572,7 +583,10 @@ def to_controls3_layout(root: Path, markets, manifest: dict) -> None:
         man = json.loads(json.dumps(manifest))
         for part, e in man["balance_gate"]["partitions"].items():
             e["n_controls"] = int(counts.get(part, 0))
+        man.update({"controls_sha256": G.file_sha256(d / "controls3" / "controls.parquet"), "controls_file": "controls.parquet", "control_set": "a", "market": m})
         (d / "controls3" / G.MANIFEST_NAME).write_text(json.dumps(man), encoding="utf-8")
+        bman = {"control_method_version": man["control_method_version"], "control_set": "b", "market": m, "controls_sha256": G.file_sha256(d / "controls3_b" / "controls.parquet")}
+        (d / "controls3_b" / G.MANIFEST_NAME).write_text(json.dumps(bman), encoding="utf-8")
 
 
 def test_controls3_layout_adapter_resolves_paths_and_normalises_the_manifest(tmp_path, prereg, prereg_path):
@@ -598,3 +612,223 @@ def test_controls3_layout_failed_verdict_is_descriptive_only_and_foreign_thresho
     root2 = build_root(tmp_path / "x", prereg)
     to_controls3_layout(root2, CORE2, real_style_manifest(thresholds={"match_rate_min": 0.8, "smd_abs_max": 0.1, "censored_share_diff_max": 0.05}))
     assert run(root2, tmp_path / "o2", prereg_path, extra=("--preflight",)) != 0
+
+
+# ---------------------------------------------------------------------------------------------- OBS-FIX H1: provenance, attestation, units, no controls-2 mixing
+def write_prereg(tmp: Path, spec: dict, name: str = "variant.md") -> Path:
+    p = tmp / name
+    p.write_text(f"{G.MARKER_BEGIN}\n```json\n{json.dumps(spec)}\n```\n{G.MARKER_END}\n", encoding="utf-8")
+    return p
+
+
+def strip_hashes(root: Path, markets=CORE2) -> None:
+    for m in markets:
+        mp = root / m / G.MANIFEST_NAME
+        man = json.loads(mp.read_text(encoding="utf-8"))
+        man.pop("controls_sha256", None)
+        man.pop("controls_b_sha256", None)
+        mp.write_text(json.dumps(man), encoding="utf-8")
+
+
+def preflight_errors(out: Path, stage: str = "fit") -> str:
+    return " | ".join(json.loads((out / f"{G.PREFLIGHT_STEM}_{stage}.json").read_text(encoding="utf-8"))["errors"])
+
+
+def test_controls_sha256_is_mandatory_and_the_attestation_is_read_only_and_tamper_evident(tmp_path, prereg, prereg_path):
+    root = build_root(tmp_path, prereg)
+    strip_hashes(root)  # artifacts built before the builder wrote controls_sha256
+    out = tmp_path / "o"
+    assert run(root, out, prereg_path, extra=("--preflight",)) == G.EXIT_PREFLIGHT
+    assert "REQUIRED" in preflight_errors(out)
+    before = tree_hash(root)
+    assert run(root, out, prereg_path, extra=("--attest",)) == 0
+    assert tree_hash(root) == before  # nothing written into the artifacts
+    att = json.loads((out / G.ATTEST_FILE).read_text(encoding="utf-8"))
+    assert set(att["markets"]) == set(CORE2) and set(att["markets"]["GER40"]["files"]) == {"controls.parquet", "controls_b.parquet"}
+    assert att["markets"]["GER40"]["files"]["controls.parquet"]["sha256"] == G.file_sha256(root / "GER40" / "controls.parquet")
+    assert run(root, out, prereg_path, extra=("--preflight",)) == 0 and no_side_effects(out, prereg)
+    assert run(root, out, prereg_path, extra=("--attest",)) == 0  # identical content: idempotent
+    # a control file that changes after the attestation breaks the preflight, and the attestation is never overwritten with different content
+    pd.read_parquet(root / "GER40" / "controls.parquet").iloc[::2].to_parquet(root / "GER40" / "controls.parquet", index=False)
+    assert run(root, out, prereg_path, extra=("--preflight",)) == G.EXIT_PREFLIGHT and "does not match the file" in preflight_errors(out)
+    assert run(root, out, prereg_path, extra=("--attest",)) == G.EXIT_ATTEST
+
+
+def test_attest_refuses_controls2_manifests(tmp_path, prereg, prereg_path):
+    root = build_root(tmp_path, prereg)
+    mp = root / "GER40" / G.MANIFEST_NAME
+    man = json.loads(mp.read_text(encoding="utf-8"))
+    man["control_method_version"] = "observer-controls-2"
+    mp.write_text(json.dumps(man), encoding="utf-8")
+    assert run(root, tmp_path / "o", prereg_path, extra=("--attest",)) == G.EXIT_ATTEST and not (tmp_path / "o" / G.ATTEST_FILE).exists()
+
+
+def test_controls2_and_controls3_files_are_never_mixed(tmp_path, prereg, prereg_path):
+    # (a) the controls3 layout is authoritative: a flat controls-2 file next to it is never read (here it is not even a Parquet file)
+    root = build_root(tmp_path, prereg)
+    to_controls3_layout(root, CORE2, real_style_manifest())
+    for m in CORE2:
+        (root / m / "controls.parquet").write_bytes(b"not parquet: a controls-2 set")
+    assert run(root, tmp_path / "o", prereg_path, extra=("--preflight",)) == 0
+    # (b) flat layout, controls-3 manifest, but the controls file is another set: the declared hash does not match
+    root2 = build_root(tmp_path / "b", prereg)
+    shutil.copy(root2 / "GER40" / "controls_b.parquet", root2 / "GER40" / "controls.parquet")
+    assert run(root2, tmp_path / "o2", prereg_path, extra=("--preflight",)) == G.EXIT_PREFLIGHT and "does not match the file" in preflight_errors(tmp_path / "o2")
+    # (c) controls3 directory without its controls file: NO silent fallback to the flat (controls-2) file
+    root3 = build_root(tmp_path / "c", prereg)
+    to_controls3_layout(root3, CORE2, real_style_manifest())
+    shutil.copy(root3 / "GER40" / "controls3_b" / "controls.parquet", root3 / "GER40" / "controls.parquet")
+    (root3 / "GER40" / "controls3" / "controls.parquet").unlink()
+    assert run(root3, tmp_path / "o3", prereg_path, extra=("--preflight",)) == G.EXIT_PREFLIGHT and "controls.parquet not found" in preflight_errors(tmp_path / "o3")
+    # (d) a manifest of the other control set / another market is refused
+    for key, val in (("control_set", "b"), ("market", "NAS100")):
+        root4 = build_root(tmp_path / f"d_{key}", prereg)
+        to_controls3_layout(root4, CORE2, real_style_manifest())
+        mp = root4 / "GER40" / "controls3" / G.MANIFEST_NAME
+        man = json.loads(mp.read_text(encoding="utf-8"))
+        man[key] = val
+        mp.write_text(json.dumps(man), encoding="utf-8")
+        assert run(root4, tmp_path / f"od_{key}", prereg_path, extra=("--preflight",)) == G.EXIT_PREFLIGHT
+    # (e) the B manifest carries its own hash: another file there fails
+    root5 = build_root(tmp_path / "e", prereg)
+    to_controls3_layout(root5, CORE2, real_style_manifest())
+    shutil.copy(root5 / "GER40" / "controls3" / "controls.parquet", root5 / "GER40" / "controls3_b" / "controls.parquet")
+    assert run(root5, tmp_path / "o5", prereg_path, extra=("--preflight",)) == G.EXIT_PREFLIGHT and "controls_b.parquet" in preflight_errors(tmp_path / "o5")
+
+
+def test_adapter_unit_and_denominator_are_fail_closed(real_prereg):
+    bal = real_prereg.spec["controls"]["balance"]
+    good = real_style_manifest()["balance_gate"]
+    assert abs(G.normalize_balance_gate(bal, good)["TRAIN"]["censoring_diff_pp"] - 0.4) < 1e-9  # 0.004 (fraction) -> 0.4 pp
+    pp = json.loads(json.dumps(good))
+    pp["partitions"]["TRAIN"]["censored_share"]["diff"] = 4.0  # looks like percentage points: refused, never read as 400 pp / 4 %
+    assert "__adapter_error__" in G.normalize_balance_gate(bal, pp)
+    assert "__adapter_error__" in G.normalize_balance_gate(bal, {**good, "censored_share_unit": "percent"})
+    thr = json.loads(json.dumps(good))
+    thr["thresholds"]["censored_share_diff_max"] = 5.0  # threshold in pp
+    assert "__adapter_error__" in G.normalize_balance_gate(bal, thr)
+    bal3 = {**bal, "censoring_denominator": "matched_pairs"}
+    assert "__adapter_error__" in G.normalize_balance_gate(bal3, {**good, "censored_share_denominator": "all_events"})
+    assert "__adapter_error__" not in G.normalize_balance_gate(bal3, {**good, "censored_share_denominator": "matched_pairs"})
+    assert "__adapter_error__" not in G.normalize_balance_gate(bal3, good)  # older manifests do not declare it
+
+
+@pytest.mark.parametrize("which", ["session", "insufficient_n"])
+def test_builder_only_criteria_are_marked_as_an_inconsistency_not_bent(tmp_path, prereg, prereg_path, which):
+    """The builder gate has a session-share tolerance (0.02) and INSUFFICIENT_N (< 20 events) that prereg-2 does not contain: explicit marking, preflight refuses
+    (owner decision), and a preregistration that DECLARES the criteria (prereg-3) makes builder and preflight agree."""
+    man = real_style_manifest(verdict="FAIL" if which == "session" else "INSUFFICIENT_N")
+    for e in man["balance_gate"]["partitions"].values():
+        if which == "session":
+            e["session_share_diff_max"] = 0.03
+        else:
+            e["n_events"] = 10
+    root = build_root(tmp_path, prereg)
+    to_controls3_layout(root, CORE2, man)
+    out = tmp_path / "o"
+    assert run(root, out, prereg_path, extra=("--preflight",)) == G.EXIT_PREFLIGHT
+    err = preflight_errors(out)
+    assert "PREREG/BUILDER INCONSISTENCY" in err and ("session_share_diff_max" in err if which == "session" else "n_events" in err)
+    spec = json.loads(json.dumps(prereg.spec))
+    spec["controls"]["balance"].update({"max_session_share_diff": 0.02, "min_events": 20})
+    p3 = write_prereg(tmp_path, spec)
+    assert run(root, tmp_path / "o3", p3, extra=("--preflight",)) == 0
+    pre = json.loads((tmp_path / "o3" / f"{G.PREFLIGHT_STEM}_fit.json").read_text(encoding="utf-8"))
+    assert all(v["status"] == "descriptive_only" for v in pre["markets"].values())  # consistent now: a not-passed gate, not a structural defect
+
+
+def test_matched_pair_censoring_denominator_differs_from_the_all_rows_denominator(tmp_path, prereg, prereg_path):
+    root = build_root(tmp_path, prereg, markets=("GER40",))
+    tp, cp = root / "GER40" / "table.parquet", root / "GER40" / "controls.parquet"
+    ev, ct = pd.read_parquet(tp), pd.read_parquet(cp)
+    keep_events = ev[(ev["partition"] == "TRAIN") & ev[LABEL].notna()]["event_id"].iloc[::2]
+    drop = ct["control_of"].isin(ev[(ev["partition"] == "TRAIN") & ev[LABEL].notna()]["event_id"]) & ~ct["control_of"].isin(keep_events)
+    ct[~drop].to_parquet(cp, index=False)  # half of the uncensored TRAIN events lose their control (match rate < 1)
+    ct = pd.read_parquet(cp)
+    e_tr, c_tr = ev[ev["partition"] == "TRAIN"], ct[ct["partition"] == "TRAIN"]
+    matched = c_tr.merge(e_tr[["event_id", LABEL]].rename(columns={"event_id": "control_of", LABEL: "_ev"}), on="control_of")
+    expected = 100 * (matched[LABEL].isna().mean() - matched["_ev"].isna().mean())
+    got = G.matched_censoring_diff_pp(tp, cp, LABEL, "TRAIN")
+    legacy = 100 * (e_tr[LABEL].isna().mean() - c_tr[LABEL].isna().mean())
+    assert abs(got - expected) < 1e-9 and abs(got - legacy) > 1.0  # the denominators are NOT interchangeable
+    spec = json.loads(json.dumps(prereg.spec))
+    spec["controls"]["balance"]["censoring_denominator"] = "matched_pairs"
+    pre = G.preflight(G.load_prereg(write_prereg(tmp_path, spec)), root, "fit", ["GER40"])
+    assert abs(pre["markets"]["GER40"]["observed_censoring_diff_pp"] - got) < 1e-9  # (the manifest hash of the rewritten file is stale on purpose: only the number is checked)
+    assert abs(G.preflight(prereg, root, "fit", ["GER40"])["markets"]["GER40"]["observed_censoring_diff_pp"] - legacy) < 1e-9
+
+
+# ---------------------------------------------------------------------------------------------- OBS-FIX H2: eligibility BEFORE registry and fit lock
+def test_no_confirmatory_test_left_stops_before_registry_and_lock_even_when_an_explore_market_is_eligible(tmp_path, prereg, prereg_path, capsys):
+    root = build_root(tmp_path, prereg)
+    bad = good_balance(match_rate=0.80, passed=False, status="descriptive_only")
+    for m in CORE2:
+        (root / m / G.MANIFEST_NAME).write_text(json.dumps(pin(manifest_for(balance=bad), root / m)), encoding="utf-8")
+    make_market(root / "BRENT", prereg, 7, 0.3, with_b=False)  # explore market that PASSES the gate
+    out = tmp_path / "o"
+    assert run(root, out, prereg_path, markets=(*CORE2, "BRENT")) == G.EXIT_STOP
+    txt = capsys.readouterr().out
+    assert "no confirmatory test left" in txt and "INCONCLUSIVE_NOT_ASKED (kein no-enrichment)" in txt
+    assert not (out / G.REGISTRY_FILE).exists() and not (out / f"{G.REPORT_STEM}.json").exists() and not G.lock_path(prereg).exists() and not G.LOCK_DIR.exists()
+    # without the eligibility check the BRENT hypotheses alone would have made the plan non-empty (and the lock + registry would have been written)
+    desc = set(CORE2)
+    plan = G.build_plan(prereg, "fit", [*CORE2, "BRENT"], None, desc)
+    assert G.family_sizes(plan) and all(p["scope"] == "explore" for p in plan if p["family"] is not None and p["kind"] == "hyp")
+    with pytest.raises(G.NoConfirmatoryTestLeft):
+        G.confirmatory_eligibility("fit", plan, [*CORE2, "BRENT"], desc)
+    assert G.confirmatory_eligibility("fit", G.build_plan(prereg, "fit", [*CORE2, "BRENT"], None, {"NAS100"}), [*CORE2, "BRENT"], {"NAS100"})  # one eligible core market: confirmatory tests exist
+
+
+# ---------------------------------------------------------------------------------------------- OBS-FIX H3: prereg-3 / observer-stats-3
+PREREG3 = Path(G.DEFAULT_PREREG).with_name("OBSERVER_GATE_C_PREREGISTRATION_V3.md")
+
+
+def test_prereg2_is_byte_identical_and_prereg3_is_a_separate_namespace_with_the_same_family(real_prereg):
+    raw = Path(G.DEFAULT_PREREG).read_bytes().replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")  # the pinned hash is of the CRLF working-tree bytes (checkout independent)
+    assert hashlib.sha256(raw).hexdigest() == "4413e35ea3fc7fe38131a3956875ec1402534f10ba55b711d199722300091110"
+    p3 = G.load_prereg(PREREG3)
+    s2, s3 = real_prereg.spec, p3.spec
+    assert s3["prereg_version"] == "observer-gate-c-prereg-3" and s3["supersedes"] == "observer-gate-c-prereg-2"
+    assert s3["registry_name"] != s2["registry_name"] and s3["namespace"] == "gatec3" and s3["files"]["registry"] != G.REGISTRY_FILE
+    assert s3["hypotheses"] == s2["hypotheses"] and s3["negative_controls"] == s2["negative_controls"] and s3["label"] == s2["label"] and s3["markets"] == s2["markets"]
+    assert s3["test"] == s2["test"] and s3["min_effect_abs"] == s2["min_effect_abs"] and s3["min_evidence"] == s2["min_evidence"] and s3["placebos"] == s2["placebos"]
+    b2, b3 = s2["controls"]["balance"], s3["controls"]["balance"]
+    assert (b3["min_match_rate"], b3["max_abs_smd"], b3["max_abs_censoring_diff_pp"]) == (b2["min_match_rate"], b2["max_abs_smd"], b2["max_abs_censoring_diff_pp"]) == (0.90, 0.10, 5.0)  # no loosening
+    assert b3["max_session_share_diff"] == 0.02 and b3["min_events"] == 20 and b3["censoring_denominator"] == "matched_pairs"
+    assert s3["stats"]["version"] == "observer-stats-3" and s3["stats"]["block_len_days"] >= 21 and G.lock_path(p3) != G.lock_path(real_prereg)
+    assert {p["name"].split("|")[0] for p in G.build_plan(p3, "fit", s3["markets"]["core"], None)} == {"gatec3"}
+
+
+@pytest.mark.parametrize("mut", ["block_20", "unit_day", "no_event_day", "sens_shorter"])
+def test_prereg3_stats_declaration_is_validated(tmp_path, mut):
+    spec = json.loads(json.dumps(G.load_prereg(PREREG3).spec))
+    if mut == "block_20":
+        spec["stats"]["block_len_days"] = 20
+    elif mut == "unit_day":
+        spec["stats"]["block_unit"] = "day"
+    elif mut == "no_event_day":
+        spec["stats"]["control_block"] = "own_day"
+    else:
+        spec["stats"]["sensitivity_block_len_days"] = 10
+    with pytest.raises(ValueError):
+        G.load_prereg(write_prereg(tmp_path, spec))
+
+
+def test_fit_under_prereg3_uses_stats_3_blocks_its_own_registry_lock_and_names(tmp_path):
+    spec = json.loads(json.dumps(G.load_prereg(PREREG3).spec))
+    spec["markets"]["core"] = list(CORE2)
+    spec["test"]["b_min"], spec["test"]["b_max"] = 1000, 3000
+    spec["stats"]["sensitivity_B_max"] = 500
+    spec["min_evidence"]["blocks"] = 3  # synthetic mini backfill: 70 TRAIN days = 3 blocks of >= 21 (the real thresholds are NOT touched, this is a test-only prereg)
+    p3 = write_prereg(tmp_path, spec)
+    prereg3 = G.load_prereg(p3)
+    root = build_root(tmp_path, prereg3, manifest=manifest_for(balance=good_balance(session_share_diff_max=0.0, n_events=500)))  # prereg-3 declares the session tolerance / minimum events: the manifest must carry them
+    out = tmp_path / "o"
+    assert run(root, out, p3) == 0
+    st = json.loads((out / "observer_gate_c3_report.json").read_text(encoding="utf-8"))["stages"]["fit"]
+    assert st["stats_version"] == "observer-stats-3" and G.lock_path(prereg3).name == "observer-gate-c-prereg-3.fit.lock.json" and G.lock_path(prereg3).is_file()
+    assert not (out / G.REGISTRY_FILE).exists() and (out / "observer_gate_c3_registry.json").is_file()
+    reg = json.loads((out / "observer_gate_c3_registry.json").read_text(encoding="utf-8"))
+    assert reg["name"] == "observer_gate_c_prereg3" and all(h.startswith("gatec3|") for h in reg["hypotheses"])
+    h01 = next(r for r in st["results"] if r["market"] == "GER40" and r["id"] == "H01")
+    assert h01["n_blocks_event"] == 3 and h01["n_blocks_control"] == 3 and h01["n_nan_draws"] == 0  # 3 blocks of >= 21 days, not 70 single days

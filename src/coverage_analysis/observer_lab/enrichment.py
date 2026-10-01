@@ -96,7 +96,9 @@ class EnrichmentConfig:
     # ``observer-stats-1`` (default, unchanged lab behaviour): a control is blocked by its OWN day column, the evidence check counts the union of blocks.
     # ``observer-stats-2``: a control is blocked by the day (or week) of its EVENT (``control_of``), the evidence check counts blocks per arm.
     stats_version: str = ST.STATS_LEGACY
-    block_unit: str = "day"  # "day" | "week" (ISO week of the block day; ``day_col`` must then hold integer day ordinals)
+    block_unit: str = "day"  # "day" | "week" (ISO week of the block day; ``day_col`` must then hold integer day ordinals) | "tdays" (observer-stats-3 only)
+    # ``observer-stats-3``: stats-2 (per-arm counts, control blocked by its EVENT) with contiguous blocks of ``block_len_days`` (>= 21) trading days; needs block_unit="tdays".
+    block_len_days: int = ST.MIN_BLOCK_TRADING_DAYS
 
 
 @dataclass(frozen=True)
@@ -292,8 +294,11 @@ def _versions(feature: str) -> dict[str, str]:
 
 def _report_versions(cfg: EnrichmentConfig | None = None) -> dict[str, str]:
     cfg = cfg or EnrichmentConfig()
-    return {"observer": OBSERVER_VERSION, "schema": SCHEMA_VERSION, "lab": LAB_VERSION, "labels": LABEL_CONVENTION_VERSION, "controls": CONTROL_METHOD_VERSION,
-            "stats": cfg.stats_version, "block_unit": cfg.block_unit}
+    v = {"observer": OBSERVER_VERSION, "schema": SCHEMA_VERSION, "lab": LAB_VERSION, "labels": LABEL_CONVENTION_VERSION, "controls": CONTROL_METHOD_VERSION,
+         "stats": cfg.stats_version, "block_unit": cfg.block_unit}
+    if cfg.block_unit == "tdays":
+        v["block_len_days"] = str(cfg.block_len_days)
+    return v
 
 
 def _block_arrays(events: pd.DataFrame, controls: pd.DataFrame, cfg: EnrichmentConfig) -> tuple[np.ndarray, np.ndarray]:
@@ -302,16 +307,23 @@ def _block_arrays(events: pd.DataFrame, controls: pd.DataFrame, cfg: EnrichmentC
     observer-stats-1: each row uses its own ``day_col``. observer-stats-2: a control takes the block of its EVENT (``control_of``), because a control
     is a paired draw for that event and its own decision day may fall in another block (a block must contain both halves of every pair).
     ``block_unit='week'`` maps day ordinals to ISO weeks (Monday start; ordinal 0 = Thursday 1970-01-01)."""
-    if cfg.stats_version not in (ST.STATS_LEGACY, ST.STATS_V2):
+    if cfg.stats_version not in ST.STATS_VERSIONS:
         raise ValueError(f"unknown stats_version {cfg.stats_version!r}")
-    if cfg.block_unit not in ("day", "week"):
-        raise ValueError(f"block_unit must be 'day' or 'week', got {cfg.block_unit!r}")
+    if cfg.block_unit not in ("day", "week", "tdays"):
+        raise ValueError(f"block_unit must be 'day', 'week' or 'tdays', got {cfg.block_unit!r}")
+    if (cfg.stats_version == ST.STATS_V3) != (cfg.block_unit == "tdays"):
+        raise ValueError("block_unit='tdays' (contiguous blocks of >= 21 trading days) belongs to observer-stats-3 and nothing else: stats-3 refuses day / week blocks")
     ev_day = events[cfg.day_col].to_numpy()
-    if cfg.stats_version == ST.STATS_V2:
+    if cfg.stats_version in ST.PER_ARM_STATS:
         by_event = dict(zip(events["event_id"], ev_day, strict=True))
         ct_day = np.asarray([by_event[e] for e in controls["control_of"]], dtype=ev_day.dtype)
     else:
         ct_day = controls[cfg.day_col].to_numpy()
+    if cfg.block_unit == "tdays":
+        if ev_day.dtype.kind not in "iu":
+            raise ValueError("block_unit='tdays' needs integer day ordinals in day_col")
+        mp = ST.contiguous_day_blocks(ev_day, cfg.block_len_days)  # from the EVENT days of the whole prepared frame: independent of the cell under test
+        return np.asarray([mp[d] for d in ev_day.tolist()], dtype="int64"), np.asarray([mp[d] for d in ct_day.tolist()], dtype="int64")
     if cfg.block_unit == "week":
         if ev_day.dtype.kind not in "iu" or ct_day.dtype.kind not in "iu":
             raise ValueError("block_unit='week' needs integer day ordinals in day_col")
@@ -379,7 +391,7 @@ def _tag(res: ST.EnrichmentResult, est: ST.DeltaEstimate, purpose: str, partitio
 
 
 def _evidence(est: ST.DeltaEstimate, cfg: EnrichmentConfig, n_clusters: int | None) -> str:
-    v2 = cfg.stats_version == ST.STATS_V2  # per-arm block counts only under observer-stats-2
+    v2 = cfg.stats_version in ST.PER_ARM_STATS  # per-arm block counts under observer-stats-2 and -3
     return ST.evidence_status(
         n_event=est.n_event, n_control=est.n_control, n_blocks=est.n_blocks, n_clusters=n_clusters, min_evidence=cfg.min_evidence,
         n_blocks_event=est.n_blocks_event if v2 else None, n_blocks_control=est.n_blocks_control if v2 else None,

@@ -273,6 +273,12 @@ def test_controls3_step_end_to_end_is_independent_of_controls2_and_carries_the_g
         assert {f.name: f.stat().st_mtime_ns for f in mdir.iterdir() if f.is_file() and f.name in snap} == snap  # events AND controls-2 files untouched
         assert c2["control_method_version"] == "observer-controls-2" and (mdir / "controls3" / "controls_manifest.json").is_file() and (mdir / "controls3_b" / "controls_manifest.json").is_file()
         assert c3["n_controls"] > 0 and "balance_gate" in c3 and c3["market_status"] in ("analysis_eligible", "descriptive_only")
+        for sub in ("controls3", "controls3_b"):  # provenance pin: the manifest carries the SHA-256 of ITS controls.parquet (the Gate C preflight requires it)
+            man = json.loads((mdir / sub / "controls_manifest.json").read_text())
+            assert man["controls_file"] == "controls.parquet" and man["controls_sha256"] == B3.file_sha256(mdir / sub / "controls.parquet") and len(man["controls_sha256"]) == 64
+        assert c3["controls_sha256"] != c3["controls_b"]["controls_sha256"]
+        bg = c3["balance_gate"]
+        assert bg["censored_share_unit"] == "fraction" and bg["censored_share_denominator"] == "matched_pairs"
         diag = pd.read_parquet(mdir / "controls3" / B3.DIAG_FILE)
         events = pd.read_parquet(mdir / BF.EVENT_FILES["events"])
         cev = pd.read_parquet(mdir / "controls3" / BF.CONTROL_FILES["events"])

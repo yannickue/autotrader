@@ -40,6 +40,17 @@ CENSOR_LABEL = "y_fav050_before_adv050"  # the 0.5 R / 0.5 R first-passage label
 CENSOR_LABELS = ("y_fav025_before_adv025", "y_fav050_before_adv050", "y_fav075_before_adv050", "y_fav100_before_adv050")
 
 
+def file_sha256(path: Path) -> str:
+    """SHA-256 of the file bytes (provenance pin written into the manifest: the Gate C preflight REQUIRES it and compares it with the file it reads)."""
+    import hashlib
+
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
 def controls3_fingerprint(events_fp: str, seed: int, spec: CS.SameTimeSpec, with_b: bool, max_bars: int) -> str:
     import hashlib
 
@@ -130,7 +141,9 @@ def _write_set(
         b["n_events"] += 1
         b["n_matched"] += int(pos in matched_pos)
     diag = pd.read_parquet(sub / DIAG_FILE)
+    controls_file = BF.CONTROL_FILES["table"]
     manifest = {
+        "controls_file": controls_file, "controls_sha256": file_sha256(sub / controls_file),  # provenance pin (new in this revision; older manifests lack it -> read-only attestation)
         "status": "COMPLETE", "step": "controls3", "control_set": spec.control_set, "fingerprint": fp, "run_id": run_id, "market": market, "events_fingerprint": evm["fingerprint"],
         "events_run_id": evm["run_id"], "controls_pipeline_version": CONTROLS3_PIPELINE_VERSION, "control_method_version": CS.CONTROL_METHOD_VERSION,
         "matching_revision": CS.CONTROL_MATCHING_REVISION, "partitioned_matching": regular, "match_spec": match_spec_dict, "seed": seed,

@@ -4,7 +4,10 @@
     uv run python scripts/observer_gate_c.py --root <backfill dir> [--markets GER40 NAS100 ...] [--out DIR] [--stage fit|validate|oos]
         [--jobs 2] [--prereg docs/OBSERVER_GATE_C_PREREGISTRATION.md] [--dry-run] [--preflight] [--force] [--confirm-oos-once]
 
-Version ``observer-gate-c-2`` (preregistration ``observer-gate-c-prereg-2``; prereg-1 is history, new registry namespace).
+Version ``observer-gate-c-3``: runs preregistration ``observer-gate-c-prereg-2`` (``observer-stats-2``, day blocks) AND the draft ``observer-gate-c-prereg-3``
+(``observer-stats-3``, contiguous blocks of >= 21 trading days, own registry namespace) from the same code; the preregistration text selects the statistics,
+the registry namespace and the file names. prereg-1 is history. The new ``--attest`` step pins the SHA-256 of controls files whose manifest predates the
+``controls_sha256`` field (read-only, written next to --out, never into --root).
 
 Never touches the live trader, ``artifacts/``, MT5, schedulers or the trading DB. The backfill directory (``--root``) is opened READ-ONLY; the
 registry, the per-market caches and the report go to ``--out`` (default ``%LOCALAPPDATA%\\Temp\\observer_gate_c``, refused if it lies inside ``--root``).
@@ -50,7 +53,7 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-SCRIPT_VERSION = "observer-gate-c-2"
+SCRIPT_VERSION = "observer-gate-c-3"
 DEFAULT_ROOT = Path(os.environ.get("LOCALAPPDATA", ".")) / "Temp" / "observer_backfill"
 DEFAULT_OUT = Path(os.environ.get("LOCALAPPDATA", ".")) / "Temp" / "observer_gate_c"
 LOCK_DIR = Path(os.environ.get("LOCALAPPDATA", ".")) / "Temp" / "observer_gate_c_locks"  # fixed anchor OUTSIDE --out (tests monkeypatch this module attribute only)
@@ -76,6 +79,10 @@ V_FIT_OK, V_NONE, V_INCONCLUSIVE, V_INVALID = "ENRICHMENT_CANDIDATES_TO_VALIDATE
 V_VAL_OK, V_OOS_OK, V_NOT_CONFIRMED = "CONFIRMED_ON_VALIDATION", "REPLICATED_ON_OOS", "NOT_CONFIRMED"
 KINDS = ("hyp", "nc", "nc_a", "nc_b")  # confirmatory hypothesis | random-feature control | A/A test | shift placebo
 EXIT_STOP, EXIT_NAN, EXIT_PREFLIGHT = 3, 4, 5
+EXIT_ATTEST = 6
+V_NOT_ASKED = "INCONCLUSIVE_NOT_ASKED"  # no market passed the balance gate / no confirmatory test eligible: the question was never asked (NOT "no enrichment")
+ATTEST_FILE = "observer_controls_attestation.json"  # written next to the report in --out (never into --root, the artifacts stay byte-identical)
+ATTEST_VERSION = "observer-controls-attest-1"
 BALANCE_FIELDS = ("match_rate", "smd_local_minute", "smd_atr_pct", "smd_spread_pct", "censoring_diff_pp")
 MANIFEST_NAME = "controls_manifest.json"
 CONTROLS3_A_DIR, CONTROLS3_B_DIR = "controls3", "controls3_b"  # on-disk layout written by scripts/observer_backfill.py --step controls3
@@ -94,6 +101,8 @@ def resolve_file(root: str | Path, market: str, logical: str) -> Path:
         return a_dir / MANIFEST_NAME
     if logical == "controls_b.parquet" and b_dir.is_dir():
         return b_dir / "controls.parquet"
+    if logical == "controls_b_manifest.json":
+        return b_dir / MANIFEST_NAME if b_dir.is_dir() else mdir / logical  # flat layout: no manifest of set B (the hash then comes from the attestation / ``controls_b_sha256``)
     if logical == "controls_v2.parquet" and not (mdir / logical).is_file() and a_dir.is_dir():
         return mdir / "controls.parquet"  # controls-2 set next to the events
     return mdir / logical
@@ -107,6 +116,15 @@ def normalize_balance_gate(prereg_balance: dict[str, Any], bg: Any) -> Any:
     if not isinstance(bg, dict) or not isinstance(bg.get("partitions"), dict):
         return bg  # already the preregistered shape (or not a dict: the structural check reports it)
     th = bg.get("thresholds") or {}
+    # UNIT: the builder writes shares and the censoring threshold as FRACTIONS (0.05); the preregistration speaks percentage points (5.0). The conversion is explicit and
+    # fail-closed: a builder that declares another unit, or a diff outside [-1, 1] (= already percentage points), is refused instead of being read 100x too loose.
+    unit = bg.get("censored_share_unit")
+    if unit is not None and unit != "fraction":
+        return {"__adapter_error__": f"builder declares censored_share_unit {unit!r}; only 'fraction' is understood (the adapter converts fraction -> percentage points)"}
+    want_den = prereg_balance.get("censoring_denominator")
+    have_den = bg.get("censored_share_denominator")
+    if want_den is not None and have_den is not None and have_den != want_den:
+        return {"__adapter_error__": f"censoring denominator differs: builder {have_den!r}, preregistration {want_den!r}"}
     want = {"match_rate_min": prereg_balance["min_match_rate"], "smd_abs_max": prereg_balance["max_abs_smd"], "censored_share_diff_max": prereg_balance["max_abs_censoring_diff_pp"] / 100.0}
     off = {k: (th.get(k), v) for k, v in want.items() if not isinstance(th.get(k), (int, float)) or abs(float(th[k]) - v) > 1e-12}
     if off:
@@ -115,14 +133,23 @@ def normalize_balance_gate(prereg_balance: dict[str, Any], bg: Any) -> Any:
     for p, e in bg["partitions"].items():
         smd, cen = (e.get("smd") or {}), (e.get("censored_share") or {})
         diff = cen.get("diff")
+        if diff is not None and (not isinstance(diff, (int, float)) or isinstance(diff, bool) or not math.isfinite(float(diff)) or abs(float(diff)) > 1.0):
+            return {"__adapter_error__": f"balance_gate[{p}].censored_share.diff={diff!r} is not a fraction in [-1, 1] (unit mismatch: percentage points?)"}
         out[p] = {"match_rate": e.get("match_rate"), "smd_local_minute": smd.get("local_minute"), "smd_atr_pct": smd.get("atr_pct"), "smd_spread_pct": smd.get("spread_pct"),
                   "censoring_diff_pp": None if diff is None else 100.0 * float(diff), "passed": e.get("verdict") == "PASS", "status": "passed" if e.get("verdict") == "PASS" else "descriptive_only",
-                  "n_controls": e.get("n_controls")}
+                  "n_controls": e.get("n_controls"),
+                  # builder-only information (the preregistered gate may or may not contain these criteria; see ``balance_passes`` / ``_check_manifest``)
+                  "builder_verdict": e.get("verdict"), "session_share_diff_max": e.get("session_share_diff_max"), "n_events": e.get("n_events"),
+                  "builder_thresholds": {k: th.get(k) for k in ("session_share_diff_max", "min_events")}}
     return out
 
 
 class StopRule(RuntimeError):
     """A preregistered stop rule forbids this stage (documented outcome, exit code 3)."""
+
+
+class NoConfirmatoryTestLeft(StopRule):
+    """Stop rule 'no confirmatory test left': raised BEFORE the registry is written and BEFORE the fit lock is taken. The question was never asked (INCONCLUSIVE_NOT_ASKED), which is NOT 'no enrichment'."""
 
 
 class NanBootstrapAbort(RuntimeError):
@@ -176,8 +203,18 @@ def _validate_prereg(s: dict[str, Any]) -> None:
         raise ValueError("unsupported test definition")
     if s["test"].get("holm_scope") != "stage_all":
         raise ValueError("test.holm_scope must be 'stage_all' (Holm over ALL hypotheses of the stage and scope, one family)")
-    if s["stats"].get("version") != "observer-stats-2" or s["stats"].get("block_unit") != "day" or s["stats"].get("sensitivity_block_unit") != "week":
-        raise ValueError("stats must declare version observer-stats-2, block_unit day, sensitivity_block_unit week")
+    from coverage_analysis.observer_lab import stats as ST
+
+    st = s["stats"]
+    if st.get("version") == ST.STATS_V2:
+        if st.get("block_unit") != "day" or st.get("sensitivity_block_unit") != "week":
+            raise ValueError("stats must declare version observer-stats-2, block_unit day, sensitivity_block_unit week")
+    elif st.get("version") == ST.STATS_V3:
+        n, sn = st.get("block_len_days"), st.get("sensitivity_block_len_days")
+        if st.get("block_unit") != "tdays" or st.get("control_block") != "event_day" or not isinstance(n, int) or isinstance(n, bool) or n < ST.MIN_BLOCK_TRADING_DAYS                 or not isinstance(sn, int) or isinstance(sn, bool) or sn < n:
+            raise ValueError(f"stats must declare observer-stats-3 with block_unit 'tdays', control_block 'event_day', block_len_days >= {ST.MIN_BLOCK_TRADING_DAYS} and sensitivity_block_len_days >= block_len_days")
+    else:
+        raise ValueError(f"unsupported stats version {st.get('version')!r} (observer-stats-2 | observer-stats-3)")
     bal = s["controls"].get("balance") or {}
     if not {"min_match_rate", "max_abs_smd", "max_abs_censoring_diff_pp"} <= set(bal) or not s["controls"].get("required_method_version"):
         raise ValueError("controls must declare required_method_version and balance thresholds")
@@ -207,6 +244,23 @@ def _validate_prereg(s: dict[str, Any]) -> None:
             raise ValueError(f"{h['id']}: derived feature {f!r} has no implementation in this script")
     if set(s["markets"]["core"]) & set(s["markets"]["explore"]):
         raise ValueError("a market cannot be both core and explore")
+
+
+def ns(prereg: Prereg) -> str:
+    """Registry / hypothesis-name namespace of the preregistration (prereg-2: ``gatec2``; prereg-3 declares its own, so no registered name can collide)."""
+    return str(prereg.spec.get("namespace", "gatec2"))
+
+
+def registry_file(prereg: Prereg) -> str:
+    return str((prereg.spec.get("files") or {}).get("registry", REGISTRY_FILE))
+
+
+def report_stem(prereg: Prereg) -> str:
+    return str((prereg.spec.get("files") or {}).get("report", REPORT_STEM))
+
+
+def preflight_stem(prereg: Prereg) -> str:
+    return str((prereg.spec.get("files") or {}).get("preflight", PREFLIGHT_STEM))
 
 
 def market_scope(prereg: Prereg, market: str) -> str:
@@ -338,11 +392,32 @@ def _file_facts(path: Path, label: str, part: str) -> dict[str, Any]:
 
 def balance_passes(thr: dict[str, Any], b: dict[str, Any]) -> bool:
     """Recomputed balance gate (the manifest's own ``passed`` must agree): match rate, standardised mean differences, censoring balance."""
-    return (b["match_rate"] >= thr["min_match_rate"] and all(abs(b[k]) <= thr["max_abs_smd"] for k in ("smd_local_minute", "smd_atr_pct", "smd_spread_pct"))
-            and abs(b["censoring_diff_pp"]) <= thr["max_abs_censoring_diff_pp"])
+    ok = (b["match_rate"] >= thr["min_match_rate"] and all(abs(b[k]) <= thr["max_abs_smd"] for k in ("smd_local_minute", "smd_atr_pct", "smd_spread_pct"))
+          and abs(b["censoring_diff_pp"]) <= thr["max_abs_censoring_diff_pp"])
+    # Criteria that exist in the controls-3 BUILDER gate but not in prereg-2: they are enforced here ONLY when the preregistration declares them (prereg-3).
+    if "max_session_share_diff" in thr:
+        s = b.get("session_share_diff_max")
+        ok = ok and isinstance(s, (int, float)) and math.isfinite(float(s)) and float(s) <= thr["max_session_share_diff"]
+    if "min_events" in thr:
+        n = b.get("n_events")
+        ok = ok and isinstance(n, int) and not isinstance(n, bool) and n >= thr["min_events"]
+    return ok
 
 
-def _check_manifest(prereg: Prereg, man: Any, part: str) -> tuple[dict[str, Any] | None, list[str]]:
+def builder_only_reasons(thr: dict[str, Any], e: dict[str, Any]) -> list[str]:
+    """Why the BUILDER verdict is stricter than the preregistered gate (explicit marking of the prereg-2 / builder inconsistency; never resolved silently)."""
+    out: list[str] = []
+    bt = e.get("builder_thresholds") or {}
+    s = e.get("session_share_diff_max")
+    if "max_session_share_diff" not in thr and isinstance(s, (int, float)) and isinstance(bt.get("session_share_diff_max"), (int, float)) and s > bt["session_share_diff_max"]:
+        out.append(f"session_share_diff_max {s:.4f} > builder tolerance {bt['session_share_diff_max']} (criterion not in this preregistration)")
+    n = e.get("n_events")
+    if "min_events" not in thr and isinstance(n, int) and isinstance(bt.get("min_events"), int) and n < bt["min_events"]:
+        out.append(f"n_events {n} < builder minimum {bt['min_events']} (INSUFFICIENT_N is not in this preregistration)")
+    return out
+
+
+def _check_manifest(prereg: Prereg, man: Any, part: str, market: str | None = None, control_set: str = "a") -> tuple[dict[str, Any] | None, list[str]]:
     """Schema check of ``controls_manifest.json``; returns (balance entry of the stage partition | None, structural problems)."""
     spec = prereg.spec["controls"]
     errs: list[str] = []
@@ -350,6 +425,10 @@ def _check_manifest(prereg: Prereg, man: Any, part: str) -> tuple[dict[str, Any]
         return None, ["controls manifest is not a JSON object"]
     if man.get("control_method_version") != spec["required_method_version"]:
         errs.append(f"control_method_version {man.get('control_method_version')!r} != required {spec['required_method_version']!r}")
+    if market is not None and man.get("market") is not None and man.get("market") != market:
+        errs.append(f"manifest belongs to market {man.get('market')!r}, not {market!r} (controls of another market)")
+    if man.get("control_set") is not None and man.get("control_set") != control_set:
+        errs.append(f"manifest describes control set {man.get('control_set')!r}, expected {control_set!r} (set A and set B must not be mixed)")
     bg = normalize_balance_gate(spec["balance"], man.get("balance_gate"))
     if not isinstance(bg, dict):
         return None, [*errs, "manifest has no balance_gate object"]
@@ -370,13 +449,115 @@ def _check_manifest(prereg: Prereg, man: Any, part: str) -> tuple[dict[str, Any]
             continue
         recomputed = balance_passes(spec["balance"], e)
         if recomputed != e["passed"] or (e["status"] == "passed") != e["passed"]:
-            errs.append(f"balance_gate[{fp}]: passed={e['passed']} / status={e['status']} disagree with the recomputed gate ({recomputed}) under the preregistered thresholds")
+            bo = builder_only_reasons(spec["balance"], e) if not recomputed or not e["passed"] else []
+            note = f" PREREG/BUILDER INCONSISTENCY (not bent either way; owner decision needed): {'; '.join(bo)}" if bo and not e["passed"] and recomputed else ""
+            errs.append(f"balance_gate[{fp}]: passed={e['passed']} / status={e['status']} (builder verdict {e.get('builder_verdict')}) disagree with the recomputed gate ({recomputed}) under the preregistered thresholds.{note}")
         if fp == FILE_PARTITION[part]:
             entry = e
     return entry, errs
 
 
-def preflight(prereg: Prereg, root: Path, stage: str, markets: list[str]) -> dict[str, Any]:
+def matched_censoring_diff_pp(table_path: Path, controls_path: Path, label: str, part: str) -> float | None:
+    """Censoring balance over the MATCHED PAIRS of the stage partition (the denominator of the controls-3 builder gate and of prereg-3): every control row of the
+    stage is joined to its event (``control_of``); result = share of censored (NaN) labels among those controls minus among their events, in percentage points
+    (controls minus events, the sign of the builder's ``censored_share.diff``). Reads event ids, control_of and the label's availability only."""
+    import pyarrow.parquet as pq
+
+    ev = pq.read_table(table_path, columns=["event_id", "partition", label]).to_pandas()
+    ev = ev[ev["partition"] == FILE_PARTITION[part]][["event_id", label]].rename(columns={"event_id": "control_of", label: "_ev"})
+    ct = pq.read_table(controls_path, columns=["control_of", label]).to_pandas()
+    pairs = ct.merge(ev, on="control_of", how="inner")
+    if not len(pairs):
+        return None
+    return 100.0 * (float(pairs[label].isna().mean()) - float(pairs["_ev"].isna().mean()))
+
+
+def load_attestation(out: Path) -> dict[str, Any] | None:
+    p = Path(out) / ATTEST_FILE
+    return json.loads(p.read_text(encoding="utf-8")) if p.is_file() else None
+
+
+def hash_sources(root: Path, market: str, man: Any, attest_entry: dict[str, Any] | None) -> tuple[dict[str, dict[str, str]], list[str]]:
+    """Every declared SHA-256 of the control files, by logical file and by source: ``manifest`` (``controls_sha256`` of set A), ``manifest_b`` (``controls_sha256`` of
+    the manifest in ``controls3_b``), ``manifest_a_b`` (``controls_b_sha256`` in the flat-layout manifest), ``attestation`` (read-only ``--attest`` step)."""
+    errs: list[str] = []
+    src: dict[str, dict[str, str]] = {"controls.parquet": {}, "controls_b.parquet": {}}
+    if isinstance(man, dict):
+        if isinstance(man.get("controls_sha256"), str):
+            src["controls.parquet"]["manifest"] = man["controls_sha256"]
+        if isinstance(man.get("controls_b_sha256"), str):
+            src["controls_b.parquet"]["manifest_a_b"] = man["controls_b_sha256"]
+    mb = resolve_file(root, market, "controls_b_manifest.json")
+    if mb.is_file():
+        try:
+            bm = json.loads(mb.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as e:
+            errs.append(f"controls_b manifest is not valid JSON: {e}")
+        else:
+            if isinstance(bm, dict) and isinstance(bm.get("controls_sha256"), str):
+                src["controls_b.parquet"]["manifest_b"] = bm["controls_sha256"]
+    for logical, e in ((attest_entry or {}).get("files") or {}).items():
+        if logical in src and isinstance(e, dict) and isinstance(e.get("sha256"), str):
+            src[logical]["attestation"] = e["sha256"]
+    return src, errs
+
+
+def hash_errors(logical_files: list[str], files: dict[str, Any], src: dict[str, dict[str, str]]) -> list[str]:
+    """``controls_sha256`` is MANDATORY (manifest or attestation): a control file without a declared hash, with conflicting declarations or with a hash that is not
+    the file's own is a structural defect (the file might be another control set, e.g. controls-2, not the one the manifest describes)."""
+    errs: list[str] = []
+    for lf in logical_files:
+        if lf not in files:
+            continue
+        s = src.get(lf, {})
+        if not s:
+            errs.append(f"{lf}: no declared SHA-256 (controls_sha256 is REQUIRED: the manifest of the builder writes it, older artifacts need the read-only --attest step)")
+        elif len(set(s.values())) > 1:
+            errs.append(f"{lf}: conflicting declared SHA-256 values {sorted(s)} (manifest vs attestation)")
+        elif next(iter(s.values())) != files[lf]["sha256"]:
+            errs.append(f"{lf}: declared sha256 ({', '.join(sorted(s))}) does not match the file (the control set is not the one that was manifested / attested; controls-2 and controls-3 are never mixed)")
+    return errs
+
+
+def attest(prereg: Prereg, root: Path, out: Path, markets: list[str]) -> int:
+    """READ-ONLY attestation for controls artifacts whose manifest predates ``controls_sha256``: hashes the file bytes of the current control files and writes
+    ``<out>/observer_controls_attestation.json`` (never into ``--root``: the artifacts stay byte-identical, nothing is recomputed). It is a pin (trust on first
+    attest, tamper-evident afterwards: any change of a hashed file or of the manifest breaks the preflight); it does not prove WHO built the files. An existing
+    attestation is never overwritten with different content (exit code 6)."""
+    ent: dict[str, Any] = {}
+    for m in markets:
+        scope = market_scope(prereg, m)
+        mp = resolve_file(root, m, MANIFEST_NAME)
+        names = ["controls.parquet"] + (["controls_b.parquet"] if scope == "core" else [])
+        paths = {n: resolve_file(root, m, n) for n in names}
+        missing = [str(p) for p in (mp, *paths.values()) if not p.is_file()]
+        if missing:
+            print(f"ATTEST REFUSED {m}: not found: {missing}")
+            return EXIT_ATTEST
+        try:
+            man = json.loads(mp.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as e:
+            print(f"ATTEST REFUSED {m}: manifest is not valid JSON: {e}")
+            return EXIT_ATTEST
+        if not isinstance(man, dict) or man.get("control_method_version") != prereg.spec["controls"]["required_method_version"]:
+            print(f"ATTEST REFUSED {m}: control_method_version {man.get('control_method_version') if isinstance(man, dict) else None!r} != required {prereg.spec['controls']['required_method_version']!r} (only controls-3 is attested)")
+            return EXIT_ATTEST
+        ent[m] = {"manifest_sha256": file_sha256(mp), "control_method_version": man["control_method_version"],
+                  "files": {n: {"path": str(p.relative_to(root)).replace("\\", "/"), "sha256": file_sha256(p), "bytes": p.stat().st_size} for n, p in paths.items()}}
+    prev = load_attestation(out) or {"attest_version": ATTEST_VERSION, "attested_utc": datetime.now(UTC).isoformat(timespec="seconds"), "markets": {}}
+    for m, e in ent.items():
+        if m in prev["markets"] and prev["markets"][m] != e:
+            print(f"ATTEST REFUSED {m}: an attestation with different content already exists in {Path(out) / ATTEST_FILE} (never overwritten)")
+            return EXIT_ATTEST
+        prev["markets"][m] = e
+    prev["markets"] = dict(sorted(prev["markets"].items()))
+    Path(out).mkdir(parents=True, exist_ok=True)
+    (Path(out) / ATTEST_FILE).write_text(json.dumps(prev, indent=1), encoding="utf-8")
+    print(f"ATTESTED {', '.join(ent)} -> {Path(out) / ATTEST_FILE}")
+    return 0
+
+
+def preflight(prereg: Prereg, root: Path, stage: str, markets: list[str], attestation: dict[str, Any] | None = None) -> dict[str, Any]:
     """Counts and manifests only. Never registers anything, never evaluates an outcome. Structural defects -> ``ok`` False; a failed balance gate is NOT a
     defect: that market is then ``descriptive_only`` (preregistered fallback)."""
     s = prereg.spec
@@ -401,7 +582,7 @@ def preflight(prereg: Prereg, root: Path, stage: str, markets: list[str]) -> dic
             if missing:
                 errs.append(f"{fname}: columns missing {missing[:5]}")
         mp = resolve_file(root, m, MANIFEST_NAME)
-        entry, man_sha, man_version = None, None, None
+        entry, man_sha, man_version, hash_src = None, None, None, {}
         if not mp.is_file():
             errs.append(f"{MANIFEST_NAME} not found (controls-3 manifest is required)")
         else:
@@ -413,11 +594,21 @@ def preflight(prereg: Prereg, root: Path, stage: str, markets: list[str]) -> dic
                 errs.append(f"{MANIFEST_NAME} is not valid JSON: {e}")
             if man is not None:
                 man_version = man.get("control_method_version") if isinstance(man, dict) else None
-                entry, merrs = _check_manifest(prereg, man, part)
+                entry, merrs = _check_manifest(prereg, man, part, market=m)
                 errs += merrs
-                declared = man.get("controls_sha256") if isinstance(man, dict) else None
-                if declared is not None and "controls.parquet" in files and declared != files["controls.parquet"]["sha256"]:
-                    errs.append("manifest controls_sha256 does not match controls.parquet (the control set is not the one the manifest describes)")
+                att = ((attestation or {}).get("markets") or {}).get(m)
+                if att is not None and att.get("manifest_sha256") not in (None, man_sha):
+                    errs.append("the manifest changed since it was attested (manifest_sha256 of the attestation differs)")
+                src, herrs = hash_sources(root, m, man, att)
+                errs += herrs + hash_errors(["controls.parquet"] + (["controls_b.parquet"] if scope == "core" else []), files, src)
+                hash_src = {k: sorted(v) for k, v in src.items() if v}
+                mb = resolve_file(root, m, "controls_b_manifest.json")
+                if scope == "core" and mb.is_file():
+                    try:
+                        _, berrs = _check_manifest(prereg, json.loads(mb.read_text(encoding="utf-8")), part, market=m, control_set="b")
+                        errs += [e for e in berrs if "balance_gate" not in e]  # B is only used as the A/A partner: provenance (version / set / market), not its own balance gate
+                    except json.JSONDecodeError:
+                        pass  # reported by hash_sources
                 nbg = normalize_balance_gate(s["controls"]["balance"], man.get("balance_gate", {})) if isinstance(man, dict) else {}
                 for fp_, ent in (nbg.items() if isinstance(nbg, dict) and "__adapter_error__" not in nbg else ()):
                     if isinstance(ent, dict) and isinstance(ent.get("n_controls"), int) and "controls.parquet" in files:
@@ -427,7 +618,10 @@ def preflight(prereg: Prereg, root: Path, stage: str, markets: list[str]) -> dic
         obs = None
         if "table.parquet" in files and "controls.parquet" in files and files["table.parquet"]["n_stage"] and files["controls.parquet"]["n_stage"]:
             ev, ct = files["table.parquet"], files["controls.parquet"]
-            obs = 100.0 * (ev["n_stage_censored"] / ev["n_stage"] - ct["n_stage_censored"] / ct["n_stage"])
+            if s["controls"]["balance"].get("censoring_denominator") == "matched_pairs":  # prereg-3: ONE denominator, identical to the builder gate
+                obs = matched_censoring_diff_pp(resolve_file(root, m, "table.parquet"), resolve_file(root, m, "controls.parquet"), label, part)
+            else:  # prereg-2: all stage events vs all stage controls (differs from the builder's matched-pairs share; see docs/OBSERVER_GATE_C_PREREGISTRATION_V3.md)
+                obs = 100.0 * (ev["n_stage_censored"] / ev["n_stage"] - ct["n_stage_censored"] / ct["n_stage"])
         thr = s["controls"]["balance"]
         status = "descriptive_only"
         if not errs and entry is not None:
@@ -440,7 +634,7 @@ def preflight(prereg: Prereg, root: Path, stage: str, markets: list[str]) -> dic
             "scope": scope, "ok": not errs, "errors": errs, "status": status, "manifest_sha256": man_sha, "control_method_version": man_version, "balance_gate": entry,
             "observed_censoring_diff_pp": obs, "n_stage_events": files.get("table.parquet", {}).get("n_stage"), "n_stage_controls": files.get("controls.parquet", {}).get("n_stage"),
             "data_fingerprint": data_fp, "files": {k: {kk: v[kk] for kk in ("sha256", "rows", "schema_sha256", "partition_counts")} for k, v in files.items()},
-            "has_controls_b": "controls_b.parquet" in files, "has_controls_v2": "controls_v2.parquet" in files,
+            "has_controls_b": "controls_b.parquet" in files, "has_controls_v2": "controls_v2.parquet" in files, "hash_sources": hash_src,
         }
         if errs:
             out["ok"] = False
@@ -553,6 +747,17 @@ def shifted_labels(df: pd.DataFrame, label: str, part: str, tol_s: int) -> tuple
     return out, cov
 
 
+def _block_fn(task: dict[str, Any], event_days: np.ndarray) -> Any:
+    """Block id of a day ordinal for the ad-hoc bootstraps (NC-A base delta, NC-C bridge): the day itself under observer-stats-2, the contiguous block of
+    >= ``block_len_days`` trading days under observer-stats-3 (same mapping the enrichment uses)."""
+    from coverage_analysis.observer_lab import stats as ST
+
+    if task["stats"]["version"] != ST.STATS_V3:
+        return lambda x: np.asarray(x)
+    mp = ST.contiguous_day_blocks(event_days, int(task["stats"]["block_len_days"]))
+    return lambda x: np.asarray([mp[d] for d in np.asarray(x).tolist()], dtype="int64")
+
+
 def run_market(task: dict[str, Any]) -> dict[str, Any]:
     """Evaluate every contrast of ONE market for ONE stage. Pure function of ``task`` and the Parquet files; no registry, no shared state."""
     from dataclasses import replace
@@ -567,8 +772,10 @@ def run_market(task: dict[str, Any]) -> dict[str, Any]:
     me = task["min_evidence"]
     cfg = EN.EnrichmentConfig(
         n_quantiles=task["n_quantiles"], min_evidence=ST.MinEvidence(me["events"], me["controls"], me["blocks"], 20), B=task["B"], seed=task["seed"], alpha=task["alpha"],
-        adjust=task["adjust"], adjust_scope="family", p_method="bootstrap", day_col=DAY_COL, stats_version=ST.STATS_V2, block_unit="day",
+        adjust=task["adjust"], adjust_scope="family", p_method="bootstrap", day_col=DAY_COL, stats_version=task["stats"]["version"], block_unit=task["stats"]["block_unit"],
+        block_len_days=int(task["stats"].get("block_len_days", ST.MIN_BLOCK_TRADING_DAYS)),
     )
+    stats3 = task["stats"]["version"] == ST.STATS_V3
     ev = df[(~df["is_control"]) & (df["partition"] == part) & df["warmup_ok"]]
     given = _defs_from_json(task["cell_defs"]) if task.get("cell_defs") is not None else None
     defs: dict[str, Any] = {}
@@ -602,8 +809,9 @@ def run_market(task: dict[str, Any]) -> dict[str, Any]:
     if main_items and len(ev):
         res = _ablate(df, main_items, defs, cfg, label, task["purpose"], f"{market}-{stage}-main")
         wk_items = [c for c in main_items if c["kind"] == "hyp"]
-        if wk_items:  # week-block sensitivity (descriptive, never part of the correction): same contrasts, blocks = ISO weeks of the event day
-            wres = _ablate(df, wk_items, defs, replace(cfg, block_unit="week", B=task["B_week"]), label, task["purpose"], f"{market}-{stage}-week")
+        if wk_items:  # sensitivity (descriptive, never part of the correction): stats-2: ISO-week blocks of the event day; stats-3: LONGER contiguous blocks (``sensitivity_block_len_days``)
+            scfg = replace(cfg, block_len_days=int(task["stats"]["sensitivity_block_len_days"]), B=task["B_week"]) if stats3 else replace(cfg, block_unit="week", B=task["B_week"])
+            wres = _ablate(df, wk_items, defs, scfg, label, task["purpose"], f"{market}-{stage}-week")
             for i, w in wres.items():
                 res[i].update({"week_ci_low": w["ci_low"], "week_ci_high": w["ci_high"], "week_p_boot": w["p_boot"], "week_n_blocks_event": w["n_blocks_event"]})
         rows += list(res.values())
@@ -619,9 +827,10 @@ def run_market(task: dict[str, Any]) -> dict[str, Any]:
             res_a = _ablate(frame_a, a_items, defs, cfg, label, task["purpose"], f"{market}-{stage}-nca")
             rows += list(res_a.values())
             pe, cc = frame_a[~frame_a["is_control"] & frame_a["warmup_ok"]], frame_a[frame_a["is_control"]]
-            blk = dict(zip(pe["event_id"], pe[DAY_COL], strict=True))
+            bf = _block_fn(task, pe[DAY_COL].to_numpy())  # stats-2: the day itself; stats-3: contiguous block of >= 21 trading days (controls follow their event)
+            blk = dict(zip(pe["event_id"], bf(pe[DAY_COL].to_numpy()), strict=True))
             cc = cc[cc["control_of"].isin(blk)]
-            est = ST.block_bootstrap_delta(pe[label].to_numpy(), pe[DAY_COL].to_numpy(), cc[label].to_numpy(), np.asarray([blk.get(e, -1) for e in cc["control_of"]]), B=task["B"],
+            est = ST.block_bootstrap_delta(pe[label].to_numpy(), bf(pe[DAY_COL].to_numpy()), cc[label].to_numpy(), np.asarray([blk.get(e, -1) for e in cc["control_of"]]), B=task["B"],
                                            seed=(task["seed"] + 17) & 0x7FFFFFFF, alpha=task["nc_base_alpha"])
             if est.n_nan_draws:
                 raise NanBootstrapAbort(f"{market}-{stage}-nca-base: {est.n_nan_draws} NaN bootstrap draw(s)")
@@ -663,9 +872,10 @@ def bridge_controls(task: dict[str, Any], df: pd.DataFrame, ev: pd.DataFrame, co
     c3 = df[df["is_control"] & (df["partition"] == part)]
     both = set(c3["control_of"]) & set(c2["control_of"]) & set(ev["event_id"])
     e, c3, c2 = ev[ev["event_id"].isin(both)], c3[c3["control_of"].isin(both)], c2[c2["control_of"].isin(both)]
-    day = dict(zip(e["event_id"], e[DAY_COL], strict=True))
+    bf = _block_fn(task, e[DAY_COL].to_numpy())
+    day = dict(zip(e["event_id"], bf(e[DAY_COL].to_numpy()), strict=True))
     d3, d2 = np.asarray([day[x] for x in c3["control_of"]]), np.asarray([day[x] for x in c2["control_of"]])
-    ye, de = e[label].to_numpy(), e[DAY_COL].to_numpy()
+    ye, de = e[label].to_numpy(), bf(e[DAY_COL].to_numpy())
     est = ST.block_bootstrap_contrast((ye, de, c3[label].to_numpy(), d3), (ye, de, c2[label].to_numpy(), d2), B=task["B"], seed=(task["seed"] + 29) & 0x7FFFFFFF, alpha=task["alpha"])
     cens3 = float(c3[label].isna().mean()) if len(c3) else float("nan")
     cens2 = float(c2[label].isna().mean()) if len(c2) else float("nan")
@@ -684,18 +894,19 @@ def required_columns_from_task(task: dict[str, Any]) -> list[str]:
 
 
 # ---------------------------------------------------------------------------------------------- plan / registry / cache / lock
-def _family(stage: str, scope: str, label: str, kind: str) -> str:
-    return f"gatec2|{stage}|{scope}|{label}|{ {'hyp': 'all', 'nc': 'ctrl', 'nc_a': 'nc_a', 'nc_b': 'nc_b'}[kind] }"
+def _family(nsp: str, stage: str, scope: str, label: str, kind: str) -> str:
+    return f"{nsp}|{stage}|{scope}|{label}|{ {'hyp': 'all', 'nc': 'ctrl', 'nc_a': 'nc_a', 'nc_b': 'nc_b'}[kind] }"
 
 
-def _name(stage: str, market: str, label: str, kind: str, item: dict[str, Any]) -> str:
-    return f"gatec2|{stage}|{market}|{label}|{kind}|{item['group']}|{item['feature']}|{item['cell']}"
+def _name(nsp: str, stage: str, market: str, label: str, kind: str, item: dict[str, Any]) -> str:
+    return f"{nsp}|{stage}|{market}|{label}|{kind}|{item['group']}|{item['feature']}|{item['cell']}"
 
 
 def build_plan(prereg: Prereg, stage: str, markets: list[str], survivors: list[str] | None, descriptive: frozenset[str] | set[str] = frozenset()) -> list[dict[str, Any]]:
     """[(market x contrast) items]. ``survivors`` (keys ``MARKET|Hxx``) restricts validate / oos to the previous stage's survivors (+ their nc / nc_a / nc_b
     controls). Markets in ``descriptive`` (balance gate failed) get their hypotheses evaluated but they are NOT registered, not in m, never survivors."""
     s = prereg.spec
+    nsp = ns(prereg)
     plan: list[dict[str, Any]] = []
     for m in markets:
         scope = market_scope(prereg, m)
@@ -703,16 +914,31 @@ def build_plan(prereg: Prereg, stage: str, markets: list[str], survivors: list[s
         for h in s["hypotheses"]:
             if survivors is not None and f"{m}|{h['id']}" not in survivors:
                 continue
-            plan.append({**h, "kind": "hyp", "market": m, "scope": scope, "descriptive": desc, "key": f"{m}|{h['id']}", "name": _name(stage, m, s["label"], "hyp", h), "family": None if desc else _family(stage, scope, s["label"], "hyp")})
+            plan.append({**h, "kind": "hyp", "market": m, "scope": scope, "descriptive": desc, "key": f"{m}|{h['id']}", "name": _name(nsp, stage, m, s["label"], "hyp", h), "family": None if desc else _family(nsp, stage, scope, s["label"], "hyp")})
             if scope == "core" and not desc:
                 for kind, pre in (("nc_a", "A_"), ("nc_b", "B_")):
                     ih = {**h, "id": pre + h["id"], "sign": 0}
-                    plan.append({**ih, "kind": kind, "market": m, "scope": scope, "descriptive": False, "key": f"{m}|{ih['id']}", "name": _name(stage, m, s["label"], kind, ih), "family": _family(stage, scope, s["label"], kind)})
+                    plan.append({**ih, "kind": kind, "market": m, "scope": scope, "descriptive": False, "key": f"{m}|{ih['id']}", "name": _name(nsp, stage, m, s["label"], kind, ih), "family": _family(nsp, stage, scope, s["label"], kind)})
         if desc or (survivors is not None and not any(k.startswith(m + "|") for k in survivors)):
             continue
         for h in s["negative_controls"]:
-            plan.append({**h, "kind": "nc", "market": m, "scope": scope, "descriptive": False, "key": f"{m}|{h['id']}", "name": _name(stage, m, s["label"], "nc", h), "family": _family(stage, scope, s["label"], "nc")})
+            plan.append({**h, "kind": "nc", "market": m, "scope": scope, "descriptive": False, "key": f"{m}|{h['id']}", "name": _name(nsp, stage, m, s["label"], "nc", h), "family": _family(nsp, stage, scope, s["label"], "nc")})
     return plan
+
+
+def confirmatory_eligibility(stage: str, plan: list[dict[str, Any]], markets: list[str], descriptive: set[str] | frozenset[str]) -> list[dict[str, Any]]:
+    """ORDER OF DECISIONS (fixed): 1. balance eligibility per market (preflight: ``descriptive`` = gate not passed) -> 2. THIS check: is any CONFIRMATORY test left
+    (a registered hypothesis of a CORE market; explore markets can never confirm, so an eligible BRENT / BTCUSD does not count) -> 3. only then the registry and the
+    fit lock. When nothing is left the stop rule 'no confirmatory test left' fires here: nothing is registered, no lock is taken, the verdict is
+    INCONCLUSIVE_NOT_ASKED (the controls were not good enough to ask the question), which is NOT 'no enrichment'."""
+    items = [p for p in plan if p["kind"] == "hyp" and p["scope"] == "core" and p["family"] is not None]
+    if items:
+        return items
+    if stage == "fit":
+        raise NoConfirmatoryTestLeft(
+            f"no confirmatory test left: no core market is eligible (balance gate not passed -> descriptive_only: {sorted(descriptive & set(markets))}; explore markets never confirm); "
+            f"nothing registered, no fit lock taken. {V_NOT_ASKED} (kein no-enrichment): the controls are not good enough to ask the confirmatory question.")
+    raise StopRule(f"no confirmatory test left: stage {stage!r} has no survivors of the previous stage to replicate; nothing registered")
 
 
 def family_sizes(plan: list[dict[str, Any]]) -> dict[str, int]:
@@ -872,12 +1098,11 @@ def run_stage(a: argparse.Namespace, prereg: Prereg, stage: str, markets: list[s
 
     spec = prereg.spec
     out, root = Path(a.out), Path(a.root)
-    report = load_report(out / f"{REPORT_STEM}.json")
+    report = load_report(out / f"{report_stem(prereg)}.json")
     survivors, prev = previous_survivors(prereg, stage, report, a.confirm_oos_once, out)
     descriptive = {m for m in markets if pre["markets"][m]["status"] != "passed"}
     plan = build_plan(prereg, stage, markets, survivors if stage != "fit" else None, descriptive)
-    if not family_sizes(plan):
-        raise StopRule(f"no confirmatory test left: every requested market is descriptive_only (balance gate not passed: {sorted(descriptive)}) or has no survivors; nothing registered")
+    confirmatory_eligibility(stage, plan, markets, descriptive)  # BEFORE the fit lock and the registry (raises NoConfirmatoryTestLeft / StopRule)
     fams = family_sizes(plan)
     choice = choose_B(prereg, fams)
     label, part, purpose = spec["label"], spec["stages"][stage]["partition"], spec["stages"][stage]["purpose"]
@@ -907,7 +1132,7 @@ def run_stage(a: argparse.Namespace, prereg: Prereg, stage: str, markets: list[s
     for m, items in by_market.items():
         sc = market_scope(prereg, m)
         t = {"market": m, "stage": stage, "label": label, "partition": part, "purpose": purpose, "root": str(root), "B": choice.B, "B_week": min(choice.B, spec["stats"].get("sensitivity_B_max", 4000)),
-             "seed": zlib.crc32(f"gatec2|{stage}|{m}".encode()) & 0x7FFFFFFF, "n_quantiles": spec["test"]["n_quantiles"], "alpha": spec["test"]["alpha"], "adjust": spec["test"]["adjust"],
+             "seed": zlib.crc32(f"{ns(prereg)}|{stage}|{m}".encode()) & 0x7FFFFFFF, "stats": spec["stats"], "n_quantiles": spec["test"]["n_quantiles"], "alpha": spec["test"]["alpha"], "adjust": spec["test"]["adjust"],
              "min_evidence": spec["min_evidence"], "nc_base_alpha": nc_base_alpha, "nc_b_tol_s": 60 * int(spec["placebos"]["nc_b"]["tolerance_minutes"]), "data_fingerprint": pre["markets"][m]["data_fingerprint"],
              "bridge": bool(sc == "explore" and pre["markets"][m]["has_controls_v2"]),
              "contrasts": [{k: h[k] for k in ("id", "group", "feature", "cell", "kind")} for h in items], "cell_defs": None if stage == "fit" else (prev_defs.get(m) or {}).get("cell_defs")}
@@ -915,7 +1140,7 @@ def run_stage(a: argparse.Namespace, prereg: Prereg, stage: str, markets: list[s
             raise StopRule(f"no frozen cell definitions for {m} in the previous stage")
         tasks.append(t)
     # ---- registry: the whole confirmatory stage is registered BEFORE anything is evaluated
-    reg_path = out / REGISTRY_FILE
+    reg_path = out / registry_file(prereg)
     reg = ST.HypothesisRegistry(spec["registry_name"], reg_path)
     existing = registry_recorded(reg_path)
     resumed = register_stage(reg, plan, existing)
@@ -1049,14 +1274,14 @@ def render_md(report: dict[str, Any]) -> str:
 
 def write_report(out: Path, prereg: Prereg, stage: str, stage_res: dict[str, Any]) -> None:
     out.mkdir(parents=True, exist_ok=True)
-    rep = load_report(out / f"{REPORT_STEM}.json")
+    rep = load_report(out / f"{report_stem(prereg)}.json")
     old = (rep.get("stages") or {}).get(stage)
     if old is not None and stage_hash(old) != stage_hash(stage_res):
         raise StopRule(f"the report already holds a stage {stage!r} with different content; a stage result is never overwritten (no best-of-N)")
     rep["prereg"] = {"path": prereg.path, "file_sha256": prereg.file_sha256, "json_sha256": prereg.json_sha256, "version": prereg.spec["prereg_version"]}
     rep.setdefault("stages", {})[stage] = stage_res
-    (out / f"{REPORT_STEM}.json").write_text(json.dumps(_clean(rep), indent=1), encoding="utf-8")
-    (out / f"{REPORT_STEM}.md").write_text(render_md(rep), encoding="utf-8")
+    (out / f"{report_stem(prereg)}.json").write_text(json.dumps(_clean(rep), indent=1), encoding="utf-8")
+    (out / f"{report_stem(prereg)}.md").write_text(render_md(rep), encoding="utf-8")
 
 
 def pin_fit_hash(prereg: Prereg, stage_res: dict[str, Any]) -> None:
@@ -1077,7 +1302,7 @@ def dry_run(a: argparse.Namespace, prereg: Prereg, stage: str, markets: list[str
     survivors: list[str] | None = None
     note = ""
     if stage != "fit":
-        rep = load_report(Path(a.out) / f"{REPORT_STEM}.json")
+        rep = load_report(Path(a.out) / f"{report_stem(prereg)}.json")
         try:
             survivors, _ = previous_survivors(prereg, stage, rep, True, Path(a.out).resolve())
         except StopRule as e:
@@ -1113,6 +1338,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--jobs", type=int, default=2, help=f"worker processes over markets (1..{MAX_JOBS}; 8 GB machine)")
     ap.add_argument("--dry-run", action="store_true", help="print the plan, read no data")
     ap.add_argument("--preflight", action="store_true", help="run only the preflight (counts + controls manifests); registers nothing")
+    ap.add_argument("--attest", action="store_true", help=f"read-only: pin the SHA-256 of the current control files (artifacts whose manifest has no controls_sha256) into <out>/{ATTEST_FILE}; nothing in --root is written")
     ap.add_argument("--force", action="store_true", help="recompute the per-market caches (the registry still refuses changed results of registered hypotheses)")
     ap.add_argument("--confirm-oos-once", action="store_true", help="required for --stage oos: the OOS partition is touched exactly once")
     a = ap.parse_args(argv)
@@ -1130,10 +1356,12 @@ def main(argv: list[str] | None = None) -> int:
     if a.stage == "fit" and not set(prereg.spec["markets"]["core"]) <= set(markets):
         ap.error(f"--stage fit needs the full preregistered core set {prereg.spec['markets']['core']} (partial fits are not allowed); explore markets may be added")
     a.out, a.root = str(out), str(root)
+    if a.attest:
+        return attest(prereg, root, out, markets)
     # ---- preflight FIRST: a failure registers nothing and consumes no stop rule
-    pre = preflight(prereg, root, a.stage, markets)
+    pre = preflight(prereg, root, a.stage, markets, load_attestation(out))
     out.mkdir(parents=True, exist_ok=True)
-    (out / f"{PREFLIGHT_STEM}_{a.stage}.json").write_text(json.dumps(_clean(pre), indent=1), encoding="utf-8")
+    (out / f"{preflight_stem(prereg)}_{a.stage}.json").write_text(json.dumps(_clean(pre), indent=1), encoding="utf-8")
     if not pre["ok"]:
         print("PREFLIGHT FAILED (nothing registered, stop rule not consumed):")
         for e in pre["errors"]:
@@ -1147,13 +1375,17 @@ def main(argv: list[str] | None = None) -> int:
         write_report(out, prereg, a.stage, res)
         if a.stage == "fit":
             pin_fit_hash(prereg, res)
+    except NoConfirmatoryTestLeft as e:
+        print(f"STOP: {e}")
+        print(f"{V_NOT_ASKED} (kein no-enrichment): no registry written, no fit lock taken")
+        return EXIT_STOP
     except StopRule as e:
         print(f"STOP: {e}")
         return EXIT_STOP
     except NanBootstrapAbort as e:
         print(f"ABORT (NaN bootstrap draws): {e}")
         return EXIT_NAN
-    print(f"stage {a.stage}: {res['verdict']}; survivors: {res['survivors'] or 'none'}; B={res['B']}; report -> {out / (REPORT_STEM + '.md')}")
+    print(f"stage {a.stage}: {res['verdict']}; survivors: {res['survivors'] or 'none'}; B={res['B']}; report -> {out / (report_stem(prereg) + '.md')}")
     return 0
 
 

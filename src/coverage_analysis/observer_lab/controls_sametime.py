@@ -194,7 +194,9 @@ def balance_gate(pairs: pd.DataFrame, n_events_by_partition: dict[str, int], par
     (over the matched events / their controls). Reads covariates and label AVAILABILITY only, never a feature-vs-label distribution.
     Verdict per partition: PASS | FAIL | INSUFFICIENT_N (< 20 events) | NO_EVENTS; market status ``descriptive_only`` as soon as one partition with events is not PASS."""
     out: dict = {"gate_version": GATE_VERSION, "thresholds": {"match_rate_min": GATE_MATCH_RATE_MIN, "smd_abs_max": GATE_SMD_MAX, "session_share_diff_max": GATE_SESSION_DIFF_MAX,
-                                                              "censored_share_diff_max": GATE_CENSOR_DIFF_MAX, "min_events": GATE_MIN_EVENTS}, "partitions": {}}
+                                                              "censored_share_diff_max": GATE_CENSOR_DIFF_MAX, "min_events": GATE_MIN_EVENTS},
+                 # unit / denominator of ``censored_share`` (shared contract with the Gate C preflight): fractions in [0, 1]; computed over the MATCHED pairs (one row per control joined to its event)
+                 "censored_share_unit": "fraction", "censored_share_denominator": "matched_pairs", "partitions": {}}
     any_not_pass = False
     any_pass = False
     for p in partitions:

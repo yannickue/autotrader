@@ -58,6 +58,25 @@ DEFAULT_MIN_EVIDENCE = MinEvidence()
 
 STATS_LEGACY = "observer-stats-1"  # blocks: union of both arms; controls blocked by their OWN decision day
 STATS_V2 = "observer-stats-2"  # blocks counted PER ARM (>= min_blocks in the event arm AND in the control arm); controls blocked by the day of their EVENT
+# observer-stats-3 = stats-2 (per-arm counts, controls take the block of their EVENT) with CONTIGUOUS blocks of >= MIN_BLOCK_TRADING_DAYS trading days instead of single days.
+# Why: a control sits up to +-10 trading days from its event (observer-controls-3) and controls of neighbouring events share label windows; a single-day (or
+# single-week) block therefore is NOT an independent unit. Blocks of >= 21 trading days (= 2 x 10 + 1) leave dependence only at the block edges.
+STATS_V3 = "observer-stats-3"
+MIN_BLOCK_TRADING_DAYS = 21
+STATS_VERSIONS = (STATS_LEGACY, STATS_V2, STATS_V3)
+PER_ARM_STATS = (STATS_V2, STATS_V3)  # versions that count blocks per arm
+
+
+def contiguous_day_blocks(days, block_len: int = MIN_BLOCK_TRADING_DAYS) -> dict:
+    """observer-stats-3 block assignment: map every distinct day ordinal to a block id. The distinct days are sorted and cut into consecutive runs of ``block_len``
+    trading days (the days present in the data); a trailing remainder shorter than ``block_len`` is merged into the previous block, so EVERY block holds
+    >= ``block_len`` days (a single block when there are fewer days). The mapping depends on the days only, never on a cell, a label or an arm. Days that
+    contain no event but lie between two event days only make a block longer in calendar time, never shorter in trading days."""
+    if block_len < MIN_BLOCK_TRADING_DAYS:
+        raise ValueError(f"observer-stats-3 needs blocks of >= {MIN_BLOCK_TRADING_DAYS} trading days, got {block_len}")
+    uniq = np.unique(np.asarray(days))
+    n_blocks = max(1, len(uniq) // block_len)
+    return {d: min(i // block_len, n_blocks - 1) for i, d in enumerate(uniq.tolist())}
 
 
 def evidence_status(
