@@ -1,9 +1,10 @@
 # Phase-2 enablement switch. BOTH must hold for a market to be handed to the DEMO stack:
 #   1. enabled = true here (flipped by the lead, only after the technical preflight is GREEN), AND
 #   2. markets.preflight.run_preflight(...) verdict == GREEN on probe data (code re-checks; a flag alone is never enough).
-# DEMO only. No real-money path exists. Both default to false.
+# DEMO only. No real-money path exists. 2026-10-01: both flipped to true by the lead (user approval in chat) after a fresh GREEN
+# probe verdict and Opus/Gemini audits; PHASE2_DISCOVERY / NOT_ALPHA_VALIDATED.
 [BRENT]
-enabled = false
+enabled = true
 
 [BTCUSD]
-enabled = false
+enabled = true

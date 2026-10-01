@@ -337,12 +337,23 @@ def runner_supports_daily(base_cmd: Sequence[str], cwd: Path) -> bool:
     return "--daily" in (out.stdout + out.stderr)
 
 
+PRODUCTION_RUNNER_FLAGS: tuple[str, ...] = (
+    "--exit-policy", "staged_profiles",
+    "--shadow-exit-lab",
+    "--shadow-universe", "all-ready",
+)
+
+
 def build_runner_cmd(python: str, repo_root: Path, artifacts: Path, account_phase: str, daily: bool) -> list[str]:
     cmd = [python, str(repo_root / "scripts" / "demo_trader.py"), "--demo-auto",
            f"--confirm-demo-auto={CONFIRMATION}", "--artifacts", str(artifacts),
            "--account-phase", account_phase]
     if daily:
         cmd.append("--daily")
+    # Production configuration decided at the controlled deployment (2026-10-01, user approval variant A; any change needs a commit
+    # + deploy re-approval): chart-based exit profiles (Lane Y; real-broker canary base/b1/b2/b3 PASSED), forward shadow exit lab
+    # (Lane W) and the broad SHADOW universe (Lane U/U2). fixed_1_5r stays baseline/fallback for FIXED-mapped families and in the lab.
+    cmd.extend(PRODUCTION_RUNNER_FLAGS)
     return cmd
 
 

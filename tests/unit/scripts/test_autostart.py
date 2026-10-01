@@ -255,8 +255,9 @@ def test_production_runner_command() -> None:
     cmd = sup.build_runner_cmd("PY", Path("R"), Path("A"), "ALPHA_EXECUTION_DISCOVERY", daily=False)
     assert cmd == ["PY", str(Path("R") / "scripts" / "demo_trader.py"), "--demo-auto",
                    "--confirm-demo-auto=I-AUTHORIZE-ACTIVTRADES-DEMO-TRADING-ONLY", "--artifacts", "A",
-                   "--account-phase", "ALPHA_EXECUTION_DISCOVERY"]
-    assert sup.build_runner_cmd("PY", Path("R"), Path("A"), "X", daily=True)[-1] == "--daily"
+                   "--account-phase", "ALPHA_EXECUTION_DISCOVERY", *sup.PRODUCTION_RUNNER_FLAGS]
+    daily = sup.build_runner_cmd("PY", Path("R"), Path("A"), "X", daily=True)
+    assert "--daily" in daily and daily[-len(sup.PRODUCTION_RUNNER_FLAGS):] == list(sup.PRODUCTION_RUNNER_FLAGS)
 
 
 def test_daily_detection_via_help() -> None:

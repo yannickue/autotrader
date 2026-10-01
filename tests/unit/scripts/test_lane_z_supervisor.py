@@ -166,14 +166,19 @@ def test_M5_the_supervisor_loop_counts_start_failures_separately(tmp_path: Path)
 
 
 # ------------------------------------------------------------------------------------------ M2: explicit --daily
-def test_M2_the_production_launch_command_contains_daily_and_never_exit_policy_staged(tmp_path: Path) -> None:
+def test_M2_the_production_launch_command_contains_daily_and_the_approved_exit_policy(tmp_path: Path) -> None:
     assert sup._parser().parse_args([]).daily == "on"  # default ON, not a --help probe
     log = tmp_path / "logs"
     rc = sup.main(["--dry-run", "--ignore-operating-day", "--artifacts", str(tmp_path / "a"), "--log-dir", str(log)])
     assert rc == 0
     text = next(log.glob("trader_*.log")).read_text(encoding="utf-8")
     plan = json.loads(text.split("DRY RUN: ", 1)[1].splitlines()[0])
-    assert "--daily" in plan["runner_cmd"] and "--exit-policy" not in plan["runner_cmd"] and "staged" not in plan["runner_cmd"]
+    cmd = plan["runner_cmd"]
+    assert "--daily" in cmd
+    # Deployment decision 2026-10-01 (user approval, variant A): chart-based exit profiles after the real-broker canary PASS. The legacy
+    # plain `staged` policy and fixed_1_5r-by-omission are NOT the production setting.
+    assert cmd[cmd.index("--exit-policy") + 1] == "staged_profiles" and "staged" not in cmd
+    assert "--shadow-exit-lab" in cmd and cmd[cmd.index("--shadow-universe") + 1] == "all-ready"
 
 
 def test_M2_the_launcher_and_the_task_pass_daily_on_explicitly() -> None:

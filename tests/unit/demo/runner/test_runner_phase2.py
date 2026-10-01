@@ -29,12 +29,29 @@ def _factory(record):
 
 
 # ------------------------------------------------------------------------------- opt-in wiring / double gate
-def test_default_runner_is_the_five_markets_on_the_frozen_v1_spec(tmp_path):
+def _flags_off(monkeypatch):
+    import markets.phase2 as p2
+
+    monkeypatch.setattr(p2, "load_enablement", lambda config_dir=None: {"BRENT": False, "BTCUSD": False})
+
+
+def test_default_runner_with_the_flags_off_is_the_five_markets_on_the_frozen_v1_spec(tmp_path, monkeypatch):
+    _flags_off(monkeypatch)  # the safe fallback: both flags off -> five core markets, v1 bit-identical
     seen: list = []
     r = rn.build_live_runner("shadow", artifacts_dir=tmp_path / "a", stack_factory=_factory(seen), learning=False)
     try:
         assert set(r.cfg.markets) == set(CORE) and set(seen[0]) == set(CORE)
         assert r.engine.strategy_hash == "c3eae99e782888ac"  # v1, bit-identical
+    finally:
+        r.store.close()
+
+
+def test_default_runner_with_the_committed_production_enablement_is_the_seven_markets_on_spec_v1_2(tmp_path):
+    seen: list = []
+    r = rn.build_live_runner("shadow", artifacts_dir=tmp_path / "a", stack_factory=_factory(seen), learning=False)
+    try:
+        assert set(r.cfg.markets) == set(CORE) | {"BTCUSD", "BRENT"} and set(seen[0]) >= set(CORE)
+        assert r.engine.strategy_hash == "70e323157664552d"  # v1.2 (all four STRUCT variants ACTIVE_DISCOVERY_ELIGIBLE)
     finally:
         r.store.close()
 
@@ -50,7 +67,8 @@ def test_enabled_phase2_market_extends_the_universe_with_the_v1_2_superset(tmp_p
         r.store.close()
 
 
-def test_explicit_market_list_cannot_bypass_the_enablement_flag(tmp_path):
+def test_explicit_market_list_cannot_bypass_the_enablement_flag(tmp_path, monkeypatch):
+    _flags_off(monkeypatch)
     with pytest.raises(rn.LiveStackRefused, match="not enabled"):
         rn.build_live_runner("shadow", artifacts_dir=tmp_path / "a", stack_factory=_factory([]), markets=("GER40", "BRENT"))
     with pytest.raises(rn.LiveStackRefused, match="unknown Phase-2"):

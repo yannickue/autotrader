@@ -1,13 +1,11 @@
 {
- "evaluated_at_probe": "2026-09-30T21:04:07.655960+00:00",
+ "evaluated_at_probe": "2026-10-01T03:32:57.967087+00:00",
  "probe_mode": "probe",
  "verdicts": {
   "BRENT": {
    "market": "BRENT",
-   "verdict": "RED",
-   "reasons": [
-    "quote_fresh: FAIL - quote age 270s > 30s (market closed or stale)"
-   ],
+   "verdict": "GREEN",
+   "reasons": [],
    "checks": [
     {
      "id": "account_demo_bound",
@@ -26,8 +24,8 @@
     },
     {
      "id": "quote_fresh",
-     "status": "FAIL",
-     "detail": "quote age 270s > 30s (market closed or stale)"
+     "status": "PASS",
+     "detail": "age 5.0s, bid=97.14 ask=97.2, distinct ticks=13"
     },
     {
      "id": "contract_facts",
@@ -37,12 +35,12 @@
     {
      "id": "margin_calc",
      "status": "PASS",
-     "detail": "min-lot margin 86.32 EUR at 97.78: implied leverage 9.99x >= spec 10.0x, <= 30x"
+     "detail": "min-lot margin 85.86 EUR at 97.2: implied leverage 9.98x >= spec 10.0x, <= 30x"
     },
     {
      "id": "structural_sl_vs_stops_level",
      "status": "PASS",
-     "detail": "stops_level=0.05 freeze_level=0.0 spread=0.0700 leave headroom for a structural stop of 1.0 (no stop is tightened to fit)"
+     "detail": "stops_level=0.05 freeze_level=0.0 spread=0.0600 leave headroom for a structural stop of 1.0 (no stop is tightened to fit)"
     },
     {
      "id": "protection_path",
@@ -62,7 +60,7 @@
     {
      "id": "cost_model_enabled",
      "status": "PASS",
-     "detail": "rates_m1_recorded_spread: median 0.0600, p95 0.0600 <= cap 0.1; movement_to_cost 12.5 at the reference stop; commission unverified_assumed_zero, swap not modelled (forced flat)"
+     "detail": "rates_m1_recorded_spread: median 0.0600, p95 0.0600 <= cap 0.08; movement_to_cost 12.5 at the reference stop; commission unverified_assumed_zero, swap not modelled (forced flat)"
     },
     {
      "id": "no_index_specific_hardcoding",
@@ -74,14 +72,14 @@
     "broker_symbol": "Brent",
     "cluster": "ENERGY",
     "probe_mode": "probe",
-    "probe_retrieved_at": "2026-09-30T21:04:07.655960+00:00",
-    "calc_price": 97.78,
-    "margin_min_lot_eur": 86.32,
-    "notional_min_lot_eur": 862.2438671013205,
-    "implied_leverage": 9.988923390886475,
-    "margin_lot_1_eur": 8631.71,
-    "profit_100_ticks_lot_1_eur": 882.22,
-    "min_lot_margin_fraction_of_free_margin": 0.0008903668740613601,
+    "probe_retrieved_at": "2026-10-01T03:32:57.967087+00:00",
+    "calc_price": 97.2,
+    "margin_min_lot_eur": 85.86,
+    "notional_min_lot_eur": 857.1293094932332,
+    "implied_leverage": 9.982871063280145,
+    "margin_lot_1_eur": 8585.89,
+    "profit_100_ticks_lot_1_eur": 883.24,
+    "min_lot_margin_fraction_of_free_margin": 0.0008856334290414323,
     "stops_level_price": 0.05,
     "freeze_level_price": 0.0,
     "reference_structural_stop": 1.0,
@@ -93,7 +91,7 @@
      4
     ],
     "observed_gap_patterns": {
-     "wd2 22:55 -> wd3 02:00 (185min)": 9,
+     "wd2 22:55 -> wd3 02:00 (185min)": 10,
      "wd3 22:55 -> wd4 02:00 (185min)": 9,
      "wd4 22:55 -> wd0 00:00 (2945min)": 9,
      "wd1 22:55 -> wd2 02:00 (185min)": 9,
@@ -104,12 +102,12 @@
     "spread_source": "rates_m1_recorded_spread",
     "spread_median_price": 0.06,
     "spread_p95_price": 0.06,
-    "spread_cap_price": 0.1,
+    "spread_cap_price": 0.08,
     "slippage_base_price": 0.02,
     "one_way_cost_price": 0.08,
     "movement_to_cost_at_reference_stop": 12.5,
     "min_lot_risk_eur_at_reference_stop": 8.818202772564128,
-    "per_trade_stop_risk_cap_eur": 4847.4400000000005
+    "per_trade_stop_risk_cap_eur": 4847.378
    }
   },
   "BTCUSD": {
@@ -135,7 +133,7 @@
     {
      "id": "quote_fresh",
      "status": "PASS",
-     "detail": "age -60.0s, bid=83662.78 ask=83746.28, distinct ticks=122"
+     "detail": "age -59.0s, bid=83442.57 ask=83529.88, distinct ticks=138"
     },
     {
      "id": "contract_facts",
@@ -145,12 +143,12 @@
     {
      "id": "margin_calc",
      "status": "PASS",
-     "detail": "min-lot margin 369.69 EUR at 83746.28: implied leverage 2.00x >= spec 2.0x, <= 30x"
+     "detail": "min-lot margin 368.89 EUR at 83529.88: implied leverage 2.00x >= spec 2.0x, <= 30x"
     },
     {
      "id": "structural_sl_vs_stops_level",
      "status": "PASS",
-     "detail": "stops_level=0.0 freeze_level=0.0 spread=83.5000 leave headroom for a structural stop of 500.0 (no stop is tightened to fit)"
+     "detail": "stops_level=0.0 freeze_level=0.0 spread=87.3100 leave headroom for a structural stop of 500.0 (no stop is tightened to fit)"
     },
     {
      "id": "protection_path",
@@ -170,7 +168,7 @@
     {
      "id": "cost_model_enabled",
      "status": "PASS",
-     "detail": "rates_m1_recorded_spread: median 59.8300, p95 68.7100 <= cap 100.0; movement_to_cost 6.2 at the reference stop; commission unverified_assumed_zero, swap not modelled (forced flat)"
+     "detail": "rates_m1_recorded_spread: median 60.7500, p95 69.1100 <= cap 100.0; movement_to_cost 6.1 at the reference stop; commission unverified_assumed_zero, swap not modelled (forced flat)"
     },
     {
      "id": "no_index_specific_hardcoding",
@@ -182,14 +180,14 @@
     "broker_symbol": "BTCUSD",
     "cluster": "CRYPTO",
     "probe_mode": "probe",
-    "probe_retrieved_at": "2026-09-30T21:04:07.655960+00:00",
-    "calc_price": 83746.28,
-    "margin_min_lot_eur": 369.69,
-    "notional_min_lot_eur": 738.4916784879317,
-    "implied_leverage": 1.9975971178228562,
-    "margin_lot_1_eur": 36968.85,
+    "probe_retrieved_at": "2026-10-01T03:32:57.967087+00:00",
+    "calc_price": 83529.88,
+    "margin_min_lot_eur": 368.89,
+    "notional_min_lot_eur": 736.5834194079489,
+    "implied_leverage": 1.9967562672014663,
+    "margin_lot_1_eur": 36888.96,
     "profit_100_ticks_lot_1_eur": 0.88,
-    "min_lot_margin_fraction_of_free_margin": 0.0038132498803492153,
+    "min_lot_margin_fraction_of_free_margin": 0.0038050467696144185,
     "stops_level_price": 0.0,
     "freeze_level_price": 0.0,
     "reference_structural_stop": 500.0,
@@ -206,14 +204,14 @@
      "wd4 22:55 -> wd5 09:00 (605min)": 6
     },
     "spread_source": "rates_m1_recorded_spread",
-    "spread_median_price": 59.83,
-    "spread_p95_price": 68.71000000000001,
+    "spread_median_price": 60.75,
+    "spread_p95_price": 69.11,
     "spread_cap_price": 100.0,
-    "slippage_base_price": 20.63,
-    "one_way_cost_price": 80.46,
-    "movement_to_cost_at_reference_stop": 6.214267959234403,
+    "slippage_base_price": 20.95,
+    "one_way_cost_price": 81.7,
+    "movement_to_cost_at_reference_stop": 6.119951040391677,
     "min_lot_risk_eur_at_reference_stop": 4.409101386282064,
-    "per_trade_stop_risk_cap_eur": 4847.4400000000005
+    "per_trade_stop_risk_cap_eur": 4847.378
    }
   }
  }

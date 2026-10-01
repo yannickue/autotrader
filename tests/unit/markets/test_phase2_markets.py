@@ -85,14 +85,20 @@ def test_demo_market_specs_for_phase2_come_from_their_own_config():
         phase2.demo_market_specs(("GER40",))
 
 
-def test_enablement_defaults_off_and_needs_green_preflight(tmp_path):
-    assert phase2.load_enablement() == {"BRENT": False, "BTCUSD": False}
+def test_enablement_needs_green_preflight_and_fails_closed(tmp_path):
+    # 2026-10-01: the committed file carries the approved production state (both flags on after the GREEN probe + audits)
+    assert phase2.load_enablement() == {"BRENT": True, "BTCUSD": True}
     (tmp_path / "enablement.toml").write_text("[BRENT]\nenabled = true\n[BTCUSD]\nenabled = true\n", encoding="utf-8")
     assert phase2.load_enablement(tmp_path) == {"BRENT": True, "BTCUSD": True}
-    # double gate on the REAL live-probe evidence: both flags on, but only the GREEN market passes (Brent is RED:
-    # stale quote during its daily break)
+    # double gate on the REAL live-probe evidence: both flags on and the fresh probe is GREEN for both
     real = json.loads(EVIDENCE.read_text(encoding="utf-8"))
-    assert phase2.enabled_market_names(run_all(real), tmp_path) == ("BTCUSD",)
+    assert set(phase2.enabled_market_names(run_all(real), tmp_path)) == {"BRENT", "BTCUSD"}
+    # ... but a flag alone is never enough: a RED verdict (e.g. a stale quote) keeps that market out, a GREEN one in
+    from types import SimpleNamespace
+
+    mixed = {"BRENT": SimpleNamespace(verdict="RED"), "BTCUSD": SimpleNamespace(verdict="GREEN")}
+    assert phase2.enabled_market_names(mixed, tmp_path) == ("BTCUSD",)
+    assert phase2.enabled_market_names({"BRENT": SimpleNamespace(verdict="RED")}, tmp_path) == ()
     # flag off -> never enabled, even when GREEN
     (tmp_path / "enablement.toml").write_text("[BRENT]\nenabled = false\n[BTCUSD]\nenabled = false\n", encoding="utf-8")
     assert phase2.enabled_market_names(run_all(real), tmp_path) == ()
@@ -243,13 +249,13 @@ def _status(v, cid):
     return next(c.status for c in v.checks if c.id == cid)
 
 
-def test_preflight_on_the_real_live_probe_brent_red_only_on_stale_quote_btc_green():
+def test_preflight_on_the_real_live_probe_both_green_with_fresh_quotes():
     real = json.loads(EVIDENCE.read_text(encoding="utf-8"))
     assert real["mode"] == "probe"
     verdicts = run_all(real)
     assert verdicts["BTCUSD"].verdict == "GREEN" and verdicts["BTCUSD"].reasons == ()
-    brent = verdicts["BRENT"]
-    assert brent.verdict == "RED" and len(brent.reasons) == 1 and brent.reasons[0].startswith("quote_fresh: FAIL")
+    # fresh probe 2026-10-01 05:33 Berlin (markets open): Brent is no longer RED on the daily-break stale quote
+    assert verdicts["BRENT"].verdict == "GREEN" and verdicts["BRENT"].reasons == ()
     for m, v in verdicts.items():
         for cid in ("account_demo_bound", "symbol_exact_mapped", "tradable", "contract_facts", "margin_calc",
                     "structural_sl_vs_stops_level", "protection_path", "persistence_reconciliation_reports",

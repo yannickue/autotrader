@@ -170,5 +170,6 @@ def test_enablement_rejects_non_boolean_values(tmp_path, bad):
         phase2.load_enablement(tmp_path)
 
 
-def test_committed_enablement_stays_off():
-    assert phase2.load_enablement() == {"BRENT": False, "BTCUSD": False}
+def test_committed_enablement_is_the_approved_production_state():
+    # 2026-10-01 deployment decision (user approval): both Phase-2 markets on, still behind the code-side GREEN preflight gate
+    assert phase2.load_enablement() == {"BRENT": True, "BTCUSD": True}

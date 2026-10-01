@@ -1,15 +1,15 @@
 {
- "retrieved_at": "2026-09-30T21:04:07.655960+00:00",
+ "retrieved_at": "2026-10-01T03:32:57.967087+00:00",
  "mode": "probe",
  "account": {
   "trade_mode": 0,
   "is_demo": true,
   "currency": "EUR",
   "leverage": 30,
-  "balance": 96948.8,
-  "equity": 96948.8,
+  "balance": 96947.56,
+  "equity": 96947.56,
   "margin": 0.0,
-  "margin_free": 96948.8,
+  "margin_free": 96947.56,
   "trade_allowed": true,
   "trade_expert": true,
   "margin_mode": 0,
@@ -36,9 +36,9 @@
     "volume": 0,
     "volumehigh": 0,
     "volumelow": 0,
-    "time": 1790809178,
+    "time": 1790832773,
     "digits": 2,
-    "spread": 7,
+    "spread": 6,
     "spread_float": true,
     "ticks_bookdepth": 0,
     "trade_calc_mode": 4,
@@ -57,12 +57,12 @@
     "order_gtc_mode": 0,
     "option_mode": 0,
     "option_right": 0,
-    "bid": 97.71,
-    "bidhigh": 99.09,
-    "bidlow": 94.98,
-    "ask": 97.78,
-    "askhigh": 99.16,
-    "asklow": 95.04,
+    "bid": 97.14,
+    "bidhigh": 98.25,
+    "bidlow": 97.0,
+    "ask": 97.2,
+    "askhigh": 98.31,
+    "asklow": 97.06,
     "last": 0.0,
     "lasthigh": 0.0,
     "lastlow": 0.0,
@@ -92,14 +92,14 @@
     "session_interest": 0.0,
     "session_buy_orders_volume": 0.0,
     "session_sell_orders_volume": 0.0,
-    "session_open": 95.59,
-    "session_close": 95.53,
+    "session_open": 97.63,
+    "session_close": 97.71,
     "session_aw": 0.0,
     "session_price_settlement": 0.0,
     "session_price_limit_min": 0.0,
     "session_price_limit_max": 0.0,
     "margin_hedged": 200.0,
-    "price_change": 2.282,
+    "price_change": -0.5834,
     "price_volatility": 0.0,
     "price_theoretical": 0.0,
     "price_greeks_delta": 0.0,
@@ -124,30 +124,30 @@
     "path": "Spot Energy\\Brent"
    },
    "tick_now": {
-    "bid": 97.71,
-    "ask": 97.78,
-    "time": 1790809178,
-    "time_msc": 1790809178691,
-    "tick_time_minus_utc_s": 6930,
+    "bid": 97.14,
+    "ask": 97.2,
+    "time": 1790832773,
+    "time_msc": 1790832773040,
+    "tick_time_minus_utc_s": 7195,
     "age_vs_server_clock_s": null
    },
    "calc": {
-    "calc_price": 97.78,
-    "margin_lot_1.0_buy_acct_ccy": 8631.71,
-    "margin_lot_1.0_sell_acct_ccy": 8626.38,
-    "margin_lot_min_buy_acct_ccy": 86.32,
-    "margin_lot_min_sell_acct_ccy": 86.26,
-    "profit_lot_1.0_buy_plus100ticks_acct_ccy": 882.22,
-    "profit_lot_min_buy_plus100ticks_acct_ccy": 8.82,
-    "notional_1lot_quote_ccy": 97780.0
+    "calc_price": 97.2,
+    "margin_lot_1.0_buy_acct_ccy": 8585.89,
+    "margin_lot_1.0_sell_acct_ccy": 8585.13,
+    "margin_lot_min_buy_acct_ccy": 85.86,
+    "margin_lot_min_sell_acct_ccy": 85.85,
+    "profit_lot_1.0_buy_plus100ticks_acct_ccy": 883.24,
+    "profit_lot_min_buy_plus100ticks_acct_ccy": 8.83,
+    "notional_1lot_quote_ccy": 97200.0
    },
    "rates_m1": {
     "available": true,
     "n": 5000,
-    "first_bar_server_epoch": 1790311140,
-    "last_bar_server_epoch": 1790809140,
-    "first_bar_server_clock": "2026-09-25T04:39:00+00:00",
-    "last_bar_server_clock": "2026-09-30T22:59:00+00:00",
+    "first_bar_server_epoch": 1790323920,
+    "last_bar_server_epoch": 1790832720,
+    "first_bar_server_clock": "2026-09-25T08:12:00+00:00",
+    "last_bar_server_clock": "2026-10-01T05:32:00+00:00",
     "spread_points": {
      "n": 5000,
      "min": 5.0,
@@ -162,10 +162,10 @@
    "rates_m5": {
     "available": true,
     "n": 12000,
-    "first_bar_server_epoch": 1785207900,
-    "last_bar_server_epoch": 1790808900,
-    "first_bar_server_clock": "2026-07-28T03:05:00+00:00",
-    "last_bar_server_clock": "2026-09-30T22:55:00+00:00",
+    "first_bar_server_epoch": 1785220800,
+    "last_bar_server_epoch": 1790832600,
+    "first_bar_server_clock": "2026-07-28T06:40:00+00:00",
+    "last_bar_server_clock": "2026-10-01T05:30:00+00:00",
     "spread_points": {
      "n": 12000,
      "min": 3.0,
@@ -180,10 +180,10 @@
    "rates_h1": {
     "available": true,
     "n": 3000,
-    "first_bar_server_epoch": 1773716400,
-    "last_bar_server_epoch": 1790805600,
-    "first_bar_server_clock": "2026-03-17T03:00:00+00:00",
-    "last_bar_server_clock": "2026-09-30T22:00:00+00:00",
+    "first_bar_server_epoch": 1773730800,
+    "last_bar_server_epoch": 1790830800,
+    "first_bar_server_clock": "2026-03-17T07:00:00+00:00",
+    "last_bar_server_clock": "2026-10-01T05:00:00+00:00",
     "spread_points": {
      "n": 3000,
      "min": 3.0,
@@ -197,9 +197,9 @@
    },
    "sessions_m5": {
     "bars": 12000,
-    "gaps_gt_15min": 46,
+    "gaps_gt_15min": 47,
     "gap_patterns_server_clock": {
-     "wd2 22:55 -> wd3 02:00 (185min)": 9,
+     "wd2 22:55 -> wd3 02:00 (185min)": 10,
      "wd3 22:55 -> wd4 02:00 (185min)": 9,
      "wd4 22:55 -> wd0 00:00 (2945min)": 9,
      "wd1 22:55 -> wd2 02:00 (185min)": 9,
@@ -359,10 +359,6 @@
     "bars": 3000,
     "gaps_gt_15min": 2999,
     "gap_patterns_server_clock": {
-     "wd1 03:00 -> wd1 04:00 (60min)": 29,
-     "wd1 04:00 -> wd1 05:00 (60min)": 29,
-     "wd1 05:00 -> wd1 06:00 (60min)": 29,
-     "wd1 06:00 -> wd1 07:00 (60min)": 29,
      "wd1 07:00 -> wd1 08:00 (60min)": 29,
      "wd1 08:00 -> wd1 09:00 (60min)": 29,
      "wd1 09:00 -> wd1 10:00 (60min)": 29,
@@ -396,9 +392,13 @@
      "wd2 18:00 -> wd2 19:00 (60min)": 29,
      "wd2 19:00 -> wd2 20:00 (60min)": 29,
      "wd2 20:00 -> wd2 21:00 (60min)": 29,
-     "wd3 02:00 -> wd3 03:00 (60min)": 28,
-     "wd3 03:00 -> wd3 04:00 (60min)": 28,
-     "wd3 04:00 -> wd3 05:00 (60min)": 28
+     "wd3 02:00 -> wd3 03:00 (60min)": 29,
+     "wd3 03:00 -> wd3 04:00 (60min)": 29,
+     "wd3 04:00 -> wd3 05:00 (60min)": 29,
+     "wd3 05:00 -> wd3 06:00 (60min)": 28,
+     "wd3 06:00 -> wd3 07:00 (60min)": 28,
+     "wd3 07:00 -> wd3 08:00 (60min)": 28,
+     "wd3 08:00 -> wd3 09:00 (60min)": 28
     },
     "weekday_hours_server_clock": {
      "0": {
@@ -561,34 +561,54 @@
     "note": "server clock encoded as UTC epoch; weekday 0=Mon..6=Sun"
    },
    "last_m1_bar": {
-    "server_epoch": 1790809140,
-    "server_clock": "2026-09-30T22:59:00+00:00",
+    "server_epoch": 1790832720,
+    "server_clock": "2026-10-01T05:32:00+00:00",
     "spread_points": 6.0
    },
    "tick_sample": {
     "seconds": 60.0,
-    "n_distinct_ticks": 1,
+    "n_distinct_ticks": 13,
     "spread_points": {
-     "n": 1,
-     "min": 7.000000000000739,
-     "p25": 7.000000000000739,
-     "median": 7.000000000000739,
-     "p75": 7.000000000000739,
-     "p95": 7.000000000000739,
-     "p99": 7.000000000000739,
-     "max": 7.000000000000739
+     "n": 13,
+     "min": 6.000000000000227,
+     "p25": 6.000000000000227,
+     "median": 6.999999999999318,
+     "p75": 7.9999999999998295,
+     "p95": 7.9999999999998295,
+     "p99": 8.00000000000125,
+     "max": 8.00000000000125
     },
-    "first_msc": 1790809178691,
-    "last_msc": 1790809178691,
+    "first_msc": 1790832773040,
+    "last_msc": 1790832837509,
     "bid_range": [
-     97.71,
-     97.71
+     97.08,
+     97.14
     ],
     "sample_head": [
      [
-      1790809178691,
-      97.71,
-      97.78
+      1790832773040,
+      97.14,
+      97.2
+     ],
+     [
+      1790832789429,
+      97.12,
+      97.19
+     ],
+     [
+      1790832796740,
+      97.14,
+      97.21
+     ],
+     [
+      1790832801292,
+      97.12,
+      97.2
+     ],
+     [
+      1790832801730,
+      97.13,
+      97.21
      ]
     ]
    }
@@ -606,9 +626,9 @@
     "volume": 0,
     "volumehigh": 0,
     "volumelow": 0,
-    "time": 1790809508,
+    "time": 1790832837,
     "digits": 2,
-    "spread": 8350,
+    "spread": 8731,
     "spread_float": true,
     "ticks_bookdepth": 0,
     "trade_calc_mode": 2,
@@ -627,12 +647,12 @@
     "order_gtc_mode": 0,
     "option_mode": 0,
     "option_right": 0,
-    "bid": 83662.78,
-    "bidhigh": 85583.76,
-    "bidlow": 82896.99,
-    "ask": 83746.28,
-    "askhigh": 85691.02,
-    "asklow": 82954.28,
+    "bid": 83442.57,
+    "bidhigh": 83771.59,
+    "bidlow": 83325.35,
+    "ask": 83529.88,
+    "askhigh": 83865.0,
+    "asklow": 83396.83,
     "last": 0.0,
     "lasthigh": 0.0,
     "lastlow": 0.0,
@@ -662,14 +682,14 @@
     "session_interest": 0.0,
     "session_buy_orders_volume": 0.0,
     "session_sell_orders_volume": 0.0,
-    "session_open": 83445.77,
-    "session_close": 83438.75,
+    "session_open": 83681.95,
+    "session_close": 83674.09,
     "session_aw": 0.0,
     "session_price_settlement": 0.0,
     "session_price_limit_min": 0.0,
     "session_price_limit_max": 0.0,
     "margin_hedged": 0.2,
-    "price_change": 0.2685,
+    "price_change": -0.2767,
     "price_volatility": 0.0,
     "price_theoretical": 0.0,
     "price_greeks_delta": 0.0,
@@ -694,73 +714,73 @@
     "path": "Cryptocurrency\\BTCUSD"
    },
    "tick_now": {
-    "bid": 83662.78,
-    "ask": 83746.28,
-    "time": 1790809508,
-    "time_msc": 1790809508317,
-    "tick_time_minus_utc_s": 7260,
+    "bid": 83442.57,
+    "ask": 83529.88,
+    "time": 1790832837,
+    "time_msc": 1790832837799,
+    "tick_time_minus_utc_s": 7259,
     "age_vs_server_clock_s": null
    },
    "calc": {
-    "calc_price": 83746.28,
-    "margin_lot_1.0_buy_acct_ccy": 36968.85,
-    "margin_lot_1.0_sell_acct_ccy": 36941.78,
-    "margin_lot_min_buy_acct_ccy": 369.69,
-    "margin_lot_min_sell_acct_ccy": 369.42,
+    "calc_price": 83529.88,
+    "margin_lot_1.0_buy_acct_ccy": 36888.96,
+    "margin_lot_1.0_sell_acct_ccy": 36885.7,
+    "margin_lot_min_buy_acct_ccy": 368.89,
+    "margin_lot_min_sell_acct_ccy": 368.86,
     "profit_lot_1.0_buy_plus100ticks_acct_ccy": 0.88,
     "profit_lot_min_buy_plus100ticks_acct_ccy": 0.01,
-    "notional_1lot_quote_ccy": 83746.28
+    "notional_1lot_quote_ccy": 83529.88
    },
    "rates_m1": {
     "available": true,
     "n": 5000,
-    "first_bar_server_epoch": 1790509560,
-    "last_bar_server_epoch": 1790809500,
-    "first_bar_server_clock": "2026-09-27T11:46:00+00:00",
-    "last_bar_server_clock": "2026-09-30T23:05:00+00:00",
+    "first_bar_server_epoch": 1790532840,
+    "last_bar_server_epoch": 1790832780,
+    "first_bar_server_clock": "2026-09-27T18:14:00+00:00",
+    "last_bar_server_clock": "2026-10-01T05:33:00+00:00",
     "spread_points": {
      "n": 5000,
      "min": 3500.0,
-     "p25": 5272.0,
-     "median": 5983.0,
-     "p75": 6411.0,
-     "p95": 6871.0,
-     "p99": 7165.0,
+     "p25": 5548.0,
+     "median": 6075.0,
+     "p75": 6464.0,
+     "p95": 6911.0,
+     "p99": 7192.0,
      "max": 10468.0
     }
    },
    "rates_m5": {
     "available": true,
     "n": 12000,
-    "first_bar_server_epoch": 1786993800,
-    "last_bar_server_epoch": 1790809500,
-    "first_bar_server_clock": "2026-08-17T19:10:00+00:00",
-    "last_bar_server_clock": "2026-09-30T23:05:00+00:00",
+    "first_bar_server_epoch": 1787016900,
+    "last_bar_server_epoch": 1790832600,
+    "first_bar_server_clock": "2026-08-18T01:35:00+00:00",
+    "last_bar_server_clock": "2026-10-01T05:30:00+00:00",
     "spread_points": {
      "n": 12000,
      "min": 3500.0,
-     "p25": 4093.0,
-     "median": 4725.0,
-     "p75": 5367.0,
-     "p95": 6036.0,
-     "p99": 6604.0,
+     "p25": 4100.0,
+     "median": 4738.0,
+     "p75": 5377.0,
+     "p95": 6045.0,
+     "p99": 6613.0,
      "max": 13481.0
     }
    },
    "rates_h1": {
     "available": true,
     "n": 3000,
-    "first_bar_server_epoch": 1779328800,
-    "last_bar_server_epoch": 1790809200,
-    "first_bar_server_clock": "2026-05-21T02:00:00+00:00",
-    "last_bar_server_clock": "2026-09-30T23:00:00+00:00",
+    "first_bar_server_epoch": 1779350400,
+    "last_bar_server_epoch": 1790830800,
+    "first_bar_server_clock": "2026-05-21T08:00:00+00:00",
+    "last_bar_server_clock": "2026-10-01T05:00:00+00:00",
     "spread_points": {
      "n": 3000,
      "min": 3500.0,
-     "p25": 3530.0,
-     "median": 3790.0,
-     "p75": 4220.0,
-     "p95": 5090.0,
+     "p25": 3531.0,
+     "median": 3795.0,
+     "p75": 4223.0,
+     "p95": 5092.0,
      "p99": 6046.0,
      "max": 12510.0
     }
@@ -988,12 +1008,6 @@
     "bars": 3000,
     "gaps_gt_15min": 2999,
     "gap_patterns_server_clock": {
-     "wd3 02:00 -> wd3 03:00 (60min)": 19,
-     "wd3 03:00 -> wd3 04:00 (60min)": 19,
-     "wd3 04:00 -> wd3 05:00 (60min)": 19,
-     "wd3 05:00 -> wd3 06:00 (60min)": 19,
-     "wd3 06:00 -> wd3 07:00 (60min)": 19,
-     "wd3 07:00 -> wd3 08:00 (60min)": 19,
      "wd3 08:00 -> wd3 09:00 (60min)": 19,
      "wd3 09:00 -> wd3 10:00 (60min)": 19,
      "wd3 10:00 -> wd3 11:00 (60min)": 19,
@@ -1027,7 +1041,13 @@
      "wd4 14:00 -> wd4 15:00 (60min)": 19,
      "wd4 15:00 -> wd4 16:00 (60min)": 19,
      "wd4 16:00 -> wd4 17:00 (60min)": 19,
-     "wd4 17:00 -> wd4 18:00 (60min)": 19
+     "wd4 17:00 -> wd4 18:00 (60min)": 19,
+     "wd4 18:00 -> wd4 19:00 (60min)": 19,
+     "wd4 19:00 -> wd4 20:00 (60min)": 19,
+     "wd4 20:00 -> wd4 21:00 (60min)": 19,
+     "wd4 21:00 -> wd4 22:00 (60min)": 19,
+     "wd4 22:00 -> wd5 09:00 (660min)": 19,
+     "wd5 09:00 -> wd5 10:00 (60min)": 19
     },
     "weekday_hours_server_clock": {
      "0": {
@@ -1243,54 +1263,54 @@
     "note": "server clock encoded as UTC epoch; weekday 0=Mon..6=Sun"
    },
    "last_m1_bar": {
-    "server_epoch": 1790809500,
-    "server_clock": "2026-09-30T23:05:00+00:00",
-    "spread_points": 7614.0
+    "server_epoch": 1790832780,
+    "server_clock": "2026-10-01T05:33:00+00:00",
+    "spread_points": 5910.0
    },
    "tick_sample": {
     "seconds": 60.0,
-    "n_distinct_ticks": 122,
+    "n_distinct_ticks": 138,
     "spread_points": {
-     "n": 122,
-     "min": 7183.000000000175,
-     "p25": 9394.000000000233,
-     "median": 10284.999999999127,
-     "p75": 10833.99999999965,
-     "p95": 11256.999999999243,
-     "p99": 11386.000000000058,
-     "max": 11421.00000000064
+     "n": 138,
+     "min": 5549.000000000524,
+     "p25": 8371.00000000064,
+     "median": 9486.000000000058,
+     "p75": 10270.999999999185,
+     "p95": 10897.999999999593,
+     "p99": 11207.000000000698,
+     "max": 11543.000000000757
     },
-    "first_msc": 1790809509643,
-    "last_msc": 1790809569100,
+    "first_msc": 1790832838100,
+    "last_msc": 1790832897928,
     "bid_range": [
-     83647.93,
-     83671.5
+     83421.65,
+     83454.75
     ],
     "sample_head": [
      [
-      1790809509643,
-      83660.78,
-      83754.19
+      1790832838100,
+      83438.97,
+      83544.18
      ],
      [
-      1790809510109,
-      83658.69,
-      83757.45
+      1790832838252,
+      83437.17,
+      83513.95
      ],
      [
-      1790809510520,
-      83657.65,
-      83761.39
+      1790832838504,
+      83432.37,
+      83530.8
      ],
      [
-      1790809510735,
-      83664.05,
-      83735.88
+      1790832838939,
+      83430.17,
+      83540.16
      ],
      [
-      1790809510955,
-      83659.65,
-      83753.39
+      1790832839137,
+      83437.72,
+      83510.29
      ]
     ]
    }
