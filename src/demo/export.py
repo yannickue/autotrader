@@ -144,14 +144,19 @@ def export_all(
     return written
 
 
-def export_observer_records(store: DemoStore, out_dir: str | os.PathLike[str]) -> Path | None:
+def export_observer_records(store: Any, out_dir: str | os.PathLike[str]) -> Path | None:
     """Market Structure Observer (shadow): persisted observer records as ONE flat Parquet table.
+
+    ``store`` is a ``demo.observer_store.ObserverStore`` (the observer's OWN
+    ``observer.sqlite``, not the live DemoStore; duck-typed so this module stays
+    free of observer imports): the per-definition constants stored once in its
+    ``definitions`` table are joined back into every row.
 
     Written to ``observer_records/data.parquet``. Columns are exactly those of
     ``market_observer.schema.ObserverRecord.to_row()`` (event_id, market, ..., ``v_<group>``,
     ``f_<group>__<name>``, ``m_<name>``), i.e. the names the offline backfill produces.
     Not part of ``export_all`` (the observer is opt-in); returns None if there are no rows."""
-    rows = store.list_observer_rows()
+    rows = store.list_rows()
     if not rows:
         return None
     out = Path(out_dir) / "observer_records" / "data.parquet"
