@@ -13,6 +13,7 @@ Times are SERVER-clock epochs (as the real terminal reports them); tests set
 
 from __future__ import annotations
 
+import math
 import threading
 import time
 from dataclasses import dataclass
@@ -55,6 +56,10 @@ class FakeBrokerConfig:
     magic_filter: int | None = None
     trade_mode: int = 0  # ACCOUNT_TRADE_MODE_DEMO; tests may inject REAL/CONTEST
     server: str = "FakeBroker-Demo"
+    # Opt-in (default OFF = unchanged): round the SL of an entry / SLTP request to the symbol
+    # tick like MT5 does. "looser" = away from the price (the case that broke the exit manager),
+    # "tighter" = towards it, "nearest".
+    sl_tick_rounding: str | None = None
 
 
 class FakeMT5Broker:
@@ -282,6 +287,21 @@ class FakeMT5Broker:
 
     def symbol_select(self, symbol: str, enable: bool = True) -> bool:
         return self._guard("symbol_select") and self._info(symbol) is not None
+
+    def _round_sl(self, symbol: str, sl: float, is_long: bool) -> float:
+        mode = self.cfg.sl_tick_rounding
+        info = self._info(symbol)
+        tick = float(getattr(info, "trade_tick_size", 0) or 0) if info is not None else 0.0
+        if mode is None or sl <= 0 or tick <= 0:
+            return sl
+        steps = sl / tick
+        if mode == "nearest":
+            n = round(steps)
+        elif (mode == "looser") == is_long:  # looser long = lower, short = higher; tighter mirrors
+            n = math.floor(steps + 1e-9)
+        else:
+            n = math.ceil(steps - 1e-9)
+        return round(n * tick, int(getattr(info, "digits", 8)))
 
     def symbol_info(self, symbol: str) -> Any:
         if not self._guard("symbol_info"):
@@ -572,7 +592,8 @@ class FakeMT5Broker:
         action = request["action"]
         if action == TradeAction.SLTP:
             position = self.positions[int(request["position"])]
-            position.sl = float(request.get("sl", position.sl))
+            sl = float(request.get("sl", position.sl))
+            position.sl = self._round_sl(position.symbol, sl, position.type == 0)
             position.tp = float(request.get("tp", position.tp))
             position.time_update = self.server_time
             return self._result(Retcode.DONE, comment="Done", request=request)
@@ -706,7 +727,10 @@ class FakeMT5Broker:
                 volume=round(qty, 8),
                 price_open=price,
                 price_current=price,
-                sl=0.0 if self.strip_stops_on_entry else float(request.get("sl", 0.0)),
+                sl=(
+                    0.0 if self.strip_stops_on_entry
+                    else self._round_sl(symbol, float(request.get("sl", 0.0)), is_buy)
+                ),
                 tp=0.0 if self.strip_stops_on_entry else float(request.get("tp", 0.0)),
                 swap=0.0,
                 profit=0.0,

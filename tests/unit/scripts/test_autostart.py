@@ -534,13 +534,19 @@ def test_ps_launcher_propagates_exit_code_and_single_mutex(tmp_path: Path) -> No
 
 
 @win_only
+def _task_count(name: str) -> str:
+    """Number of registered scheduled tasks with this name (environment-independent baseline for dry-run tests)."""
+    lst = subprocess.run([POWERSHELL, "-NoProfile", "-Command",
+                          f"(Get-ScheduledTask -TaskName '{name}' -ErrorAction SilentlyContinue | Measure-Object).Count"],
+                         capture_output=True, text=True, timeout=60)
+    return lst.stdout.strip()
+
+
 def test_ps_register_task_dry_run_validates_xml_without_registering() -> None:
+    before = _task_count("AutoTrader-DemoDaily")  # the task may legitimately exist on a deployed machine
     cp = _ps(str(AUTOSTART / "register_task.ps1"), "-DryRun")
     assert cp.returncode == 0, cp.stdout + cp.stderr
     assert "XML valid" in cp.stdout and "StartWhenAvailable=True" in cp.stdout
     assert "DRY RUN: nothing registered" in cp.stdout and "register_task.ps1" in cp.stdout
     assert "T08:30:00" in cp.stdout
-    lst = subprocess.run([POWERSHELL, "-NoProfile", "-Command",
-                          "(Get-ScheduledTask -TaskName 'AutoTrader-DemoDaily' -ErrorAction SilentlyContinue | Measure-Object).Count"],
-                         capture_output=True, text=True, timeout=60)
-    assert lst.stdout.strip() == "0"
+    assert _task_count("AutoTrader-DemoDaily") == before  # a dry run registers/changes nothing
