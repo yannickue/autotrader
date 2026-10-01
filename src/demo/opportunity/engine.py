@@ -307,6 +307,10 @@ class OpportunityEngine:
         self._versions_cache: dict[str, dict[str, str]] = {}
         self._seq = sequence_tracker  # Lane U2: measure-only same-zone / flip / whipsaw metrics (None = off)
         self.shadow_skipped_in_window = 0
+        # Market Structure Observer (shadow, default off): when ``retain_frame`` is set the runner's observer hook may READ the closed-bar frame of the
+        # last evaluation. The engine only stores a reference (it never reads observer output and never changes behaviour).
+        self.retain_frame = False
+        self.last_frame: pd.DataFrame | None = None
 
     @property
     def strategy_hash(self) -> str:
@@ -377,6 +381,7 @@ class OpportunityEngine:
         now = to_utc(now_utc)
         self.last_intents = []
         self.last_candidates = []
+        self.last_frame = None
         ms = self._mspec[market]
         frame = self._source.m5_frame(market, self._window)
         frame = closed_bars_only(frame, now).reset_index(drop=True)
@@ -384,6 +389,8 @@ class OpportunityEngine:
             self.health[market] = "insufficient_history"
             return []
         validate_frame(frame, market)
+        if self.retain_frame:
+            self.last_frame = frame
         last_ts = pd.Timestamp(frame["ts"].iloc[-1])
         bar_key = market if shadow is None else f"{market}|{shadow.origin}"
         if self._last_bar.get(bar_key) == last_ts:

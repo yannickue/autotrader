@@ -127,6 +127,15 @@ def _parser() -> argparse.ArgumentParser:
              "trades, never in the order path, exception-contained, bounded per cycle",
     )
     sel.add_argument("--no-shadow-exit-lab", dest="shadow_exit_lab", action="store_false")
+    mso = parser.add_mutually_exclusive_group()
+    mso.add_argument(
+        "--market-observer", dest="market_observer", action="store_true", default=None,
+        help="Market Structure Observer (DEFAULT OFF, OBSERVATION ONLY): after the decisions of a closed bar are final, record level / swing / balance / "
+             "acceptance / participation features of every opportunity into the SEPARATE <artifacts_dir>/observer.sqlite (the live demo.sqlite is untouched); "
+             "never changes an opportunity, decision, intent, stop, target, size, risk, execution or their timing; all observer work runs after the live "
+             "scans of a cycle, exception-contained, bounded per cycle (docs/OBSERVER.md). Forced off with --flatten-only",
+    )
+    mso.add_argument("--no-market-observer", dest="market_observer", action="store_false")
     learn = parser.add_mutually_exclusive_group()
     learn.add_argument(
         "--learning", dest="learning", action="store_true", default=None,
@@ -205,6 +214,7 @@ def _run(args: argparse.Namespace, mode: str) -> int:
             exit_policy=args.exit_policy,
             out_of_window_shadow=args.out_of_window_shadow, shadow_exit_lab=args.shadow_exit_lab,
             shadow_universe=args.shadow_universe,
+            market_observer=bool(args.market_observer),
             exit_plan=None if args.geometry_source == "family" else ExitPlanConfig(geometry_source=args.geometry_source),
             operating_policy=operating, daily=args.daily, flatten_only=args.flatten_only,
         )
