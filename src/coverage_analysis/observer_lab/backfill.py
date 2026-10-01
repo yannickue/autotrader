@@ -728,13 +728,21 @@ def run_controls_step(
 def run_market_backfill(
     mi: MarketInputs, mspec: Any, out_dir: str | Path, *, seed: int = 0, limit: int | None = None, force: bool = False, chunk_rows: int = DEFAULT_CHUNK_ROWS,
     match_spec: MatchSpec | None = None, max_label_bars: int = DEFAULT_MAX_BARS, code: dict[str, Any] | None = None, steps: Sequence[str] = ("events", "controls"),
+    control_method: str = "2", sametime_spec: Any = None, with_controls_b: bool = True,
 ) -> dict[str, Any]:
     """Both steps of ONE market. Returns the events manifest with the controls manifest under ``controls`` (when run). Idempotent per step."""
     code = code or code_identity()
     out: dict[str, Any] = {}
     if "events" in steps:
         out = run_events_step(mi, mspec, out_dir, limit=limit, force=force, chunk_rows=chunk_rows, max_label_bars=max_label_bars, code=code)
-    if "controls" in steps:
+    if "controls" in steps and control_method == "3":
+        from coverage_analysis.observer_lab.backfill_controls3 import (
+            run_controls3_step,  # lazy: backfill_controls3 imports this module
+        )
+
+        c = run_controls3_step(mi.frame, mspec, mi.market, out_dir, seed=seed, force=force, spec=sametime_spec, with_b=with_controls_b, chunk_rows=chunk_rows, max_label_bars=max_label_bars, code=code)
+        out = {**out, "controls": c} if out else {"market": mi.market, "controls": c}
+    elif "controls" in steps:
         c = run_controls_step(mi.frame, mspec, mi.market, out_dir, seed=seed, force=force, match_spec=match_spec, chunk_rows=chunk_rows, max_label_bars=max_label_bars, code=code)
         out = {**out, "controls": c} if out else {"market": mi.market, "controls": c}
     return out
@@ -780,20 +788,22 @@ def _read_set(d: Path, files: dict[str, str], with_labels: bool) -> pd.DataFrame
     return df
 
 
-def load_event_table(path: str | Path, with_labels: bool = False, *, controls: bool = True, columns: list[str] | None = None) -> pd.DataFrame:
+def load_event_table(path: str | Path, with_labels: bool = False, *, controls: bool = True, columns: list[str] | None = None, controls_dir: str | None = None) -> pd.DataFrame:
     """Events (+ controls unless ``controls=False``) with features, joined on ``event_id``; one market directory or every market directory below ``path``.
 
     Labels are PHYSICALLY separate: ``labels.parquet`` / ``controls_labels.parquet`` are opened only when ``with_labels=True``; the feature and event files
-    contain no ``y_*`` column and no ``horizon_end_ts_ns`` (asserted here as well, so a corrupt directory raises instead of leaking)."""
+    contain no ``y_*`` column and no ``horizon_end_ts_ns`` (asserted here as well, so a corrupt directory raises instead of leaking).
+    ``controls_dir``: sub-directory of each market directory holding the controls to load (``"controls3"`` / ``"controls3_b"`` for observer-controls-3);
+    default = the controls-2 files next to the events."""
     root = Path(path)
     dirs = [root] if (root / EVENT_FILES["features"]).is_file() else sorted(p.parent for p in root.glob(f"*/{EVENT_FILES['features']}"))
     if not dirs:
         raise FileNotFoundError(f"no {EVENT_FILES['features']} below {root}")
     frames = []
     for d in dirs:
-        for use, files in ((True, EVENT_FILES), (controls, CONTROL_FILES)):
+        for use, files, base in ((True, EVENT_FILES, d), (controls, CONTROL_FILES, d / controls_dir if controls_dir else d)):
             if use:
-                df = _read_set(d, files, with_labels)
+                df = _read_set(base, files, with_labels)
                 if df is not None:
                     frames.append(df)
     if not frames:

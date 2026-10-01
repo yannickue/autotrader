@@ -6,7 +6,7 @@
 
 One market at a time (``--jobs`` default 1, max 2 = one market per worker process). Development bars only (the 2026-08-31 guard of the existing loaders,
 re-asserted by the backfill). Output per market: ``<out>/<MARKET>/{table,events,features,labels}.parquet`` + ``manifest.json`` (events step) and
-``controls{,_events,_features,_labels}.parquet`` + ``controls_manifest.json`` (controls step, re-runnable alone with ``--step controls``) + ``backfill.log``.
+``controls{,_events,_features,_labels}.parquet`` + ``controls_manifest.json`` (controls step, re-runnable alone with ``--step controls``; default ``--control-method 3`` writes ``<MARKET>/controls3/`` (+ ``controls3_b/``) and leaves the controls-2 files untouched) + ``backfill.log``.
 Idempotent per step: a complete step with an identical fingerprint is skipped.
 """
 
@@ -25,11 +25,12 @@ DEFAULT_OUT = Path("C:/Users/yanni/AppData/Local/Temp/observer_backfill")
 ACTIVE = ("GER40", "NAS100", "SPX500", "XAUUSD", "EURUSD", "BTCUSD", "BRENT")
 
 
-def run_one(market: str, out: str, seed: int, limit: int | None, data_root: str | None, p2root: str | None, force: bool, steps: tuple[str, ...], exclusion_bars: int) -> dict:
+def run_one(market: str, out: str, seed: int, limit: int | None, data_root: str | None, p2root: str | None, force: bool, steps: tuple[str, ...], exclusion_bars: int, control_method: str = "3", n_controls: int = 1, with_b: bool = True) -> dict:
     import entry_exit_quality as X
 
     from coverage_analysis.observer_lab.backfill import run_market_backfill
     from coverage_analysis.observer_lab.controls import MatchSpec
+    from coverage_analysis.observer_lab.controls_sametime import SameTimeSpec
     from markets.phase2 import load_phase2_spec
     from markets.spec import CANONICALS, PHASE2_CANONICALS, load_market_spec
 
@@ -42,7 +43,7 @@ def run_one(market: str, out: str, seed: int, limit: int | None, data_root: str 
         ms = load_phase2_spec(market)
     else:
         raise SystemExit(f"unknown market {market!r}")
-    return run_market_backfill(mi, ms, out, seed=seed, limit=limit, force=force, steps=steps, match_spec=MatchSpec(exclusion_bars=exclusion_bars))
+    return run_market_backfill(mi, ms, out, seed=seed, limit=limit, force=force, steps=steps, match_spec=MatchSpec(exclusion_bars=exclusion_bars), control_method=control_method, sametime_spec=SameTimeSpec(n_controls=n_controls), with_controls_b=with_b)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -56,6 +57,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--jobs", type=int, default=1, help="1 (default) or 2; one market per worker process")
     ap.add_argument("--force", action="store_true", help="rebuild even if a complete identical run exists")
     ap.add_argument("--exclusion-bars", type=int, default=48, help="control exclusion radius around every opportunity (default 48 = the label horizon; smaller values = sensitivity runs only)")
+    ap.add_argument("--control-method", choices=("2", "3"), default="3", help="3 (default) = observer-controls-3 (same Berlin clock time, other day; files under <MARKET>/controls3[_b]/ + blocking balance gate); 2 = legacy exclusion-radius controls")
+    ap.add_argument("--n-controls", type=int, default=1, help="controls-3: controls per event (default 1)")
+    ap.add_argument("--no-controls-b", action="store_true", help="controls-3: skip the disjoint A/A set B")
     ap.add_argument("--step", choices=("all", "events", "controls"), default="all", help="controls = re-run ONLY the control step (needs a complete events step)")
     a = ap.parse_args(argv)
     if not 1 <= a.jobs <= 2:
@@ -74,9 +78,9 @@ def main(argv: list[str] | None = None) -> int:
         from concurrent.futures import ProcessPoolExecutor
 
         with ProcessPoolExecutor(max_workers=a.jobs) as ex:
-            res = [f.result() for f in [ex.submit(run_one, m, a.out, a.seed, a.limit, a.data_root, p2, a.force, steps, a.exclusion_bars) for m in markets]]
+            res = [f.result() for f in [ex.submit(run_one, m, a.out, a.seed, a.limit, a.data_root, p2, a.force, steps, a.exclusion_bars, a.control_method, a.n_controls, not a.no_controls_b) for m in markets]]
     else:
-        res = [run_one(m, a.out, a.seed, a.limit, a.data_root, p2, a.force, steps, a.exclusion_bars) for m in markets]
+        res = [run_one(m, a.out, a.seed, a.limit, a.data_root, p2, a.force, steps, a.exclusion_bars, a.control_method, a.n_controls, not a.no_controls_b) for m in markets]
     for r in res:
         if r.get("status") == "NO_DATA":
             print(f"{r['market']}: NO_DATA - {r['note']}")
@@ -86,7 +90,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"{r['market']}: events step {r.get('status_this_call')} events={ev['n_events']} rows={r['rows']} runtime={r['runtime_s']}s peak_mb={r['peak_memory_mb']}")
         c = r.get("controls")
         if c:
-            print(f"{r.get('market', '')}: controls step {c.get('status_this_call')} controls={c['n_controls']} match_rate={c['match_report']['match_rate']:.3f} runtime={c['runtime_s']}s peak_mb={c['peak_memory_mb']}")
+            print(f"{r.get('market', '')}: controls step {c.get('status_this_call')} controls={c['n_controls']} match_rate={c['match_report']['match_rate']:.3f} runtime={c['runtime_s']}s peak_mb={c['peak_memory_mb']}" + (f" market_status={c['market_status']}" if "market_status" in c else ""))
     return 0 if all(r.get("status") != "NO_DATA" for r in res) else 2
 
 
