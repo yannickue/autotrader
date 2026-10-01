@@ -285,6 +285,10 @@ def test_factory_real_path_wires_client_config_state_dir_dry_run(tmp_path, monke
     monkeypatch.setattr(rc, "get_real_client", lambda: client)
     monkeypatch.setattr(cfgmod, "load_attach_only_config", lambda *a, **k: conn)
     monkeypatch.setattr(live, "Mt5DemoStack", RecStack)
+    import markets.phase2 as p2
+
+    # the committed production state has both Phase-2 markets on (7-market universe since 2026-10-01); this wiring test pins them off
+    monkeypatch.setattr(p2, "load_enablement", lambda config_dir=None: {"BRENT": False, "BTCUSD": False})
     r = rn.build_live_runner("shadow", artifacts_dir=tmp_path / "s", markets=("GER40", "NAS100"))
     r.store.close()
     kw = seen[-1]

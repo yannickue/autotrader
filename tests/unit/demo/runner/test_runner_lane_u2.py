@@ -300,7 +300,16 @@ def _factory(record):
     return make
 
 
-def test_factory_defaults_oow_on_universe_off_and_production_spec_untouched(tmp_path):
+def _flags_off(monkeypatch):
+    """Lane U2 tests assert the runner defaults on the frozen v1 spec: pin both Phase-2 flags off (the committed production state has
+    them on since 2026-10-01, which selects spec v1.2)."""
+    import markets.phase2 as p2
+
+    monkeypatch.setattr(p2, "load_enablement", lambda config_dir=None: {"BRENT": False, "BTCUSD": False})
+
+
+def test_factory_defaults_oow_on_universe_off_and_production_spec_untouched(tmp_path, monkeypatch):
+    _flags_off(monkeypatch)
     from demo import runner as rn
 
     r = rn.build_live_runner("shadow", artifacts_dir=tmp_path / "a", stack_factory=_factory([]), learning=False)
@@ -318,7 +327,8 @@ def test_factory_defaults_oow_on_universe_off_and_production_spec_untouched(tmp_
     assert RunnerConfig().out_of_window_shadow_enabled is False and RunnerConfig().shadow_universe == ()  # library default: bit-identical
 
 
-def test_factory_wires_shadow_universe_with_a_read_only_source_and_the_registry_guard(tmp_path):
+def test_factory_wires_shadow_universe_with_a_read_only_source_and_the_registry_guard(tmp_path, monkeypatch):
+    _flags_off(monkeypatch)
     import test_shadow_universe as t
 
     from demo import runner as rn
