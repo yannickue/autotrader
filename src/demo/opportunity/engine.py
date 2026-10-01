@@ -193,13 +193,23 @@ def live_leader_features(
     return LeaderFeatures(name, ret, al.take(in_cash) > 0.5)
 
 
+def live_family_calendar(mspec: MarketSpec, research_spec: MarketSpec | None = None) -> MarketCalendar:
+    """The family calendar of a (possibly live-overlaid) spec.  The overlay widens / cuts ``entry_end_min`` for entry GATING
+    only; the frozen research entry end is carried along so window-defined families (EOD) keep their fitted semantics."""
+    cal = MarketCalendar.from_market_spec(mspec)
+    if research_spec is None or research_spec.calendar.entry_end_min == cal.entry_end_min:
+        return cal
+    return dataclasses.replace(cal, research_entry_end_min=research_spec.calendar.entry_end_min)
+
+
 def assemble_live(
     market: str, mspec: MarketSpec, frame: pd.DataFrame,
     leaders: Mapping[str, tuple[pd.DataFrame, MarketCalendar]] | None = None,
+    research_spec: MarketSpec | None = None,
 ) -> FamilyData:
     """FamilyData of ``frame`` (closed M5 bars) + ONE placeholder next bar (see module doc).
     The last row of the result is the placeholder; the deciding bar is ``len(result) - 2``."""
-    cal = MarketCalendar.from_market_spec(mspec)
+    cal = live_family_calendar(mspec, research_spec)
     ts = pd.DatetimeIndex(frame["ts"]).as_unit("ns").asi8.astype(np.int64)
     o, h, low, c = (frame[k].to_numpy(float) for k in ("open", "high", "low", "close"))
     spread = frame["spread_pts"].to_numpy(float) * float(mspec.point_size)
@@ -391,7 +401,7 @@ class OpportunityEngine:
 
         data = assemble_live(
             market, relaxed_market_spec(live_ms) if shadow is not None and shadow.relax_window else live_ms, frame,
-            self._leaders(market, now),
+            self._leaders(market, now), research_spec=ms,
         )
         i = len(data) - 2  # deciding bar; the last row is the placeholder
         if catchup is None:

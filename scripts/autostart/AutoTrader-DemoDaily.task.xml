@@ -6,6 +6,10 @@
     @@REPO_ROOT@@  the approved production checkout (working directory + script location)
     @@START_DATE@@ first day of the trigger (yyyy-MM-dd); the time below is LOCAL time (no zone suffix)
     @@WAKE@@       true|false  (WakeToRun)
+  Lane Z (zero overnight): the 08:30 trigger REPEATS every 15 min for 15 h (until 23:30 local) and a logon trigger (1 min delay)
+  re-enters the supervisor after a reboot / sleep / crash.  MultipleInstancesPolicy=IgnoreNew + supervisor.lock + runner.lock
+  make every extra start a no-op; the supervisor itself refuses to start outside the operating day unless own exposure is
+  still open (then it continues, bounded until 23:30).  No BootTrigger: it needs admin rights to register.
   StartBoundary has NO timezone suffix: Task Scheduler treats it as local wall-clock time and follows
   DST, so 08:30 stays 08:30 Europe/Berlin because the OS zone is W. Europe Standard Time.
 -->
@@ -16,6 +20,11 @@
   </RegistrationInfo>
   <Triggers>
     <CalendarTrigger>
+      <Repetition>
+        <Interval>PT15M</Interval>
+        <Duration>PT15H</Duration>
+        <StopAtDurationEnd>false</StopAtDurationEnd>
+      </Repetition>
       <StartBoundary>@@START_DATE@@T08:30:00</StartBoundary>
       <Enabled>true</Enabled>
       <ScheduleByWeek>
@@ -29,6 +38,11 @@
         <WeeksInterval>1</WeeksInterval>
       </ScheduleByWeek>
     </CalendarTrigger>
+    <LogonTrigger>
+      <Enabled>true</Enabled>
+      <UserId>@@USER_ID@@</UserId>
+      <Delay>PT1M</Delay>
+    </LogonTrigger>
   </Triggers>
   <Principals>
     <Principal id="Author">

@@ -90,6 +90,9 @@ class Pause:
 @dataclass(frozen=True, slots=True)
 class MarketOperating:
     entry_end_live_min: int | None = None  # market-local minute that replaces the research entry_end (live only)
+    # Lane Z: ``entry_end_live = "flat"`` = entries run to the (season-dependent) effective flat minus the runway, bounded by the
+    # research forced flat: computed per day in ``clock.live_spec``, no hard-coded clock string.
+    entry_end_live_to_flat: bool = False
     pauses: tuple[Pause, ...] = ()
     session_status: str = "unknown"  # observed | provisional | unknown
     session_source: str = ""
@@ -238,8 +241,10 @@ def policy_from_dict(raw: dict[str, Any]) -> OperatingPolicy:
             days = frozenset(_DAYS.index(d) for d in pz["days"])
             pauses.append(Pause(days, _hhmm(pz["start"]), tz, _hhmm(pz["end"]), pz.get("end_tz", tz)))
         end_live = m.get("entry_end_live")
+        to_flat = isinstance(end_live, str) and end_live.strip().lower() == "flat"
         markets[name] = MarketOperating(
-            entry_end_live_min=None if end_live is None else _hhmm(end_live),
+            entry_end_live_min=None if end_live is None or to_flat else _hhmm(end_live),
+            entry_end_live_to_flat=to_flat,
             pauses=tuple(pauses),
             session_status=str(sess.get("status", "unknown")),
             session_source=str(sess.get("source", "")),

@@ -1835,6 +1835,11 @@ class Mt5DemoStack:
     def _flatten(
         self, info: _MarketInfo, *, tag: str, hint: str | None = None, escalate: bool = True
     ) -> bool:
+        """Reduce-only close of OUR position(s) on ``info``.  Success = no OWN-magic position left at the broker (a
+        foreign / canary position on the same symbol neither makes the flatten "fail" nor is ever touched).  A position
+        the Nautilus cache never adopted is closed by broker ticket (M1).  ``escalate=False`` (the end-of-day sweep and,
+        under an operating policy, the row-based forced flat) never touches the shared failure counter and never latches
+        the fatal ``flatten_failed``: those callers retry with their own bounded backoff and must never be pre-empted."""
         assert self._strategy is not None and self._registry is not None
         if hint is not None:
             for row in self._registry.open_for_market(info.canonical):
@@ -1845,17 +1850,44 @@ class Mt5DemoStack:
             outcome: JobOutcome = job.future.result(timeout=self._cfg.flatten_wait_s)
         except concurrent.futures.TimeoutError:
             outcome = JobOutcome("failed", "flatten_timeout")
-        still_open = self._on_lane(self._lane_symbol_positions, info.broker_symbol, strict=True)
+        still_open = self._own_symbol_positions(info)
+        if outcome.status == "flat" and outcome.reason == "no_open_position" and still_open:
+            # M1: Nautilus holds no position but the broker does (never adopted / cache lost): reduce-only close by
+            # the broker ticket through the adapter (verifies own magic, side and volume against the broker).
+            with contextlib.suppress(_Reject):  # a refused / unreachable close = still open: the caller retries
+                self._on_lane(self._lane_close_by_ticket, info, tag, retry_reads=False)
+            still_open = self._own_symbol_positions(info)
+            outcome = JobOutcome("flat" if not still_open else "failed", "ticket_close")
         if outcome.status == "flat" and not still_open:
-            self._flatten_failures.pop(info.canonical, None)
+            if escalate:
+                self._flatten_failures.pop(info.canonical, None)
             return True
+        self._halt("flatten_failed")
+        if not escalate:
+            return False
         count = self._flatten_failures.get(info.canonical, 0) + 1
         self._flatten_failures[info.canonical] = count
-        self._halt("flatten_failed")
-        if escalate and count >= self._cfg.flatten_max_failures:
+        if count >= self._cfg.flatten_max_failures:
             self._set_fatal(f"flatten_failed:{info.canonical}")
             raise StackFailClosed(self._fatal or "flatten_failed")
         return False
+
+    def _own_symbol_positions(self, info: _MarketInfo) -> list[Any]:
+        rows = self._on_lane(self._lane_symbol_positions, info.broker_symbol, strict=True)
+        return [p for p in rows if int(p.magic) == self._cfg.magic]
+
+    def _lane_close_by_ticket(self, info: _MarketInfo, tag: str) -> list[str]:
+        """Lane: close every own-magic broker position on the symbol via ``exec_client.emergency_close`` (one reduce-only
+        deal per position ticket).  Returns the denial reasons (empty = all sent)."""
+        assert self._adapter is not None
+        denials: list[str] = []
+        for position in self._lane_symbol_positions(info.broker_symbol):
+            if int(position.magic) != self._cfg.magic:
+                continue
+            denial = self._adapter.exec_client.emergency_close(int(position.ticket), tag=tag)
+            if denial is not None:
+                denials.append(f"{position.ticket}:{denial}")
+        return denials
 
     # ================================================================================= lane reads
 
@@ -2532,11 +2564,26 @@ class Mt5DemoStack:
         """Audit trail of the staged exit manager (empty under fixed_1_5r)."""
         return [] if self._exit_manager is None else list(self._exit_manager.log)
 
+    # A fatal of these kinds means "this is not (or may not be) our demo account / the broker lane is wedged": no broker
+    # action at all.  Every other latched fatal (e.g. ``flatten_failed:*``) only stops NEW exposure - reducing exposure
+    # stays allowed, so the zero-overnight sweep must still run (Lane Z / C1).
+    _NO_ACTION_FATALS = ("non_demo_account", "account_identity_changed", "mt5_lane_timeout")
+
     def on_clock(self, now: datetime) -> list[ExecutionEvent]:
         """Reduce-only close of every open intent whose ``forced_flat_utc`` has arrived."""
         assert self._registry is not None
         with self._submit_lock:
-            self._check_fatal()
+            op = self._cfg.operating_policy
+            if (
+                op is not None
+                and self._fatal
+                and self._started
+                and not self._stopped
+                and not self._fatal.startswith(self._NO_ACTION_FATALS)
+            ):
+                pass  # latched fatal: keep flattening (exposure-reducing) - the runner learns the fatal elsewhere
+            else:
+                self._check_fatal()
             current = now.astimezone(UTC)
             events: list[ExecutionEvent] = []
             for row in self._registry.with_status(reg.OPEN):
@@ -2546,17 +2593,19 @@ class Mt5DemoStack:
                 if info is None:  # must not happen (exposed markets are kept registered); never a silent KeyError
                     self._halt(f"forced_flat_market_unregistered:{row.market}")
                     continue
-                still_open = self._on_lane(self._lane_symbol_positions, info.broker_symbol, strict=True)
+                still_open = self._own_symbol_positions(info)
+                # With an operating policy the sweep below retries with backoff and must never be pre-empted by the
+                # fatal flatten escalation (Lane Z / C1): the row loop only escalates when there is no sweep.
                 if still_open and not self._flatten(
-                    info, tag=f"forced-flat:{row.intent_id}", hint="SESSION_END"
+                    info, tag=f"forced-flat:{row.intent_id}", hint="SESSION_END", escalate=op is None
                 ):
                     continue
                 fresh = self._registry.get(row.intent_id) or row
                 closed = self._on_lane(self._lane_build_closed, fresh, strict=True)
                 if closed is not None:
                     events.append(closed)
-            if self._cfg.operating_policy is not None:
-                events.extend(self._eod_sweep(current, self._cfg.operating_policy))
+            if op is not None:
+                events.extend(self._eod_sweep(current, op))
             return events
 
     # -- end-of-day flatten sweep (Lane P) ---------------------------------------------------------------

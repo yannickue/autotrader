@@ -33,7 +33,7 @@ LAST2H_BARS = 24
 
 
 def session_end(cal: MarketCalendar) -> int:
-    return min(cal.cash_close_min, cal.entry_end_min)
+    return min(cal.cash_close_min, cal.semantic_entry_end_min)  # RESEARCH entry end: live gating never moves T
 
 
 @dataclass(frozen=True)
@@ -66,7 +66,7 @@ class EODSpec(FamilySpec):
 
     def effective_window(self, cal: MarketCalendar) -> EffectiveWindow:
         ex = self.exit_min(cal)
-        end = min(cal.entry_end_min, ex)
+        end = min(cal.entry_end_min, cal.semantic_entry_end_min, ex)  # live cut still gates; live widening never does
         if end <= cal.entry_start_min:
             raise ValueError("exit clock is not after the entry start")
         return EffectiveWindow(cal.entry_start_min, end, ex)

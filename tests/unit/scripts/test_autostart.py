@@ -148,13 +148,13 @@ MON_2230 = datetime(2026, 10, 26, 22, 30, tzinfo=BERLIN)
 POLICY = sup.Policy()
 
 
-def _d(code, *, stop=False, now=MON_10, state=None, ran=60.0, policy=POLICY):
+def _d(code, *, stop=False, now=MON_10, state=None, ran=60.0, policy=POLICY, **kw):
     return sup.decide(code, stop_file_exists=stop, now=now, state=state or sup.WatchdogState(date="x"),
-                      policy=policy, ran_s=ran)
+                      policy=policy, ran_s=ran, **kw)
 
 
 def test_policy_exit0_done_no_restart() -> None:
-    d = _d(0)
+    d = _d(0, stop_reason="eod_flat_shutdown")
     assert d.action == "done" and d.exit_code == 0 and not d.alert
 
 
@@ -312,8 +312,22 @@ def _run_sup(tmp_path: Path, runner_json: str, *extra: str) -> tuple[int, int]:
     return cp.returncode, len(launches.read_text().split()) if launches.exists() else 0
 
 
+def _eod_done(tmp_path: Path) -> str:
+    """Fake-runner script tail: write the final heartbeat of an orderly end-of-day shutdown, exit 0."""
+    root = repr(str(tmp_path))
+    return chr(10).join([
+        "import json, pathlib, datetime",
+        "for d in ('art', 'art2'):",
+        f"    a = pathlib.Path({root}) / d",
+        "    a.mkdir(parents=True, exist_ok=True)",
+        "    (a / 'heartbeat.json').write_text(json.dumps({'process_alive': False, 'stop_reason': 'eod_flat_shutdown', "
+        "'updated_utc': datetime.datetime.now(datetime.timezone.utc).isoformat()}))",
+        "sys.exit(0)",
+    ])
+
+
 def test_sup_exit0_day_finished_no_restart(tmp_path: Path) -> None:
-    code, n = _run_sup(tmp_path, _fake_runner(tmp_path, "sys.exit(0)"), "--ignore-operating-day")
+    code, n = _run_sup(tmp_path, _fake_runner(tmp_path, _eod_done(tmp_path)), "--ignore-operating-day")
     assert (code, n) == (0, 1)
 
 
@@ -325,7 +339,8 @@ def test_sup_exit2_no_restart_with_alert(tmp_path: Path) -> None:
 
 
 def test_sup_crash_then_recovery_reconciles_via_restart(tmp_path: Path) -> None:
-    code, n = _run_sup(tmp_path, _fake_runner(tmp_path, "sys.exit(1 if n == 1 else 0)"), "--ignore-operating-day")
+    script = chr(10).join(["if n == 1:", "    sys.exit(1)", _eod_done(tmp_path)])
+    code, n = _run_sup(tmp_path, _fake_runner(tmp_path, script), "--ignore-operating-day")
     assert (code, n) == (0, 2)
 
 
@@ -338,8 +353,21 @@ def test_sup_crash_loop_is_bounded(tmp_path: Path) -> None:
     assert state["restarts_today"] == 2
 
 
+def _ready_then_exit(tmp_path: Path, code: int) -> str:
+    """Fake-runner script tail: publish a fresh RECONCILED heartbeat for its own pid (=> READY), then exit ``code``."""
+    root = repr(str(tmp_path / "art"))
+    return chr(10).join([
+        "import json, pathlib, datetime, os, sys, time",
+        f"a = pathlib.Path({root}); a.mkdir(parents=True, exist_ok=True)",
+        "(a / 'heartbeat.json').write_text(json.dumps({'process_alive': True, 'pid': os.getppid() if sys.platform == 'win32' else os.getpid(), 'reconciliation': 'RECONCILED', "
+        "'updated_utc': datetime.datetime.now(datetime.timezone.utc).isoformat()}))",
+        "time.sleep(0.6)",
+        f"sys.exit({code})",
+    ])
+
+
 def test_sup_fail_closed_7_bounded_and_surfaced(tmp_path: Path) -> None:
-    code, n = _run_sup(tmp_path, _fake_runner(tmp_path, "sys.exit(7)"), "--ignore-operating-day",
+    code, n = _run_sup(tmp_path, _fake_runner(tmp_path, _ready_then_exit(tmp_path, 7)), "--ignore-operating-day",
                        "--max-fail-closed-restarts-per-day", "1")
     assert (code, n) == (sup.SUP_GAVE_UP, 2)
     assert json.loads((tmp_path / "art" / "watchdog_alert.json").read_text())["latest"]["severity"] == "CRITICAL"
@@ -402,7 +430,7 @@ def test_sup_unhealthy_runner_present_not_duplicated_and_alerts(tmp_path: Path) 
 def test_sup_missed_start_launches_immediately_reconcile_is_runners_job(tmp_path: Path) -> None:
     """Started late (PC was off at 08:30): operating day -> launch at once, no waiting, no chasing logic here."""
     log = sup.RunLog(tmp_path / "l.log", echo=None)
-    cmd = json.loads(_fake_runner(tmp_path, "sys.exit(0)"))
+    cmd = json.loads(_fake_runner(tmp_path, _eod_done(tmp_path)))
     s = sup.Supervisor(tmp_path / "art", cmd, sup.REPO_ROOT, log, sup.Policy(backoff_s=(0,)), poll_s=0.05,
                        now_fn=lambda: datetime(2026, 10, 26, 10, 40, tzinfo=BERLIN))
     assert s.run() == 0
@@ -481,7 +509,7 @@ def test_ps_launcher_dry_run_prints_production_command(tmp_path: Path) -> None:
     cp = _ps(str(AUTOSTART / "run_trader_day.ps1"), "-DryRun", "-Uv", "C:\\fake\\uv.exe")
     assert cp.returncode == 0, cp.stderr
     out = cp.stdout
-    assert "supervisor.py" in out and "--daily auto" in out and "ALPHA_EXECUTION_DISCOVERY" in out
+    assert "supervisor.py" in out and "--daily on" in out and "ALPHA_EXECUTION_DISCOVERY" in out
     assert "--end-of-day 22:15" in out and "demo_100k" in out and "Global\\AutoTrader-DemoDaily-" in out
     assert str(sup.REPO_ROOT) in out  # working directory = this checkout
 
