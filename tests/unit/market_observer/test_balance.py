@@ -1,4 +1,4 @@
-# ruff: noqa: E501
+# ruff: noqa: E501, E741, RUF005
 """Lane C / BALANCE group: exact hand-computed values, prefix invariance, segment handling, serialisation, definition hash."""
 
 from __future__ import annotations
