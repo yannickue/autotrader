@@ -419,7 +419,15 @@ def _ps(*args: str, timeout: int = 120) -> subprocess.CompletedProcess[str]:
 
 
 @win_only
+def _task_count(name: str) -> str:
+    lst = subprocess.run([POWERSHELL, "-NoProfile", "-Command",
+                          f"(Get-ScheduledTask -TaskName '{name}' -ErrorAction SilentlyContinue | Measure-Object).Count"],
+                         capture_output=True, text=True, timeout=60)
+    return lst.stdout.strip()
+
+
 def test_O_register_dry_run_validates_both_xmls_without_registering():
+    before = _task_count("AutoTrader-EodRecovery")  # the task may legitimately exist on a deployed machine
     cp = _ps(str(AUTOSTART / "register_task.ps1"), "-DryRun")
     assert cp.returncode == 0, cp.stdout + cp.stderr
     out = cp.stdout
@@ -427,10 +435,7 @@ def test_O_register_dry_run_validates_both_xmls_without_registering():
     for t in ("T21:45:00", "T21:50:00", "T21:55:00", "T22:00:00", "repeat PT2M for PT31M", "T08:30:00"):
         assert t in out, t
     assert "MultipleInstances policy=2" in out and "StartWhenAvailable=True" in out and "DRY RUN: nothing registered" in out
-    lst = subprocess.run([POWERSHELL, "-NoProfile", "-Command",
-                          "(Get-ScheduledTask -TaskName 'AutoTrader-EodRecovery' -ErrorAction SilentlyContinue | Measure-Object).Count"],
-                         capture_output=True, text=True, timeout=60)
-    assert lst.stdout.strip() == "0"
+    assert _task_count("AutoTrader-EodRecovery") == before  # a dry run registers/changes nothing
 
 
 @win_only
