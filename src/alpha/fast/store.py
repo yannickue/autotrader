@@ -36,9 +36,11 @@ All rolling calculations are trailing and causal; bar i is known at its close.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
-import inspect
 import json
+import os
+import tempfile
 import time
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field, is_dataclass
@@ -49,10 +51,6 @@ import numpy as np
 import pandas as pd
 import talib
 
-import alpha.context as context_module
-import alpha.regime as regime_module
-import alpha.session as session_module
-import alpha.timeframe as timeframe_module
 from alpha.context import (
     CONTEXT_LABELS,
     DIRECTIONAL_LABELS,
@@ -66,6 +64,10 @@ from alpha.session import local_clock as _local_clock
 from alpha.timeframe import MtfView
 
 FEATURE_SCHEMA_VERSION = 2
+# On-disk cache layout/identity. Bump when the manifest/artifact format changes: it is part of
+# the cache key, so caches written by an older format can never be served as hits.
+CACHE_FORMAT_VERSION = 2
+_UNCACHEABLE_PREFIX = "UNCACHEABLE:"
 # Bump whenever the set/definition of price-action feature arrays changes (cache invalidation).
 FEATURE_SET_VERSION = 3
 NEW_FEATURE_NAMES: tuple[str, ...] = (
@@ -193,18 +195,27 @@ def _hash_frame(frame: pd.DataFrame) -> str:
 
 
 def _code_fingerprint() -> str:
-    digest = hashlib.sha256()
-    for module in (
-        inspect.getmodule(_code_fingerprint),
-        timeframe_module,
-        session_module,
-        regime_module,
-        context_module,
-    ):
-        path = Path(inspect.getsourcefile(module) or "")
-        digest.update(str(path.name).encode())
-        digest.update(path.read_bytes())
-    return digest.hexdigest()
+    """Content hash of the static import closure of ``alpha.fast.store`` + ``alpha.fast.__init__``.
+
+    Reuses ``research_speed.importgraph`` (imported lazily so the live trader never loads research
+    code at import time). If the closure contains a dynamic import (importlib/__import__/runpy ...)
+    or cannot be computed, static analysis cannot prove what the features depend on: the result
+    starts with ``UNCACHEABLE:`` and ``FeatureStore.load_or_build`` then never reads or writes the
+    cache (always rebuilds).
+    """
+    try:
+        from research_speed import importgraph
+
+        src_root = Path(__file__).resolve().parents[2]
+        entries = [Path(__file__).resolve(), Path(__file__).resolve().with_name("__init__.py")]
+        files = importgraph.closure(entries, [src_root])
+        dynamic = importgraph.dynamic_import_files(files)
+        if dynamic:
+            names = ",".join(sorted(f.relative_to(src_root).as_posix() for f in dynamic))
+            return f"{_UNCACHEABLE_PREFIX}dynamic_import:{names}"
+        return importgraph.hash_files(files, src_root)
+    except Exception as exc:  # any failure means "cannot prove" -> no cache
+        return f"{_UNCACHEABLE_PREFIX}fingerprint_error:{type(exc).__name__}"
 
 
 def _library_versions() -> dict[str, str]:
@@ -224,6 +235,7 @@ def _key_components(frame: pd.DataFrame, config: FeatureConfig) -> dict[str, Any
     return {
         "dataset_hash": _hash_frame(frame),
         "schema_version": FEATURE_SCHEMA_VERSION,
+        "cache_format_version": CACHE_FORMAT_VERSION,
         "feature_set_version": FEATURE_SET_VERSION,
         "new_feature_names": list(NEW_FEATURE_NAMES),
         "v2_feature_names": list(V2_FEATURE_NAMES),
@@ -237,6 +249,118 @@ def _key_components(frame: pd.DataFrame, config: FeatureConfig) -> dict[str, Any
 def _cache_key(components: Mapping[str, Any]) -> str:
     payload = json.dumps(components, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(payload.encode()).hexdigest()
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _fsync_dir(directory: Path) -> None:
+    try:
+        fd = os.open(directory, os.O_RDONLY)
+    except OSError:  # Windows cannot open directories; the file fsync + os.replace still hold
+        return
+    try:
+        os.fsync(fd)
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
+
+
+def _verified_cache_hit(
+    target: Path, key: str, components: Mapping[str, Any]
+) -> tuple[dict[str, np.ndarray], dict[str, Any]] | None:
+    """Return (arrays, metadata) only if the artifact verifies completely; any problem is a miss."""
+    try:
+        manifest_path = target / "manifest.json"
+        arrays_path = target / "features.npz"
+        if not manifest_path.is_file() or not arrays_path.is_file():
+            return None
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if not isinstance(manifest, dict):
+            return None
+        if manifest.get("key") != key or manifest.get("key_components") != components:
+            return None
+        artifact = manifest["artifact"]
+        if arrays_path.stat().st_size != artifact["size_bytes"]:
+            return None
+        if _sha256_file(arrays_path) != artifact["sha256"]:
+            return None
+        declared_dtypes = manifest["arrays"]
+        declared_shapes = manifest["array_shapes"]
+        metadata = dict(manifest["metadata"])
+        arrays: dict[str, np.ndarray] = {}
+        with np.load(arrays_path, allow_pickle=False) as stored:
+            if sorted(stored.files) != sorted(declared_dtypes):
+                return None
+            for name in stored.files:
+                value = stored[name]
+                if (
+                    str(value.dtype) != declared_dtypes[name]
+                    or list(value.shape) != declared_shapes[name]
+                ):
+                    return None
+                arrays[name] = value
+        return arrays, metadata
+    except Exception:  # corrupt/truncated/invalid cache is a MISS, never an error
+        return None
+
+
+def _publish(
+    target: Path,
+    key: str,
+    components: Mapping[str, Any],
+    built: Mapping[str, np.ndarray],
+    metadata: dict[str, Any],
+) -> None:
+    """Atomically publish arrays, then the manifest (commit marker); temps cleaned on failure."""
+    target.mkdir(parents=True, exist_ok=True)
+    manifest_path = target / "manifest.json"
+    arrays_path = target / "features.npz"
+    # No committed manifest may exist while its arrays are being replaced.
+    manifest_path.unlink(missing_ok=True)
+    temps: list[str] = []
+    try:
+        fd, arrays_tmp = tempfile.mkstemp(dir=target, prefix=".features-", suffix=".tmp")
+        temps.append(arrays_tmp)
+        with os.fdopen(fd, "wb") as handle:
+            np.savez_compressed(handle, **built)
+            handle.flush()
+            os.fsync(handle.fileno())
+        size = os.path.getsize(arrays_tmp)
+        digest = _sha256_file(Path(arrays_tmp))
+        os.replace(arrays_tmp, arrays_path)
+        temps.remove(arrays_tmp)
+        manifest = {
+            "key": key,
+            "key_components": components,
+            "metadata": metadata,
+            "arrays": {name: str(value.dtype) for name, value in built.items()},
+            "array_shapes": {name: list(value.shape) for name, value in built.items()},
+            "artifact": {"file": "features.npz", "sha256": digest, "size_bytes": size},
+            "cache_format_version": CACHE_FORMAT_VERSION,
+        }
+        fd, manifest_tmp = tempfile.mkstemp(dir=target, prefix=".manifest-", suffix=".tmp")
+        temps.append(manifest_tmp)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps(manifest, sort_keys=True, indent=2))
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(manifest_tmp, manifest_path)
+        temps.remove(manifest_tmp)
+        _fsync_dir(target)
+    except BaseException:
+        manifest_path.unlink(missing_ok=True)  # never leave a commit marker for unverified arrays
+        raise
+    finally:
+        for leftover in temps:
+            with contextlib.suppress(OSError):
+                os.unlink(leftover)
 
 
 def _true_range(high: np.ndarray, low: np.ndarray, close: np.ndarray) -> np.ndarray:
@@ -631,36 +755,28 @@ class FeatureStore:
         components = _key_components(df, cfg)
         key = _cache_key(components)
         target = Path(cache_dir) / key
-        manifest_path = target / "manifest.json"
-        arrays_path = target / "features.npz"
-        if manifest_path.is_file() and arrays_path.is_file():
-            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-            if manifest.get("key") == key and manifest.get("key_components") == components:
-                with np.load(arrays_path, allow_pickle=False) as stored:
-                    arrays = {name: stored[name] for name in stored.files}
+        cacheable = not str(components["code_fingerprint"]).startswith(_UNCACHEABLE_PREFIX)
+        if cacheable:
+            hit = _verified_cache_hit(target, key, components)
+            if hit is not None:
+                arrays, stored_metadata = hit
                 elapsed = time.perf_counter() - started
-                metadata = dict(manifest["metadata"])
-                metadata.update({"timing_s": elapsed, "cache_hit": True, "cache_key": key})
+                stored_metadata.update({"timing_s": elapsed, "cache_hit": True, "cache_key": key})
                 print(f"[features] loaded cache: {elapsed:.3f} s")
-                return FeatureSet(arrays, metadata)
+                return FeatureSet(arrays, stored_metadata)
         built = FeatureStore.build(df, cfg)
-        target.mkdir(parents=True, exist_ok=True)
-        np.savez_compressed(arrays_path, **built)
         metadata = dict(built.metadata)
         metadata["cache_key"] = key
-        manifest = {
-            "key": key,
-            "key_components": components,
-            "metadata": metadata,
-            "arrays": {name: str(value.dtype) for name, value in built.items()},
-        }
-        manifest_path.write_text(json.dumps(manifest, sort_keys=True, indent=2), encoding="utf-8")
+        if cacheable:
+            _publish(target, key, components, built, metadata)
         built.metadata = metadata
-        print(f"[features] cached {key}: {time.perf_counter() - started:.3f} s")
+        state = "cached" if cacheable else "built (uncacheable code closure, cache bypassed)"
+        print(f"[features] {state} {key}: {time.perf_counter() - started:.3f} s")
         return built
 
 
 __all__ = (
+    "CACHE_FORMAT_VERSION",
     "FEATURE_SCHEMA_VERSION",
     "FEATURE_SET_VERSION",
     "NEW_FEATURE_NAMES",
