@@ -56,10 +56,40 @@ class MinEvidence:
 DEFAULT_MIN_EVIDENCE = MinEvidence()
 
 
+STATS_LEGACY = "observer-stats-1"  # blocks: union of both arms; controls blocked by their OWN decision day
+STATS_V2 = "observer-stats-2"  # blocks counted PER ARM (>= min_blocks in the event arm AND in the control arm); controls blocked by the day of their EVENT
+# observer-stats-3 = stats-2 (per-arm counts, controls take the block of their EVENT) with CONTIGUOUS blocks of >= MIN_BLOCK_TRADING_DAYS trading days instead of single days.
+# Why: a control sits up to +-10 trading days from its event (observer-controls-3) and controls of neighbouring events share label windows; a single-day (or
+# single-week) block therefore is NOT an independent unit. Blocks of >= 21 trading days (= 2 x 10 + 1) leave dependence only at the block edges.
+STATS_V3 = "observer-stats-3"
+MIN_BLOCK_TRADING_DAYS = 21
+STATS_VERSIONS = (STATS_LEGACY, STATS_V2, STATS_V3)
+PER_ARM_STATS = (STATS_V2, STATS_V3)  # versions that count blocks per arm
+
+
+def contiguous_day_blocks(days, block_len: int = MIN_BLOCK_TRADING_DAYS) -> dict:
+    """observer-stats-3 block assignment: map every distinct day ordinal to a block id. The distinct days are sorted and cut into consecutive runs of ``block_len``
+    trading days (the days present in the data); a trailing remainder shorter than ``block_len`` is merged into the previous block, so EVERY block holds
+    >= ``block_len`` days (a single block when there are fewer days). The mapping depends on the days only, never on a cell, a label or an arm. Days that
+    contain no event but lie between two event days only make a block longer in calendar time, never shorter in trading days."""
+    if block_len < MIN_BLOCK_TRADING_DAYS:
+        raise ValueError(f"observer-stats-3 needs blocks of >= {MIN_BLOCK_TRADING_DAYS} trading days, got {block_len}")
+    uniq = np.unique(np.asarray(days))
+    n_blocks = max(1, len(uniq) // block_len)
+    return {d: min(i // block_len, n_blocks - 1) for i, d in enumerate(uniq.tolist())}
+
+
 def evidence_status(
     *, n_event: int, n_control: int, n_blocks: int, n_clusters: int | None = None, min_evidence: MinEvidence = DEFAULT_MIN_EVIDENCE,
+    n_blocks_event: int | None = None, n_blocks_control: int | None = None,
 ) -> str:
-    if n_event < min_evidence.min_events or n_control < min_evidence.min_controls or n_blocks < min_evidence.min_blocks:
+    """``n_blocks_event`` / ``n_blocks_control`` (observer-stats-2): independent blocks with at least one non-NaN outcome IN THE CELL, separately per
+    arm; when given they replace the union count ``n_blocks`` (an arm with few blocks can no longer hide behind the other arm's blocks)."""
+    if n_blocks_event is not None and n_blocks_control is not None:
+        blocks_short = min(n_blocks_event, n_blocks_control) < min_evidence.min_blocks
+    else:
+        blocks_short = n_blocks < min_evidence.min_blocks
+    if n_event < min_evidence.min_events or n_control < min_evidence.min_controls or blocks_short:
         return INSUFFICIENT_EVIDENCE
     if n_clusters is not None and n_clusters < min_evidence.min_clusters:
         return INSUFFICIENT_EVIDENCE
@@ -145,6 +175,9 @@ class DeltaEstimate:
     alpha: float
     se: float = float("nan")  # standard deviation of the bootstrap draws (block-level standard error)
     p_norm: float = float("nan")  # normal-approximation p from delta / se (unlimited resolution)
+    n_blocks_event: int | None = None  # blocks with >= 1 non-NaN event outcome (the event arm of THIS cell)
+    n_blocks_control: int | None = None  # blocks with >= 1 non-NaN control outcome (the control arm of THIS cell)
+    n_nan_draws: int = 0  # bootstrap draws that were NaN (an empty arm in a resample): COUNTED here, never silently dropped without a trace
 
 
 Arm = tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]  # (y_event, day_event, y_control, day_control)
@@ -185,15 +218,23 @@ def _bootstrap_sums(counts: np.ndarray, B: int, seed: int, chunk: int = 200):
         yield counts[idx].sum(axis=1)  # (m, columns)
 
 
-def _summarise(draws: np.ndarray, alpha: float) -> tuple[float, float, float, float]:
+def _summarise(draws: np.ndarray, alpha: float) -> tuple[float, float, float, float, int]:
+    """(ci_low, ci_high, p, se, n_nan_draws): NaN draws are excluded from the summary but their number is returned (a consumer may abort on > 0)."""
+    n_nan = int(np.isnan(draws).sum())
     d = draws[~np.isnan(draws)]
     if len(d) == 0:
-        return float("nan"), float("nan"), float("nan"), float("nan")
+        return float("nan"), float("nan"), float("nan"), float("nan"), n_nan
     lo, hi = np.percentile(d, [100 * alpha / 2, 100 * (1 - alpha / 2)])
     le, ge = int((d <= 0).sum()), int((d >= 0).sum())
     p = min(1.0, 2.0 * (min(le, ge) + 1) / (len(d) + 1))
     se = float(d.std(ddof=1)) if len(d) > 1 else float("nan")
-    return float(lo), float(hi), float(p), se
+    return float(lo), float(hi), float(p), se, n_nan
+
+
+def _n_blocks(y: np.ndarray, d: np.ndarray) -> int:
+    """Independent blocks with at least one non-NaN outcome in this arm."""
+    _, dd, _ = _clean(y, d)
+    return len(np.unique(dd)) if len(dd) else 0
 
 
 def block_bootstrap_delta(
@@ -209,12 +250,12 @@ def block_bootstrap_delta(
     pe = ke / ne if ne else float("nan")
     pc = kc / nc if nc else float("nan")
     draws = np.concatenate([_rate(s[:, 0], s[:, 1]) - _rate(s[:, 2], s[:, 3]) for s in _bootstrap_sums(counts, B, seed)]) if D else np.array([])
-    lo, hi, p, se = _summarise(draws, alpha)
+    lo, hi, p, se, n_nan = _summarise(draws, alpha)
     ncl = None
     if cluster_event is not None:
         cl = np.asarray(cluster_event)
         ncl = len(set(cl[~np.isnan(arm[0])].tolist()))
-    return DeltaEstimate(ne, nc, ke, kc, pe, pc, pe - pc, lo, hi, p, D, ncl, B, alpha, se, normal_p(pe - pc, se))
+    return DeltaEstimate(ne, nc, ke, kc, pe, pc, pe - pc, lo, hi, p, D, ncl, B, alpha, se, normal_p(pe - pc, se), _n_blocks(arm[0], arm[1]), _n_blocks(arm[2], arm[3]), n_nan)
 
 
 def block_bootstrap_contrast(arm_a: Arm, arm_b: Arm, *, B: int = DEFAULT_B, seed: int = 0, alpha: float = DEFAULT_ALPHA) -> DeltaEstimate:
@@ -228,11 +269,12 @@ def block_bootstrap_contrast(arm_a: Arm, arm_b: Arm, *, B: int = DEFAULT_B, seed
     draws = np.concatenate([
         (_rate(s[:, 0], s[:, 1]) - _rate(s[:, 2], s[:, 3])) - (_rate(s[:, 4], s[:, 5]) - _rate(s[:, 6], s[:, 7])) for s in _bootstrap_sums(counts, B, seed)
     ])
-    lo, hi, p, se = _summarise(draws, alpha)
+    lo, hi, p, se, n_nan = _summarise(draws, alpha)
     pe, pc = (ke / ne if ne else float("nan")), (kc / nc if nc else float("nan"))
     pbe, pbc = (kbe / nbe if nbe else float("nan")), (kbc / nbc if nbc else float("nan"))
     delta = (pe - pc) - (pbe - pbc)
-    return DeltaEstimate(ne, nc, ke, kc, pe, pc, delta, lo, hi, p, D, None, B, alpha, se, normal_p(delta, se))
+    # per-arm blocks of the CELL arm A (``n_blocks`` stays the union of all four arrays that the bootstrap resamples)
+    return DeltaEstimate(ne, nc, ke, kc, pe, pc, delta, lo, hi, p, D, None, B, alpha, se, normal_p(delta, se), _n_blocks(arm_a[0], arm_a[1]), _n_blocks(arm_a[2], arm_a[3]), n_nan)
 
 
 def block_bootstrap_ci(
@@ -469,6 +511,10 @@ class EnrichmentResult:
     n_hypotheses_ever: int | None = None  # registry size across ALL runs
     adjusted_p_registry: float | None = None  # adjusted over everything ever registered
     p_norm: float | None = None  # block-SE normal approximation (check / alternative p)
+    n_blocks_event: int | None = None  # per-arm blocks of the cell (observer-stats-2)
+    n_blocks_control: int | None = None
+    n_nan_draws: int = 0
+    stats_version: str | None = None
     p_floor: float | None = None  # smallest attainable bootstrap p
     B: int | None = None
     power_limited: bool = False  # m_family * p_floor >= alpha: no result of this family could ever be significant

@@ -131,3 +131,15 @@ events, excluded controls and orphaned controls. Table columns are asserted disj
 * Real exchange volume or a volume profile, only if a real volume source ever exists (MT5 tick volume is a tick count, not volume).
 
 No external code is imported; external repositories are references for definitions and test patterns only.
+
+## Profiling note: speeding up Gate B / Gate C later (text only, nothing implemented here)
+
+* Profile first (`python -X importtime`, `cProfile` on ONE market, `--limit` smoke runs): the cost of Gate B is dominated by the REAL-data leakage audit (batch adapter / incremental
+  rebuilds over truncated views), not by statistics. Gate C is cheap per market (one partition read, one `incremental_ablation` call); its bootstrap draws scale with `B x days`.
+* Cheap wins, in order: per-market parallelism (already `--jobs`, max 2 on the 8 GB machine; one market per process, results independent of the worker count); Parquet column projection and
+  partition filters (Gate C reads only the stage partition and only the columns of the preregistered contrasts); the per-market cache keyed by input fingerprint; reuse the observer registry
+  catch-up (`LevelRegistry`) between audit cases instead of replaying from bar 0 per sample; fewer / smaller audit samples for markets that already passed an identical fingerprint.
+* Bootstrap: day-block counts are already vectorised (`stats._bootstrap_sums`); `B` is the knob (`choose_B`: 20 m / alpha, cap 20 000). A normal-approximation p (`p_method="normal"`) removes
+  the B floor for exploration but is not used for preregistered confirmation.
+* Do not trade away coverage for speed (the audit sample sizes and the partition guards are part of the gate), and re-measure peak memory (`peak_memory_mb` in the backfill manifest) after any change.
+* Gate C preregistration and runner: `docs/OBSERVER_GATE_C_PREREGISTRATION.md`, `scripts/observer_gate_c.py` (own registry, fit -> validate -> oos, stop rule).
