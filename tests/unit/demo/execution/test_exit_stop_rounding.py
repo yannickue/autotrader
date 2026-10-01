@@ -113,7 +113,24 @@ def test_three_ticks_looser_broker_stop_is_refused_but_counted_and_visible(env):
         stack.manage_exits(now_of(stack))
     assert broker.positions_get()[0].volume == vol0  # nothing was done
     assert not [e for e in stack.exit_log() if e["kind"] == "partial_exit"]
-    assert len([e for e in stack.exit_log() if e["kind"] == "skip_invalid_position"]) == 3  # still refused (invariant kept)
+    h = stack.exit_manager_health()
+    assert h["rows_skipped"] == 1 and h["rows_managed"] == 0
+    assert h["consecutive_skips_max"] == 3 and h["skipped_rows"] == {"intent-1": 3}
+    assert h["last_skip_reason"].startswith("skip_invalid_position")
+    assert stack._exit_manager.counters["skip_invalid_position"] == 3
+
+
+def test_skip_streak_resets_when_the_row_is_managed_again(env):
+    broker, stack = env
+    open_row(stack, PLAN_GER, stop=24950.0)
+    (pos,) = broker.positions_get()
+    pos.sl = 24949.97
+    stack.manage_exits(now_of(stack))
+    assert stack.exit_manager_health()["consecutive_skips_max"] == 1
+    pos.sl = 24950.0
+    stack.manage_exits(now_of(stack))
+    h = stack.exit_manager_health()
+    assert h["consecutive_skips_max"] == 0 and h["rows_managed"] == 1 and h["rows_skipped"] == 0
 
 
 # -- (4) a tighter broker stop works as before ---------------------------------------------------------------------------
@@ -127,7 +144,7 @@ def test_tighter_broker_stop_is_managed_as_before(env):
     broker.set_quote(25060.5, 25062.0)
     stack.manage_exits(now_of(stack))
     assert [e for e in stack.exit_log() if e["kind"] == "partial_exit"]
-    assert not [e for e in stack.exit_log() if e["kind"] == "skip_invalid_position"]
+    assert stack.exit_manager_health()["rows_skipped"] == 0
 
 
 # -- (5) tick-aligned equal stops: golden, unchanged ---------------------------------------------------------------------

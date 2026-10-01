@@ -2618,6 +2618,11 @@ class Mt5DemoStack:
     def exit_plan_config(self) -> ExitPlanConfig:
         return self._cfg.exit_plan
 
+    def exit_manager_health(self) -> dict[str, Any] | None:
+        """Visibility of the staged exit manager's last cycle (None under fixed_1_5r): rows managed / skipped, the longest
+        consecutive-skip streak per row. Cheap, read-only, no lock needed (a plain dict snapshot)."""
+        return None if self._exit_manager is None else self._exit_manager.health()
+
     def exit_log(self) -> list[dict[str, Any]]:
         """Audit trail of the staged exit manager (empty under fixed_1_5r)."""
         return [] if self._exit_manager is None else list(self._exit_manager.log)

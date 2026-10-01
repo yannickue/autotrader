@@ -466,6 +466,8 @@ class DemoRunner:
         self._last_fill: dict[str, Any] | None = None
         self._last_error: dict[str, Any] | None = None
         self._warnings: list[str] = []
+        self._exit_health: dict[str, Any] | None = None  # last staged exit-manager cycle (visibility only)
+        self._exit_alarmed: dict[str, int] = {}  # intent_id -> streak at which the loud alarm last fired
         self._pred_status: dict[str, str] = {}
         self._day: str = ""
         self._day_counts: dict[str, int] = {"raw": 0, "accepted": 0, "rejected": 0, "trades": 0}
@@ -1004,6 +1006,7 @@ class DemoRunner:
             manage_exits = None if self.cfg.flatten_only else getattr(self.stack, "manage_exits", None)
             if manage_exits is not None:
                 events += list(manage_exits(now))
+                self._observe_exit_health(now)
         except StackFailClosed as exc:
             if self.cfg.operating_policy is None:
                 raise
@@ -1018,6 +1021,31 @@ class DemoRunner:
         self._note_eod(now)
         if pending is not None:
             raise pending
+
+    EXIT_SKIP_ALARM_CYCLES = 3  # one row unmanaged this many consecutive cycles -> loud (no fail-closed, no exit)
+
+    def _observe_exit_health(self, now: datetime) -> None:
+        """Make a silently UNMANAGED position impossible: surface the exit manager's per-cycle skip counters in the heartbeat and
+        raise a loud alarm (stderr line + warnings + ``last_error``) when one row is skipped N consecutive cycles. Failure-isolated."""
+        try:
+            fn = getattr(self.stack, "exit_manager_health", None)
+            health = None if fn is None else fn()
+            if health is None:
+                return
+            self._exit_health = dict(health)
+            rows = dict(health.get("skipped_rows") or {})
+            for iid in [k for k in self._exit_alarmed if k not in rows]:
+                del self._exit_alarmed[iid]  # managed again (or closed): re-arm
+            for iid, n in rows.items():
+                last = self._exit_alarmed.get(iid)
+                if n >= self.EXIT_SKIP_ALARM_CYCLES and (last is None or n - last >= 20):
+                    self._exit_alarmed[iid] = n
+                    text = f"EXIT_MANAGER_UNMANAGED_ROW {iid}: skipped {n} consecutive cycles ({health.get('last_skip_reason')}); only the broker stop / EOD flat act on it"
+                    print(f"ALARM {text}", file=sys.stderr)
+                    self._warnings.append(text[:300])
+                    self._note_error(now, text)
+        except Exception as exc:  # visibility only - must never disturb the manage cycle
+            self._note_error(now, f"exit_health_observe_failed: {type(exc).__name__}: {exc}")
 
     def _eod_status(self) -> dict[str, Any] | None:
         if self.cfg.operating_policy is None:
@@ -1984,6 +2012,7 @@ class DemoRunner:
             "last_signal": self._last_signal,
             "last_fill": self._last_fill,
             "last_error": self._last_error,
+            "exit_manager": self._exit_health,
             "learning_samples": n_trades,
             "champion": CHAMPION,
             "challengers": self._pred_status or {"status": self.learning_error or ("not_loaded" if self.predictor is None else "no_predictions_yet")},

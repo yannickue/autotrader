@@ -444,6 +444,9 @@ def broker_target_for_staged(
     return last.target_price if favourable else None
 
 
+SKIP_ALARM_CYCLES = 3  # consecutive unmanaged cycles of one row before the loud alarm line
+
+
 class StagedExitManager:
     def __init__(self, stack: Mt5DemoStack, policy: ExitPolicy, *, profiles: bool = False) -> None:
         self._stack = stack
@@ -456,6 +459,13 @@ class StagedExitManager:
         self._stop_failures: dict[str, int] = collections.defaultdict(int)
         self.log: collections.deque[dict[str, Any]] = collections.deque(maxlen=1000)
         self.counters: collections.Counter[str] = collections.Counter()
+        # Observability: a row that is NOT managed (invalid position / row error / ...) must never be silent.
+        self._cycle_skips: dict[str, str] = {}
+        self._cycle_managed = 0
+        self._skip_streak: dict[str, int] = {}
+        self._health: dict[str, Any] = {
+            "rows_managed": 0, "rows_skipped": 0, "consecutive_skips_max": 0, "last_skip_reason": None, "skipped_rows": {},
+        }
 
     # ------------------------------------------------------------------------------ public
 
@@ -470,6 +480,8 @@ class StagedExitManager:
         events: list[ExecutionEvent] = []
         rows = stack._registry.with_status(reg.OPEN)
         per_market = collections.Counter(r.market for r in rows)
+        self._cycle_skips = {}
+        self._cycle_managed = 0
         for row in rows:
             if per_market[row.market] > 1:
                 self._note_once(row.intent_id, R_EXIT_TRANCHE_LIMITATION, now)
@@ -481,7 +493,45 @@ class StagedExitManager:
                     raise
                 self.counters["row_errors"] += 1
                 self._log("row_error", row, error=f"{type(exc).__name__}:{exc}"[:200])
+                self._cycle_skips[row.intent_id] = f"row_error:{type(exc).__name__}:{exc}"[:200]
+        self._close_cycle({r.intent_id for r in rows})
         return events
+
+    def health(self) -> dict[str, Any]:
+        """Last cycle's visibility counters (cheap, failure-isolated): rows managed / skipped, the longest consecutive-skip streak
+        and the per-row streaks (only rows currently skipped)."""
+        return {**self._health, "skipped_rows": dict(self._health["skipped_rows"])}
+
+    def _close_cycle(self, open_ids: set[str]) -> None:
+        try:
+            for iid in list(self._skip_streak):
+                if iid not in self._cycle_skips:  # managed again, or no longer open
+                    self._skip_streak.pop(iid, None)
+            for iid in self._cycle_skips:
+                self._skip_streak[iid] = self._skip_streak.get(iid, 0) + 1
+            worst = max(self._skip_streak.values(), default=0)
+            last = self._health.get("last_skip_reason")
+            if self._cycle_skips:
+                last = self._cycle_skips[max(self._skip_streak, key=lambda k: self._skip_streak[k])]
+            self._health = {
+                "rows_managed": self._cycle_managed, "rows_skipped": len(self._cycle_skips),
+                "consecutive_skips_max": worst, "last_skip_reason": last, "skipped_rows": dict(self._skip_streak),
+            }
+            for iid, n in self._skip_streak.items():
+                if n == SKIP_ALARM_CYCLES or (n > SKIP_ALARM_CYCLES and n % 20 == 0):
+                    self.counters["unmanaged_row_alarms"] += 1
+                    _LOG.error(
+                        "exit_manager ALARM: row %s has been NOT MANAGED for %d consecutive cycles (%s); only the broker stop and the EOD flat act on it",
+                        iid, n, self._cycle_skips.get(iid),
+                    )
+        except Exception:  # visibility only - never allowed to disturb the exit cycle
+            _LOG.exception("exit_manager health bookkeeping failed")
+
+    def _skip(self, row: reg.IntentRow, kind: str, **fields: Any) -> list[ExecutionEvent]:
+        self.counters[kind] += 1
+        self._cycle_skips[row.intent_id] = f"{kind}:{fields.get('error', '')}"[:200]
+        self._log(kind, row, **fields)
+        return []
 
     # ------------------------------------------------------------------------------ helpers
 
@@ -580,8 +630,7 @@ class StagedExitManager:
         if row.position_ticket is not None and int(row.position_ticket) != int(position.ticket):
             return []
         if (1 if int(position.type) == 0 else -1) != row.direction:
-            self._log("skip_side_mismatch", row)
-            return []
+            return self._skip(row, "skip_side_mismatch")
 
         quote = self._quote(row, now)
         if quote is None:
@@ -596,14 +645,12 @@ class StagedExitManager:
             # partial ENTRY fill would look like an already-taken partial exit
             original = Decimal(str(ctx.get("initial_quantity") if ctx.get("initial_quantity") is not None else ctx["quantity"]))
         except (KeyError, ValueError, ArithmeticError):
-            self._log("skip_no_original_quantity", row)
-            return []
+            return self._skip(row, "skip_no_original_quantity")
         realized = max(ZERO, original - volume)
         try:
             plan_stages = parse_exit_plan(ctx.get("exit_plan"))
         except (KeyError, ValueError, TypeError, ArithmeticError) as exc:
-            self._log("skip_bad_exit_plan", row, error=str(exc)[:160])
-            return []
+            return self._skip(row, "skip_bad_exit_plan", error=str(exc)[:160])
         if profile_attr is not None and plan_stages:
             # Lane V (MEDIUM-1): the broker TP and the profile's FINAL stage sit at the same price (REVERSION / FAILED_MOVE): the
             # engine must not race the broker fill with a market close. The broker owns that stage; the engine keeps thesis
@@ -693,8 +740,8 @@ class StagedExitManager:
                 time_to_forced_flat=time_left,
             )
         except ValueError as exc:
-            self._log("skip_invalid_position", row, error=str(exc)[:200])
-            return []
+            return self._skip(row, "skip_invalid_position", error=str(exc)[:200])
+        self._cycle_managed += 1
 
         evaluation = self._engine_for(row.market, policy).evaluate(
             position=exit_position, market=market_state, now=now
