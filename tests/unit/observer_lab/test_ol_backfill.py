@@ -152,7 +152,7 @@ def test_controls_step_is_independently_rerunnable_and_never_rewrites_event_file
         c2 = BF.run_controls_step(b["frame"], b["mspec"], MARKET, tmp_path, seed=2, code=CODE)  # re-run ONLY the controls with another seed
         assert c1["status_this_call"] == c2["status_this_call"] == "BUILT" and c1["fingerprint"] != c2["fingerprint"]
         assert ev_mt == {k: (tmp_path / MARKET / f).stat().st_mtime_ns for k, f in BF.EVENT_FILES.items()}  # event files untouched
-        assert c2["matching_is_pre_revision"] is True and c2["matching_revision"] == BF.CONTROL_MATCHING_REVISION and c2["events_run_id"] == c1["events_run_id"]
+        assert c2["matching_is_pre_revision"] is False and c2["matching_revision"] == BF.CONTROL_MATCHING_REVISION and c2["events_run_id"] == c1["events_run_id"]
         other_frame = make_frame(N_BARS, seed=99)
         with pytest.raises(ValueError):  # a different frame than the one the events step used
             BF.run_controls_step(other_frame, b["mspec"], MARKET, tmp_path, seed=3, code=CODE)
@@ -291,7 +291,7 @@ def test_manifest_content():
     assert m["events"]["n_events"] == len(EVENT_BARS) and m["events"]["by_family_variant_direction"] and m["events"]["exclusions"]["no_stop"] == 1
     assert m["events"]["n_opportunity_bars"] == len(EVENT_BARS) + 3
     assert c["match_report"]["n_events"] == len(EVENT_BARS) and "smd" in c["match_report"] and c["match_report"]["method"].startswith("observer-controls")
-    assert c["matching_revision"] == BF.CONTROL_MATCHING_REVISION and c["matching_is_pre_revision"] and "controls_in_a_different_partition_than_their_event" in c["partitions"]
+    assert c["matching_revision"] == BF.CONTROL_MATCHING_REVISION and not c["matching_is_pre_revision"] and "controls_in_a_different_partition_than_their_event" in c["partitions"]
     assert m["rows"]["table"] == m["rows"]["features"] == m["rows"]["labels"] == m["rows"]["events"] == m["events"]["n_events"]
     assert c["rows"]["table"] == c["rows"]["features"] == c["rows"]["labels"] == c["rows"]["events"] == c["n_controls"]
     assert m["runtime_s"] >= 0 and "peak_memory_mb" in m and m["label_convention_version"] == "obs-labels-1" and m["partitions"]["has_frozen_split"] is True

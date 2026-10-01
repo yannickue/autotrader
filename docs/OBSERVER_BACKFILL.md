@@ -61,7 +61,7 @@ separate: a labels file is opened only with `with_labels=True`; the feature/even
 group versions and definition hashes, `observer_config_hash`, label convention version, dev-end guard result, data coverage (first / last bar, bars, gaps,
 missing months, frame fingerprint, evaluation start), partition plan (`has_frozen_split`, note), event counts per family|variant|direction, exclusion counters,
 warm-up counts, row counts, runtime, peak memory. `controls_manifest.json`: events fingerprint it was built from, seed, match spec,
-`control_method_version`, `matching_revision` (`pre-partition-aware`) and `matching_is_pre_revision`, match report (match rate, unmatched, SMD, session
+`control_method_version`, `matching_revision` (partition-aware, `observer-controls-2`) and `matching_is_pre_revision` (false), match report (match rate, unmatched, SMD, session
 share difference), match rate by family, controls in a different partition than their event, warm-up counts, rows, runtime, memory.
 
 ## Partition column
@@ -71,13 +71,16 @@ OOS = 2026-07-01..2026-08-31 written as `FROZEN_OOS`, FORWARD never occurs). PUR
 the first 4 h after a boundary. BTCUSD / BRENT have NO frozen split: the same generic dev dates are applied for comparability, `has_frozen_split = false`
 and the manifest note says the TRAIN / VALIDATION tags are not a frozen train/validation of any fitted parameter.
 
-## Matching revision (controls)
+## Matching (controls)
 
-Controls are produced by `observer_lab.controls.match_controls` as it was BEFORE the partition-aware revision: percentile ranks over the whole market sample
-(including later partitions), no restriction of a control to its event's partition, no PURGED/EMBARGO restriction of control bars. The pipeline isolates
-this: `select_controls` is the single selection function and `CONTROL_MATCHING_REVISION` is part of the controls fingerprint, so after the revised matching
-lands `scripts/observer_backfill.py --step controls` regenerates only the controls (events, features and labels of events are not recomputed).
-Every result built on the current controls is provisional and says so (`matching_is_pre_revision`).
+Controls come from the partition-aware `observer_lab.controls.match_controls` (`CONTROL_METHOD_VERSION = observer-controls-2`): drawn INSIDE the event's
+partition (TRAIN / VALIDATION / FROZEN_OOS), percentile ranks (ATR, spread) computed within the partition, PURGED / EMBARGO / UNASSIGNED bars are never
+controls (events there are reported unmatched), `exclude_idx` = the decision bars of EVERY generator candidate of the market (all families, also those
+filtered out of the event table) with the +-48 bar neighbourhood closed. Frames with fewer than 4 trading days up to the core fit end fall back to
+`partition=None` (synthetic tests only). `select_controls` is the single selection function and `CONTROL_MATCHING_REVISION` is part of the controls
+fingerprint, so a matching change re-runs only the controls (`--step controls`); events, features and labels of events are not recomputed.
+The first (pre-revision, whole-sample ranks, no partition restriction) controls of every market are kept next to the backfill under `_prerevision/` and
+compared in the Gate B report. BTCUSD / BRENT have no frozen split: their partition tags are generic dev-date tags.
 
 ## Forward system (live table vs backfill)
 
@@ -119,6 +122,6 @@ uv run pytest tests/unit/observer_lab/test_ol_backfill.py tests/unit/observer_la
 * Events are generator opportunities, strongly clustered in time (many families fire on the same bars); controls must stay 48 bars away from every
   opportunity, so the match rate can be low in busy markets. Low rates are reported, not hidden; they are a property of the exclusion rule.
 * Bar-resolution labels (M5), stop-first, cost-free; first-passage rates are not P&L.
-* Percentile ranks used for matching are descriptive over the whole market sample (pre-revision), `match_*` columns must never be used as features.
+* Percentile ranks used for matching are descriptive over the whole market sample (descriptive `match_*` columns of `events.parquet`; the matching itself uses partition-internal ranks), `match_*` columns must never be used as features.
 * The audit compares exact equality (NaN == None); records whose windowed history is not warm are skipped and counted, not hidden.
 * One market per run; the level registry costs ~1 ms per bar, an observed record ~30 ms, so a market takes minutes to tens of minutes.

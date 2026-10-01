@@ -36,7 +36,7 @@ CAVEATS = [
     "The core thresholds (GER40 NAS100 SPX500 XAUUSD EURUSD) were partly fitted up to 2026-06-30: events before that date are in-sample for the family thresholds.",
     "The dev window 2026-07-01..2026-08-31 is NOT a clean holdout for the core (other lanes validated on it); the forward period (>= 2026-09-01) is untouched and never read.",
     "Bars are M5 bid bars: first-passage labels are bar-resolution, stop-first, cost-free; they are not P&L. Events are generator opportunities without the live operating policy filters.",
-    "Controls used the matching version BEFORE the partition-aware revision (percentile ranks over the whole market sample, no partition restriction): control-based results are provisional until the controls step is re-run.",
+    "Controls use the partition-aware matching (observer-controls-2): inside the event's partition, partition-internal percentile ranks, +-48 bars away from every generator opportunity. BTCUSD/BRENT have no frozen split, so their partitions are generic dev-date tags only. The pre-revision controls (whole-sample ranks) are kept under _prerevision/ for comparison.",
     "Nothing here is an edge claim; OBSERVATION_ONLY_NOT_ALPHA_VALIDATED.",
 ]
 
@@ -192,6 +192,19 @@ def gate_b_market(market: str, root: Path, p2root: str | None, args) -> dict:
     mq, mv, mw = check_matching(cm)
     res["matching"] = {**mq, "verdict": mv, "reasons": mw}
 
+    pre = root / "_prerevision" / market
+    if (pre / "controls_manifest.json").is_file():
+        pm = json.loads((pre / "controls_manifest.json").read_text(encoding="utf-8"))
+        rates = {}
+        if (pre / "controls_labels.parquet").is_file():
+            pl_ = pd.read_parquet(pre / "controls_labels.parquet")
+            for a_, b_ in FP_LABELS:
+                col = f"y_fav{round(a_ * 100):03d}_before_adv{round(b_ * 100):03d}"
+                if col in pl_.columns:
+                    v_ = pl_[col].dropna().astype(float)
+                    rates[col] = {"n": len(v_), "rate": float(v_.mean()) if len(v_) else None}
+        res["matching_prerevision"] = {"method": pm["match_report"]["method"], "n_controls": pm["n_controls"], "match_rate": pm["match_report"]["match_rate"], "smd": pm["match_report"]["smd"], "control_label_rates": rates}
+
     # (ii) + (vi) leakage audit and parity on real data
     rng = np.random.default_rng(args.seed)
     ev = feat_all[~feat_all["is_control"].astype(bool)]
@@ -308,6 +321,11 @@ def render(results: list[dict], meta: dict) -> str:
             lines.append("* match rate by family: " + ", ".join(f"{k} {v['n_matched']}/{v['n_events']}" for k, v in (mq.get("by_family") or {}).items()))
         if mq.get("reasons"):
             lines.append(f"* reasons: {mq['reasons']}")
+        pr = r.get("matching_prerevision")
+        if pr:
+            cur = {c: x["controls"] for c, x in lb["rates"].items()}
+            lines.append(f"* PRE-REVISION controls ({pr['method']}, whole-sample ranks): {pr['n_controls']} controls, match rate {pr['match_rate']:.4f}, SMD {pr['smd']}; REVISED: {r['n_controls']} controls, match rate {mq.get('match_rate')}")
+            lines.append("* control label rates pre -> revised: " + ", ".join(f"{c.replace('y_', '')} {('n/a' if v['rate'] is None else format(v['rate'], '.3f'))} (n={v['n']}) -> {('n/a' if cur[c]['rate'] is None else format(cur[c]['rate'], '.3f'))} (n={cur[c]['n_resolved']})" for c, v in pr["control_label_rates"].items()))
         cov = r["coverage"]
         d = cov["data"]
         lines += ["", "### (vii) Coverage", "",

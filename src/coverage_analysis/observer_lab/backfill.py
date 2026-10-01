@@ -10,7 +10,7 @@ step keyed by ``event_id``, matched controls with the same features and labels (
   live hook). A record is emitted at every event bar (step 1) and every control bar (step 2).
 * CONTROLS: ``select_controls`` -> ``observer_lab.controls.match_controls`` (market, session bucket, time of day, ATR percentile, spread band, direction
   inherited, +-48 bars exclusion around EVERY generator opportunity bar, seeded), ``is_control=True``, ``control_of=<event_id>``. The matching is the version
-  BEFORE the partition-aware revision (``CONTROL_MATCHING_REVISION``); when it lands only step 2 is re-run.
+  partition-aware revision (``CONTROL_MATCHING_REVISION``, ``observer-controls-2``); a matching change re-runs only step 2.
 * LABELS: ``observer_lab.labels.label_event`` for events AND controls (bars strictly after the decision bar only; a control inherits the risk distance
   ``R`` (price units) of its event).
 * PARTITION: every row carries ``partition`` (TRAIN / VALIDATION / FROZEN_OOS / PURGED / EMBARGO from ``observer_lab.splits``; a split tag that uses the label
@@ -97,7 +97,7 @@ if TYPE_CHECKING:  # pragma: no cover
 BACKFILL_VERSION = "observer-backfill-2"
 EVENTS_PIPELINE_VERSION = "observer-backfill-events-1"  # bump on ANY change of event generation / feature pass / labels / file layout of the events step
 CONTROLS_PIPELINE_VERSION = "observer-backfill-controls-1"  # bump on ANY change of the control step (selection wrapper, files)
-CONTROL_MATCHING_REVISION = "pre-partition-aware"  # replaced when observer_lab.controls gets the partition-aware matching (the controls step then re-runs alone)
+CONTROL_MATCHING_REVISION = "partition-aware (match_controls partition=auto, rank_mode=partition, exclude_idx = every generator opportunity)"
 DEFAULT_CHUNK_ROWS = 2000
 EVENT_BASE_COLS = ("event_id", "market", "family", "variant", "direction", "is_control", "control_of", "decision_ts_ns", "run_id")
 EVENT_EXTRA_COLS = (
@@ -364,7 +364,9 @@ def _matching_report_dict(rep: Any) -> dict[str, Any]:
     return {
         "n_events": rep.n_events, "n_matched": rep.n_matched, "match_rate": rep.match_rate, "n_unmatched": len(rep.unmatched_event_pos), "n_controls": rep.n_controls,
         "smd": {k: (None if (isinstance(v, float) and not math.isfinite(v)) else v) for k, v in rep.smd.items()}, "session_share_diff_max": rep.session_share_diff_max,
-        "method": rep.method,
+        "method": rep.method, "partition_mode": getattr(rep, "partition_mode", None), "rank_mode": getattr(rep, "rank_mode", None),
+        "by_partition": {k: dict(v) for k, v in getattr(rep, "by_partition", {}).items()}, "n_events_in_excluded_partition": getattr(rep, "n_events_in_excluded_partition", None),
+        "n_exclusion_bars_blocked": getattr(rep, "n_exclusion_bars_blocked", None), "n_rejected_partition": getattr(rep, "n_rejected_partition", None),
     }
 
 
@@ -604,10 +606,13 @@ def run_events_step(
 
 
 # ---------------------------------------------------------------------------------------------- step 2: controls (independently re-runnable)
-def select_controls(bars: ObserverBars, event_idx: Sequence[int], *, spec: MatchSpec, seed: int, eligible: np.ndarray) -> ControlSet:
-    """THE single place that chooses controls (so a revised, partition-aware matching replaces exactly this function and its revision label). Currently
-    ``observer_lab.controls.match_controls`` as it was before the revision: percentile ranks over the whole market sample, no partition restriction."""
-    return match_controls(bars, event_idx, spec=spec, seed=seed, eligible=eligible)
+def select_controls(
+    bars: ObserverBars, event_idx: Sequence[int], *, spec: MatchSpec, seed: int, eligible: np.ndarray, exclude_idx: Sequence[int], partitioned: bool,
+) -> ControlSet:
+    """THE single place that chooses controls: the partition-aware ``observer_lab.controls.match_controls`` (controls drawn INSIDE the event's partition, ranks
+    within the partition, PURGED / EMBARGO / UNASSIGNED bars never controls, +-``exclusion_bars`` around EVERY generator opportunity via ``exclude_idx``).
+    ``partitioned=False`` (frames with fewer than 4 trading days up to the core fit end: synthetic / very short data) uses ``partition=None`` (legacy)."""
+    return match_controls(bars, event_idx, spec=spec, seed=seed, eligible=eligible, partition="auto" if partitioned else None, exclude_idx=exclude_idx)
 
 
 def exclusion_mask(n: int, idx: np.ndarray, radius: int) -> np.ndarray:
@@ -667,9 +672,9 @@ def run_controls_step(
         eligible = np.arange(n) >= eval_idx
         if evm.get("limit") is not None and len(events):
             eligible &= np.arange(n) <= int(events["decision_idx"].max()) + CONTROL_TAIL_BARS
-        eligible &= ~exclusion_mask(n, opp, match_spec.exclusion_bars)  # keep away from EVERY generator opportunity, not only the emitted events
         ev_idx = events["decision_idx"].to_numpy(np.int64)
-        cs = select_controls(bars, ev_idx, spec=match_spec, seed=seed, eligible=eligible)
+        _plan0, regular0 = split_plan_for(bars.ts_ns)
+        cs = select_controls(bars, ev_idx, spec=match_spec, seed=seed, eligible=eligible, exclude_idx=opp, partitioned=regular0)
         log.info("controls %d match_rate=%.4f", len(cs.control_idx), cs.report.match_rate)
         items: dict[int, list[_Item]] = defaultdict(list)
         for pos, cidx in zip(cs.event_pos.tolist(), cs.control_idx.tolist(), strict=True):
@@ -685,7 +690,7 @@ def run_controls_step(
         log.info("controls observer pass done: %d rows in %.1fs", n_rows, t_obs)
         counts = _assemble_files(mdir, parts_dir, CONTROL_FILES)
         shutil.rmtree(parts_dir)
-        # partition agreement of control and event (the pre-revision matching does not enforce it)
+        # partition agreement of control and event (the revised matching enforces it: expected 0)
         cpart = pd.read_parquet(mdir / CONTROL_FILES["events"], columns=["control_of", "partition"]) if counts.get("events") else pd.DataFrame({"control_of": [], "partition": []})
         joined = cpart.merge(events[["event_id", "partition"]].rename(columns={"event_id": "control_of", "partition": "event_partition"}), on="control_of", how="left")
         mismatch = int((joined["partition"] != joined["event_partition"]).sum()) if len(joined) else 0
@@ -698,7 +703,7 @@ def run_controls_step(
         manifest = {
             "status": "COMPLETE", "step": "controls", "fingerprint": fp, "run_id": run_id, "market": market, "events_fingerprint": evm["fingerprint"], "events_run_id": evm["run_id"],
             "controls_pipeline_version": CONTROLS_PIPELINE_VERSION, "control_method_version": CONTROL_METHOD_VERSION, "matching_revision": CONTROL_MATCHING_REVISION,
-            "matching_is_pre_revision": True, "match_spec": asdict(match_spec), "seed": seed, "code": code, "observer_config_hash": cfg.config_hash(),
+            "matching_is_pre_revision": False, "partitioned_matching": regular0, "match_spec": asdict(match_spec), "seed": seed, "code": code, "observer_config_hash": cfg.config_hash(),
             "label_convention_version": LABEL_CONVENTION_VERSION, "n_controls": len(cs.control_idx), "match_report": _matching_report_dict(cs.report),
             "match_by_family": by_fam, "eligible_control_bars": int(eligible.sum()), "n_excluded_opportunity_bars": len(opp),
             "partitions": {"counts": _partition_summary(mdir / CONTROL_FILES["events"]), "controls_in_a_different_partition_than_their_event": mismatch,
@@ -706,8 +711,7 @@ def run_controls_step(
             "warmup": _warmup_counts(mdir / CONTROL_FILES["features"]), "rows": counts, "files": dict(CONTROL_FILES), "runtime_s": round(time.time() - t0, 1), "observer_pass_s": round(t_obs, 1),
             "peak_memory_mb": peak_memory_mb(),
             "caveats": [
-                "matching = observer_lab.controls.match_controls BEFORE the partition-aware revision: percentile ranks are computed over the whole market sample (incl. later partitions), "
-                "a control may come from another partition than its event, no PURGED/EMBARGO restriction on control bars",
+                "matching = observer_lab.controls.match_controls (observer-controls-2): controls are drawn inside the event's partition with partition-internal ranks; events in PURGED/EMBARGO bars are unmatched by construction", 
                 "a control inherits the risk distance R (price units), direction, family and variant of its event (inherited labels, not generator output)",
             ],
             **(extra_manifest or {}),
