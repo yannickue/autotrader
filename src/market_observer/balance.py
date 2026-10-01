@@ -14,6 +14,13 @@ longer window 48). Metrics, for a window of N bars with high H = max(h), low L =
                              central_zone_fraction 0.5 = middle half of the window range); bounds inclusive; R = 0 -> 1.0.
 * ``midpoint_cross_count``   number of sign changes of (close - (H+L)/2) along the window; a close exactly ON the midpoint carries the previous side.
 
+WARM-UP / HISTORY INVARIANCE: the value at T depends on bars [T-N+1 .. T] only (plus ``atr[T]``, an INPUT array). ``MIN_HISTORY_BARS`` = max(windows) = 48:
+below it the longer window is None (the shorter one is available from 24). Beyond that every metric except ``range_width_atr`` is EXACTLY
+independent of how much history was loaded (tested with 120 / 240 / 500 / full windows). ``range_width_atr`` is exact only if the supplied ATR is
+exact-window (e.g. SMA of TR); with a recursive Wilder/EMA ATR it inherits that recursion's warm-up error (decays by 13/14 per bar, tested
+relative difference < 1e-3 once 120 bars are loaded) — a research/live difference that is the adapter's ATR warm-up, not this module's.
+This is NOT a market-profile / volume-profile (no POC, no value area): only time-in-zone style quantities that are honestly determinable.
+
 ``close_distribution_entropy`` is deliberately NOT included: with N=24 closes any histogram needs a bin-count parameter, the value is dominated by
 that choice, and occupancy + crossings already separate the intended cases. All constants live in :class:`BalanceConfig`.
 """
@@ -46,14 +53,19 @@ class BalanceConfig:
             raise ValueError("central_zone_fraction must be in (0, 1]")
 
 
+def min_history_bars(config: BalanceConfig | None = None) -> int:
+    return max((config or BalanceConfig()).windows)
+
+
 def definition_hash(config: BalanceConfig | None = None) -> str:
     """SHA-256 of (group version, metric names, every constant): any silent change of a definition changes this value."""
     cfg = config or BalanceConfig()
-    payload = {"group": GROUP, "version": GROUP_VERSIONS[GROUP], "metrics": list(METRICS), "config": asdict(cfg)}
+    payload = {"group": GROUP, "version": GROUP_VERSIONS[GROUP], "metrics": list(METRICS), "config": asdict(cfg), "min_history_bars": min_history_bars(cfg)}
     return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
 DEFINITION_HASH = definition_hash()
+MIN_HISTORY_BARS = min_history_bars()
 
 
 def _window_values(bars: ObserverBars, i: int, n: int, cfg: BalanceConfig) -> dict[str, JsonScalar]:

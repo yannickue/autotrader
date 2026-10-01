@@ -16,7 +16,7 @@ def make_bars(c, *, half=0.5, atr=1.0, seg=None, h=None, l=None, tv=None, gap_at
     c = np.asarray(c, dtype=float)
     n = len(c)
     h = c + half if h is None else np.asarray(h, dtype=float)
-    l = c - half if l is None else np.asarray(l, dtype=float)  # noqa: E741
+    l = c - half if l is None else np.asarray(l, dtype=float)
     step = np.arange(n, dtype=np.int64) * 300
     if gap_at is not None:
         step = step + np.where(np.arange(n) >= gap_at, 2 * 86400, 0)
@@ -177,4 +177,77 @@ def test_definition_hash_is_stable_and_detects_changes():
 
 
 def test_definition_hash_pinned_literal():
-    assert B.definition_hash() == "060c27799e7091c531b7f2f2c26554a934a729476c755a281c48a61faa1580af"
+    assert B.definition_hash() == "ddac1af18d7032ca1ee3acf276d5f2ccd6101710a5bd8476158872b7ca8d3aec"
+
+
+# ------------------------------------------------------------------ RECURSIVE / WARM-UP INVARIANCE
+def _window(b: S.ObserverBars, s: int, e: int) -> S.ObserverBars:
+    sl = slice(s, e)
+    return dataclasses.replace(
+        b, ts_ns=b.ts_ns[sl], o=b.o[sl], h=b.h[sl], l=b.l[sl], c=b.c[sl], tick_volume=b.tick_volume[sl], spread=b.spread[sl],
+        atr=b.atr[sl], segment_id=b.segment_id[sl], local_minute=b.local_minute[sl], local_day=b.local_day[sl],
+    )
+
+
+def _sma_atr(h, l, c, n=14):
+    pc = np.r_[c[0], c[:-1]]
+    tr = np.maximum.reduce([h - l, np.abs(h - pc), np.abs(l - pc)])
+    out = np.full(len(c), np.nan)
+    cs = np.cumsum(np.r_[0.0, tr])
+    out[n - 1:] = (cs[n:] - cs[:-n]) / n
+    return out
+
+
+def _wilder_atr(h, l, c, n=14):
+    pc = np.r_[c[0], c[:-1]]
+    tr = np.maximum.reduce([h - l, np.abs(h - pc), np.abs(l - pc)])
+    out = np.empty(len(c))
+    out[0] = tr[0]
+    for k in range(1, len(c)):
+        out[k] = out[k - 1] + (tr[k] - out[k - 1]) / n
+    return out
+
+
+def test_min_history_constant_is_the_longest_window():
+    assert B.MIN_HISTORY_BARS == 48 == B.min_history_bars()
+
+
+def test_recursive_invariance_exact_with_an_exact_window_atr():
+    rng = np.random.default_rng(21)
+    n = 700
+    c = 100 + np.cumsum(rng.normal(0, 0.3, n))
+    h, l = c + rng.uniform(0.05, 0.3, n), c - rng.uniform(0.05, 0.3, n)
+    b = dataclasses.replace(make_bars(c, h=h, l=l), atr=_sma_atr(h, l, c))
+    for T in range(520, 700, 11):
+        ref = B.balance_features(b, T)
+        assert all(v is not None for v in ref.values.values())
+        for loaded in (120, 240, 500, T + 1):
+            assert B.balance_features(_window(b, T + 1 - loaded, T + 1), loaded - 1) == ref
+
+
+def test_recursive_atr_normalised_value_inherits_only_the_atr_warmup_not_more():
+    rng = np.random.default_rng(22)
+    n = 700
+    c = 100 + np.cumsum(rng.normal(0, 0.3, n))
+    h, l = c + rng.uniform(0.05, 0.3, n), c - rng.uniform(0.05, 0.3, n)
+    full = dataclasses.replace(make_bars(c, h=h, l=l), atr=_wilder_atr(h, l, c))
+    worst = 0.0
+    for T in range(520, 700, 11):
+        ref = B.balance_features(full, T).values
+        for loaded in (120, 240, 500):
+            s = T + 1 - loaded
+            w = dataclasses.replace(make_bars(c[s: T + 1], h=h[s: T + 1], l=l[s: T + 1]), atr=_wilder_atr(h[s: T + 1], l[s: T + 1], c[s: T + 1]))
+            got = B.balance_features(w, loaded - 1).values
+            for k, v in ref.items():
+                if k.startswith("range_width_atr"):
+                    worst = max(worst, abs(got[k] / v - 1.0))
+                else:
+                    assert got[k] == v, k  # everything that does not touch ATR stays EXACT
+    assert worst < 1e-3, worst
+
+
+def test_longer_window_is_none_below_min_history_but_exact_after():
+    b = _walk(with_breaks=False)
+    r = B.balance_features(b, 30)
+    assert r.values["midpoint_cross_count_w24"] is not None and r.values["midpoint_cross_count_w48"] is None
+    assert B.balance_features(b, 47).values["midpoint_cross_count_w48"] is not None

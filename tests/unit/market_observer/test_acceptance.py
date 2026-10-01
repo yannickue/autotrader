@@ -11,6 +11,7 @@ import pytest
 from market_observer import acceptance as A
 from market_observer import schema as S
 
+OFF = 100
 LEVEL = S.LevelRef("L1", 100.0, 99.9, 100.1, ("ROUND_MAJOR",), 0, 0)
 # (open, high, low, close); edge = zone_high = 100.1 for a long break. Break bar = index 2.
 SEQ = [
@@ -23,8 +24,10 @@ SEQ = [
 ]
 
 
-def make_bars(seq, *, atr=1.0, gap_at=None, level_ts=None) -> S.ObserverBars:
-    a = np.asarray(seq, dtype=float)
+def make_bars(seq, *, atr=1.0, gap_at=None, pad=OFF) -> S.ObserverBars:
+    base = [(99.5, 99.6, 99.4, 99.5)] * pad  # flat history far below the level: the acceptance window needs a full lookback
+    a = np.asarray(base + list(seq), dtype=float).reshape(-1, 4)
+    gap_at = None if gap_at is None else gap_at + pad
     n = len(a)
     step = np.arange(n, dtype=np.int64) * 300
     if gap_at is not None:
@@ -47,7 +50,7 @@ def mirror_level(lv):
 
 # ------------------------------------------------------------------ (d) hand-built break / hold / reclaim sequence
 def test_break_hold_reclaim_exact_values_at_decision_bar_5():
-    v = A.acceptance_features(make_bars(SEQ), 5, LEVEL, +1).values
+    v = A.acceptance_features(make_bars(SEQ), OFF + 5, LEVEL, +1).values
     assert v["break_found"] is True
     assert v["break_close_distance_atr"] == pytest.approx(0.8)  # 100.9 - 100.1
     assert v["break_body_atr"] == pytest.approx(1.0)  # 100.9 - 99.9
@@ -61,11 +64,11 @@ def test_break_hold_reclaim_exact_values_at_decision_bar_5():
     assert v["close_location_in_bar"] == pytest.approx((100.9 - 99.8) / 1.2)
     assert v["time_held_beyond_level_bars"] == 1 and v["time_held_beyond_level_minutes"] == pytest.approx(5.0)
     assert v["reclaim_occurred"] is True
-    assert v["break_bar_ts_ns"] == int(make_bars(SEQ).ts_ns[2])
+    assert v["break_bar_ts_ns"] == int(make_bars(SEQ).ts_ns[OFF + 2])
 
 
 def test_hold_without_reclaim_at_decision_bar_3():
-    v = A.acceptance_features(make_bars(SEQ), 3, LEVEL, +1).values
+    v = A.acceptance_features(make_bars(SEQ), OFF + 3, LEVEL, +1).values
     assert v["closes_beyond_level_count"] == 2 and v["bars_since_break"] == 1
     assert v["max_reentry_depth_atr"] == pytest.approx(0.0)  # bar 3 low 100.6 stays above the edge
     assert v["reclaim_occurred"] is False
@@ -73,43 +76,43 @@ def test_hold_without_reclaim_at_decision_bar_3():
 
 
 def test_decision_on_break_bar_itself_and_before_break():
-    v = A.acceptance_features(make_bars(SEQ), 2, LEVEL, +1).values
+    v = A.acceptance_features(make_bars(SEQ), OFF + 2, LEVEL, +1).values
     assert v["bars_since_break"] == 0 and v["closes_beyond_level_count"] == 1 and v["max_reentry_depth_atr"] == 0.0
     assert v["reclaim_occurred"] is False
-    v = A.acceptance_features(make_bars(SEQ), 1, LEVEL, +1).values
+    v = A.acceptance_features(make_bars(SEQ), OFF + 1, LEVEL, +1).values
     assert v["break_found"] is False
     assert all(x is None for k, x in v.items() if k != "break_found")
 
 
 def test_reclaim_currently_inside_has_zero_time_held():
-    v = A.acceptance_features(make_bars(SEQ), 4, LEVEL, +1).values
+    v = A.acceptance_features(make_bars(SEQ), OFF + 4, LEVEL, +1).values
     assert v["reclaim_occurred"] is True and v["time_held_beyond_level_bars"] == 0 and v["closes_beyond_level_count"] == 2
 
 
 def test_none_level_gives_all_none():
-    r = A.acceptance_features(make_bars(SEQ), 5, None, +1)
+    r = A.acceptance_features(make_bars(SEQ), OFF + 5, None, +1)
     assert r.group == "acceptance" and r.version == S.GROUP_VERSIONS["acceptance"]
     assert set(r.values) == set(A.FEATURE_NAMES) and all(x is None for x in r.values.values())
 
 
 def test_invalid_direction_is_rejected():
     with pytest.raises(ValueError):
-        A.acceptance_features(make_bars(SEQ), 5, LEVEL, 0)
+        A.acceptance_features(make_bars(SEQ), OFF + 5, LEVEL, 0)
 
 
 def test_level_confirmed_in_the_future_is_unknown():
-    lv = dataclasses.replace(LEVEL, confirmed_at_ts_ns=int(make_bars(SEQ).ts_ns[5]) + 1_000_000_000 * 400)
-    assert all(x is None for x in A.acceptance_features(make_bars(SEQ), 5, lv, +1).values.values())
+    lv = dataclasses.replace(LEVEL, confirmed_at_ts_ns=int(make_bars(SEQ).ts_ns[OFF + 5]) + 1_000_000_000 * 400)
+    assert all(x is None for x in A.acceptance_features(make_bars(SEQ), OFF + 5, lv, +1).values.values())
 
 
 def test_breaks_before_level_confirmation_do_not_count():
     b = make_bars(SEQ)
-    lv = dataclasses.replace(LEVEL, confirmed_at_ts_ns=int(b.ts_ns[3]))  # confirmed when bar 3 opens: break at bar 2 predates it
-    v = A.acceptance_features(b, 5, lv, +1).values
+    lv = dataclasses.replace(LEVEL, confirmed_at_ts_ns=int(b.ts_ns[OFF + 3]))  # confirmed when bar 3 opens: break at bar 2 predates it
+    v = A.acceptance_features(b, OFF + 5, lv, +1).values
     # bar 3 is already beyond and bar 2 is not eligible; the first FRESH cross after confirmation is the re-break at bar 5
     assert v["bars_since_break"] == 0 and v["reclaim_occurred"] is False and v["closes_beyond_level_count"] == 1
-    lv2 = dataclasses.replace(LEVEL, confirmed_at_ts_ns=int(b.ts_ns[2]))
-    assert A.acceptance_features(b, 5, lv2, +1).values["bars_since_break"] == 3
+    lv2 = dataclasses.replace(LEVEL, confirmed_at_ts_ns=int(b.ts_ns[OFF + 2]))
+    assert A.acceptance_features(b, OFF + 5, lv2, +1).values["bars_since_break"] == 3
 
 
 # ------------------------------------------------------------------ mirror symmetry
@@ -122,8 +125,8 @@ SIGNED_SAME = (
 
 @pytest.mark.parametrize("i", [2, 3, 4, 5])
 def test_long_short_mirror_symmetry(i):
-    lo = A.acceptance_features(make_bars(SEQ), i, LEVEL, +1).values
-    sh = A.acceptance_features(make_bars(mirror_seq(SEQ)), i, mirror_level(LEVEL), -1).values
+    lo = A.acceptance_features(make_bars(SEQ), OFF + i, LEVEL, +1).values
+    sh = A.acceptance_features(make_bars(mirror_seq(SEQ)), OFF + i, mirror_level(LEVEL), -1).values
     for k in SIGNED_SAME:
         assert sh[k] == pytest.approx(lo[k]), k
     assert sh["followthrough_high_atr"] == pytest.approx(-lo["followthrough_low_atr"])
@@ -134,13 +137,13 @@ def test_short_break_close_location_is_direction_relative():
     # short break closing at its LOW: location 1.0 (closing at the extreme in the break direction)
     seq = [(100.0, 100.2, 99.8, 100.0), (100.0, 100.1, 98.0, 98.0)]
     lv = S.LevelRef("L", 99.0, 98.9, 99.1, (), 0, 0)
-    v = A.acceptance_features(make_bars(seq), 1, lv, -1).values
+    v = A.acceptance_features(make_bars(seq), OFF + 1, lv, -1).values
     assert v["close_location_in_bar"] == pytest.approx(1.0) and v["break_close_distance_atr"] == pytest.approx(0.9)
 
 
 # ------------------------------------------------------------------ ATR and segments
 def test_atr_missing_only_blanks_atr_normalised_values():
-    v = A.acceptance_features(make_bars(SEQ, atr=np.nan), 5, LEVEL, +1).values
+    v = A.acceptance_features(make_bars(SEQ, atr=np.nan), OFF + 5, LEVEL, +1).values
     assert v["break_close_distance_atr"] is None and v["followthrough_high_atr"] is None
     assert v["closes_beyond_level_count"] == 3 and v["bars_since_break"] == 3 and v["close_location_in_bar"] is not None
 
@@ -148,11 +151,11 @@ def test_atr_missing_only_blanks_atr_normalised_values():
 def test_break_must_not_be_searched_across_a_segment_boundary():
     # gap before bar 3: bars 0-2 are segment 0 (the break happens there), 3-5 segment 1
     b = make_bars(SEQ, gap_at=3)
-    v = A.acceptance_features(b, 4, LEVEL, +1).values
+    v = A.acceptance_features(b, OFF + 4, LEVEL, +1).values
     # bar 3 is beyond but its predecessor (bar 2) lies in another segment: no fresh cross inside segment 1 -> no break
     assert v["break_found"] is False
-    assert A.acceptance_features(b, 5, LEVEL, +1).values["bars_since_break"] == 0  # only the bar-5 re-cross counts
-    v2 = A.acceptance_features(b, 2, LEVEL, +1).values
+    assert A.acceptance_features(b, OFF + 5, LEVEL, +1).values["bars_since_break"] == 0  # only the bar-5 re-cross counts
+    v2 = A.acceptance_features(b, OFF + 2, LEVEL, +1).values
     assert v2["break_found"] is True and v2["bars_since_break"] == 0
 
 
@@ -162,7 +165,7 @@ def _walk(n=300, seed=5, gap=150):
     c = 100 + np.cumsum(rng.normal(0, 0.3, n))
     o = np.r_[c[:1], c[:-1]]
     seq = np.c_[o, np.maximum(o, c) + 0.1, np.minimum(o, c) - 0.1, c]
-    return make_bars(seq, atr=0.4, gap_at=gap)
+    return make_bars(seq, atr=0.4, gap_at=gap, pad=0)
 
 
 @pytest.mark.parametrize("direction", [1, -1])
@@ -197,8 +200,8 @@ def test_chunked_restart_determinism():
 # ------------------------------------------------------------------ (g) serialisation
 def test_serialises_through_decision_features_and_timestamp_guard():
     b = make_bars(SEQ)
-    r = A.acceptance_features(b, 5, LEVEL, +1)
-    f = S.DecisionFeatures.from_results(b.decision_ts_ns(5), [r])
+    r = A.acceptance_features(b, OFF + 5, LEVEL, +1)
+    f = S.DecisionFeatures.from_results(b.decision_ts_ns(OFF + 5), [r])
     assert f.columns["f_acceptance__break_bar_ts_ns"] <= f.decision_ts_ns
     assert f.versions == {"acceptance": S.GROUP_VERSIONS["acceptance"]}
     assert set(f.columns) == {f"f_acceptance__{k}" for k in A.FEATURE_NAMES}
@@ -212,4 +215,48 @@ def test_definition_hash_is_stable_and_detects_changes():
 
 
 def test_definition_hash_pinned_literal():
-    assert A.definition_hash() == "ddeb7b66e6caa06860faf96754568180cc6951ffab2b16fef3dac89442535589"
+    assert A.definition_hash() == "1608ec3fb935dc33ecc4874e1768289b3c0790e9bc3a0919f88e766e28f08060"
+
+
+# ------------------------------------------------------------------ RECURSIVE / WARM-UP INVARIANCE
+def _window(b: S.ObserverBars, s: int, e: int) -> S.ObserverBars:
+    sl = slice(s, e)
+    return dataclasses.replace(
+        b, ts_ns=b.ts_ns[sl], o=b.o[sl], h=b.h[sl], l=b.l[sl], c=b.c[sl], tick_volume=b.tick_volume[sl], spread=b.spread[sl],
+        atr=b.atr[sl], segment_id=b.segment_id[sl], local_minute=b.local_minute[sl], local_day=b.local_day[sl],
+    )
+
+
+def test_min_history_constant_is_lookback_plus_two():
+    assert A.MIN_HISTORY_BARS == A.AcceptanceConfig().max_break_lookback_bars + 2 == 98
+
+
+def test_fewer_than_min_history_bars_without_proven_segment_break_is_all_none():
+    b = _walk(n=300, gap=1000)  # no break
+    lv = S.LevelRef("W", 100.0, 99.8, 100.2, (), 0, 0)
+    for i in (5, 50, A.MIN_HISTORY_BARS - 2):
+        assert all(v is None for v in A.acceptance_features(b, i, lv, 1).values.values())
+    assert A.acceptance_features(b, A.MIN_HISTORY_BARS - 1, lv, 1).values["break_found"] is not None
+
+
+@pytest.mark.parametrize("direction", [1, -1])
+def test_recursive_invariance_across_loaded_history_lengths(direction):
+    b = _walk(n=700, seed=9, gap=10_000)  # one long segment
+    lv = S.LevelRef("W", 100.0, 99.7, 100.3, (), 0, int(b.ts_ns[30]))
+    n_checked = 0
+    for T in range(520, 700, 13):
+        ref = A.acceptance_features(b, T, lv, direction)
+        for loaded in (120, 240, 500, T + 1):
+            w = _window(b, T + 1 - loaded, T + 1)
+            assert A.acceptance_features(w, loaded - 1, lv, direction) == ref
+        n_checked += ref.values["break_found"] is True
+    assert n_checked >= 1  # the sweep actually exercised real breaks
+
+
+def test_recursive_invariance_with_a_real_segment_break_inside_the_window():
+    b = _walk(n=700, seed=4, gap=600)
+    lv = S.LevelRef("W", 100.0, 99.7, 100.3, (), 0, int(b.ts_ns[30]))
+    for T in (610, 640, 699):
+        ref = A.acceptance_features(b, T, lv, 1)
+        for loaded in (120, 240, 500, T + 1):
+            assert A.acceptance_features(_window(b, T + 1 - loaded, T + 1), loaded - 1, lv, 1) == ref

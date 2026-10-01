@@ -24,6 +24,11 @@ Definitions (s = direction, edge = ``zone_high`` for s=+1 / ``zone_low`` for s=-
 * ``close_location_in_bar`` of the BREAK bar, direction-relative in [0,1]: 1 = closed at the extreme in the break direction. None if h == l.
 * ``time_held_beyond_level_bars`` = trailing run of consecutive closes beyond the edge ending at i (0 if bar i closed back inside);
   ``..._minutes`` = bars * bar_seconds / 60.
+* WARM-UP / HISTORY INVARIANCE: the value at T depends only on bars [T - L - 1 .. T] (L = ``max_break_lookback_bars``) clipped at the segment start,
+  plus the explicit level and the ATR array. If fewer than L + 2 bars are loaded AND no segment break proves that the data really starts there,
+  every value is None (``min_history_bars``/``MIN_HISTORY_BARS`` = L + 2 = 98). From that point the result is EXACTLY independent of how much
+  earlier history was loaded (tested with 120 / 240 / 500 / full windows). Live/research consequence: after a restart the first 98 bars of a
+  loaded history yield None, never a truncated-lookback value; ATR is an input (its own recursion warm-up is the adapter's job).
 * ``reclaim_occurred`` True if any close in k+1..i is at/inside the edge. ``break_bar_ts_ns`` = open timestamp of bar k (<= decision time).
 """
 
@@ -54,13 +59,18 @@ class AcceptanceConfig:
             raise ValueError("max_break_lookback_bars must be >= 1")
 
 
+def min_history_bars(config: AcceptanceConfig | None = None) -> int:
+    return (config or AcceptanceConfig()).max_break_lookback_bars + 2
+
+
 def definition_hash(config: AcceptanceConfig | None = None) -> str:
     cfg = config or AcceptanceConfig()
-    payload = {"group": GROUP, "version": GROUP_VERSIONS[GROUP], "features": list(FEATURE_NAMES), "config": asdict(cfg)}
+    payload = {"group": GROUP, "version": GROUP_VERSIONS[GROUP], "features": list(FEATURE_NAMES), "config": asdict(cfg), "min_history_bars": min_history_bars(cfg)}
     return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
 DEFINITION_HASH = definition_hash()
+MIN_HISTORY_BARS = min_history_bars()
 
 
 def _div(num: float, atr: float) -> float | None:
@@ -79,6 +89,8 @@ def acceptance_features(bars: ObserverBars, i: int, level: LevelRef | None, dire
     edge = level.zone_high if s > 0 else level.zone_low
     seg_start = int(np.searchsorted(bars.segment_id[: i + 1], bars.segment_id[i], side="left"))
     k0 = int(np.searchsorted(bars.ts_ns[: i + 1], level.confirmed_at_ts_ns, side="left"))  # first bar opening at/after confirmation
+    if i - cfg.max_break_lookback_bars - 1 < 0 and seg_start == 0:  # lookback not fully loaded and no proven segment break: warm-up, unknown
+        return result
     j0 = max(seg_start, i - cfg.max_break_lookback_bars - 1)
     beyond = s * (bars.c[j0: i + 1] - edge) > 0
     fresh = np.flatnonzero(beyond[1:] & ~beyond[:-1]) + j0 + 1
