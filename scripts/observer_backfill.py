@@ -25,10 +25,11 @@ DEFAULT_OUT = Path("C:/Users/yanni/AppData/Local/Temp/observer_backfill")
 ACTIVE = ("GER40", "NAS100", "SPX500", "XAUUSD", "EURUSD", "BTCUSD", "BRENT")
 
 
-def run_one(market: str, out: str, seed: int, limit: int | None, data_root: str | None, p2root: str | None, force: bool, steps: tuple[str, ...]) -> dict:
+def run_one(market: str, out: str, seed: int, limit: int | None, data_root: str | None, p2root: str | None, force: bool, steps: tuple[str, ...], exclusion_bars: int) -> dict:
     import entry_exit_quality as X
 
     from coverage_analysis.observer_lab.backfill import run_market_backfill
+    from coverage_analysis.observer_lab.controls import MatchSpec
     from markets.phase2 import load_phase2_spec
     from markets.spec import CANONICALS, PHASE2_CANONICALS, load_market_spec
 
@@ -41,7 +42,7 @@ def run_one(market: str, out: str, seed: int, limit: int | None, data_root: str 
         ms = load_phase2_spec(market)
     else:
         raise SystemExit(f"unknown market {market!r}")
-    return run_market_backfill(mi, ms, out, seed=seed, limit=limit, force=force, steps=steps)
+    return run_market_backfill(mi, ms, out, seed=seed, limit=limit, force=force, steps=steps, match_spec=MatchSpec(exclusion_bars=exclusion_bars))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -54,6 +55,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--phase2-root", default=None)
     ap.add_argument("--jobs", type=int, default=1, help="1 (default) or 2; one market per worker process")
     ap.add_argument("--force", action="store_true", help="rebuild even if a complete identical run exists")
+    ap.add_argument("--exclusion-bars", type=int, default=48, help="control exclusion radius around every opportunity (default 48 = the label horizon; smaller values = sensitivity runs only)")
     ap.add_argument("--step", choices=("all", "events", "controls"), default="all", help="controls = re-run ONLY the control step (needs a complete events step)")
     a = ap.parse_args(argv)
     if not 1 <= a.jobs <= 2:
@@ -72,9 +74,9 @@ def main(argv: list[str] | None = None) -> int:
         from concurrent.futures import ProcessPoolExecutor
 
         with ProcessPoolExecutor(max_workers=a.jobs) as ex:
-            res = [f.result() for f in [ex.submit(run_one, m, a.out, a.seed, a.limit, a.data_root, p2, a.force, steps) for m in markets]]
+            res = [f.result() for f in [ex.submit(run_one, m, a.out, a.seed, a.limit, a.data_root, p2, a.force, steps, a.exclusion_bars) for m in markets]]
     else:
-        res = [run_one(m, a.out, a.seed, a.limit, a.data_root, p2, a.force, steps) for m in markets]
+        res = [run_one(m, a.out, a.seed, a.limit, a.data_root, p2, a.force, steps, a.exclusion_bars) for m in markets]
     for r in res:
         if r.get("status") == "NO_DATA":
             print(f"{r['market']}: NO_DATA - {r['note']}")
