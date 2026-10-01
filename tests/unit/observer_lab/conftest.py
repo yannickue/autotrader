@@ -26,6 +26,6 @@ def build_bars(
     )
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def make_bars():
     return build_bars
