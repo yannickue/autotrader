@@ -20,6 +20,17 @@ The nine policies (all share the SAME entry fill and the SAME initial stop; the 
   P8 TIME_ALPHA          P1 + time stop after 24 bars (2 h) unless the trade showed >= 0.5R (alpha decay)
   P9 EOD_FORCED_FLAT     initial stop only; the position is held to the Berlin flatten (Lane P operating policy)
 
+Lane W (``eeq-policies-2``) adds three policies for the SHADOW EXIT LAB (``demo.shadow_exit_lab``); ``POLICY_IDS`` stays the
+nine above (Lane X results reproduce bit-for-bit), ``LAB_POLICY_IDS`` is the twelve:
+
+  P10 TP1_PLUS_RUNNER    the PRODUCTION staged policy with ONLY a structural TP1 (50 %) + runner; never a TP2 [needs a structural TP1]
+  P11 BE_PLUS_RUNNER     no target; once +1.0R was reached the stop moves to the engine's COST-ADJUSTED break-even floor (from the
+                         next bar) and the remainder trails behind confirmed structure.  The floor is the engine's own ratchet
+                         (never loosens, never above the price); the LIVE production break-even is NOT an independent authority:
+                         it exists only after TP1 inside the staged policy (``breakeven_after_first_stage``)
+  P12 FAILED_MOVE_EXIT   P1 + exit of the remainder at the CLOSE of the first bar that closes back across the failed-move level
+                         (the broken range edge) against the trade: the reclaim failed / the break re-opened.  [needs the level]
+
 ``[needs ...]``: an entry without the required structural level is NOT_APPLICABLE for that policy (never a level
 invented from an R multiple).  Comparisons are therefore also reported on the paired subset on which every
 structural policy applies.
@@ -59,7 +70,7 @@ from exits.models import (
     TakeProfitStage,
 )
 
-POLICY_SET_VERSION = "eeq-policies-1"
+POLICY_SET_VERSION = "eeq-policies-2"  # 2: Lane W adds P10-P12 (P1-P9 unchanged); parameters unchanged
 
 P_FIXED = "P1_FIXED_1_5R"
 P_TP1 = "P2_STRUCT_TP1"
@@ -70,7 +81,11 @@ P_BE = "P6_BREAKEVEN_LOCK"
 P_MOM = "P7_MOMENTUM_EXIT"
 P_TIME = "P8_TIME_ALPHA"
 P_EOD = "P9_EOD_FORCED_FLAT"
+P_TP1_RUNNER = "P10_TP1_PLUS_RUNNER"
+P_BE_RUNNER = "P11_BE_PLUS_RUNNER"
+P_FM = "P12_FAILED_MOVE_EXIT"
 POLICY_IDS: tuple[str, ...] = (P_FIXED, P_TP1, P_TP12, P_RUNNER, P_TRAIL, P_BE, P_MOM, P_TIME, P_EOD)
+LAB_POLICY_IDS: tuple[str, ...] = (*POLICY_IDS, P_TP1_RUNNER, P_BE_RUNNER, P_FM)
 STRUCTURAL_POLICIES = (P_TP1, P_TP12, P_RUNNER)
 
 # ---- predeclared, versioned parameters (NOT searched) ---------------------------------------------------
@@ -88,6 +103,8 @@ POLICY_PARAMS: dict[str, Any] = {
     "fixed_r": str(FIXED_R), "be_trigger_r": str(BE_TRIGGER_R), "momentum_threshold_atr": str(MOMENTUM_THRESHOLD),
     "time_stop_bars": TIME_STOP_BARS, "time_stop_min_mfe_r": str(TIME_STOP_MIN_MFE_R),
     "tp12_fractions": [str(x) for x in TP12_FRACTIONS], "runner_fractions": [str(x) for x in RUNNER_FRACTIONS],
+    "failed_move_rule": "close (bid) back across the failed-move level against the trade -> exit at that close; level must lie strictly between stop and fill",
+    "be_runner": "break-even trigger 1.0R (engine cost-adjusted floor, from the next bar) + structure trailing, no target",
     "swing_n": 2, "atr_buffer_mult": 0.25, "momentum_bars": 3,
     "tick_model": "T0 open, T1 adverse extreme, T2 favourable extreme, T3 close; stop-first; ratchets apply from the next bar",
     "sizing": "normalised position 1.0; R = spread-adjusted gross against initial risk |fill-stop|",
@@ -136,6 +153,7 @@ class EntryInput:
     tp2_id: str = "tp2"
     flat_utc: datetime | None = None
     pre: BarSeries | None = None  # the last closed bars BEFORE the entry (momentum / swing context, >= 5 bars)
+    failed_move_level: float | None = None  # Lane W: broken range edge; a close back across it against the trade = failed move
 
 
 @dataclass(slots=True)
@@ -178,9 +196,11 @@ def _base_policy(policy_id: str, **kw: Any) -> ExitPolicy:
 
 
 def _policy_object(pid: str) -> ExitPolicy:
-    if pid in (P_FIXED, P_TP1, P_TP12, P_EOD):
-        return _base_policy(f"eeq-{pid}")
-    if pid == P_RUNNER:
+    if pid in (P_FIXED, P_TP1, P_TP12, P_EOD, P_FM):
+        return _base_policy(f"eeq-{pid}", **({"structure_failure_exit": True} if pid == P_FM else {}))
+    if pid == P_BE_RUNNER:
+        return _base_policy(f"eeq-{pid}", breakeven_trigger_r_multiple=BE_TRIGGER_R, structure_trailing=True)
+    if pid in (P_RUNNER, P_TP1_RUNNER):
         from demo.execution.exit_manager import default_staged_exit_policy
 
         return default_staged_exit_policy()  # the PRODUCTION staged policy, unmodified
@@ -197,9 +217,15 @@ def _policy_object(pid: str) -> ExitPolicy:
 
 def _stages(pid: str, e: EntryInput) -> tuple[tuple[TakeProfitStage, ...], str | None]:
     """Per-position target ladder of a policy, or (``()``, reason) when its structural levels are missing."""
-    if pid in (P_TRAIL, P_EOD):
+    if pid in (P_TRAIL, P_EOD, P_BE_RUNNER):
         return (), None
-    if pid in (P_FIXED, P_BE, P_MOM, P_TIME):
+    if pid == P_FM:
+        lvl, long = e.failed_move_level, e.direction == 1
+        if lvl is None:
+            return (), "NO_FAILED_MOVE_LEVEL"
+        if not ((e.stop < lvl < e.fill) if long else (e.fill < lvl < e.stop)):
+            return (), "FAILED_MOVE_LEVEL_NOT_BETWEEN_STOP_AND_ENTRY"
+    if pid in (P_FIXED, P_BE, P_MOM, P_TIME, P_FM):
         return (TakeProfitStage(close_fraction=Decimal(1), r_multiple=FIXED_R, stage_id="fixed_r"),), None
     if e.tp1 is None:
         return (), "NO_STRUCTURAL_TP1"
@@ -213,6 +239,8 @@ def _stages(pid: str, e: EntryInput) -> tuple[tuple[TakeProfitStage, ...], str |
             replace(tp1, close_fraction=TP12_FRACTIONS[0]),
             TakeProfitStage(close_fraction=TP12_FRACTIONS[1], target_price=_d(e.tp2), stage_id="tp2", source=f"STRUCTURE:{e.tp2_id}"),
         ), None
+    if pid == P_TP1_RUNNER:
+        return (replace(tp1, close_fraction=RUNNER_FRACTIONS[0]),), None
     if pid == P_RUNNER:
         stages = [replace(tp1, close_fraction=RUNNER_FRACTIONS[0])]
         if e.tp2 is not None:
@@ -250,7 +278,7 @@ class ManagementCache:
 
 def simulate_policy(pid: str, e: EntryInput, bars: BarSeries, mgmt: ManagementCache | None = None) -> PolicyResult:
     """Run ONE policy on ONE entry over ``bars`` (the entry bar first).  Pure and deterministic."""
-    if pid not in POLICY_IDS:
+    if pid not in LAB_POLICY_IDS:
         raise ValueError(f"unknown policy {pid!r}")
     stages, na = _stages(pid, e)
     if na is not None:
@@ -266,7 +294,7 @@ def simulate_policy(pid: str, e: EntryInput, bars: BarSeries, mgmt: ManagementCa
     needs_signals = (
         policy.structure_trailing or policy.structure_failure_exit or policy.momentum_deterioration_threshold is not None
         or policy.late_loser_momentum_threshold is not None
-    )
+    ) and pid != P_FM  # P12 replaces the swing-based structure failure by the explicit failed-move level rule
     if needs_signals and mgmt is None:
         mgmt = ManagementCache(e, bars)
     pos = ExitPosition(
@@ -322,7 +350,10 @@ def simulate_policy(pid: str, e: EntryInput, bars: BarSeries, mgmt: ManagementCa
                     holding_seconds=Decimal(str((now - e.entry_ts).total_seconds())),
                     expected_exit_cost=sp_d,
                     structure_trail_price=None if sig is None else sig.trail_candidate,
-                    structure_failure=False if sig is None else sig.structure_failure,
+                    structure_failure=(
+                        (bars.c[k] < e.failed_move_level if long else bars.c[k] > e.failed_move_level)  # type: ignore[operator]
+                        if (pid == P_FM and name == "T3") else (False if sig is None else sig.structure_failure)
+                    ),
                     momentum_score=None if sig is None else sig.momentum_score,
                     time_to_forced_flat=left,
                 )

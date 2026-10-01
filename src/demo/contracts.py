@@ -219,6 +219,8 @@ class CounterfactualLabel(_Record):
     labelled_utc: str
     # Lane X (additive, optional): entry vs exit quality fields; legacy labels: None
     entry_exit: dict[str, Any] | None = None
+    # Lane W (additive): shadow exit lab on the same entry; legacy / flag off: None
+    shadow_exit_lab: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

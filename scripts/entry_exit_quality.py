@@ -102,6 +102,14 @@ def build_market_inputs(m: str, days: int, data_root: str | None, p2root: str | 
     return mi
 
 
+def load_market_inputs(m: str, days: int, data_root: str | None, p2root: str | None):
+    """Lane W interface (shadow-exit-lab CLI): (inputs | None, cut frame, eval_from, tz); thin wrapper over build_market_inputs."""
+    mi = build_market_inputs(m, days, data_root, p2root)
+    if mi is None:
+        return None, None, None, ""
+    return mi, mi.frame, mi.eval_from, mi.tz
+
+
 def analyse_market(m: str, days: int, limit: int | None, data_root: str | None, p2root: str | None) -> dict:
     """One market end to end (module level + plain arguments so it can run in a worker process)."""
     t0 = time.time()

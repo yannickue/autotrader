@@ -118,6 +118,14 @@ def _parser() -> argparse.ArgumentParser:
              "tradable but the entry window is closed (REJECTED OUT_OF_WINDOW_SHADOW; never trades, no window widened)",
     )
     oow.add_argument("--no-out-of-window-shadow", dest="out_of_window_shadow", action="store_false")
+    sel = parser.add_mutually_exclusive_group()
+    sel.add_argument(
+        "--shadow-exit-lab", dest="shadow_exit_lab", action="store_true", default=None,
+        help="Lane W (DEFAULT OFF): at label time run 12 predeclared hypothetical exit policies on the SAME entries of closed "
+             "trades and labelled counterfactuals and store them additively (outcome_extra / counterfactual JSON); never "
+             "trades, never in the order path, exception-contained, bounded per cycle",
+    )
+    sel.add_argument("--no-shadow-exit-lab", dest="shadow_exit_lab", action="store_false")
     learn = parser.add_mutually_exclusive_group()
     learn.add_argument(
         "--learning", dest="learning", action="store_true", default=None,
@@ -194,7 +202,8 @@ def _run(args: argparse.Namespace, mode: str) -> int:
             markets=markets, learning=args.learning,
             forced_flat_on_shutdown=args.forced_flat_on_shutdown, account_phase=args.account_phase,
             exit_policy=args.exit_policy,
-            out_of_window_shadow=args.out_of_window_shadow, shadow_universe=args.shadow_universe,
+            out_of_window_shadow=args.out_of_window_shadow, shadow_exit_lab=args.shadow_exit_lab,
+            shadow_universe=args.shadow_universe,
             exit_plan=None if args.geometry_source == "family" else ExitPlanConfig(geometry_source=args.geometry_source),
             operating_policy=operating, daily=args.daily, flatten_only=args.flatten_only,
         )

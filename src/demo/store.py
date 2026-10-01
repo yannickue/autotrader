@@ -1244,6 +1244,20 @@ class DemoStore:
             )
             return cur.rowcount == 1
 
+    def merge_outcome_extra(self, intent_id: str, key: str, value: Any) -> bool:
+        """Lane W: ADD ONE new top-level key to an existing outcome_extra JSON (insert-once per key; an existing key or a
+        missing row is never overwritten).  Additive JSON only - no schema change."""
+        with self._tx() as c:
+            row = c.execute("SELECT json FROM outcome_extra WHERE intent_id=?", (intent_id,)).fetchone()
+            if row is None:
+                return False
+            data = json.loads(row["json"])
+            if data.get(key) is not None:
+                return False
+            data[key] = value
+            c.execute("UPDATE outcome_extra SET json=? WHERE intent_id=?", (json.dumps(data, sort_keys=True, default=str), intent_id))
+            return True
+
     def get_outcome_extra(self, intent_id: str) -> dict[str, Any] | None:
         r = self._one("SELECT json FROM outcome_extra WHERE intent_id=?", (intent_id,))
         return None if r is None else json.loads(r["json"])
@@ -1336,6 +1350,9 @@ class DemoStore:
                 new.pop("labelled_utc", None)
                 if "entry_exit" not in old:  # legacy label written before Lane X: the additive field is not a difference
                     new.pop("entry_exit", None)
+                if old.get("shadow_exit_lab") is None or new.get("shadow_exit_lab") is None:  # Lane W: additive, flag-dependent
+                    old.pop("shadow_exit_lab", None)
+                    new.pop("shadow_exit_lab", None)
                 if old == new:
                     return False
                 raise ImmutableRecordError("counterfactual label is immutable")

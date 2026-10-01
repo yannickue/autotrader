@@ -25,6 +25,7 @@ import math
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from typing import Any
 
 from demo.contracts import CounterfactualLabel, OpportunitySnapshot, OutcomeRecord
 from demo.entry_exit_quality import MFE_LEVELS_R, Step, entry_exit_fields
@@ -158,6 +159,8 @@ def label_one(
     *,
     labelled_utc: str,
     horizon_end: datetime | None = None,
+    shadow_exit_lab: bool = False,
+    shadow_stats: Any = None,
 ) -> tuple[CounterfactualLabel, HypotheticalResult]:
     """Pure: label from snapshot geometry + bars. Only bars in [signal_ts, horizon_end) are used."""
     start = parse_utc(snap.signal_ts_utc)
@@ -185,8 +188,36 @@ def label_one(
         target_before_stop=res.target_before_stop,
         labelled_utc=labelled_utc,
         entry_exit=counterfactual_entry_exit(snap, causal, res, start),
+        shadow_exit_lab=counterfactual_shadow_lab(snap, causal, start, res, stats=shadow_stats) if shadow_exit_lab else None,
     )
     return label, res
+
+
+def counterfactual_shadow_lab(
+    snap: OpportunitySnapshot, causal: Sequence[Bar], start: datetime, res: HypotheticalResult, *, stats: Any = None,
+) -> dict | None:
+    """Lane W: the shadow exit lab on ONE counterfactual (same entry = the snapshot's intended entry / stop, only the
+    causal horizon bars).  Additive and failure-isolated: never raises into the labeller, None when unusable.  Policies
+    still open at the horizon are CENSORED there (no bars beyond it are opened); structural TP1/TP2 are not recorded in
+    the snapshot, so the structural policies are NOT_APPLICABLE for counterfactuals."""
+    try:
+        from demo.exit_policies import EntryInput
+        from demo.shadow_exit_lab import failed_move_level, safe_evaluate_shadow, to_series
+
+        g = snap.geometry
+        if not causal:
+            return None
+        entry = EntryInput(
+            entry_id=snap.opportunity_id, market=snap.market, direction=snap.direction, fill=g.intended_entry, stop=g.stop,
+            entry_ts=start, atr=snap.market_state.atr, failed_move_level=failed_move_level(snap.direction, snap.signal),
+        )
+        live = {
+            "profile": "fixed_1_5r" if g.exit_kind != "trail" else "trail", "r": res.r, "exit_reason": res.exit_kind,
+            "mfe_r": res.mfe_r, "mae_r": res.mae_r, "note": "counterfactual: the hypothetical label under the snapshot geometry",
+        }
+        return safe_evaluate_shadow(entry, to_series(causal), live=live, stats=stats)
+    except Exception:
+        return None
 
 
 def counterfactual_entry_exit(
@@ -269,6 +300,9 @@ def label_counterfactuals(
     phase: str | None = None,
     bar_seconds: int = 300,
     incomplete_grace_s: int = 6 * 3600,
+    shadow_exit_lab: bool = False,
+    shadow_stats: Any = None,
+    shadow_cap: int | None = None,
 ) -> list[CounterfactualLabel]:
     """Label every NON-TRADED opportunity whose horizon elapsed: engine rejects, catch-up misses AND
     engine-accepted ones the stack rejected / cancelled / failed to send (incl. shadow dry-run, kept
@@ -296,13 +330,17 @@ def label_counterfactuals(
         end = horizon_end_utc(snap)
         if now < end:
             continue
+        if shadow_exit_lab and shadow_cap is not None and len(written) >= shadow_cap:
+            break  # bounded cost per cycle: the rest is labelled (with the lab) on the next call, never without it
         raw = bars_provider(snap.market, snap.signal_ts_utc, end.isoformat())
         causal = [b for b in raw if parse_utc(snap.signal_ts_utc) <= parse_utc(b.ts_utc) < end]
         if not causal:
             continue
         last_open = max(parse_utc(b.ts_utc) for b in causal)
         covered = last_open + timedelta(seconds=bar_seconds) >= end
-        label, res = label_one(snap, causal, labelled_utc=now.isoformat(), horizon_end=end)
+        label, res = label_one(
+            snap, causal, labelled_utc=now.isoformat(), horizon_end=end, shadow_exit_lab=shadow_exit_lab, shadow_stats=shadow_stats,
+        )
         # A stop/target resolution inside the available bars is final; only a "still open at the last
         # bar" (HORIZON) result depends on coverage of the whole horizon.
         if (

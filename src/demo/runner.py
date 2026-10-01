@@ -131,6 +131,9 @@ _M5 = timedelta(minutes=5)
 # per-cycle budget ``out_of_window_budget_s``) and cannot trade; ``--no-out-of-window-shadow`` turns it off. A bare
 # ``RunnerConfig()`` (library / tests) keeps it OFF. The shadow UNIVERSE is always opt-in (``--shadow-universe``).
 DEFAULT_OUT_OF_WINDOW_SHADOW = True
+# Lane W: shadow exit lab (12 hypothetical exit policies per labelled entry, ~25-60 ms each, run on the runner thread at label
+# time).  Default OFF: opt in with --shadow-exit-lab (see docs/evidence/shadow_exit_lab.md for the measured cost).
+DEFAULT_SHADOW_EXIT_LAB = False
 
 
 TRANSIENT_STACK_PREFIXES = ("broker_disconnect", "not_reconciled", "runtime_not_ready", "stale_feed")
@@ -322,6 +325,10 @@ class RunnerConfig:
     stale_feed_s: float = 660.0
     all_stale_grace_s: float = 900.0
     label_every_s: float = 900.0
+    # Lane W: shadow exit lab (parallel hypothetical exit policies on the SAME entries) at outcome / label time, never on the
+    # decision path, failure-isolated.  Default: see docs/evidence/shadow_exit_lab.md (measured cost per entry).
+    shadow_exit_lab_enabled: bool = DEFAULT_SHADOW_EXIT_LAB
+    shadow_lab_max_per_cycle: int = 10
     trainer_every_s: float = 3600.0
     trainer_every_trades: int = 10
     min_disk_free_bytes: int = monitor.MIN_DISK_FREE_BYTES
@@ -487,6 +494,10 @@ class DemoRunner:
         self._shadow_counts: dict[str, int] = {"out_of_window": 0, "shadow_universe": 0}
         self._oow: Any | None = None  # OutOfWindowShadow (Lane U2), created when the flag is on
         self.shadow_universe: Any | None = None  # ShadowUniverseScanner, attached by the factory / tests
+        from demo.shadow_exit_lab import LabStats
+
+        self._shadow_stats = LabStats()  # Lane W: shadow exit lab cost / failure counters (diagnostic)
+        self._shadow_lab_seen: set[str] = set()
         if self.cfg.out_of_window_shadow_enabled:
             from demo.shadow_universe import OutOfWindowShadow
 
@@ -1768,10 +1779,77 @@ class DemoRunner:
 
     def label_now(self, now: datetime) -> int:
         """Counterfactual labels for REJECTED opportunities whose horizon elapsed (post-horizon only)."""
-        written = label_counterfactuals(self.store, self._bars_provider(), _iso(now))
+        written = label_counterfactuals(
+            self.store, self._bars_provider(), _iso(now),
+            shadow_exit_lab=self.cfg.shadow_exit_lab_enabled, shadow_stats=self._shadow_stats,
+            shadow_cap=self.cfg.shadow_lab_max_per_cycle,
+        )
         self._last_label = now
         self._last_label_n += len(written)
+        if self.cfg.shadow_exit_lab_enabled:
+            self._shadow_lab_trades(now)
         return len(written)
+
+    def _shadow_lab_trades(self, now: datetime) -> int:
+        """Lane W: shadow exit lab for CLOSED real trades whose flat deadline has passed (the bars after the real exit are
+        needed to run the shadow policies to horizon / EOD).  Off the decision path, bounded per cycle, exception-contained:
+        a failure here is counted and noted, never affects the recorded outcome or trading.  The result is merged ADDITIVELY
+        into the existing ``outcome_extra`` JSON as ``shadow_exit_lab`` (insert-once)."""
+        from demo.exit_policies import EntryInput
+        from demo.shadow_exit_lab import failed_move_level, flat_deadline_bars, safe_evaluate_shadow
+
+        done = 0
+        try:
+            outcomes = self.store.list_outcomes(self.cfg.phase, kind="strategy")
+            for iid, oid, oc in reversed(outcomes):
+                if done >= self.cfg.shadow_lab_max_per_cycle:
+                    break
+                if iid in self._shadow_lab_seen:
+                    continue
+                extra = self.store.get_outcome_extra(iid)
+                if extra is None or extra.get("shadow_exit_lab") is not None:
+                    self._shadow_lab_seen.add(iid)
+                    continue
+                intent = self.store.get_intent(iid)
+                snap = self.store.get_snapshot(oid)
+                ex = self.store.get_execution(iid)
+                if intent is None or snap is None or ex is None or ex.fill_price is None:
+                    continue
+                signal = parse_utc(snap.signal_ts_utc)
+                flat_s = intent.get("forced_flat_utc")
+                flat = parse_utc(flat_s) if flat_s else signal + timedelta(hours=12)
+                if now < flat + _M5:
+                    continue  # the deadline (and the bar that carries it) has not passed yet: retry next cycle
+                self._shadow_lab_seen.add(iid)
+                rows = self._frame_rows(snap.market)
+                post = [r for r in rows if r[0] >= signal]
+                pre = [r for r in rows if r[0] < signal][-6:]
+                if not post:
+                    continue
+                from demo.exit_policies import BarSeries
+
+                def series(rs: list[Any]) -> BarSeries:
+                    return BarSeries(tuple(r[0] for r in rs), tuple(r[1] for r in rs), tuple(r[2] for r in rs),
+                                     tuple(r[3] for r in rs), tuple(r[4] for r in rs), tuple(r[5] for r in rs))
+
+                tp1, tp2 = self._structural_tps(iid)
+                entry = EntryInput(
+                    entry_id=iid, market=snap.market, direction=int(intent["direction"]), fill=float(ex.fill_price),
+                    stop=float(intent["stop"]), entry_ts=signal, atr=snap.market_state.atr, tp1=tp1, tp2=tp2, flat_utc=flat,
+                    pre=series(pre) if len(pre) >= 3 else None, failed_move_level=failed_move_level(int(intent["direction"]), snap.signal),
+                )
+                live = {
+                    "profile": str(getattr(self.stack, "exit_policy", None) or "fixed_1_5r"), "r": float(oc.gross_r),
+                    "exit_reason": oc.exit_reason, "mfe_r": float(oc.mfe_r), "mae_r": float(oc.mae_r), "holding_s": float(oc.holding_s),
+                }
+                lab_out = safe_evaluate_shadow(entry, flat_deadline_bars(series(post), flat), live=live, stats=self._shadow_stats)
+                if lab_out is not None and self.store.merge_outcome_extra(iid, "shadow_exit_lab", lab_out):
+                    done += 1
+        except (sqlite3.Error, OSError):
+            raise
+        except Exception as exc:
+            self._note_error(now, f"shadow_exit_lab: {type(exc).__name__}: {exc}")
+        return done
 
     def train_now(self, now: datetime) -> None:
         """Start the shadow-learning update in a SEPARATE thread on its own read connection (never on the
@@ -2171,6 +2249,7 @@ def build_live_runner(
     operating_policy: Any | None = None,
     daily: bool = False,
     out_of_window_shadow: bool | None = None,
+    shadow_exit_lab: bool | None = None,
     shadow_universe: str | Sequence[str] | None = None,
     shadow_source_factory: Callable[[Any, Mapping[str, str]], Any] | None = None,
     signal_sequence_metrics: bool = True,
@@ -2319,6 +2398,7 @@ def build_live_runner(
                        forced_flat_on_shutdown=forced_flat_on_shutdown, account_phase=account_phase,
                        operating_policy=operating_policy, daily=daily, flatten_only=flatten_only,
                        out_of_window_shadow_enabled=False if flatten_only else (DEFAULT_OUT_OF_WINDOW_SHADOW if out_of_window_shadow is None else bool(out_of_window_shadow)),
+                       shadow_exit_lab_enabled=False if flatten_only else (DEFAULT_SHADOW_EXIT_LAB if shadow_exit_lab is None else bool(shadow_exit_lab)),
                        shadow_universe=tuple(sorted(su_specs)))
     runner = DemoRunner(
         stack, engine, store, config=cfg, predictor=predictor, trainer=trainer,
