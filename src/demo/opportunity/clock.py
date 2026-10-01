@@ -86,7 +86,8 @@ def live_spec(spec: MarketSpec, operating: OperatingPolicy | None, signal_utc: d
     sig = to_utc(signal_utc)
     if operating.flatten_active(sig):
         return None
-    cutoff = forced_flat_utc(spec, sig, cal.forced_flat_min, operating) - timedelta(minutes=operating.min_entry_runway_min)
+    flat = forced_flat_utc(spec, sig, cal.forced_flat_min, operating)
+    cutoff = flat - timedelta(minutes=operating.entry_runway_min(spec.canonical, flat))  # Lane R: DERIVED runway
     cut_loc = local_of(spec, cutoff)
     sig_day = local_of(spec, sig).date()
     if cut_loc.date() < sig_day:

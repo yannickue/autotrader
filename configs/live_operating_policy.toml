@@ -8,17 +8,35 @@
 #   * all times Europe/Berlin (DST-aware through zoneinfo), never fixed UTC offsets;
 #   * only the final mandatory flatten window blocks new exposure (plus the short entry runway below).
 [policy]
-version = "live-op-2"   # Lane Z: BTCUSD entry_end_live = "flat" (entries to the season-dependent flatten runway)
+version = "live-op-3"   # Lane R: entry runway DERIVED from explicit components ([policy.runway]); NAS100/SPX500 entry_end_live = "flat"
 tz = "Europe/Berlin"
 global_flat_deadline = "22:00"   # broker flat confirmed before this instant
 flatten_start = "21:55"          # mandatory flatten phase: entries refused, every own-magic position closed reduce-only
 broker_close_buffer_min = 5      # per-instrument deadline = MIN(global deadline, broker session close - this buffer)
-# Minimum time between a NEW entry signal and the (effective) forced-flat instant of its market. Two full M5 bars:
-# a position opened later than that would be force-closed before it could even be managed (round-trip cost, no
-# edge) and would race the flatten phase. JUSTIFICATION only; change here, it is versioned with the snapshots.
-min_entry_runway_min = 10
 operating_days = ["Mon", "Tue", "Wed", "Thu", "Fri"]   # Berlin calendar date; weekend = not an operating day
 flatten_retry_backoff_s = [5, 10, 20, 30, 60]          # bounded retry backoff of a failed / uncertain close
+
+# DERIVED ENTRY RUNWAY (Lane R). latest_safe_entry_time = (effective mandatory flat) - runway; there is NO clock-time cutoff
+# (no 21:00 / 21:45 constant) anywhere: the runway is the SUM of the durations below, see operating_policy.derive_entry_runway.
+#   (i)   decision latency       = bar_minutes*60 + evaluation_budget_s
+#   (ii)  execution + reconcile  = flatten_wait_s + flatten_retry_backoff_s[0] + flatten_wait_s + close_grace_s   (first attempt + one retry cycle + exit-deal visibility)
+#   (iii) broker-session margin  = max(0, (ii) - (broker close - flat))   (0 unless the broker closes < (ii) after the flat instant)
+#   (iv)  liquidity allowance    = liquidity_allowance_s[asset_class]  (documented PLACEHOLDER; a measured p95 close latency from recorded TCA
+#                                  replaces it when larger - not wired to the store yet)
+# then rounded up to whole minutes and to a multiple of bar_minutes. flatten_wait_s / close_grace_s mirror StackConfig (a test ties them).
+[policy.runway]
+bar_minutes = 5
+evaluation_budget_s = 30
+flatten_wait_s = 35
+close_grace_s = 90
+default_liquidity_allowance_s = 60
+round_to_bar = true
+[policy.runway.liquidity_allowance_s]
+index_cfd = 60
+metal_cfd = 60
+fx_cfd = 30
+energy_cfd = 90
+crypto_cfd = 90
 
 # ----------------------------------------------------------------------------------------------------------------
 # Per-market live overrides + broker session (known pauses). The broker session is used for feed semantics only
@@ -30,7 +48,8 @@ flatten_retry_backoff_s = [5, 10, 20, 30, 60]          # bounded retry backoff o
 # ----------------------------------------------------------------------------------------------------------------
 [markets.NAS100]
 # Research window ends 15:00 New York (= 21:00 Berlin). Live: entries up to the flatten runway (15:55 NY flat).
-entry_end_live = "15:55"
+asset_class = "index_cfd"
+entry_end_live = "flat"   # = the market flat (15:55 New York) -> effective flat - derived runway; not a clock constant
 [markets.NAS100.session]
 status = "observed"
 source = "M5 bar gaps data/markets NAS100 2025-05..2026-09: daily break 23:00-00:00 Europe/Berlin Mon-Fri in summer AND winter; in US/EU DST-mismatch weeks the break may shift by 1h (UNVERIFIED -> provisional for those weeks)"
@@ -40,7 +59,8 @@ start = "23:00"
 end = "00:00"
 
 [markets.SPX500]
-entry_end_live = "15:55"
+asset_class = "index_cfd"
+entry_end_live = "flat"
 [markets.SPX500.session]
 status = "observed"
 source = "M5 bar gaps data/markets SPX500 2025-05..2026-09: daily break 23:00-00:00 Europe/Berlin (same as NAS100)"
@@ -50,6 +70,7 @@ start = "23:00"
 end = "00:00"
 
 [markets.XAUUSD]
+asset_class = "metal_cfd"
 [markets.XAUUSD.session]
 status = "observed"
 source = "M5 bar gaps data/markets XAUUSD 2025-05..2026-09: daily break 23:00-00:00 Europe/Berlin Mon-Fri, summer and winter"
@@ -59,6 +80,7 @@ start = "23:00"
 end = "00:00"
 
 [markets.EURUSD]
+asset_class = "fx_cfd"
 [markets.EURUSD.session]
 status = "observed"
 source = "M5 bar gaps data/markets EURUSD 2025-05..2026-09: no daily break; weekly close Fri 23:00 Europe/Berlin (reopens Sun 23:00)"
@@ -68,6 +90,7 @@ start = "23:00"
 end = "00:00"
 
 [markets.GER40]
+asset_class = "index_cfd"
 [markets.GER40.session]
 status = "observed"
 source = "M5 bar gaps data/markets GER40 2025-02..2026-09: closes 22:00 Europe/Berlin, reopens 00:15 UTC (= 02:15 Berlin summer / 01:15 Berlin winter); Sunday 22:00 Berlin start covers the Monday reopen"
@@ -78,6 +101,7 @@ end = "00:15"
 end_tz = "UTC"
 
 [markets.BRENT]
+asset_class = "energy_cfd"
 [markets.BRENT.session]
 status = "provisional"
 source = "docs/evidence/phase2_symbol_probe.json (summer only): daily break 22:55 -> 02:00 server clock = 20:55 -> 00:00 UTC, weekend Fri 20:55 UTC -> Sun 22:00 UTC. Expressed in UTC (the observed server offset was +2h); the winter position of the break (21:55 Berlin if UTC-fixed) is NOT observed. PROVISIONAL."
@@ -88,8 +112,9 @@ tz = "UTC"
 end = "00:00"
 
 [markets.BTCUSD]
+asset_class = "crypto_cfd"
 # Lane Z: entries run to the flatten runway instead of the research entry end (19:30 UTC). "flat" = computed per day in
-# clock.live_spec: entry end = (effective flat) - min_entry_runway, where effective flat = MIN(research forced flat 20:30 UTC,
+# clock.live_spec: entry end = (effective flat) - DERIVED runway (Lane R), where effective flat = MIN(research forced flat 20:30 UTC,
 # 21:55 Berlin, Fri broker break 20:55 UTC - buffer): summer -> 19:45 UTC (21:45 Berlin), winter -> 20:20 UTC (21:20 Berlin).
 # The research forced flat (20:30 UTC) is NOT extended (frozen holding semantics), so winter entries end earlier than summer.
 entry_end_live = "flat"

@@ -358,6 +358,11 @@ class RunnerConfig:
     # Lane Z (H1): a STOP (file / signal) that arrives inside the flatten window with own exposure still open finishes the
     # sweep first, bounded by this grace after the 22:00 deadline; then it exits with a loud alert.
     stop_flatten_grace_s: float = 900.0
+    # Lane R: EOD-RECOVERY (flatten-only) mode. Same start path as a normal run (DEMO verification, account binding, persisted-state
+    # recovery, broker reconciliation) but: no market scanning / engine / shadow universe / learning, the stack entry gate is
+    # permanently closed (``StackConfig.flatten_only``), the STOP file does not stop a sweep, and the run ends with exit 0 and
+    # stop_reason ``eod_recovery_flat_confirmed`` as soon as the broker is flat (own magic) and reconciled.
+    flatten_only: bool = False
 
     # ---- Lane U2: opt-in measurement-only shadow collection (inside this process; OFF by default) ---
     out_of_window_shadow_enabled: bool = False  # active markets: record what the frozen families WOULD signal with the window closed
@@ -375,6 +380,8 @@ class RunnerConfig:
         if not (0 < self.clock_reference_window_s < self.max_clock_skew_s):
             # the reference window must be shorter than the skew bound, or a stale reference could mask real skew
             raise ValueError("clock_reference_window_s must be > 0 and < max_clock_skew_s")
+        if self.flatten_only and (self.operating_policy is None or self.mode != "demo-auto"):
+            raise ValueError("flatten_only needs mode='demo-auto' and the live operating policy")
         self.artifacts_dir = Path(self.artifacts_dir)
         if self.stop_file is None:
             self.stop_file = self.artifacts_dir / "STOP"
@@ -564,7 +571,7 @@ class DemoRunner:
     def can_trade(self) -> bool:
         return (
             self.halt_reason is None and not self._stopping and self.fail_reason is None
-            and not self._transient and self._stale_halt_since is None
+            and not self._transient and self._stale_halt_since is None and not self.cfg.flatten_only
         )
 
     def _note_transient(self, key: str, reason: str, now: datetime) -> None:
@@ -606,7 +613,7 @@ class DemoRunner:
             return
         if not self._bind_account(snap, now):
             return
-        self.clock_rows = verify_clock_chain(
+        self.clock_rows = [] if self.cfg.flatten_only else verify_clock_chain(  # recovery: no entry clocks are needed
             self.cfg.markets, now=now, spec_loader=self._spec_loader, production=self._production,
             operating=self.cfg.operating_policy,
         )
@@ -623,7 +630,7 @@ class DemoRunner:
             if m in self.cfg.markets:
                 self.disabled.setdefault(m, f"stack_preflight: {why}")
         print(render_clock_table(self.clock_rows), file=sys.stderr)
-        if self.cfg.markets and len(self.disabled) == len(self.cfg.markets):
+        if not self.cfg.flatten_only and self.cfg.markets and len(self.disabled) == len(self.cfg.markets):
             self._fail_closed("all markets disabled by clock chain", now)
             return
         try:
@@ -651,7 +658,11 @@ class DemoRunner:
         known = {i["intent_id"] for i in unfinished}
         for orphan in sorted(broker - known):
             row = self.store.get_intent(orphan)
-            if row is None:
+            if row is None and self.cfg.flatten_only:
+                # Lane R: recovery acts on BROKER truth (the local store may be lost / behind): an intent the store never saw is
+                # reported, not fatal - the sweep below closes its position by broker truth either way
+                self._warnings.append(f"orphan_broker_intent_in_recovery:{orphan}")
+            elif row is None:
                 self._fail_closed(f"orphan_broker_intent:{orphan}", now)
         for it in unfinished:
             iid, state = it["intent_id"], it["state"]
@@ -916,8 +927,8 @@ class DemoRunner:
     def run_cycle(self, now: datetime | None = None) -> None:
         now = now or self._clock()
         self._roll_day(now)
-        if self.cfg.stop_file is not None and self.cfg.stop_file.exists():
-            self.request_stop("stop_file")
+        if self.cfg.stop_file is not None and self.cfg.stop_file.exists() and not self.cfg.flatten_only:
+            self.request_stop("stop_file")  # recovery mode: flattening is exposure-REDUCING, a STOP file must not prevent it
         new_bars: list[str] = []
         try:
             self._guards(now)
@@ -926,6 +937,9 @@ class DemoRunner:
         except Exception as exc:  # cannot verify the account -> fail closed
             self._fail_closed(f"guard_error: {type(exc).__name__}: {exc}", now)
         self._section(now, "manage", self._manage)
+        if self.cfg.flatten_only:  # Lane R: no feeds, no scans, no shadow universe, no learning - only the sweep + the heartbeat
+            self._heartbeat(now)
+            return
         try:
             new_bars = self._refresh_feeds(now)
         except StackFailClosed as exc:
@@ -969,7 +983,7 @@ class DemoRunner:
             events += list(self.stack.poll_events())
             # Lane E1: deterministic exit-engine cycle (partials / tighten-only stops). Optional port method:
             # the real stack returns [] unless exit_policy == "staged"; stacks without it are untouched.
-            manage_exits = getattr(self.stack, "manage_exits", None)
+            manage_exits = None if self.cfg.flatten_only else getattr(self.stack, "manage_exits", None)
             if manage_exits is not None:
                 events += list(manage_exits(now))
         except StackFailClosed as exc:
@@ -1385,6 +1399,9 @@ class DemoRunner:
     def _handle_event(self, ev: ExecutionEvent, now: datetime) -> None:
         row = self.store.get_intent(ev.intent_id)
         if row is None:
+            if self.cfg.flatten_only:  # Lane R: the local store may be lost / behind; the broker close itself is what matters
+                self._warnings.append(f"recovery_event_for_unknown_intent:{type(ev).__name__}:{ev.intent_id}")
+                return
             self._fail_closed(f"event_for_unknown_intent:{ev.intent_id}", now)
             return
         intent = TradeIntent.from_dict({k: v for k, v in row.items() if k in {f.name for f in dataclasses.fields(TradeIntent)}})
@@ -1820,6 +1837,7 @@ class DemoRunner:
             "account_phase": self.account_info.get("account_phase"),
             "account_id_hash": self.account_info.get("account_id_hash"),
             "runner_mode": self.cfg.mode,
+            "flatten_only": self.cfg.flatten_only,
             "phase": self.cfg.phase,
             "updated_utc": _iso(now),
             "process_alive": alive,
@@ -1887,6 +1905,7 @@ class DemoRunner:
             "eod_flat_confirmed_utc": eod.get("eod_flat_confirmed_utc"),
             "eod_detail": eod.get("eod_detail"),
             "eod_own_positions_open": eod.get("eod_own_positions_open"),
+            "eod_foreign_positions": eod.get("eod_foreign_positions", []),
         }
 
     def _heartbeat(self, now: datetime, *, alive: bool = True) -> None:
@@ -1925,11 +1944,46 @@ class DemoRunner:
         except Exception:
             return False
 
+    def _recovery_flat_ready(self, now: datetime) -> bool:
+        """--flatten-only: the sweep confirmed the broker flat for our magic (FLAT_CONFIRMED, 0 own positions, no OPEN registry row),
+        the account is connected + RECONCILED with a fresh snapshot, and no open / in-doubt intent is left in the store.
+        Foreign / canary positions do not count (they are reported, never closed)."""
+        if not self.cfg.flatten_only:
+            return False
+        eod = self._eod_status()
+        acct = self._last_account
+        foreign = list((eod or {}).get("eod_foreign_positions") or [])
+        # A foreign / manual position makes the account-level reconciliation MISMATCH (fail-closed reason ``reconciliation=...``).
+        # Our own exposure is verified flat from the broker's position list by magic, independently of that state, so this single
+        # fail reason does not keep the recovery alive (any other fail reason still does).
+        foreign_recon_only = bool(foreign) and (self.fail_reason or "").startswith("reconciliation=")
+        if self.fail_reason is not None and not foreign_recon_only:
+            return False
+        if eod is None or eod.get("flatten_state") != "FLAT_CONFIRMED" or not eod.get("eod_flat_confirmed_utc"):
+            return False
+        if int(eod.get("eod_own_positions_open") or 0) != 0:
+            return False
+        if acct is None or not acct.connected or (acct.reconciliation != "RECONCILED" and not foreign):
+            return False
+        if acct.open_positions > len(foreign):
+            return False  # the account snapshot predates the closes: wait for a fresh one (the next cycle's guard) before exiting
+        if self._last_account_at is None or (now - self._last_account_at).total_seconds() > max(
+            2 * self.cfg.idle_account_check_s, 120.0
+        ):
+            return False
+        try:
+            return not self.store.recover_open_intents() and not self._in_doubt_ids()
+        except Exception:
+            return False
+
     def _should_exit(self, now: datetime) -> bool:
         if self._stopping:
             return not self._stop_must_finish_flatten(now)
         if self._eod_shutdown_ready(now):
             self.request_stop("eod_flat_shutdown")
+            return True
+        if self._recovery_flat_ready(now):
+            self.request_stop(RECOVERY_STOP_REASON)
             return True
         if self.fail_reason is not None:
             # keep managing exits while a position may still be open, up to manage_after_halt_s
@@ -1951,7 +2005,9 @@ class DemoRunner:
         (bounded by ``stop_flatten_grace_s`` after the deadline), otherwise a STOP file at 21:58 leaves a position
         overnight.  Flat confirmed / outside the window / grace over -> the stop proceeds."""
         op = self.cfg.operating_policy
-        if op is None or self.stop_reason == "eod_flat_shutdown" or not op.flatten_active(now):
+        if op is None or self.stop_reason in ("eod_flat_shutdown", RECOVERY_STOP_REASON):
+            return False
+        if not op.flatten_active(now) and not self.cfg.flatten_only:  # recovery mode: the sweep is always "in the window"
             return False
         if (now - op.deadline_utc(op.day_of(now))).total_seconds() > self.cfg.stop_flatten_grace_s:
             return False
@@ -2027,7 +2083,7 @@ class DemoRunner:
                     self._note_error(now, f"forced_flat_on_shutdown: {type(exc).__name__}: {exc}")
         self.join_training(2.0)
         for name, fn in (
-            ("final_label", lambda: self.label_now(now)),
+            ("final_label", (lambda: None) if self.cfg.flatten_only else (lambda: self.label_now(now))),
             ("final_report", self._final_report),
         ):
             try:
@@ -2036,7 +2092,8 @@ class DemoRunner:
                 self._note_error(now, f"{name}: {type(exc).__name__}: {exc}")
         with contextlib.suppress(Exception):
             self.stack.stop()
-        self.exit_code = EXIT_FAIL_CLOSED if self.fail_reason else EXIT_OK
+        recovered = self.stop_reason == RECOVERY_STOP_REASON  # Lane R: own exposure confirmed flat (foreign-only recon mismatch tolerated)
+        self.exit_code = EXIT_FAIL_CLOSED if self.fail_reason and not recovered else EXIT_OK
         self._heartbeat(self._clock(), alive=False)
         return self.exit_code
 
@@ -2047,6 +2104,9 @@ class DemoRunner:
 
 
 # ------------------------------------------------------------------------------------ factory
+RECOVERY_STOP_REASON = "eod_recovery_flat_confirmed"
+
+
 class LiveStackRefused(RuntimeError):
     """The factory refuses to build a live stack (e.g. ``MT5_ALLOW_ACCOUNT_LOGIN=1``)."""
 
@@ -2072,6 +2132,7 @@ def build_live_runner(
     shadow_universe: str | Sequence[str] | None = None,
     shadow_source_factory: Callable[[Any, Mapping[str, str]], Any] | None = None,
     signal_sequence_metrics: bool = True,
+    flatten_only: bool = False,
 ) -> DemoRunner:
     """Wire the runner to the REAL ``Mt5DemoStack``.
 
@@ -2175,6 +2236,7 @@ def build_live_runner(
                 expected_server=os.environ.get("DEMO_TRADER_EXPECTED_SERVER", EXPECTED_DEMO_SERVER),
                 **exit_kw,
                 operating_policy=operating_policy,
+                flatten_only=flatten_only,
             )
         stack: StackPort = Mt5DemoStack(  # type: ignore[assignment]
             client=client, connection=connection, state_dir=state_dir,
@@ -2206,13 +2268,15 @@ def build_live_runner(
         from demo.shadow_universe import select_shadow_markets
 
         su_specs, su_pending = select_shadow_markets(shadow_universe)
+    if flatten_only:  # Lane R: recovery never learns, never shadows, never scans
+        learning, su_specs, su_pending = False, {}, set()
     if learning is None:
         learning = mode == "shadow"
     predictor, trainer, err = load_learning(art / "models", learning)
     cfg = RunnerConfig(mode=mode, phase=phase, markets=names, artifacts_dir=art, learning=learning,
                        forced_flat_on_shutdown=forced_flat_on_shutdown, account_phase=account_phase,
-                       operating_policy=operating_policy, daily=daily,
-                       out_of_window_shadow_enabled=DEFAULT_OUT_OF_WINDOW_SHADOW if out_of_window_shadow is None else bool(out_of_window_shadow),
+                       operating_policy=operating_policy, daily=daily, flatten_only=flatten_only,
+                       out_of_window_shadow_enabled=False if flatten_only else (DEFAULT_OUT_OF_WINDOW_SHADOW if out_of_window_shadow is None else bool(out_of_window_shadow)),
                        shadow_universe=tuple(sorted(su_specs)))
     runner = DemoRunner(
         stack, engine, store, config=cfg, predictor=predictor, trainer=trainer,

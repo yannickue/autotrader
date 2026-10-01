@@ -66,6 +66,7 @@ R_PAST_FORCED_FLAT = "past_forced_flat"
 # inside the minimum entry runway before the effective forced flat; --daily refuses entries outside the operating day
 R_FLATTEN_WINDOW = "flatten_window_active"
 R_ENTRY_RUNWAY = "entry_runway_too_short"
+R_FLATTEN_ONLY = "flatten_only_mode"
 R_OUTSIDE_OPERATING_DAY = "outside_operating_day"
 R_DUPLICATE_INTENT = "duplicate_intent"
 R_STALE_FEED = "stale_feed"
@@ -154,7 +155,8 @@ _ENTRIES: tuple[Gate, ...] = (
     _G(R_STALE_SIGNAL, S, True, "stale signal: intent validity window elapsed (stale data)"),
     _G(R_PAST_FORCED_FLAT, S, True, "time stop: the intent's forced-flat time has already passed"),
     _G(R_FLATTEN_WINDOW, S, True, "mandatory flatten phase (from flatten_start Europe/Berlin): no new exposure, every own-magic position is closed reduce-only before the 22:00 Berlin deadline"),
-    _G(R_ENTRY_RUNWAY, S, True, "less than the minimum entry runway (min_entry_runway_min) before the effective forced-flat instant of the market"),
+    _G(R_FLATTEN_ONLY, S, True, "Lane R EOD-recovery runner (--flatten-only): the entry gate is permanently closed, only reduce-only closes of own-magic positions"),
+    _G(R_ENTRY_RUNWAY, S, True, "less than the DERIVED entry runway (operating_policy.derive_entry_runway) before the effective forced-flat instant of the market"),
     _G(R_OUTSIDE_OPERATING_DAY, S, True, "--daily mode: no entries outside the operating day (Mon-Fri Berlin date)"),
     _G(R_DUPLICATE_INTENT, S, True, "duplicate / execution safety: exactly one order per intent_id"),
     _G(R_STALE_FEED, S, True, "stale feed: executable quote older than the freshness bound"),

@@ -120,3 +120,9 @@ Ctrl+C / SIGTERM / SIGBREAK on the supervisor forwards an orderly stop to the ru
 Never starts/stops/closes/kills MetaTrader 5; never kills the runner; never places or modifies orders;
 never logs in (runner refuses `MT5_ALLOW_ACCOUNT_LOGIN=1`); never restarts past the budget or after the
 operating day; never deletes the STOP file.
+
+## Lane R: EOD recovery task + deployment gate
+Second task `AutoTrader-EodRecovery` (`AutoTrader-EodRecovery.task.xml`, registered by the same `register_task.ps1`, validated by `-DryRun`):
+weekday triggers 21:45/21:50/21:55/22:00 (+2-min repeat to 22:30), IgnoreNew, StartWhenAvailable, ExecutionTimeLimit PT2H. Exit codes
+0/2/9/10/20, see `docs/DEMO_TRADER.md`. The normal task additionally needs `deploy_approved.json` (supervisor exit 30, never restarted);
+`register_task.ps1 -Disabled` registers without letting anything fire; `enable_task.ps1` / `disable_task.ps1` / `status_trader.ps1`.

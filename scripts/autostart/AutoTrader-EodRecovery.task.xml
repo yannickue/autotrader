@@ -1,0 +1,124 @@
+<?xml version="1.0"?>
+<!--
+  Task Scheduler definition template for AutoTrader-EodRecovery (schema 1.2), Lane R.
+  Placeholders are filled by register_task.ps1 (same as AutoTrader-DemoDaily):
+    @@USER_ID@@    DOMAIN\user (task runs only while this user is logged on; interactive MT5 session)
+    @@REPO_ROOT@@  the approved production checkout (working directory + script location)
+    @@START_DATE@@ first day of the triggers (yyyy-MM-dd); the times below are LOCAL time (no zone suffix)
+    @@WAKE@@       true|false  (WakeToRun)
+  PURPOSE: the 15-minute repetition of AutoTrader-DemoDaily must NOT be the last defence of the hard rule "22:00 Europe/Berlin = zero
+  strategy exposure".  This task is an independent EOD recovery: Mon-Fri 21:45, 21:50, 21:55, 22:00 and then every 2 minutes until 22:30
+  (local Berlin wall-clock; Task Scheduler follows DST because the OS zone is W. Europe Standard Time).  It runs
+  scripts\autostart\run_eod_recovery.ps1 -> eod_recovery.py, which does nothing while a healthy runner owns the day, never starts a second
+  runner next to a live one, and otherwise starts the EXISTING runner in flatten-only mode (reduce-only closes, never an entry).
+  MultipleInstancesPolicy=IgnoreNew + eod_recovery.lock + runner.lock make every extra start a no-op.  ExecutionTimeLimit bounds one
+  instance (the script itself retries at most until 23:30 Berlin).  A leftover after midnight / on a weekend is handled by running the
+  script by hand (flatten-only is always allowed, it never opens anything).  No BootTrigger (needs admin rights to register).
+  The 22:00 trigger repeats every 2 minutes for 31 minutes so that the 22:30 run is included.
+-->
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo>
+    <Description>AutoTrader DEMO end-of-day recovery: Mon-Fri 21:45/21:50/21:55/22:00 then every 2 min until 22:30 Europe/Berlin (local time), flatten-only, never opens a position.</Description>
+    <URI>\AutoTrader-EodRecovery</URI>
+  </RegistrationInfo>
+  <Triggers>
+    <CalendarTrigger>
+      <StartBoundary>@@START_DATE@@T21:45:00</StartBoundary>
+      <Enabled>true</Enabled>
+      <ScheduleByWeek>
+        <DaysOfWeek>
+          <Monday />
+          <Tuesday />
+          <Wednesday />
+          <Thursday />
+          <Friday />
+        </DaysOfWeek>
+        <WeeksInterval>1</WeeksInterval>
+      </ScheduleByWeek>
+    </CalendarTrigger>
+    <CalendarTrigger>
+      <StartBoundary>@@START_DATE@@T21:50:00</StartBoundary>
+      <Enabled>true</Enabled>
+      <ScheduleByWeek>
+        <DaysOfWeek>
+          <Monday />
+          <Tuesday />
+          <Wednesday />
+          <Thursday />
+          <Friday />
+        </DaysOfWeek>
+        <WeeksInterval>1</WeeksInterval>
+      </ScheduleByWeek>
+    </CalendarTrigger>
+    <CalendarTrigger>
+      <StartBoundary>@@START_DATE@@T21:55:00</StartBoundary>
+      <Enabled>true</Enabled>
+      <ScheduleByWeek>
+        <DaysOfWeek>
+          <Monday />
+          <Tuesday />
+          <Wednesday />
+          <Thursday />
+          <Friday />
+        </DaysOfWeek>
+        <WeeksInterval>1</WeeksInterval>
+      </ScheduleByWeek>
+    </CalendarTrigger>
+    <CalendarTrigger>
+      <Repetition>
+        <Interval>PT2M</Interval>
+        <Duration>PT31M</Duration>
+        <StopAtDurationEnd>false</StopAtDurationEnd>
+      </Repetition>
+      <StartBoundary>@@START_DATE@@T22:00:00</StartBoundary>
+      <Enabled>true</Enabled>
+      <ScheduleByWeek>
+        <DaysOfWeek>
+          <Monday />
+          <Tuesday />
+          <Wednesday />
+          <Thursday />
+          <Friday />
+        </DaysOfWeek>
+        <WeeksInterval>1</WeeksInterval>
+      </ScheduleByWeek>
+    </CalendarTrigger>
+  </Triggers>
+  <Principals>
+    <Principal id="Author">
+      <UserId>@@USER_ID@@</UserId>
+      <LogonType>InteractiveToken</LogonType>
+      <RunLevel>LeastPrivilege</RunLevel>
+    </Principal>
+  </Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <AllowHardTerminate>true</AllowHardTerminate>
+    <StartWhenAvailable>true</StartWhenAvailable>
+    <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>
+    <IdleSettings>
+      <StopOnIdleEnd>false</StopOnIdleEnd>
+      <RestartOnIdle>false</RestartOnIdle>
+    </IdleSettings>
+    <AllowStartOnDemand>true</AllowStartOnDemand>
+    <Enabled>true</Enabled>
+    <Hidden>false</Hidden>
+    <RunOnlyIfIdle>false</RunOnlyIfIdle>
+    <WakeToRun>@@WAKE@@</WakeToRun>
+    <ExecutionTimeLimit>PT2H</ExecutionTimeLimit>
+    <Priority>7</Priority>
+    <RestartOnFailure>
+      <Interval>PT1M</Interval>
+      <Count>3</Count>
+    </RestartOnFailure>
+  </Settings>
+  <Actions Context="Author">
+    <Exec>
+      <Command>powershell.exe</Command>
+      <Arguments>-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "@@REPO_ROOT@@\scripts\autostart\run_eod_recovery.ps1"</Arguments>
+      <WorkingDirectory>@@REPO_ROOT@@</WorkingDirectory>
+    </Exec>
+  </Actions>
+</Task>

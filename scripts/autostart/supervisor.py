@@ -23,6 +23,13 @@ e.g. a SIGTERM/CTRL_BREAK shutdown that flattens nothing, is an unexpected stop 
 8 MT5 stack unavailable (bounded restart), 9 second runner refused (no restart), other / signal =
 crash (bounded restart).
 
+Deployment gate (Lane R addendum): the supervisor of the NORMAL task refuses to launch the runner unless
+``<artifacts>/deploy_approved.json`` approves the CURRENT clean checkout (see ``deploy_gate.py``: NOT_APPROVED / SHA_MISMATCH /
+DIRTY_CHECKOUT / GIT_UNAVAILABLE).  It writes ``watchdog_alert.json`` (CRITICAL) and exits ``SUP_NOT_APPROVED`` = 30, which is never
+restarted (the check is repeated before every launch, a restart loop on it is impossible).  The EOD recovery (eod_recovery.py) is NOT
+gated: it always flattens own exposure.  A STOP file still wins (exit 0, nothing launched).  Exit codes of this process: 0 ok / nothing
+to do, 10 unhealthy runner present, 20 restart budget exhausted, 30 deployment gate refused.
+
 Lane Z (zero overnight): while the last heartbeat shows own exposure (open positions / intents / flatten not confirmed) the
 end-of-day cut-off (22:15) and the restart/give-up budgets are suspended, bounded by ``Policy.exposure_end`` (23:30 Berlin):
 the supervisor keeps (re)launching the runner (whose sweep flattens) instead of leaving the position overnight.  A runner that
@@ -54,6 +61,7 @@ for _p in (HERE, REPO_ROOT / "src"):
     if str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
 
+import deploy_gate  # noqa: E402
 import instance_lock  # noqa: E402
 
 CONFIRMATION = "I-AUTHORIZE-ACTIVTRADES-DEMO-TRADING-ONLY"
@@ -63,6 +71,7 @@ TZ_NAME = "Europe/Berlin"
 SUP_OK = 0
 SUP_UNHEALTHY_RUNNER_PRESENT = 10  # a runner process holds the lock but its heartbeat is not fresh
 SUP_GAVE_UP = 20  # restart budget exhausted (alert written)
+SUP_NOT_APPROVED = deploy_gate.EXIT_NOT_APPROVED  # 30: deployment gate refused (NOT_APPROVED / SHA_MISMATCH / DIRTY_CHECKOUT); never restarted
 # runner exit codes (mirrors src/demo/runner.py + scripts/demo_trader.py)
 RUN_OK, RUN_BAD_ARGS, RUN_NO_HEARTBEAT, RUN_FAIL_CLOSED, RUN_UNAVAILABLE = 0, 2, 3, 7, 8
 RUN_ALREADY_RUNNING = instance_lock.EXIT_ALREADY_RUNNING
@@ -383,6 +392,7 @@ class Supervisor:
     ready_timeout_s: float = 300.0
     stop_grace_s: float = 120.0
     now_fn: Callable[[], datetime] = berlin_now
+    gate: Callable[[], deploy_gate.GateResult] | None = None  # deployment gate (None = not enforced: direct/test use of the class)
     stop_requested: bool = False
     last_ready: bool = False
     _launched_utc: datetime | None = None
@@ -496,6 +506,18 @@ class Supervisor:
             return None
         return st.get("stop_reason")
 
+    def _gate_ok(self) -> bool:
+        """Deployment gate before EVERY launch (also each restart): a refusal is final for this supervisor (exit 30)."""
+        assert self.gate is not None
+        res = self.gate()
+        if res.ok:
+            self.log.info(f"deploy gate: {res.detail}")
+            return True
+        self._alert("CRITICAL", f"DEPLOY GATE {res.verdict}: {res.detail}. The runner is NOT started and NOT restarted (exit "
+                    f"{SUP_NOT_APPROVED}); the EOD recovery (flatten-only) is unaffected", gate=res.verdict, head=res.head,
+                    approved_sha=res.approved_sha)
+        return False
+
     def alert_stop_with_exposure(self, now: datetime) -> None:
         """A STOP file with own exposure inside the flatten window must never be silent: the runner's own sweep finishes
         while it stops, but with no runner alive nothing can flatten - say so, loudly."""
@@ -523,6 +545,8 @@ class Supervisor:
                 return SUP_OK
             if "exposure pending" in why:
                 self.log.alert(why)
+            if self.gate is not None and not self._gate_ok():
+                return SUP_NOT_APPROVED
             code, ran_s = self._run_once()
             if code is None:
                 self.log.info("stopped by operator/signal; not restarting")
@@ -604,13 +628,17 @@ def main(argv: Sequence[str] | None = None) -> int:
             cmd = build_runner_cmd(a.python, REPO_ROOT, artifacts, a.account_phase, daily)
             log.info(f"--daily {'ON' if daily else 'OFF'} (mode={a.daily})")
         sup = Supervisor(artifacts, cmd, REPO_ROOT, log, policy, a.ignore_operating_day, poll_s=a.poll_s)
+        if not a.runner_cmd_json:  # a custom --runner-cmd-json is TEST ONLY (never the real trader): only the real command is gated
+            sup.gate = lambda: deploy_gate.check_deploy_approval(artifacts, REPO_ROOT)
         now = sup.now_fn()
         log.info(f"supervisor start pid={os.getpid()} now={now:%Y-%m-%d %H:%M:%S %Z} artifacts={artifacts} "
                  f"log={log.path}")
         if a.dry_run:
+            gate_res = None if sup.gate is None else sup.gate()
             log.info("DRY RUN: " + json.dumps({"runner_cmd": cmd, "policy": asdict(policy) | {
                 "end_of_day": a.end_of_day}, "operating_day": operating_day(now, policy.end_of_day,
-                                                                             ignore=a.ignore_operating_day)},
+                                                                             ignore=a.ignore_operating_day),
+                "deploy_gate": None if gate_res is None else {"verdict": gate_res.verdict, "detail": gate_res.detail}},
                                               default=str))
             return SUP_OK
         ok, why = operating_day_or_exposure(now, policy, artifacts, ignore=a.ignore_operating_day)
@@ -621,6 +649,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             log.info(f"STOP file present ({sup.stop_file}); delete it to allow the trader to start. Exit 0")
             sup.alert_stop_with_exposure(now)
             return SUP_OK
+        if sup.gate is not None and not sup._gate_ok():  # before the lock / any runner presence handling
+            return SUP_NOT_APPROVED
         with contextlib.ExitStack() as stack:
             sup_lock = instance_lock.InstanceLock(artifacts / "supervisor.lock", role="supervisor")
             try:

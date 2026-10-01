@@ -47,7 +47,7 @@ def _flat_berlin(pol, market, day, hh=10, mm=0):
 
 # ------------------------------------------------------------------------------------------ config
 def test_policy_is_versioned_hashed_and_carries_the_user_rules(pol):
-    assert pol.version == "live-op-2" and len(pol.policy_hash) == 16
+    assert pol.version == "live-op-3" and len(pol.policy_hash) == 16
     assert (pol.flatten_start_min, pol.deadline_min) == (21 * 60 + 55, 22 * 60)
     assert pol.tz == "Europe/Berlin" and pol.broker_close_buffer_min == 5
     assert pol.min_entry_runway_min == 10
