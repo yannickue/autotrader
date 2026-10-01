@@ -78,6 +78,47 @@ KINDS = ("hyp", "nc", "nc_a", "nc_b")  # confirmatory hypothesis | random-featur
 EXIT_STOP, EXIT_NAN, EXIT_PREFLIGHT = 3, 4, 5
 BALANCE_FIELDS = ("match_rate", "smd_local_minute", "smd_atr_pct", "smd_spread_pct", "censoring_diff_pp")
 MANIFEST_NAME = "controls_manifest.json"
+CONTROLS3_A_DIR, CONTROLS3_B_DIR = "controls3", "controls3_b"  # on-disk layout written by scripts/observer_backfill.py --step controls3
+
+
+def resolve_file(root: str | Path, market: str, logical: str) -> Path:
+    """Layout adapter (path mapping only): the preregistration names ``controls.parquet`` / ``controls_b.parquet`` / ``controls_v2.parquet`` /
+    ``controls_manifest.json`` next to ``table.parquet``. The controls-3 builder writes ``<M>/controls3/{controls.parquet, controls_manifest.json}`` (set A) and
+    ``<M>/controls3_b/controls.parquet`` (set B); the flat ``<M>/controls.parquet`` of that layout is the controls-2 set (= the NC-C bridge input).
+    If a ``controls3`` directory exists it is authoritative (no silent mixing with the flat controls-2 files); without it the flat layout is used unchanged."""
+    mdir = Path(root) / market
+    a_dir, b_dir = mdir / CONTROLS3_A_DIR, mdir / CONTROLS3_B_DIR
+    if logical == "controls.parquet" and a_dir.is_dir():
+        return a_dir / "controls.parquet"
+    if logical == MANIFEST_NAME and a_dir.is_dir():
+        return a_dir / MANIFEST_NAME
+    if logical == "controls_b.parquet" and b_dir.is_dir():
+        return b_dir / "controls.parquet"
+    if logical == "controls_v2.parquet" and not (mdir / logical).is_file() and a_dir.is_dir():
+        return mdir / "controls.parquet"  # controls-2 set next to the events
+    return mdir / logical
+
+
+def normalize_balance_gate(prereg_balance: dict[str, Any], bg: Any) -> Any:
+    """Schema adapter for the manifest of the controls-3 builder (``observer-controls-3-balance-1``): ``balance_gate = {gate_version, thresholds, partitions: {P: {...,
+    verdict}}, ...}`` -> the per-partition shape of the preregistration (``{P: {match_rate, smd_*, censoring_diff_pp, passed, status, n_controls}}``). Pure re-labelling:
+    nothing is recomputed or loosened. A threshold of the builder that differs from the preregistered one makes the entry unusable (returns an error marker), and
+    the builder's own verdict becomes ``passed`` (the script still compares it with its recomputation under the preregistered thresholds)."""
+    if not isinstance(bg, dict) or not isinstance(bg.get("partitions"), dict):
+        return bg  # already the preregistered shape (or not a dict: the structural check reports it)
+    th = bg.get("thresholds") or {}
+    want = {"match_rate_min": prereg_balance["min_match_rate"], "smd_abs_max": prereg_balance["max_abs_smd"], "censored_share_diff_max": prereg_balance["max_abs_censoring_diff_pp"] / 100.0}
+    off = {k: (th.get(k), v) for k, v in want.items() if not isinstance(th.get(k), (int, float)) or abs(float(th[k]) - v) > 1e-12}
+    if off:
+        return {"__adapter_error__": f"builder thresholds differ from the preregistered ones (builder, prereg): {off}"}
+    out: dict[str, Any] = {}
+    for p, e in bg["partitions"].items():
+        smd, cen = (e.get("smd") or {}), (e.get("censored_share") or {})
+        diff = cen.get("diff")
+        out[p] = {"match_rate": e.get("match_rate"), "smd_local_minute": smd.get("local_minute"), "smd_atr_pct": smd.get("atr_pct"), "smd_spread_pct": smd.get("spread_pct"),
+                  "censoring_diff_pp": None if diff is None else 100.0 * float(diff), "passed": e.get("verdict") == "PASS", "status": "passed" if e.get("verdict") == "PASS" else "descriptive_only",
+                  "n_controls": e.get("n_controls")}
+    return out
 
 
 class StopRule(RuntimeError):
@@ -221,7 +262,7 @@ def load_part(root: str | Path, market: str, fname: str, partition: str, columns
     """ONE Parquet file of ONE market restricted to the stage partition (+ PURGED/EMBARGO tags), only ``columns``."""
     import pyarrow.parquet as pq
 
-    p = Path(root) / market / fname
+    p = resolve_file(root, market, fname)
     if not p.is_file():
         raise FileNotFoundError(f"{p} not found (the backfill must be complete)")
     assert_file_dev_only(p)
@@ -309,9 +350,11 @@ def _check_manifest(prereg: Prereg, man: Any, part: str) -> tuple[dict[str, Any]
         return None, ["controls manifest is not a JSON object"]
     if man.get("control_method_version") != spec["required_method_version"]:
         errs.append(f"control_method_version {man.get('control_method_version')!r} != required {spec['required_method_version']!r}")
-    bg = man.get("balance_gate")
+    bg = normalize_balance_gate(spec["balance"], man.get("balance_gate"))
     if not isinstance(bg, dict):
         return None, [*errs, "manifest has no balance_gate object"]
+    if "__adapter_error__" in bg:
+        return None, [*errs, bg["__adapter_error__"]]
     entry: dict[str, Any] | None = None
     for fp in FILE_PARTITION.values():
         e = bg.get(fp)
@@ -343,14 +386,13 @@ def preflight(prereg: Prereg, root: Path, stage: str, markets: list[str]) -> dic
     out: dict[str, Any] = {"stage": stage, "partition": part, "script_version": SCRIPT_VERSION, "prereg_json_sha256": prereg.json_sha256, "markets": {}, "ok": True, "errors": []}
     for m in markets:
         scope = market_scope(prereg, m)
-        mdir = root / m
         errs: list[str] = []
         files: dict[str, Any] = {}
         want = ["table.parquet", "controls.parquet"] + (["controls_b.parquet"] if scope == "core" else [])
-        if scope == "explore" and (mdir / "controls_v2.parquet").is_file():
+        if scope == "explore" and resolve_file(root, m, "controls_v2.parquet").is_file():
             want.append("controls_v2.parquet")  # optional NC-C bridge input
         for fname in want:
-            p = mdir / fname
+            p = resolve_file(root, m, fname)
             if not p.is_file():
                 errs.append(f"{fname} not found")
                 continue
@@ -358,7 +400,7 @@ def preflight(prereg: Prereg, root: Path, stage: str, markets: list[str]) -> dic
             missing = [c for c in need_cols if c not in files[fname]["columns"]]
             if missing:
                 errs.append(f"{fname}: columns missing {missing[:5]}")
-        mp = mdir / MANIFEST_NAME
+        mp = resolve_file(root, m, MANIFEST_NAME)
         entry, man_sha, man_version = None, None, None
         if not mp.is_file():
             errs.append(f"{MANIFEST_NAME} not found (controls-3 manifest is required)")
@@ -376,8 +418,9 @@ def preflight(prereg: Prereg, root: Path, stage: str, markets: list[str]) -> dic
                 declared = man.get("controls_sha256") if isinstance(man, dict) else None
                 if declared is not None and "controls.parquet" in files and declared != files["controls.parquet"]["sha256"]:
                     errs.append("manifest controls_sha256 does not match controls.parquet (the control set is not the one the manifest describes)")
-                for fp_, ent in (man.get("balance_gate", {}) if isinstance(man, dict) else {}).items():
-                    if isinstance(ent, dict) and "n_controls" in ent and "controls.parquet" in files:
+                nbg = normalize_balance_gate(s["controls"]["balance"], man.get("balance_gate", {})) if isinstance(man, dict) else {}
+                for fp_, ent in (nbg.items() if isinstance(nbg, dict) and "__adapter_error__" not in nbg else ()):
+                    if isinstance(ent, dict) and isinstance(ent.get("n_controls"), int) and "controls.parquet" in files:
                         have = files["controls.parquet"]["partition_counts"].get(fp_)
                         if have is not None and int(ent["n_controls"]) != have:
                             errs.append(f"balance_gate[{fp_}].n_controls={ent['n_controls']} != {have} rows of controls.parquet")
@@ -612,7 +655,7 @@ def bridge_controls(task: dict[str, Any], df: pd.DataFrame, ev: pd.DataFrame, co
     from coverage_analysis.observer_lab import stats as ST
 
     label, part = task["label"], task["partition"]
-    p2 = Path(task["root"]) / task["market"] / "controls_v2.parquet"
+    p2 = resolve_file(task["root"], task["market"], "controls_v2.parquet")
     if not p2.is_file():
         return {"available": False, "note": "controls_v2.parquet not present: no controls-2 set to bridge to"}
     c2 = prepare_frame(load_part(task["root"], task["market"], "controls_v2.parquet", part, cols))
@@ -1053,7 +1096,7 @@ def dry_run(a: argparse.Namespace, prereg: Prereg, stage: str, markets: list[str
     for m in markets:
         scope = market_scope(prereg, m)
         names = ["table.parquet", "controls.parquet", MANIFEST_NAME] + (["controls_b.parquet"] if scope == "core" else [])
-        have = {n: (Path(a.root) / m / n).is_file() for n in names}
+        have = {n: resolve_file(a.root, m, n).is_file() for n in names}
         print(f"  market {m} ({scope}): " + " ".join(f"{n}={v}" for n, v in have.items()) + " (existence only, nothing read)")
     lk = read_lock(prereg)
     print(f"fit lock {lock_path(prereg)}: {'present (out ' + str(lk.get('out')) + ')' if lk else 'absent'}")

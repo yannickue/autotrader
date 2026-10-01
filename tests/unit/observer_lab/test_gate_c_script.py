@@ -549,3 +549,52 @@ def test_out_inside_root_and_bad_jobs_are_refused(tmp_path, prereg, prereg_path)
 
 def test_backfill_directory_is_never_written(planted_run):
     assert tree_hash(planted_run["root"]) == planted_run["before"]
+
+
+# ---------------------------------------------------------------------------------------------- controls-3 on-disk layout adapter
+def real_style_manifest(version="observer-controls-3", thresholds=None, verdict="PASS", match_rate=0.97) -> dict:
+    part = {"n_events": 100, "n_controls": 0, "n_matched_events": 97, "match_rate": match_rate, "smd": {"local_minute": 0.02, "atr_pct": 0.03, "spread_pct": -0.04},
+            "session_share_diff_max": 0.0, "censored_share": {"events": 0.0, "controls": 0.004, "diff": 0.004}, "fail_reasons": [], "verdict": verdict}
+    th = thresholds or {"match_rate_min": 0.9, "smd_abs_max": 0.1, "session_share_diff_max": 0.02, "censored_share_diff_max": 0.05, "min_events": 20}
+    return {"control_method_version": version, "market_status": "passed", "balance_gate": {"gate_version": "observer-controls-3-balance-1", "thresholds": th,
+            "partitions": {p: dict(part) for p in ("TRAIN", "VALIDATION", "FROZEN_OOS")}, "market_status": "passed", "market_pass": True}}
+
+
+def to_controls3_layout(root: Path, markets, manifest: dict) -> None:
+    for m in markets:
+        d = root / m
+        (d / "controls3").mkdir()
+        (d / "controls3_b").mkdir()
+        shutil.move(str(d / "controls.parquet"), str(d / "controls3" / "controls.parquet"))
+        shutil.move(str(d / "controls_b.parquet"), str(d / "controls3_b" / "controls.parquet"))
+        (d / G.MANIFEST_NAME).unlink()
+        counts = pd.read_parquet(d / "controls3" / "controls.parquet", columns=["partition"])["partition"].value_counts()
+        man = json.loads(json.dumps(manifest))
+        for part, e in man["balance_gate"]["partitions"].items():
+            e["n_controls"] = int(counts.get(part, 0))
+        (d / "controls3" / G.MANIFEST_NAME).write_text(json.dumps(man), encoding="utf-8")
+
+
+def test_controls3_layout_adapter_resolves_paths_and_normalises_the_manifest(tmp_path, prereg, prereg_path):
+    root = build_root(tmp_path, prereg)
+    to_controls3_layout(root, CORE2, real_style_manifest())
+    assert G.resolve_file(root, "GER40", "controls.parquet") == root / "GER40" / "controls3" / "controls.parquet"
+    assert G.resolve_file(root, "GER40", "controls_b.parquet") == root / "GER40" / "controls3_b" / "controls.parquet"
+    assert G.resolve_file(root, "GER40", G.MANIFEST_NAME) == root / "GER40" / "controls3" / G.MANIFEST_NAME
+    out = tmp_path / "o"
+    assert run(root, out, prereg_path, extra=("--preflight",)) == 0
+    pre = json.loads((out / f"{G.PREFLIGHT_STEM}_fit.json").read_text(encoding="utf-8"))
+    assert pre["ok"] and all(v["status"] == "passed" for v in pre["markets"].values())
+    assert no_side_effects(out, prereg)
+
+
+def test_controls3_layout_failed_verdict_is_descriptive_only_and_foreign_thresholds_are_refused(tmp_path, prereg, prereg_path):
+    root = build_root(tmp_path, prereg)
+    to_controls3_layout(root, CORE2, real_style_manifest(verdict="FAIL", match_rate=0.84))
+    out = tmp_path / "o"
+    assert run(root, out, prereg_path, extra=("--preflight",)) == 0
+    pre = json.loads((out / f"{G.PREFLIGHT_STEM}_fit.json").read_text(encoding="utf-8"))
+    assert pre["ok"] and all(v["status"] == "descriptive_only" for v in pre["markets"].values())
+    root2 = build_root(tmp_path / "x", prereg)
+    to_controls3_layout(root2, CORE2, real_style_manifest(thresholds={"match_rate_min": 0.8, "smd_abs_max": 0.1, "censored_share_diff_max": 0.05}))
+    assert run(root2, tmp_path / "o2", prereg_path, extra=("--preflight",)) != 0
