@@ -42,6 +42,13 @@ SEGMENTS: dict[str, list[str]] = {
 # Changed-path matrix: (source prefix, pytest targets). Targets are paths or `-m` expressions
 # (prefixed with "m:"). `safety` markers make reduce-only/idempotency/exposure coverage follow.
 # Research-only paths intentionally map to no demo safety suite.
+_ALPHA_TARGETS = [
+    "tests/unit/alpha",
+    "tests/unit/strategies",
+    "tests/contracts",
+    "tests/test_alpha_*.py",
+]
+
 MATRIX: list[tuple[str, list[str]]] = [
     (
         "src/exits/",
@@ -108,10 +115,27 @@ MATRIX: list[tuple[str, list[str]]] = [
         ["tests/unit/persistence", "tests/unit/execution", "tests/unit/demo/store"],
     ),
     ("src/strategies/", ["tests/unit/strategies", "tests/contracts", "tests/parity"]),
+    # LIVE-REACHABLE alpha modules: the production runner imports them (signal families, the fast
+    # simulator used by the opportunity engine/policy, market data/costs, session). They are NOT
+    # research-only, so a change here must also pull the demo (opportunity/execution) tests.
+    # First match wins -> these prefixes must stay above the generic "src/alpha/" entry.
     (
-        "src/alpha/",
-        ["tests/unit/alpha", "tests/unit/strategies", "tests/contracts", "tests/test_alpha_*.py"],
+        "src/alpha/families/",
+        [*_ALPHA_TARGETS, "tests/unit/demo"],
     ),
+    (
+        "src/alpha/fast/",
+        [*_ALPHA_TARGETS, "tests/unit/demo"],
+    ),
+    (
+        "src/alpha/common/",
+        [*_ALPHA_TARGETS, "tests/unit/demo", "tests/unit/markets"],
+    ),
+    (
+        "src/alpha/session.py",
+        [*_ALPHA_TARGETS, "tests/unit/demo"],
+    ),
+    ("src/alpha/", _ALPHA_TARGETS),
     ("src/data/", ["tests/unit/data", "tests/events"]),
     ("src/temporal/", ["tests/temporal", "tests/events"]),
     ("src/events/", ["tests/events", "tests/temporal", "tests/replay"]),
