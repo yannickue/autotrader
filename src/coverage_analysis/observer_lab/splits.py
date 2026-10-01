@@ -36,7 +36,13 @@ _ALLOWED_USE = {
     "select": {TRAIN, VALIDATION},
     "final_oos": {OOS},
     "observe_forward": {FORWARD},
+    # enrichment / statistics entry points (``enrichment``): rows of ONE partition per purpose
+    "validate": {VALIDATION},
+    "oos_test": {OOS},
+    "forward_monitor": {FORWARD},
 }
+FORWARD_PURPOSES = frozenset({"observe_forward", "forward_monitor"})
+PURPOSES = tuple(_ALLOWED_USE)
 
 
 def core_fit_end() -> str:
@@ -63,11 +69,12 @@ def guard_dev_only(ts_ns: np.ndarray) -> None:
 
 
 def assert_partition_use(partitions: Iterable[str], purpose: str) -> None:
-    """``fit`` -> TRAIN only; ``select`` -> TRAIN/VALIDATION; ``final_oos`` -> OOS only; ``observe_forward`` -> FORWARD only."""
+    """``fit`` -> TRAIN only; ``select`` -> TRAIN/VALIDATION; ``final_oos`` / ``oos_test`` -> OOS only; ``validate`` -> VALIDATION only;
+    ``observe_forward`` / ``forward_monitor`` -> FORWARD only. The forward period is refused for every other purpose."""
     if purpose not in _ALLOWED_USE:
         raise ValueError(f"unknown purpose {purpose!r}")
     used = set(partitions)
-    if FORWARD in used and purpose != "observe_forward":
+    if FORWARD in used and purpose not in FORWARD_PURPOSES:
         raise ForwardHoldoutError(f"the forward period is never used for {purpose}")
     bad = used - _ALLOWED_USE[purpose]
     if bad:
