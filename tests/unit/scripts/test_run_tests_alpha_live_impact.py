@@ -123,3 +123,26 @@ def test_every_production_reachable_alpha_file_pulls_the_demo_tests() -> None:
     assert len(live) > 20  # sanity: the closure really found the live alpha modules
     missing = [p for p in live if "tests/unit/demo" not in _flat(run_tests.plan_for([p]))]
     assert not missing, f"live-reachable alpha files that do not pull tests/unit/demo: {missing}"
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "src/exits/engine.py",
+        "src/risk/sizing.py",
+        "src/execution/orders.py",
+        "src/nautilus_mt5/reconciliation.py",
+        "src/adapters/activtrades_mt5/real_client.py",
+        "src/persistence/store.py",
+        "src/demo/execution/exit_manager.py",
+        "src/demo/runner.py",
+        "scripts/autostart/supervisor.py",
+        "scripts/autostart/eod_recovery.py",
+    ],
+)
+def test_safety_critical_paths_select_the_safety_overlay(path: str) -> None:
+    assert ["-m", "safety"] in run_tests.plan_for([path])
+
+
+def test_research_only_alpha_path_does_not_select_safety_overlay() -> None:
+    assert ["-m", "safety"] not in run_tests.plan_for(["src/alpha/discovery/evaluate.py"])

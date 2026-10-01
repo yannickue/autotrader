@@ -49,6 +49,24 @@ _ALPHA_TARGETS = [
     "tests/test_alpha_*.py",
 ]
 
+# Paths whose change must also run the SAFETY overlay (`-m safety`: reduce-only, idempotency,
+# stale-signal, exposure, leverage, reconciliation, persistence, EOD/flatten). docs/TEST_GATES.md
+# requires it for risk/execution/reconciliation/persistence changes, and the impact matrix of the
+# night master plan adds exits and autostart/supervisor/EOD. `changed` previously never selected it.
+SAFETY_PREFIXES: tuple[str, ...] = (
+    "src/exits/",
+    "src/risk/",
+    "src/execution/",
+    "src/nautilus_mt5/",
+    "src/adapters/",
+    "src/persistence/",
+    "src/demo/execution/",
+    "src/demo/runner.py",
+    "src/demo/store.py",
+    "scripts/autostart/",
+    "scripts/demo_trader.py",
+)
+
 MATRIX: list[tuple[str, list[str]]] = [
     (
         "src/exits/",
@@ -230,6 +248,8 @@ def plan_for(paths: list[str]) -> list[list[str]]:
         ):
             targets.append(p)
             continue
+        if p.startswith(SAFETY_PREFIXES):
+            marks.append("safety")
         for prefix, tgt in MATRIX:
             if p.startswith(prefix):
                 for t in tgt:
