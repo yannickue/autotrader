@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import threading
+import time
 from dataclasses import replace
 from pathlib import Path
 
@@ -485,21 +486,217 @@ def test_persistent_permission_error_returns_arrays_not_raise(
 @pytest.mark.skipif(
     os.name != "nt", reason="POSIX replaces open files; the Windows failure mode cannot occur"
 )
-def test_reader_holding_npz_open_during_replacement_never_raises_or_accepts_partial(
-    tmp_path, frame, fresh
+def test_reader_holding_npz_open_during_replacement_forces_retry_then_succeeds(
+    tmp_path, frame, fresh, monkeypatch
 ) -> None:
+    """A reader holds features.npz open while the writer replaces it (Windows: PermissionError)."""
     _, manifest, npz = _published(tmp_path, frame)
     npz.write_bytes(b"corrupt")  # force a republish
-    holder = npz.open("rb")  # a reader keeps the artifact open (Windows blocks os.replace)
-    released = threading.Timer(0.12, holder.close)
-    released.start()
+    real_savez, real_replace = np.savez_compressed, os.replace
+    state = {"holder": None, "attempts": 0}
+
+    def savez_then_reader_opens(handle, **arrays):
+        real_savez(handle, **arrays)
+        state["holder"] = npz.open("rb")  # reader appears after the writer started, before replace
+
+    def counting_replace(src, dst):
+        if str(dst).endswith("features.npz"):
+            state["attempts"] += 1
+        try:
+            return real_replace(src, dst)
+        except PermissionError:
+            state["holder"].close()  # deterministic: the reader goes away after the first failure
+            raise
+
+    monkeypatch.setattr(store_module.np, "savez_compressed", savez_then_reader_opens)
+    monkeypatch.setattr(store_module.os, "replace", counting_replace)
     try:
         result = FeatureStore.load_or_build(frame, CONFIG, tmp_path)
     finally:
-        released.join()
-        holder.close()
+        state["holder"].close()
+        monkeypatch.undo()
+    assert state["attempts"] >= 2  # the first replace really failed and was retried
+    assert "cache_write_skipped" not in result.metadata
     assert _same(result, fresh)
     final = FeatureStore.load_or_build(frame, CONFIG, tmp_path)
-    assert _same(final, fresh)
-    if "cache_write_skipped" not in result.metadata:
-        assert final.metadata["cache_hit"] is True and manifest.is_file()
+    assert final.metadata["cache_hit"] is True and _same(final, fresh) and manifest.is_file()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="needs Windows sharing semantics")
+def test_reader_open_without_retry_logic_would_skip_the_write(
+    tmp_path, frame, fresh, monkeypatch
+) -> None:
+    """Mutation check: with a single replace attempt the same scenario skips the cache write."""
+    _, _, npz = _published(tmp_path, frame)
+    npz.write_bytes(b"corrupt")
+    real_savez = np.savez_compressed
+    holder = {}
+
+    def savez_then_reader_opens(handle, **arrays):
+        real_savez(handle, **arrays)
+        holder["f"] = npz.open("rb")
+
+    monkeypatch.setattr(store_module.np, "savez_compressed", savez_then_reader_opens)
+    monkeypatch.setattr(store_module, "_REPLACE_ATTEMPTS", 1)
+    try:
+        result = FeatureStore.load_or_build(frame, CONFIG, tmp_path)
+    finally:
+        holder["f"].close()
+    assert "PermissionError" in result.metadata["cache_write_skipped"]
+    assert _same(result, fresh)
+
+
+def test_tz_rule_file_digest_changes_key_and_sources_recorded(frame, monkeypatch) -> None:
+    zones = store_module._key_components(frame, CONFIG)["timezone_rules"]["zones"]
+    assert zones["Europe/Berlin"]["sources"] and zones["Europe/Berlin"]["sampled_offsets"]
+    baseline = _key(frame)
+    monkeypatch.setattr(
+        store_module, "_tz_source_digests", lambda name: {"tzdata": "other-tzif-bytes"}
+    )
+    assert _key(frame) != baseline
+
+
+def test_tz_source_digests_are_real_file_hashes() -> None:
+    sources = store_module._tz_source_digests("Europe/Berlin")
+    assert sources and all(len(v) == 64 for v in sources.values())
+    assert store_module._tz_source_digests("Not/AZone") == {}
+    assert store_module._tz_source_digests("../etc/passwd") == {}
+
+
+def test_unlocatable_zone_makes_cache_unusable_no_read_no_write(
+    tmp_path, frame, fresh, monkeypatch
+) -> None:
+    FeatureStore.load_or_build(frame, CONFIG, tmp_path)  # a valid entry exists for the real key
+    before = sorted(p.name for p in tmp_path.rglob("*"))
+    monkeypatch.setattr(store_module, "_tz_source_digests", lambda name: {})
+    fp = store_module._timezone_fingerprint(("Europe/Berlin",))
+    assert fp["uncacheable"] == "UNCACHEABLE:tz_rules_unavailable:Europe/Berlin"
+    result = FeatureStore.load_or_build(frame, CONFIG, tmp_path)
+    assert result.metadata["cache_hit"] is False and _same(result, fresh)
+    assert (
+        sorted(p.name for p in tmp_path.rglob("*")) == before
+    )  # nothing read-through, nothing written
+
+
+def test_research_speed_helpers_are_scanned_only_importgraph_is_exempt(tmp_path) -> None:
+    src = tmp_path / "src"
+    (src / "pkg").mkdir(parents=True)
+    (src / "research_speed").mkdir()
+    (src / "pkg" / "__init__.py").write_text("")
+    (src / "research_speed" / "__init__.py").write_text("")
+    (src / "pkg" / "entry.py").write_text("from research_speed import helper\n")
+    (src / "research_speed" / "helper.py").write_text("X = 1\n")
+    entries = (src / "pkg" / "entry.py",)
+    assert not store_module._code_fingerprint(entries, src).startswith("UNCACHEABLE")
+    (src / "research_speed" / "helper.py").write_text(
+        "import importlib\nm = importlib.import_module('x')\n"
+    )
+    got = store_module._code_fingerprint(entries, src)
+    assert got.startswith("UNCACHEABLE:dynamic_import:") and "research_speed/helper.py" in got
+
+
+def test_importgraph_itself_is_exempt_but_hashed(tmp_path) -> None:
+    src = tmp_path / "src"
+    (src / "research_speed").mkdir(parents=True)
+    (src / "research_speed" / "__init__.py").write_text("")
+    graph = src / "research_speed" / "importgraph.py"
+    graph.write_text("NAMES = ('import_module', '__import__')\n")
+    (src / "entry.py").write_text("from research_speed import importgraph\n")
+    first = store_module._code_fingerprint((src / "entry.py",), src)
+    assert not first.startswith("UNCACHEABLE")
+    graph.write_text("NAMES = ('import_module',)\n")
+    assert store_module._code_fingerprint((src / "entry.py",), src) != first
+
+
+def _race_on_lock(target: Path, workers: int = 6, hold: float = 0.05):
+    inside = {"now": 0, "max": 0, "entered": 0}
+    guard = threading.Lock()
+    barrier = threading.Barrier(workers)
+
+    def worker() -> None:
+        barrier.wait()
+        with store_module._publish_lock(target) as locked:
+            if not locked:
+                return
+            with guard:
+                inside["now"] += 1
+                inside["entered"] += 1
+                inside["max"] = max(inside["max"], inside["now"])
+            time.sleep(hold)
+            with guard:
+                inside["now"] -= 1
+
+    threads = [threading.Thread(target=worker) for _ in range(workers)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    return inside
+
+
+def test_contenders_racing_on_a_stale_lock_one_at_a_time_and_nobody_deletes_new_owner(
+    tmp_path,
+) -> None:
+    target = tmp_path / "entry"
+    target.mkdir()
+    lock = target / ".publish.lock"
+    lock.write_text("dead-writer")
+    old = lock.stat().st_mtime - 10_000
+    os.utime(lock, (old, old))
+    inside = _race_on_lock(target)
+    assert inside["max"] == 1 and inside["entered"] == 6  # serialised, everyone got its turn
+    assert not lock.exists()
+    assert [p.name for p in target.iterdir()] == []  # stale lock removed, no leftovers
+
+
+def test_stale_takeover_abandons_when_new_owner_replaced_the_lock(tmp_path) -> None:
+    target = tmp_path / "entry"
+    target.mkdir()
+    lock = target / ".publish.lock"
+    lock.write_text("dead-writer")
+    old = lock.stat().st_mtime - 10_000
+    os.utime(lock, (old, old))
+    real_replace = os.replace
+    swapped = {"done": False}
+
+    def swap_in_new_owner_then_replace(src, dst):
+        if not swapped["done"] and str(src).endswith(".publish.lock"):
+            swapped["done"] = True
+            Path(src).write_text("new-owner-token")  # a new owner took over before our rename
+        return real_replace(src, dst)
+
+    store_module.os.replace = swap_in_new_owner_then_replace
+    try:
+        assert store_module._takeover_stale_lock(lock) is True
+    finally:
+        store_module.os.replace = real_replace
+    graves = [p for p in target.iterdir() if ".stale." in p.name]
+    assert (
+        len(graves) == 1 and graves[0].read_text() == "new-owner-token"
+    )  # not deleted, not restored
+
+
+def test_lock_released_when_write_fails_and_interrupt_in_body(tmp_path) -> None:
+    target = tmp_path / "entry"
+    target.mkdir()
+    with pytest.raises(KeyboardInterrupt), store_module._publish_lock(target) as locked:
+        assert locked
+        raise KeyboardInterrupt
+    assert not (target / ".publish.lock").exists()
+
+
+def test_empty_lock_left_by_our_own_failed_token_write_is_released(tmp_path, monkeypatch) -> None:
+    target = tmp_path / "entry"
+    target.mkdir()
+    real_fdopen = os.fdopen
+
+    def failing_fdopen(fd, *args, **kwargs):
+        handle = real_fdopen(fd, *args, **kwargs)
+        handle.write = lambda text: (_ for _ in ()).throw(OSError("disk full"))  # type: ignore[method-assign]
+        return handle
+
+    monkeypatch.setattr(store_module.os, "fdopen", failing_fdopen)
+    with pytest.raises(OSError), store_module._publish_lock(target):
+        pass
+    monkeypatch.undo()
+    assert not (target / ".publish.lock").exists()

@@ -397,6 +397,11 @@ _BASELINE_NOT_FAST = (  # slow + integration entries (dirs, files, prefixes) of 
 )
 
 
+# test files that did NOT exist at the baseline: they were never part of the FAST tier, so placing them in slow/integration
+# is not a "move" and needs no MOVED_OUT_OF_FAST entry
+_NEW_NON_FAST_TESTS = ("tests/unit/research_workbench/test_differential_e2e.py",)
+
+
 def _conftest():
     spec = importlib.util.spec_from_file_location(
         "tests_conftest_moved_guard", REPO / "tests" / "conftest.py"
@@ -414,7 +419,11 @@ def test_every_file_moved_out_of_fast_is_listed_in_moved_out_of_fast(rt):
     moved = []
     for p in sorted((REPO / "tests").rglob("test_*.py")):
         rel = p.relative_to(REPO).as_posix()
-        if rel.startswith(now_not_fast) and not rel.startswith(_BASELINE_NOT_FAST):
+        if (
+            rel.startswith(now_not_fast)
+            and not rel.startswith(_BASELINE_NOT_FAST)
+            and rel not in _NEW_NON_FAST_TESTS
+        ):
             moved.append(rel)
     missing = [m for m in moved if m not in rt.impact_tests.MOVED_OUT_OF_FAST]
     assert not missing, (

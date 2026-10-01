@@ -42,6 +42,7 @@ import hashlib
 import json
 import os
 import tempfile
+import threading
 import time
 import uuid
 from collections.abc import Mapping
@@ -213,9 +214,14 @@ def _code_fingerprint(entries: tuple[Path, ...] | None = None, src_root: Path | 
             here = Path(__file__).resolve()
             entries = (here, here.with_name("__init__.py"))
         files = importgraph.closure(entries, [src_root])
-        # research_speed/* (the analyser) is in the closure, so its edits change the key, but its
-        # tables name the functions it detects, so it is not scanned for dynamic imports.
-        scanned = [f for f in files if "research_speed" not in f.relative_to(src_root).parts]
+        # Only the analyser itself is exempt from the dynamic-import scan (its detection tables
+        # name the functions it looks for). It stays in the closure, so its edits change the key;
+        # every other file, research_speed helpers included, is scanned like any other.
+        scanned = [
+            f
+            for f in files
+            if not (f.name == "importgraph.py" and f.parent.name == "research_speed")
+        ]
         dynamic = importgraph.dynamic_import_files(scanned)
         if dynamic:
             names = ",".join(sorted(f.relative_to(src_root).as_posix() for f in dynamic))
@@ -240,19 +246,68 @@ def _library_versions() -> dict[str, str]:
 
 @functools.lru_cache(maxsize=16)
 def _tz_rules_digest(name: str) -> str:
-    """Hash of the UTC offsets pandas applies for ``name`` over 1990-2045, sampled hourly.
+    """Hash of the UTC offsets pandas applies for ``name`` over 1970-2100, sampled hourly.
 
-    Hourly sampling captures every DST transition date/instant, so any tz-rule update (tzdata,
-    pytz, system zoneinfo) that changes a wall-clock conversion changes the digest.
+    A behavioural cross-check on top of the rule-file bytes (see ``_tz_source_digests``); computed
+    in decade chunks to keep memory small.
     """
-    index = pd.date_range("1990-01-01", "2045-12-31 23:00", freq="h", tz="UTC")
-    local = index.tz_convert(name)
-    offsets = np.asarray(local.tz_localize(None) - index.tz_localize(None), dtype="timedelta64[s]")
-    return hashlib.sha256(offsets.astype(np.int64).tobytes()).hexdigest()
+    digest = hashlib.sha256()
+    for year in range(1970, 2100, 10):
+        index = pd.date_range(f"{year}-01-01", f"{year + 9}-12-31 23:00", freq="h", tz="UTC")
+        local = index.tz_convert(name)
+        offsets = np.asarray(
+            local.tz_localize(None) - index.tz_localize(None), dtype="timedelta64[s]"
+        )
+        digest.update(offsets.astype(np.int64).tobytes())
+    return digest.hexdigest()
+
+
+def _tz_source_digests(name: str) -> dict[str, str]:
+    """sha256 of the actual tz rule (TZif) bytes of ``name`` from every source pandas may use.
+
+    Sources: the ``tzdata`` package, the first ``zoneinfo.TZPATH`` hit, the bundled ``pytz`` file.
+    Returns only the sources that could be located (empty if the zone cannot be located at all).
+    """
+    parts = name.split("/")
+    if not name or ".." in parts or any(not part for part in parts) or "\\" in name:
+        return {}
+    found: dict[str, str] = {}
+    try:
+        from importlib import resources
+
+        resource = resources.files("tzdata.zoneinfo").joinpath(*parts)
+        if resource.is_file():
+            found["tzdata"] = hashlib.sha256(resource.read_bytes()).hexdigest()
+    except Exception:  # package missing or zone absent
+        pass
+    try:
+        import zoneinfo
+
+        for base in zoneinfo.TZPATH:
+            candidate = Path(base).joinpath(*parts)
+            if candidate.is_file():
+                found["tzpath"] = hashlib.sha256(candidate.read_bytes()).hexdigest()
+                break
+    except Exception:
+        pass
+    try:
+        import pytz
+
+        candidate = Path(pytz.__file__).resolve().parent.joinpath("zoneinfo", *parts)
+        if candidate.is_file():
+            found["pytz"] = hashlib.sha256(candidate.read_bytes()).hexdigest()
+    except Exception:
+        pass
+    return found
 
 
 def _timezone_fingerprint(names: tuple[str, ...]) -> dict[str, Any]:
-    """Deterministic fingerprint of the timezone rules the features depend on."""
+    """Deterministic fingerprint of the timezone rules the features depend on.
+
+    Per zone: the rule-file digests by source plus the sampled-offset digest. If no rule file can
+    be located for a used zone the result carries ``uncacheable`` =
+    ``UNCACHEABLE:tz_rules_unavailable:<zone>`` and the store bypasses the cache.
+    """
     from importlib import metadata
 
     packages = {}
@@ -261,12 +316,20 @@ def _timezone_fingerprint(names: tuple[str, ...]) -> dict[str, Any]:
             packages[package] = metadata.version(package)
         except metadata.PackageNotFoundError:
             packages[package] = "NOT_INSTALLED"
-    zones = {}
+    zones: dict[str, Any] = {}
     for name in sorted(set(names)):
+        sources = _tz_source_digests(name)
+        if not sources:
+            return {
+                "uncacheable": f"{_UNCACHEABLE_PREFIX}tz_rules_unavailable:{name}",
+                "zones": zones,
+                "packages": packages,
+            }
         try:
-            zones[name] = _tz_rules_digest(name)
-        except Exception as exc:  # unknown tz: key stays deterministic, build will fail loudly
-            zones[name] = f"ERROR:{type(exc).__name__}"
+            sampled = _tz_rules_digest(name)
+        except Exception as exc:  # unknown tz for pandas: deterministic marker, build fails loudly
+            sampled = f"ERROR:{type(exc).__name__}"
+        zones[name] = {"sources": sources, "sampled_offsets": sampled}
     return {"zones": zones, "packages": packages}
 
 
@@ -356,40 +419,90 @@ _LOCK_WAIT_SECONDS = 30.0
 _REPLACE_ATTEMPTS = 6
 
 
+_ACQUIRE_GUARD = threading.Lock()  # serialises lock attempts/takeovers inside one process
+
+
+def _file_identity(path: Path) -> tuple[int, int] | None:
+    try:
+        st = path.stat()
+    except OSError:
+        return None
+    return (st.st_dev, st.st_ino)
+
+
+def _takeover_stale_lock(lock_path: Path) -> bool:
+    """Try to clear a stale lock; True means "re-loop and try to acquire normally".
+
+    The stale file is renamed atomically to a unique name and deleted only if its payload is the
+    one that was judged stale. If it differs (a new owner replaced it meanwhile) the takeover is
+    abandoned: the renamed file is left alone (never restored, never deleted) and the caller
+    simply re-loops. Only the process whose rename succeeded does anything with the file.
+    """
+    try:
+        stat = lock_path.stat()
+        payload = lock_path.read_text(encoding="utf-8")
+    except OSError:
+        return True  # vanished: just retry acquiring
+    if time.time() - stat.st_mtime <= _LOCK_STALE_SECONDS:
+        return False  # live lock: wait
+    grave = lock_path.with_name(f"{lock_path.name}.stale.{uuid.uuid4().hex}")
+    try:
+        os.replace(lock_path, grave)
+    except OSError:
+        return True  # someone else took it first
+    with contextlib.suppress(OSError):
+        if grave.read_text(encoding="utf-8") == payload:
+            grave.unlink()  # verified stale
+    return True
+
+
 @contextlib.contextmanager
 def _publish_lock(target: Path):
     """Per-cache-directory publisher lock (O_CREAT|O_EXCL lock file, stale after 120 s).
 
-    Yields True if acquired, False if it could not be acquired within the wait budget.
+    Yields True if acquired, False if it could not be acquired within the wait budget. The lock
+    file is only ever removed by its owner (matching token/identity) or by a verified stale
+    takeover. Mutual exclusion across processes is best-effort; correctness of the cache does not
+    rely on it (unique temp files, atomic replace, hash-verified reads).
     """
     lock_path = target / ".publish.lock"
     token = f"{os.getpid()}:{uuid.uuid4().hex}"
     deadline = time.monotonic() + _LOCK_WAIT_SECONDS
     acquired = False
-    while True:
-        try:
-            fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-        except FileExistsError:
-            with contextlib.suppress(OSError):
-                if time.time() - lock_path.stat().st_mtime > _LOCK_STALE_SECONDS:
-                    lock_path.unlink()  # stale: its owner died or hung
-                    continue
+    identity: tuple[int, int] | None = None
+    fd: int | None = None
+    try:
+        while True:
+            with _ACQUIRE_GUARD:
+                try:
+                    fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                except FileExistsError:
+                    if _takeover_stale_lock(lock_path):
+                        continue
+                except PermissionError:
+                    pass  # Windows: lock file mid-deletion by its owner/stale taker; wait and retry
+                except OSError:
+                    break
+                else:
+                    acquired = True
+                    identity = _file_identity(lock_path)
+                    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                        fd = None
+                        handle.write(token)
+                    break
             if time.monotonic() >= deadline:
                 break
             time.sleep(0.05)
-            continue
-        except OSError:
-            break
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(token)
-        acquired = True
-        break
-    try:
         yield acquired
     finally:
+        if fd is not None:
+            with contextlib.suppress(OSError):
+                os.close(fd)
         if acquired:
             with contextlib.suppress(OSError):
-                if lock_path.read_text(encoding="utf-8") == token:  # never drop someone else's lock
+                content = lock_path.read_text(encoding="utf-8")
+                ours = content == token or (content == "" and _file_identity(lock_path) == identity)
+                if ours:  # never drop someone else's lock
                     lock_path.unlink()
 
 
@@ -872,6 +985,7 @@ class FeatureStore:
         key = _cache_key(components)
         target = Path(cache_dir) / key
         cacheable = not str(components["code_fingerprint"]).startswith(_UNCACHEABLE_PREFIX)
+        cacheable = cacheable and "uncacheable" not in components["timezone_rules"]
         if cacheable:
             hit = _verified_cache_hit(target, key, components)
             if hit is not None:
