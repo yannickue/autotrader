@@ -523,7 +523,9 @@ class StagedExitManager:
         return xp.profile_policy(profile, self._policy, time_stop_minutes=None if minutes is None else int(minutes)), attr
 
     def _terminal(self, market: str, request_id: str, outcome: ExitOutcome) -> None:
-        """Release-equivalent on every terminal outcome (fill / cancel / reject)."""
+        """Release-equivalent on every terminal outcome (fill / cancel / reject).  Lane V: the risk-gate reservation lives in the
+        ONE shared ``_ReleaseRecorder`` (``release`` is idempotent and keyed by request id), so notifying the base engine rather
+        than the profile engine that produced the decision releases exactly the same reservation: harmless by construction."""
         self._engine_for(market).notify_terminal(request_id, outcome)
 
     def _log(self, kind: str, row: reg.IntentRow, **fields: Any) -> None:
@@ -602,6 +604,21 @@ class StagedExitManager:
         except (KeyError, ValueError, TypeError, ArithmeticError) as exc:
             self._log("skip_bad_exit_plan", row, error=str(exc)[:160])
             return []
+        if profile_attr is not None and plan_stages:
+            # Lane V (MEDIUM-1): the broker TP and the profile's FINAL stage sit at the same price (REVERSION / FAILED_MOVE): the
+            # engine must not race the broker fill with a market close. The broker owns that stage; the engine keeps thesis
+            # failure, time stop and the hard EOD flat for the row.
+            broker_tp = Decimal(str(getattr(position, "tp", 0) or 0))
+            last = plan_stages[-1]
+            if (
+                broker_tp > 0 and last.target_price is not None
+                and abs(last.target_price - broker_tp) < info.spec.tick_size
+                and sum((st.close_fraction for st in plan_stages), ZERO) == Decimal(1)
+            ):
+                plan_stages = plan_stages[:-1]
+                self.counters["stage_left_to_broker_tp"] += 1
+                if not plan_stages:  # no ladder at all: the single-stage fallback target must not take over either
+                    policy = replace(policy, target_r_multiple=None, policy_id=f"{policy.policy_id}-tpb")
         ladder = plan_stages or policy.take_profit_stages
         stages_completed = self._stages_done(state, ladder, original, realized, info.spec.volume_step)
         broker_stop = Decimal(str(position.sl or 0))

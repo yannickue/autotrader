@@ -208,3 +208,47 @@ def test_H1_task_repeats_every_15_minutes_until_2330_and_re_enters_after_logon()
 @pytest.mark.parametrize("hh,mm", [(8, 30), (12, 0)])
 def test_operating_day_unchanged_without_exposure(hh: int, mm: int) -> None:
     assert sup.operating_day(at(hh, mm), POLICY.end_of_day)[0]
+
+
+# ------------------------------------------------------------------------------------------ Lane V (HIGH-2): exit 7 after a latched mt5_lane_timeout
+@pytest.mark.parametrize("hh,mm", [(21, 58), (22, 5), (22, 20)])
+def test_V_exit_7_from_a_lane_timeout_with_exposure_restarts_within_the_exposure_cap(hh: int, mm: int, tmp_path: Path) -> None:
+    now = at(hh, mm)
+    state = sup.WatchdogState(date="x", restarts_today=POLICY.max_restarts_per_day, fail_closed_restarts_today=POLICY.max_fail_closed_restarts_per_day)
+    d = _d(7, now=now, state=state, ready=True, exposure=True, stop_reason=None)
+    assert d.action == "restart" and d.delay_s <= POLICY.exposure_backoff_cap_s  # budgets suspended: a fresh process gets a working lane
+    assert d.alert  # and it is loud
+
+
+def test_V_supervisor_loop_relaunches_after_the_lane_timeout_exit_with_exposure_in_the_flatten_window(tmp_path: Path) -> None:
+    s, launched = _sup(tmp_path, at(21, 58), [
+        (7, {"open_positions": 1, "open_intents": 1, "flatten_state": "WINDOW", "fail_closed": "stack: mt5_lane_timeout", "_ready": True}),
+        (0, {"stop_reason": "eod_flat_shutdown", "flatten_state": "FLAT_CONFIRMED"}),
+    ])
+    _hb(tmp_path / "art", at(21, 57), open_positions=1, open_intents=1, flatten_state="WINDOW")
+    assert s.run() == 0 and launched == [7, 0]
+
+
+# ------------------------------------------------------------------------------------------ Lane V (LOW): -Disabled renders the task disabled
+@pytest.mark.parametrize("name", ["AutoTrader-DemoDaily", "AutoTrader-EodRecovery"])
+def test_V_the_task_templates_carry_a_task_level_enabled_placeholder_and_render_disabled(name: str) -> None:
+    text = (AUTOSTART / f"{name}.task.xml").read_text(encoding="utf-8")
+    for enabled in ("true", "false"):
+        body = (text.replace("@@USER_ID@@", "PC-user").replace("@@REPO_ROOT@@", "C:/repo").replace("@@START_DATE@@", "2026-10-02")
+                .replace("@@WAKE@@", "false").replace("@@ENABLED@@", enabled))
+        root = ET.fromstring(body)  # well-formed XML
+        assert root.findtext("t:Settings/t:Enabled", namespaces=NS) == enabled
+        assert all(t.findtext("t:Enabled", namespaces=NS) == "true" for t in root.find("t:Triggers", NS))  # triggers untouched
+
+
+def test_V_register_task_renders_enabled_false_when_disabled() -> None:
+    ps = (AUTOSTART / "register_task.ps1").read_text(encoding="utf-8")
+    assert "@@ENABLED@@" in ps and "$Disabled.IsPresent" in ps  # the XML is rendered disabled: never registered enabled first
+
+
+def test_V_logon_caveat_is_documented_prominently_and_in_the_status_helper() -> None:
+    doc = (AUTOSTART.parent.parent / "docs" / "AUTOSTART.md").read_text(encoding="utf-8")
+    assert "no logon = no task" in doc.lower() and "InteractiveToken" in doc and "EOD recovery" in doc
+    assert doc.index("no logon = no task") < doc.index("## Operating model")  # prominent: before the operating model
+    status = (AUTOSTART / "status_trader.ps1").read_text(encoding="utf-8")
+    assert "InteractiveToken" in status and "NO task runs" in status

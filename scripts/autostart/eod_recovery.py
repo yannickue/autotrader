@@ -9,6 +9,8 @@ recovery ran at 21:45, the next one (22:00+) is too late.  This separate task fi
 * takes ``<artifacts>/eod_recovery.lock`` (a second invocation while one runs is refused: exit 9),
 * looks at the artifacts dir exactly like the supervisor does (``supervisor.runner_presence``):
     - healthy runner (runner.lock + fresh heartbeat + live pid)  -> does NOTHING, exit 0 ("runner healthy, its own sweep handles flat"),
+    - healthy-looking runner that is fail-closed / OVERDUE with own exposure (Lane V) -> CRITICAL alert every invocation, exit 11,
+      NOT treated as flat-owning, never killed, no second runner,
     - live pid but stale heartbeat (starting / hung)             -> CRITICAL alert, does NOT start a second one, never kills it, exit 10,
     - nothing alive                                              -> starts the EXISTING runner in FLATTEN-ONLY mode,
 * flatten-only runner = ``scripts/demo_trader.py --demo-auto --flatten-only``: DEMO + account binding, broker connect, persisted-state
@@ -24,7 +26,7 @@ GUARANTEE (exact wording): every controllable execution path actively enforces f
 forced to execute.
 
 Exit codes: 0 flat confirmed (or healthy runner owns the day / day already finished flat); 2 bad arguments / DEMO authorisation refused
-(no retry can help); 9 another recovery holds the lock; 10 live runner process with a stale heartbeat (not touched); 20 retry window
+(no retry can help); 9 another recovery holds the lock; 10 live runner process with a stale heartbeat (not touched); 11 healthy-looking runner that is fail-closed / OVERDUE with own exposure (CRITICAL, not touched); 20 retry window
 ended WITHOUT a confirmed flat (CRITICAL alert).  It never starts, stops or touches MetaTrader 5 and never kills a process.
 """
 
@@ -59,6 +61,7 @@ EXIT_BAD_ARGS = 2
 EXIT_LOCKED = instance_lock.EXIT_ALREADY_RUNNING  # 9
 EXIT_UNHEALTHY_RUNNER = sup.SUP_UNHEALTHY_RUNNER_PRESENT  # 10
 EXIT_NOT_FLAT = 20  # retry window ended without a confirmed flat
+EXIT_RUNNER_NOT_FLATTENING = 11  # Lane V: a runner that LOOKS healthy but is fail-closed / OVERDUE with own exposure (not flat-owning)
 
 RECOVERY_STOP_REASON = "eod_recovery_flat_confirmed"
 DAY_DONE_STOP_REASONS = (sup.EOD_STOP_REASON, RECOVERY_STOP_REASON)
@@ -105,6 +108,30 @@ def day_finished_flat(st: dict[str, Any] | None, now: datetime, policy: Recovery
     if exposed or st.get("flatten_state") != "FLAT_CONFIRMED" or not st.get("eod_flat_confirmed_utc"):
         return False, f"flat not confirmed ({detail})"
     return True, f"day already finished flat (stop_reason={st.get('stop_reason')}, confirmed {st.get('eod_flat_confirmed_utc')})"
+
+
+def runner_not_flattening(st: dict[str, Any] | None, now: datetime, policy: RecoveryPolicy) -> str | None:
+    """Lane V (HIGH-2): pure.  A runner whose process + heartbeat look healthy can still be unable to flatten (a latched no-action
+    fatal such as ``mt5_lane_timeout`` leaves it RUNNING with its sweep blocked).  Returns a description when the heartbeat shows own
+    exposure AND (the runner is fail-closed OR the flatten is OVERDUE) at/after the flatten window start, else None."""
+    if not st or now.time() < policy.flatten_start:
+        return None
+    exposed, detail = sup.status_shows_exposure(st, now)
+    if not exposed:
+        return None
+    own = [k for k in ("open_positions", "open_intents", "eod_own_positions_open") if _num(st.get(k))]
+    overdue = st.get("flatten_state") == "OVERDUE"
+    fail = st.get("fail_closed")
+    if (own or overdue) and (fail or overdue):
+        return f"fail_closed={fail!r}, flatten_state={st.get('flatten_state')}, {detail}"
+    return None
+
+
+def _num(value: Any) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
 
 
 LaunchFn = Callable[[list[str]], int]
@@ -182,6 +209,13 @@ class EodRecovery:
             self._to("CHECK")
             presence, detail = self.presence_fn(self.artifacts)
             if presence == "healthy":
+                bad = runner_not_flattening(self._status(), self.now_fn(), self.policy)
+                if bad is not None:
+                    self._to("RUNNER_NOT_FLATTENING")
+                    self._alert("CRITICAL", f"runner {detail} looks healthy but is NOT flatten-owning ({bad}): its flatten sweep cannot "
+                                "complete; NOT launching a second runner, NOT killing it; own exposure may stay open overnight - "
+                                "operator action required (this alert repeats on every recovery invocation)", presence=detail)
+                    return EXIT_RUNNER_NOT_FLATTENING
                 self._to("HEALTHY_RUNNER")
                 self.log.info(f"runner healthy ({detail}); its own sweep handles flat. Nothing to do. Exit 0")
                 return EXIT_OK

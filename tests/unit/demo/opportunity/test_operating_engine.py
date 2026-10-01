@@ -79,3 +79,20 @@ def test_flatten_phase_and_runway_yield_no_entry(frames, mspecs, prod):
     assert late_plain, "without the policy this window has opportunities"
     assert all(now_of_ < datetime(2026, 6, 10, 8, 20, tzinfo=UTC) for now_of_ in [datetime.fromisoformat(s.signal_ts_utc) for s, _ in late_live])  # only before the runway cut (10:20 Berlin)
     assert eng.health[market] == "outside_live_entry_window"
+
+
+def test_lane_v_a_shadow_scan_outside_the_live_window_never_marks_the_normal_bar_namespace(frames, mspecs, prod):
+    """Opus LOW: the outside-window early return wrote ``_last_bar[market]`` (the NORMAL namespace) for a shadow scan."""
+    from demo.opportunity.engine import ShadowScan
+
+    market = "GER40"
+    raw = {"policy": {"version": "t", "global_flat_deadline": "11:00", "flatten_start": "10:30",
+                      "broker_close_buffer_min": 5, "min_entry_runway_min": 10, "operating_days": ["Mon", "Tue", "Wed", "Thu", "Fri"],
+                      "flatten_retry_backoff_s": [5]}}
+    base = ReplayBarSource(frames, {m: s.point_size for m, s in mspecs.items()})
+    eng = _engine(base, prod, mspecs, operating=policy_from_dict(raw))
+    now = now_of(bar_times(frames[market], "2026-06-10T08:40", "2026-06-10T08:45")[0])  # inside the flatten phase
+    base.set_time(now)
+    eng.on_m5_close(market, now, shadow=ShadowScan(code="X", origin="ORIGIN_X"))
+    assert eng.health[market] == "outside_live_entry_window"
+    assert market not in eng._last_bar and "GER40|ORIGIN_X" in eng._last_bar

@@ -126,7 +126,7 @@ def test_H_rejected_close_is_retried_with_backoff_without_flipping_exposure(env)
     _open_position(stack, broker)
     (before,) = broker.positions_get()
     direction, volume = int(before.type), float(before.volume)
-    broker.send_retcode_override = [int(Retcode.REJECT)]
+    broker.send_retcode_override = [int(Retcode.REJECT)] * 2  # Lane V: one sweep step = the Nautilus close AND the ticket fallback, both refused
     stack.on_clock(berlin(21, 55, 0))
     (still,) = broker.positions_get()  # close refused: nothing changed, in particular NOT flipped
     assert (int(still.type), float(still.volume)) == (direction, volume)
@@ -144,7 +144,7 @@ def test_H_rejected_close_is_retried_with_backoff_without_flipping_exposure(env)
 def test_rejected_closes_are_retried_past_the_deadline_until_flat(env):
     broker, stack = env
     _open_position(stack, broker)
-    broker.send_retcode_override = [int(Retcode.REJECT)] * 4
+    broker.send_retcode_override = [int(Retcode.REJECT)] * 8  # Lane V: 2 refused sends per sweep step (Nautilus close + ticket fallback)
     t = berlin(21, 55)
     for step in (0, 6, 17, 40):  # 21:55:00, :06, :17, :40: each attempt rejected
         stack.on_clock(t + timedelta(seconds=step))

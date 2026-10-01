@@ -1856,7 +1856,7 @@ class Mt5DemoStack:
     # -- flatten (reduce-only, through Nautilus) --------------------------------------------------------
 
     def _flatten(
-        self, info: _MarketInfo, *, tag: str, hint: str | None = None, escalate: bool = True
+        self, info: _MarketInfo, *, tag: str, hint: str | None = None, escalate: bool = True, now: datetime | None = None
     ) -> bool:
         """Reduce-only close of OUR position(s) on ``info``.  Success = no OWN-magic position left at the broker (a
         foreign / canary position on the same symbol neither makes the flatten "fail" nor is ever touched).  A position
@@ -1876,7 +1876,14 @@ class Mt5DemoStack:
         still_open = self._own_symbol_positions(info)
         # Lane R: ONLY the flatten-only recovery also falls back to the ticket close when Nautilus FAILED (e.g. an EXTERNAL-adopted
         # position id the NETTING OMS refuses); the normal sweep keeps one broker attempt per backoff step (Lane P semantics).
-        if still_open and ((outcome.status != "flat" and self._cfg.flatten_only) or outcome.reason == "no_open_position"):
+        # Lane V (HIGH-1): the EOD window of a normal runner behaves like the recovery mode - a refused / timed-out Nautilus close
+        # (REDUCE_ONLY_LOCAL_BROKER_POSITION_MISMATCH, an EXTERNAL-adopted id under NETTING, a timeout) must not leave exposure overnight.
+        eod_window = (
+            not escalate
+            and self._cfg.operating_policy is not None
+            and self._cfg.operating_policy.flatten_active((now or self._now()).astimezone(UTC))
+        )
+        if still_open and ((outcome.status != "flat" and (self._cfg.flatten_only or eod_window)) or outcome.reason == "no_open_position"):
             # M1: Nautilus holds no position but the broker does (never adopted / cache lost) - or Nautilus could not close it
             # (Lane R: e.g. an EXTERNAL-adopted position id the NETTING OMS refuses, a denial, a timeout): reduce-only close by
             # the broker ticket through the adapter (verifies own magic, side and volume against the broker).
@@ -1884,7 +1891,7 @@ class Mt5DemoStack:
                 self._on_lane(self._lane_close_by_ticket, info, tag, retry_reads=False)
             still_open = self._own_symbol_positions(info)
             outcome = JobOutcome("flat" if not still_open else "failed", "ticket_close")
-        if outcome.status == "flat" and not still_open:
+        if not still_open:  # Lane V (MEDIUM-1): broker truth (own magic) is flat -> success, even if the close itself was denied (TP filled first)
             if escalate:
                 self._flatten_failures.pop(info.canonical, None)
             return True
@@ -2522,15 +2529,16 @@ class Mt5DemoStack:
         info = self._markets[market]
         self._halt("unprotected_position")
         if row is not None:
+            stop = self._restore_stop(row)  # Lane V: the last TIGHTENED stop (never looser than the intent's initial stop)
             try:
-                denial = self._on_lane(self._lane_protect, ticket, Decimal(row.stop), retry_reads=False)
+                denial = self._on_lane(self._lane_protect, ticket, stop, retry_reads=False)
             except (StackFailClosed, _Reject):
                 denial = "protect_unavailable"
             if denial is None:
                 return [
                     ProtectionConfirmed(
                         intent_id=row.intent_id, broker_position_id=str(ticket),
-                        stop=Decimal(row.stop),
+                        stop=stop,
                         target=None if row.target is None else Decimal(row.target),
                     )
                 ]
@@ -2540,6 +2548,21 @@ class Mt5DemoStack:
         fresh = self._registry.get(row.intent_id) if self._registry else None
         closed = self._on_lane(self._lane_build_closed, fresh or row, strict=True)
         return [closed] if closed is not None else []
+
+    def _restore_stop(self, row: reg.IntentRow) -> Decimal:
+        """Stop to restore after a vanished broker stop: the last tightened stop recorded in ``exit_state`` (fresh registry
+        row), but never looser than the intent's initial stop (a corrupt / looser value is ignored)."""
+        initial = Decimal(row.stop)
+        fresh = self._registry.get(row.intent_id) if self._registry else None
+        try:
+            ctx = json.loads((fresh or row).context or "{}")
+            raw = (ctx.get("exit_state") or {}).get("current_stop") if isinstance(ctx, dict) else None
+            tightened = None if raw in (None, "") else Decimal(str(raw))
+        except (ValueError, TypeError, ArithmeticError, AttributeError):
+            return initial
+        if tightened is None or not tightened.is_finite() or tightened <= 0:
+            return initial
+        return max(initial, tightened) if row.direction == 1 else min(initial, tightened)
 
     def _lane_protect(self, ticket: int, stop: Decimal) -> str | None:
         """Tighten-only stop on a broker position (adapter ``emergency_protect``), then verify."""
@@ -2623,7 +2646,7 @@ class Mt5DemoStack:
                 # With an operating policy the sweep below retries with backoff and must never be pre-empted by the
                 # fatal flatten escalation (Lane Z / C1): the row loop only escalates when there is no sweep.
                 if still_open and not self._flatten(
-                    info, tag=f"forced-flat:{row.intent_id}", hint="SESSION_END", escalate=op is None
+                    info, tag=f"forced-flat:{row.intent_id}", hint="SESSION_END", escalate=op is None, now=current
                 ):
                     continue
                 fresh = self._registry.get(row.intent_id) or row
@@ -2702,7 +2725,7 @@ class Mt5DemoStack:
             if current < self._eod_next_try.get(market, current):
                 problems.append(f"retry_backoff:{market}")
                 continue
-            if self._flatten(info, tag=f"eod-flat:{market}", hint="SESSION_END", escalate=False):
+            if self._flatten(info, tag=f"eod-flat:{market}", hint="SESSION_END", escalate=False, now=current):
                 self._eod_failures.pop(market, None)
                 self._eod_next_try.pop(market, None)
                 for row in self._registry.with_status(reg.OPEN):

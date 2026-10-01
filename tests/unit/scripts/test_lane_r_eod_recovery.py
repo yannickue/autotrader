@@ -466,3 +466,38 @@ def test_the_recovery_path_never_imports_the_deploy_gate_or_reads_the_approval_f
     assert "deploy_approved" not in (AUTOSTART / "run_eod_recovery.ps1").read_text(encoding="utf-8")
     src = (AUTOSTART / "eod_recovery.py").read_text(encoding="utf-8")
     assert "import deploy_gate" not in src and "check_deploy_approval" not in src
+
+
+# ------------------------------------------------------------------------------------------ Lane V (HIGH-2): a "healthy" runner that does not flatten
+def _healthy_with_hb(tmp_path, **fields):
+    art = tmp_path / "a"
+    _write_hb(art, at(22, 5), **fields)
+    ran: list[int] = []
+    rec = _recovery(art, lambda c: ran.append(1) or 0, Clock(at(22, 5)), presence=lambda a: ("healthy", "pid 4242, heartbeat age 3s"))
+    return art, rec, ran
+
+
+def test_V_a_healthy_runner_that_is_fail_closed_with_own_exposure_after_the_window_start_raises_critical_not_a_silent_exit_0(tmp_path):
+    art, rec, ran = _healthy_with_hb(
+        tmp_path, fail_closed="stack: mt5_lane_timeout", flatten_state="WINDOW", open_positions=1, open_intents=1, eod_own_positions_open=1
+    )
+    assert rec.run() == eod.EXIT_RUNNER_NOT_FLATTENING == 11 and ran == []  # never a second runner, never killed
+    assert rec.history[-1] == "RUNNER_NOT_FLATTENING"
+    ev = _alerts(art)
+    assert ev[-1]["severity"] == "CRITICAL" and "NOT flatten-owning" in ev[-1]["reason"] and "mt5_lane_timeout" in ev[-1]["reason"]
+
+
+def test_V_overdue_with_own_exposure_after_the_deadline_is_critical_every_invocation(tmp_path):
+    art, rec, _ran = _healthy_with_hb(tmp_path, flatten_state="OVERDUE", eod_own_positions_open=1, fail_closed=None)
+    assert rec.run() == 11
+    rec2 = _recovery(art, lambda c: 0, Clock(at(22, 7)), presence=lambda a: ("healthy", "pid 4242"))
+    assert rec2.run() == 11
+    assert len([e for e in _alerts(art) if e["severity"] == "CRITICAL"]) == 2
+
+
+def test_V_a_healthy_runner_that_is_flattening_normally_is_still_left_alone(tmp_path):
+    art, rec, ran = _healthy_with_hb(tmp_path, flatten_state="WINDOW", eod_own_positions_open=1, open_positions=1, fail_closed=None)
+    assert rec.run() == eod.EXIT_OK and ran == []
+    assert not (art / "watchdog_alert.json").exists()
+    _art2, rec2, _ = _healthy_with_hb(tmp_path / "x", flatten_state="FLAT_CONFIRMED", fail_closed="stack: mt5_lane_timeout")
+    assert rec2.run() == eod.EXIT_OK  # fail-closed but flat: nothing to flatten

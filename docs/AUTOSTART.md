@@ -3,7 +3,23 @@
 Scope: DEMO trader only (`scripts/demo_trader.py --demo-auto`). Native Windows solution: one scheduled
 task, one PowerShell launcher, one small Python supervisor. No Docker, no daemon framework.
 The scripts NEVER start, stop, restart or otherwise touch MetaTrader 5 (MT5 stays open) and NEVER
-kill the runner.
+kill the runner.  Precise scope of that statement (Lane V): no script here contains any code that
+launches, closes or kills the terminal.  The MetaTrader5 Python API itself, however, is attach-or-launch:
+`initialize()` (called by the runner / EOD recovery through `adapters.activtrades_mt5.connection`, with the
+configured `MT5_TERMINAL_PATH` or none) starts the terminal process when it is not running and the API cannot
+be told to only attach.  An unattended start of the terminal is therefore possible as a side effect of the
+API (it would still be refused as non-DEMO / wrong account by the identity checks, and never logs in); keep
+MT5 running and logged in on the DEMO account as the operating assumption.
+
+## IMPORTANT: no logon = no task (reboot caveat)
+
+Both tasks (`AutoTrader-DemoDaily`, `AutoTrader-EodRecovery`) use `LogonType InteractiveToken`: they run ONLY
+while the configured user is logged on to an interactive session.  After a reboot (or a logoff / locked-out
+session on a headless box) with NO logon, NO task runs - including the independent EOD recovery - and open
+positions stay protected only by their broker-side stops overnight.  This cannot be changed without the user's
+credentials or administrator rights (`LogonType Password` / `S4U`); it is a documented residual risk of the
+zero-overnight guarantee.  Mitigations outside this repo: auto-logon for the trading user, never reboot with
+open positions, and check `status_trader.ps1` (it prints this note) each trading day.
 
 ## Operating model
 
