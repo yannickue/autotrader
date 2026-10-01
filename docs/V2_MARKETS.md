@@ -280,3 +280,7 @@ and 'n too small' flags, random-bar base-rate control. Headline: mean R per vari
 | spread/stop (median; structural stop ~4 ATR) | ~0.10 (16 % of candidates above the policy 20 %-of-1R gate; fade 56 %) | ~0.09 (10 %; fade 47 %) |
 | movement_to_cost (median 4 h MFE / spread) | ~6 | ~8 |
 | verdict | family semantics GREEN (session-agnostic, gap-aware, causal); cost/edge UNVALIDATED | family semantics GREEN with the PROVISIONAL Brent calendar caveat; cost/edge UNVALIDATED |
+
+## Oracle available-MFE diagnostic (Lane X2, ORACLE_RETROSPECTIVE)
+
+`src/coverage_analysis/oracle_mfe.py` (`oracle-mfe-1`, CLI `scripts/oracle_available_mfe.py`, output `docs/evidence/oracle_available_mfe.{md,json}`) computes, for every Lane X entry, the stop-independent maximum favourable excursion up to the live operating-policy flat horizon in R of the entry's initial risk (`available_mfe_r`), the capture ratio / giveback of the fixed_1_5r baseline and the Lane X structural shadow policies, and the distribution of `available_mfe_r` per market x family:variant x direction next to a zero-drift null reference. It uses future bars by construction: hindsight yardstick only, `NEVER_IN_LIVE_DECISION_PATH` (isolation-tested), no edge claim; Lane X's "useful entry + poor capture" label counts must not be used to promote strategies - read the raw diagnostics against the null. Shadow markets have no bar history yet, so none are analysed.
