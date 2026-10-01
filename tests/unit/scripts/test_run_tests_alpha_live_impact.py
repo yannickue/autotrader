@@ -146,3 +146,23 @@ def test_safety_critical_paths_select_the_safety_overlay(path: str) -> None:
 
 def test_research_only_alpha_path_does_not_select_safety_overlay() -> None:
     assert ["-m", "safety"] not in run_tests.plan_for(["src/alpha/discovery/evaluate.py"])
+
+
+def test_every_production_reachable_alpha_file_selects_the_safety_overlay() -> None:
+    missing = [p for p in _live_alpha_files() if ["-m", "safety"] not in run_tests.plan_for([p])]
+    assert not missing, f"live alpha files without the safety overlay: {missing}"
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "src/data/historical.py",
+        "src/markets/spec.py",
+        "src/instruments/models.py",
+        "src/margin/estimator.py",
+        "src/demo/opportunity/policy.py",
+        "src/demo/exit_policies.py",
+    ],
+)
+def test_other_production_reachable_domains_select_the_safety_overlay(path: str) -> None:
+    assert ["-m", "safety"] in run_tests.plan_for([path])
