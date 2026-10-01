@@ -33,7 +33,7 @@ def _reset():
 def _args(tmp_path: Path):
     return argparse.Namespace(
         artifacts=tmp_path, markets=None, phase=None, db=None, learning=None, forced_flat_on_shutdown=False, account_phase=None,
-        exit_policy="fixed_1_5r", out_of_window_shadow=None, shadow_exit_lab=None, shadow_universe=None, geometry_source="family",
+        exit_policy="fixed_1_5r", out_of_window_shadow=None, shadow_exit_lab=None, shadow_universe=None, market_observer=None, geometry_source="family",
         daily=False, flatten_only=False,
     )
 
