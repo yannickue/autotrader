@@ -623,6 +623,14 @@ class StagedExitManager:
         stages_completed = self._stages_done(state, ladder, original, realized, info.spec.volume_step)
         broker_stop = Decimal(str(position.sl or 0))
         initial_stop = Decimal(row.stop)
+        if broker_stop > 0 and 0 < abs(broker_stop - initial_stop) <= info.spec.tick_size and (
+            broker_stop < initial_stop if row.direction == 1 else broker_stop > initial_stop
+        ):
+            # The broker rounded our (tick-unaligned) stop to the LOOSER side by less than one tick: the broker SL is the real
+            # risk, so it IS the initial stop (R moves by < 1 tick). Without this the ExitPosition invariant "never looser than
+            # the initial stop" raised and the row was silently unmanaged for its whole life. A stop MORE than one tick looser
+            # is still refused (invariant kept); a tighter one is untouched.
+            initial_stop = broker_stop
         current_stop = broker_stop if broker_stop > 0 else initial_stop
         price = bid if side is PositionSide.LONG else ask
         atr = ctx.get("atr")
