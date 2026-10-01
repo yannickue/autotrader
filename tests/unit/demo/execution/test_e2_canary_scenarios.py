@@ -23,7 +23,7 @@ from tests.unit.demo.execution.test_e2_canary import foreign_fill, load, make_en
 
 D = Decimal
 TP_LEVEL_MIN = 1.1750  # the canary's TP1 / target level is ~3 x 17.6 pips above the 1.17005 ask: ~1.1753
-SCENARIO_STEPS_N = {"base": 10, "b1": 9, "b2": 5, "b3": 10}
+SCENARIO_STEPS_N = {"base": 10, "b1": 9, "b2": 6, "b3": 10}
 
 
 def run_scenario(env: canary.CanaryEnv, scenario: str, **kw) -> tuple[int, dict]:
@@ -206,23 +206,25 @@ def test_b1_manager_that_never_evaluates_fails_step_3(tmp_path):
 # -- B2 ---------------------------------------------------------------------------------------------------------------
 
 
-def test_b2_reversion_full_pass_broker_tp_and_engine_target_at_the_same_level(tmp_path):
+def test_b2_reversion_full_pass_engine_leaves_the_target_to_the_broker_tp_and_closes_on_thesis_failure(tmp_path):
     broker = build_broker()
     env = make_env(tmp_path, broker)
     code, report = run_scenario(env, "b2")
     assert code == 0 and report["verdict"] == "EXECUTION_CONTRACT_PASS", report["verdict"]
     assert [s["name"] for s in report["steps"]] == list(canary.B2_STEP_NAMES)
-    assert status_of(report) == ["PASS"] * 5
+    assert status_of(report) == ["PASS"] * 6
     entry = broker.request_log[0]
     tp = float(report["plan"]["tp1_price"])
     assert abs(entry["tp"] - tp) < 1e-9 and tp > 1.1750 and entry["sl"] > 0  # broker TP at the target level, far above the market
     assert report["plan"]["broker_tp"] == report["plan"]["tp1_price"]
-    step3 = report["steps"][2]["data"]
-    assert step3["closed_by"] == "engine" and step3["exit_reason"] == "EXIT_ENGINE_TP1"
-    assert report["steps"][3]["data"]["stray_orders"] == 0 and report["steps"][3]["data"]["flatten_failures"] == {}
     assert report["steps"][1]["data"]["broker_tp"] == report["steps"][1]["data"]["engine_stage_price"]
+    step3 = report["steps"][2]["data"]  # Lane V MEDIUM-1: at the broker-TP level the engine does NOT close, it leaves the target to the broker
+    assert step3["engine_close"] is False and step3["stage_left_to_broker_tp"] >= 1 and step3["position_unchanged"] is True
+    step4 = report["steps"][3]["data"]  # the thesis-failure exit stays with the engine (broker TP still far away)
+    assert step4["closed_by"] == "engine" and step4["exit_reason"] == "EXIT_ENGINE_STRUCTURE"
+    assert report["steps"][4]["data"]["stray_orders"] == 0 and report["steps"][4]["data"]["flatten_failures"] == {}
     deals = [r for r in broker.request_log if r.get("position") and r.get("action") == 1]
-    assert [r["volume"] for r in deals] == [0.02]  # ONE real full reduce-only close
+    assert [r["volume"] for r in deals] == [0.02]  # ONE real full reduce-only close (none at the target level)
     assert not broker.positions_get() and not broker.orders_get()
     assert_injection_never_touched_orders(broker, report)
     assert report["registry_status_after_close"] == "CLOSED"
@@ -238,10 +240,10 @@ def test_b2_sabotage_stray_order_left_after_the_close(tmp_path):
             price_open=1.1760, sl=0.0, tp=0.0,
         )
 
-    env.hooks["after_action_3"] = stray
+    env.hooks["after_action_4"] = stray
     code, report = run_scenario(env, "b2")
     assert code == 1
-    assert report["verdict"].startswith("FAIL(step 4") or report["verdict"].startswith("FAIL(step 3"), report["verdict"]
+    assert report["verdict"].startswith("FAIL(step 5") or report["verdict"].startswith("FAIL(step 4"), report["verdict"]
     assert not own(broker)
 
 
@@ -259,8 +261,25 @@ def test_b2_sabotage_broker_tp_not_at_the_engine_level(tmp_path):
     assert_failed_at(report, 2, broker)
 
 
+def test_b2_sabotage_engine_races_the_broker_tp_at_the_target_level(tmp_path):
+    """If the broker TP does NOT sit at the engine stage price the engine fires its own target close: step 3 must catch that
+    (it is exactly the market-close-racing-the-broker-fill behaviour Lane V removed)."""
+    broker = build_broker()
+    env = make_env(tmp_path, broker)
+
+    def move_tp():
+        for p in broker.positions.values():
+            p.tp = round(p.tp + 0.0020, 5)
+
+    env.hooks["before_manage_target"] = move_tp
+    code, report = run_scenario(env, "b2")
+    assert code == 1
+    assert_failed_at(report, 3, broker)
+    assert "instead of leaving it to the broker" in report["steps"][2]["detail"] or "position changed" in report["steps"][2]["detail"]
+
+
 def test_b2_sabotage_engine_close_failure_counts_as_a_halt(tmp_path):
-    """A failed engine close must show up as flatten failure / halt in step 3 or 4 (and the finally-flatten still closes)."""
+    """A failed engine close (thesis failure, step 4) must show up as a failure in step 4 (and the finally-flatten still closes)."""
     broker = build_broker()
     real_send = broker.order_send
 
@@ -275,15 +294,12 @@ def test_b2_sabotage_engine_close_failure_counts_as_a_halt(tmp_path):
     env = make_env(tmp_path, broker)
     code, report = run_scenario(env, "b2")
     assert code == 1
-    assert report["verdict"].startswith("FAIL(step 3")
+    assert report["verdict"].startswith("FAIL(step 4")
     assert not own(broker)
 
 
-@pytest.mark.skip(reason="LANE V dependency: on base 327c7e7 the engine close that reaches the broker AFTER its TP filled gets 'Position not found' "
-                         "(retcode 10036) and Mt5DemoStack._flatten returns False (flat=False, halt flatten_failed, failure count + 1) although the "
-                         "position IS flat. Lane V fixes the _flatten success semantics; remove this skip after the Lane V merge "
-                         "(the test body is complete and was verified to fail only on exactly that: 'the engine close reported failure (flat=False)').")
 def test_b2b_broker_tp_fills_first_then_the_engine_close_is_harmless(tmp_path):
+    """The broker TP fills while the engine's thesis-failure close is on its way (the race Lane V protects): the close is harmless."""
     broker = build_broker()
     real_send = broker.order_send
 
@@ -299,14 +315,13 @@ def test_b2b_broker_tp_fills_first_then_the_engine_close_is_harmless(tmp_path):
     env = make_env(tmp_path, broker, tolerate_tp_race=True)
     code, report = run_scenario(env, "b2")
     assert send.done and any(o.comment == "[tp]" for o in broker.history_orders), "the broker TP did not fill (no race happened)"
-    stack_state = report["steps"][3]
-    assert stack_state["status"] == "PASS", stack_state["detail"]  # no halt, no flatten-failure count, no stray order
-    assert not broker.positions_get() and code in (0, 1)
+    assert report["steps"][3]["status"] == "PASS", report["steps"][3]["detail"]
+    assert report["steps"][4]["status"] == "PASS", report["steps"][4]["detail"]  # no halt, no flatten-failure count, no stray order
+    assert not broker.positions_get() and not broker.orders_get()
+    assert report["registry_status_after_close"] == "CLOSED"
+    assert code == 0, report["verdict"]
 
 
-@pytest.mark.skip(reason="LANE V dependency (timing-dependent on base 327c7e7): when the strategy has already ingested the broker-TP deal before the "
-                         "flatten runs, _flatten returns False (flat=False, halt flatten_failed) although the position is flat; it passed in isolation "
-                         "and failed under the parallel fast tier. Remove this skip after the Lane V merge.")
 def test_b2b_broker_tp_fills_before_the_engine_flatten_is_enqueued(tmp_path):
     """The broker TP fills AFTER the manager decided but BEFORE its flatten reaches the strategy (the local cache has not seen the TP
     deal yet).  The engine close must then be harmless: no halt, no flatten-failure count, no stray order, flat, registry terminal."""
@@ -324,12 +339,33 @@ def test_b2b_broker_tp_fills_before_the_engine_flatten_is_enqueued(tmp_path):
 
         stack._flatten = flatten_after_tp
 
-    env.hooks["before_manage_target"] = race
+    env.hooks["before_manage_failure"] = race
     code, report = run_scenario(env, "b2")
     assert not broker.positions_get() and not broker.orders_get()
     assert any(o.comment == "[tp]" for o in broker.history_orders), "the broker TP did not fill (no race happened)"
     assert report["steps"][3]["status"] == "PASS", report["steps"][3]["detail"]
+    assert report["steps"][4]["status"] == "PASS", report["steps"][4]["detail"]
     assert code == 0, report["verdict"]
+
+
+def test_b2_broker_tp_fill_closes_the_row_as_a_target_exit(tmp_path):
+    """The broker-side TP fills at the target level (the case the engine leaves to the broker): the row ends terminal, flat, no
+    halt / failure count / stray order, and the close is booked as a TARGET exit (not an engine / session exit)."""
+    broker = build_broker()
+    env = make_env(tmp_path, broker, tolerate_tp_race=True)
+
+    def fill_tp():
+        tp = max(float(p.tp) for p in broker.positions.values())
+        broker.set_symbol_quote("EURUSD", round(tp + 0.00005, 5), round(tp + 0.00015, 5))
+
+    env.hooks["before_manage_failure"] = fill_tp  # right after the engine left the target alone (step 3 passed)
+    _code, report = run_scenario(env, "b2")
+    assert any(o.comment == "[tp]" for o in broker.history_orders), "the broker TP did not fill"
+    assert not broker.positions_get() and not broker.orders_get()
+    assert report["steps"][2]["status"] == "PASS" and report["steps"][4]["status"] == "PASS", report["verdict"]
+    assert report["registry_status_after_close"] == "CLOSED"
+    closed = env.runtime["canary"].data["closed_event"]
+    assert closed["exit_reason"] == "TARGET" and closed["exit_quantity"] == D("0.02"), closed
 
 
 # -- B3 ---------------------------------------------------------------------------------------------------------------
@@ -528,7 +564,7 @@ def test_scenario_all_runs_sequentially_with_a_flat_check_between(tmp_path):
     assert [s["scenario"] for s in combined["scenarios"]] == ["base", "b1", "b2", "b3"]
     assert all(s["exit_code"] == 0 for s in combined["scenarios"])
     assert [(f["after_scenario"], f["ok"]) for f in combined["flat_checks"]] == [("base", True), ("b1", True), ("b2", True), ("b3", True)]
-    assert [len(s["steps"]) for s in combined["scenarios"]] == [10, 9, 5, 10]
+    assert [len(s["steps"]) for s in combined["scenarios"]] == [10, 9, 6, 10]
     assert not broker.positions_get() and not broker.orders_get()
     # one report per scenario (+ the combined one); the base scenario keeps its historical file name
     names = sorted(p.name for p in env.artifacts_dir.glob("canary_report_*.json"))

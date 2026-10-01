@@ -26,6 +26,7 @@ This module never logs in and there is no live-account path.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import subprocess
@@ -213,10 +214,26 @@ def _run(args: argparse.Namespace, mode: str) -> int:
     except rn.LiveStackUnavailable as exc:
         print(f"UNAVAILABLE: {exc}", file=sys.stderr)
         return rn.EXIT_UNAVAILABLE
+    global _LANE_WEDGED
     try:
         return r.run(install_signals=True)
     finally:
+        _LANE_WEDGED = bool(getattr(r, "lane_wedged", False))  # Lane V2: read before the store closes
         r.store.close()
+
+
+_LANE_WEDGED = False
+
+
+def _hard_exit(code: int) -> None:
+    """Lane V2 (HIGH-2 gap A): terminate NOW.  A wedged MT5 C call blocks the lane thread forever and Python's interpreter exit
+    joins that thread, so an orderly return would never leave the process: the heartbeat goes stale, the EOD recovery only alerts
+    (exit 10) and the supervisor never restarts.  The final heartbeat is written and runner.lock released before this is called;
+    broker-side SL/TP stay on the server (nothing is closed here)."""
+    with contextlib.suppress(Exception):
+        sys.stdout.flush()
+        sys.stderr.flush()
+    os._exit(code)
 
 
 def _run_single_instance(args: argparse.Namespace, mode: str) -> int:
@@ -229,9 +246,12 @@ def _run_single_instance(args: argparse.Namespace, mode: str) -> int:
         print(f"REFUSED: {exc}", file=sys.stderr)
         return instance_lock.EXIT_ALREADY_RUNNING
     try:
-        return _run(args, mode)
+        code = _run(args, mode)
     finally:
         lock.release()
+    if _LANE_WEDGED:
+        _hard_exit(code)  # Lane V2 (HIGH-2 gap A): only the wedged-lane path skips the orderly interpreter exit
+    return code
 
 
 def main(argv: list[str] | None = None) -> int:
