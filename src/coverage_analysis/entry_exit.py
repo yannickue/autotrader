@@ -249,6 +249,7 @@ def build_entry_rows(mi: MarketInputs, op: OperatingPolicy, *, limit: int | None
                 "session": session_bucket(int(d.minute[j]), d.cal, berlin_hour), "regime": regime,
                 "risk_atr": risk / atr if atr > 0 else None, "spread_over_risk": e_sp / risk,
                 "spread_state": spread_bucket(e_sp / risk), "signal_age_s": 0.0,
+                "fill": fill, "stop": stop, "atr": atr, "entry_idx": j, "end_idx": end,
                 "holding_baseline_s": base.holding_s, "flat_utc": flat, "tp1_available": tp1 is not None,
                 "tp2_available": tp2 is not None, "baseline_r": baseline_r,
                 "baseline_exit": base.final_reason, "baseline_censored": base.censored,

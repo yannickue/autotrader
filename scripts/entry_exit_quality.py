@@ -72,10 +72,8 @@ def _cut(frame: pd.DataFrame, days: int) -> tuple[pd.DataFrame, pd.Timestamp]:
     return cut, eval_from
 
 
-def analyse_market(m: str, days: int, limit: int | None, data_root: str | None, p2root: str | None) -> dict:
-    """One market end to end (module level + plain arguments so it can run in a worker process)."""
-    t0 = time.time()
-    op = load_operating_policy()
+def build_market_inputs(m: str, days: int, data_root: str | None, p2root: str | None):
+    """MarketInputs of one market, or None when its bars are unavailable (shared with Lane X2)."""
     prod = load_production_spec_for(tuple(PHASE2_CANONICALS))
     if m in CANONICALS:
         mspecs = {k: load_market_spec(k) for k in CANONICALS}
@@ -91,8 +89,7 @@ def analyse_market(m: str, days: int, limit: int | None, data_root: str | None, 
         data = build_family_data(cut, cal, name=m, point_size=ms.point_size, tick_size=ms.tick_size, asset_class=ms.asset_class, cross=cross)
     elif m in PHASE2_CANONICALS:
         if p2root is None:
-            msg = f"## {m}" + chr(10) * 2 + "NO DATA: no Phase-2 data root (lane_f_root) found; pass --phase2-root." + chr(10)
-            return {"market": m, "rows": [], "entry": {"markdown": msg, "result": {}, "excl": {}}, "note": f"{m}: NO bar data available (phase-2 root not found)"}
+            return None
         ms = load_phase2_spec(m)
         frame = dev_frame(load_dev_market_frame(ms, data_root=p2root))
         cut, eval_from = _cut(frame, days)
@@ -102,6 +99,18 @@ def analyse_market(m: str, days: int, limit: int | None, data_root: str | None, 
         raise SystemExit(f"unknown active market {m!r}")
     specs = list(prod.specs_for(m))
     mi = MarketInputs(market=m, data=data, frame=cut, specs=specs, tick_size=float(ms.tick_size), eval_from=eval_from, tz=cal.tz)
+    return mi
+
+
+def analyse_market(m: str, days: int, limit: int | None, data_root: str | None, p2root: str | None) -> dict:
+    """One market end to end (module level + plain arguments so it can run in a worker process)."""
+    t0 = time.time()
+    op = load_operating_policy()
+    mi = build_market_inputs(m, days, data_root, p2root)
+    if mi is None:
+        msg = f"## {m}" + chr(10) * 2 + "NO DATA: no Phase-2 data root (lane_f_root) found; pass --phase2-root." + chr(10)
+        return {"market": m, "rows": [], "entry": {"markdown": msg, "result": {}, "excl": {}}, "note": f"{m}: NO bar data available (phase-2 root not found)"}
+    cut, eval_from, specs = mi.frame, mi.eval_from, list(mi.specs)
     rows, excl = build_entry_rows(mi, op, limit=limit)
     res = aggregate_market(rows)
     span = f"{pd.Timestamp(cut['ts'].iloc[0]).date()}..{pd.Timestamp(cut['ts'].iloc[-1]).date()} ({len(cut)} M5 bars; evaluated from {pd.Timestamp(eval_from).date()})"
