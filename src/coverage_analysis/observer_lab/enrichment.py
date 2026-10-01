@@ -93,6 +93,10 @@ class EnrichmentConfig:
     cluster_col: str = "m_structure_event_id"
     warmup_col: str = "warmup_ok"
     partition_col: str = "partition"
+    # ``observer-stats-1`` (default, unchanged lab behaviour): a control is blocked by its OWN day column, the evidence check counts the union of blocks.
+    # ``observer-stats-2``: a control is blocked by the day (or week) of its EVENT (``control_of``), the evidence check counts blocks per arm.
+    stats_version: str = ST.STATS_LEGACY
+    block_unit: str = "day"  # "day" | "week" (ISO week of the block day; ``day_col`` must then hold integer day ordinals)
 
 
 @dataclass(frozen=True)
@@ -286,8 +290,33 @@ def _versions(feature: str) -> dict[str, str]:
     return {g: GROUP_VERSIONS[g]} if g in GROUP_VERSIONS else {}
 
 
-def _report_versions() -> dict[str, str]:
-    return {"observer": OBSERVER_VERSION, "schema": SCHEMA_VERSION, "lab": LAB_VERSION, "labels": LABEL_CONVENTION_VERSION, "controls": CONTROL_METHOD_VERSION}
+def _report_versions(cfg: EnrichmentConfig | None = None) -> dict[str, str]:
+    cfg = cfg or EnrichmentConfig()
+    return {"observer": OBSERVER_VERSION, "schema": SCHEMA_VERSION, "lab": LAB_VERSION, "labels": LABEL_CONVENTION_VERSION, "controls": CONTROL_METHOD_VERSION,
+            "stats": cfg.stats_version, "block_unit": cfg.block_unit}
+
+
+def _block_arrays(events: pd.DataFrame, controls: pd.DataFrame, cfg: EnrichmentConfig) -> tuple[np.ndarray, np.ndarray]:
+    """Independent-block id of every event row and every control row (aligned to ``events`` / ``controls``).
+
+    observer-stats-1: each row uses its own ``day_col``. observer-stats-2: a control takes the block of its EVENT (``control_of``), because a control
+    is a paired draw for that event and its own decision day may fall in another block (a block must contain both halves of every pair).
+    ``block_unit='week'`` maps day ordinals to ISO weeks (Monday start; ordinal 0 = Thursday 1970-01-01)."""
+    if cfg.stats_version not in (ST.STATS_LEGACY, ST.STATS_V2):
+        raise ValueError(f"unknown stats_version {cfg.stats_version!r}")
+    if cfg.block_unit not in ("day", "week"):
+        raise ValueError(f"block_unit must be 'day' or 'week', got {cfg.block_unit!r}")
+    ev_day = events[cfg.day_col].to_numpy()
+    if cfg.stats_version == ST.STATS_V2:
+        by_event = dict(zip(events["event_id"], ev_day, strict=True))
+        ct_day = np.asarray([by_event[e] for e in controls["control_of"]], dtype=ev_day.dtype)
+    else:
+        ct_day = controls[cfg.day_col].to_numpy()
+    if cfg.block_unit == "week":
+        if ev_day.dtype.kind not in "iu" or ct_day.dtype.kind not in "iu":
+            raise ValueError("block_unit='week' needs integer day ordinals in day_col")
+        return (ev_day.astype("int64") + 3) // 7, (ct_day.astype("int64") + 3) // 7
+    return ev_day, ct_day
 
 
 def _family_name(cfg: EnrichmentConfig, kind: str, purpose: str, lab: str, grp: str | None) -> str:
@@ -344,8 +373,17 @@ def _choose_B(plan_families: Mapping[str, list[str]], cfg: EnrichmentConfig) -> 
     return ST.choose_B(m_max, cfg.alpha, requested=cfg.B, b_min=cfg.B_min, b_max=cfg.B_max)
 
 
-def _tag(res: ST.EnrichmentResult, est: ST.DeltaEstimate, purpose: str, partition: str, contrast: str) -> ST.EnrichmentResult:
-    return replace(res, p_norm=est.p_norm, contrast=contrast, purpose=purpose, partition=partition)
+def _tag(res: ST.EnrichmentResult, est: ST.DeltaEstimate, purpose: str, partition: str, contrast: str, cfg: EnrichmentConfig | None = None) -> ST.EnrichmentResult:
+    return replace(res, p_norm=est.p_norm, contrast=contrast, purpose=purpose, partition=partition, n_blocks_event=est.n_blocks_event, n_blocks_control=est.n_blocks_control,
+                   n_nan_draws=est.n_nan_draws, stats_version=(cfg.stats_version if cfg else ST.STATS_LEGACY))
+
+
+def _evidence(est: ST.DeltaEstimate, cfg: EnrichmentConfig, n_clusters: int | None) -> str:
+    v2 = cfg.stats_version == ST.STATS_V2  # per-arm block counts only under observer-stats-2
+    return ST.evidence_status(
+        n_event=est.n_event, n_control=est.n_control, n_blocks=est.n_blocks, n_clusters=n_clusters, min_evidence=cfg.min_evidence,
+        n_blocks_event=est.n_blocks_event if v2 else None, n_blocks_control=est.n_blocks_control if v2 else None,
+    )
 
 
 def _partition_of(events: pd.DataFrame, cfg: EnrichmentConfig) -> str:
@@ -382,6 +420,7 @@ def single_feature_enrichment(
     registry.register_many(names, fams)  # all hypotheses are registered BEFORE any is evaluated
     raw: list[tuple[ST.EnrichmentResult, float | None]] = []
     overall = {lab: _overall_delta(events[lab].to_numpy(), controls[lab].to_numpy()) for lab in label_cols}
+    ev_blk, ct_blk = _block_arrays(events, controls, cfg)
     part = _partition_of(events, cfg)
     for (lab, f, cell, mask, ctl_cell), name in zip(plan, names, strict=True):
         if contrast == CONTRAST_SAME_CELL:
@@ -389,16 +428,16 @@ def single_feature_enrichment(
         else:
             cm = controls["control_of"].isin(set(events.loc[mask, "event_id"])).to_numpy()
         est = ST.block_bootstrap_delta(
-            events[lab].to_numpy()[mask], events[cfg.day_col].to_numpy()[mask], controls[lab].to_numpy()[cm], controls[cfg.day_col].to_numpy()[cm],
+            events[lab].to_numpy()[mask], ev_blk[mask], controls[lab].to_numpy()[cm], ct_blk[cm],
             B=choice.B, seed=_seed_for(cfg, name), alpha=cfg.alpha, cluster_event=_clusters(events, cfg, mask),
         )
-        status = ST.evidence_status(n_event=est.n_event, n_control=est.n_control, n_blocks=est.n_blocks, n_clusters=est.n_clusters, min_evidence=cfg.min_evidence)
+        status = _evidence(est, cfg, est.n_clusters)
         res = ST.EnrichmentResult(
             feature=f, group=_group_of(f), label=lab, cell=cell, n_event=est.n_event, n_control=est.n_control, p_event=est.p_event, p_control=est.p_control,
             delta=est.delta, ci_low=est.ci_low, ci_high=est.ci_high, n_blocks=est.n_blocks, adjusted_p=None, status=status, versions=_versions(f),
             n_clusters=est.n_clusters, p_boot=est.p_boot, kind="single", base_delta=overall[lab], hypothesis=name,
         )
-        raw.append((_tag(res, est, purpose, part, contrast), _evaluate_p(est, cfg) if status == ST.OK else None))
+        raw.append((_tag(res, est, purpose, part, contrast, cfg), _evaluate_p(est, cfg) if status == ST.OK else None))
     return _wrap(raw, registry, events, controls, prep, cfg, purpose, choice, defs)
 
 
@@ -459,22 +498,23 @@ def incremental_ablation(
     registry.register_many(names, fams)
     raw: list[tuple[ST.EnrichmentResult, float | None]] = []
     part = _partition_of(events, cfg)
+    ev_blk, ct_blk = _block_arrays(events, controls, cfg)
     for (lab, grp, f, cell, mask), name in zip(plan, names, strict=True):
         ids = set(events.loc[mask, "event_id"])
         cm = controls["control_of"].isin(ids).to_numpy()
-        arm_a = (events[lab].to_numpy()[mask], events[cfg.day_col].to_numpy()[mask], controls[lab].to_numpy()[cm], controls[cfg.day_col].to_numpy()[cm])
-        arm_b = (events[lab].to_numpy()[base_ev], events[cfg.day_col].to_numpy()[base_ev], controls[lab].to_numpy()[cm_base], controls[cfg.day_col].to_numpy()[cm_base])
+        arm_a = (events[lab].to_numpy()[mask], ev_blk[mask], controls[lab].to_numpy()[cm], ct_blk[cm])
+        arm_b = (events[lab].to_numpy()[base_ev], ev_blk[base_ev], controls[lab].to_numpy()[cm_base], ct_blk[cm_base])
         est = ST.block_bootstrap_contrast(arm_a, arm_b, B=choice.B, seed=_seed_for(cfg, name), alpha=cfg.alpha)
         cl = _clusters(events, cfg, mask)
         n_cl = len(set(cl[~np.isnan(arm_a[0])].tolist())) if cl is not None else None
-        status = ST.evidence_status(n_event=est.n_event, n_control=est.n_control, n_blocks=est.n_blocks, n_clusters=n_cl, min_evidence=cfg.min_evidence)
+        status = _evidence(est, cfg, n_cl)
         base_delta = _overall_delta(arm_b[0], arm_b[2])
         res = ST.EnrichmentResult(
             feature=f, group=grp, label=lab, cell=f"base AND {cell}", n_event=est.n_event, n_control=est.n_control, p_event=est.p_event,
             p_control=est.p_control, delta=est.delta, ci_low=est.ci_low, ci_high=est.ci_high, n_blocks=est.n_blocks, adjusted_p=None, status=status,
             versions=_versions(f), n_clusters=n_cl, p_boot=est.p_boot, kind="incremental", base_delta=base_delta, hypothesis=name,
         )
-        raw.append((_tag(res, est, purpose, part, "incremental"), _evaluate_p(est, cfg) if status == ST.OK else None))
+        raw.append((_tag(res, est, purpose, part, "incremental", cfg), _evaluate_p(est, cfg) if status == ST.OK else None))
     return _wrap(raw, registry, events, controls, prep, cfg, purpose, choice, defs)
 
 
@@ -493,7 +533,7 @@ def _wrap(raw, registry, events, controls, prep, cfg, purpose, choice: ST.BChoic
     return EnrichmentReport(
         results=results, n_hypotheses=registry.n_hypotheses, n_rows=prep["n_rows"], n_events_used=len(events), n_controls_used=len(controls),
         n_excluded_warmup_events=prep["n_ev_ex"], n_excluded_warmup_controls=prep["n_ctl_ex"], n_orphan_controls_dropped=prep["n_orphan"],
-        warmup_column_present=prep["warm"], adjust_method=cfg.adjust, versions=_report_versions(), purpose=purpose,
+        warmup_column_present=prep["warm"], adjust_method=cfg.adjust, versions=_report_versions(cfg), purpose=purpose,
         n_hypotheses_ever=registry.n_hypotheses, n_families=registry.n_families, B=choice.B, p_method=cfg.p_method,
         n_excluded_partition_events=prep["n_part_ev"], n_excluded_partition_controls=prep["n_part_ctl"], cell_defs=dict(defs), warnings=warns,
         power_limited_families=limited,
