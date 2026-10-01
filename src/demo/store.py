@@ -343,11 +343,35 @@ CREATE TABLE IF NOT EXISTS outcome_extra (
     recorded_utc TEXT NOT NULL,
     json TEXT NOT NULL
 );
+-- Market Structure Observer (shadow, default off; OBSERVATION ONLY): one immutable row per observed opportunity / event. Additive table: an old
+-- DB simply gets it created empty. It is a SIDE table: the opportunity snapshot (and so its replay / byte-identity) never contains observer data.
+CREATE TABLE IF NOT EXISTS observer_records (
+    record_key TEXT PRIMARY KEY,
+    event_id TEXT NOT NULL,
+    opportunity_id TEXT,
+    market TEXT NOT NULL,
+    family TEXT,
+    variant TEXT,
+    direction INTEGER,
+    is_control INTEGER NOT NULL,
+    control_of TEXT,
+    decision_ts_ns INTEGER NOT NULL,
+    observer_version TEXT NOT NULL,
+    schema_version TEXT NOT NULL,
+    status TEXT NOT NULL,
+    warmup_ok INTEGER NOT NULL,
+    versions_json TEXT NOT NULL,
+    features_json TEXT NOT NULL,
+    meta_json TEXT NOT NULL,
+    created_utc TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_observer_records_event ON observer_records(event_id);
+CREATE INDEX IF NOT EXISTS idx_observer_records_market_ts ON observer_records(market, decision_ts_ns);
 """
 
 _IMMUTABLE_TABLES = (
     "snapshots", "decisions", "counterfactuals", "outcomes", "shadow_predictions",
-    "risk_detail", "tca_records",
+    "risk_detail", "tca_records", "observer_records",
 )
 RISK_DETAIL_KINDS = ("ACCEPTED", "REJECTED")
 TCA_STAGES = ("ENTRY", "EXIT", "GEOMETRY")  # GEOMETRY (Lane E2): family vs structure geometry + exit plan, at submit
@@ -1261,6 +1285,58 @@ class DemoStore:
     def get_outcome_extra(self, intent_id: str) -> dict[str, Any] | None:
         r = self._one("SELECT json FROM outcome_extra WHERE intent_id=?", (intent_id,))
         return None if r is None else json.loads(r["json"])
+
+    # ---- Market Structure Observer (shadow, observation only) ---------------------------------
+    def record_observer(self, rec: Any) -> bool:
+        """Insert-once an ``market_observer.schema.ObserverRecord`` (duck-typed: this module does not import the observer). The key is the
+        opportunity id when the record belongs to one, else the event id. Identical re-insert -> False; differing content -> ImmutableRecordError."""
+        row = rec.to_row()
+        meta = dict(rec.meta)
+        key = str(meta.get("opportunity_id") or rec.event_id)
+        feats = {k: v for k, v in row.items() if k.startswith("f_")}
+        payload = (
+            key, rec.event_id, meta.get("opportunity_id"), rec.market, rec.family, rec.variant, rec.direction, int(bool(rec.is_control)), rec.control_of,
+            int(rec.features.decision_ts_ns), rec.observer_version, rec.schema_version, rec.status, int(bool(meta.get("warmup_ok"))),
+            json.dumps(dict(rec.features.versions), sort_keys=True), json.dumps(feats, sort_keys=True, default=str),
+            json.dumps(meta, sort_keys=True, default=str),
+        )
+        with self._tx() as c:
+            cur = c.execute(
+                "INSERT OR IGNORE INTO observer_records(record_key,event_id,opportunity_id,market,family,variant,direction,is_control,control_of,"
+                "decision_ts_ns,observer_version,schema_version,status,warmup_ok,versions_json,features_json,meta_json,created_utc) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (*payload, self._clock()),
+            )
+            if cur.rowcount == 1:
+                return True
+            old = c.execute(
+                "SELECT record_key,event_id,opportunity_id,market,family,variant,direction,is_control,control_of,decision_ts_ns,observer_version,"
+                "schema_version,status,warmup_ok,versions_json,features_json,meta_json FROM observer_records WHERE record_key=?", (key,),
+            ).fetchone()
+            if tuple(old) != payload:
+                raise ImmutableRecordError(f"observer_records {key}: different content for the same key")
+            return False
+
+    def count_observer_records(self) -> int:
+        r = self._one("SELECT COUNT(*) n FROM observer_records")
+        return int(r["n"]) if r is not None else 0
+
+    def list_observer_rows(self, market: str | None = None) -> list[dict[str, Any]]:
+        """Flat rows with the SAME column names as ``ObserverRecord.to_row()`` (= the offline backfill's table), ordered by (decision_ts_ns, key)."""
+        sql = "SELECT * FROM observer_records" + (" WHERE market=?" if market else "") + " ORDER BY decision_ts_ns, record_key"
+        with self._lock:
+            rows = self._conn.execute(sql, (market,) if market else ()).fetchall()
+        out: list[dict[str, Any]] = []
+        for r in rows:
+            row: dict[str, Any] = {
+                "event_id": r["event_id"], "market": r["market"], "family": r["family"], "variant": r["variant"], "direction": r["direction"],
+                "is_control": bool(r["is_control"]), "control_of": r["control_of"], "decision_ts_ns": r["decision_ts_ns"],
+                "observer_version": r["observer_version"], "schema_version": r["schema_version"], "status": r["status"],
+            }
+            row.update({f"v_{g}": v for g, v in sorted(json.loads(r["versions_json"]).items())})
+            row.update(json.loads(r["features_json"]))
+            row.update({f"m_{k}": v for k, v in json.loads(r["meta_json"]).items()})
+            out.append(row)
+        return out
 
     # ---- account binding (Lane R2) -------------------------------------------------------------
     def bind_account(

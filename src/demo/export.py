@@ -142,3 +142,17 @@ def export_all(
                 write_parquet_atomic(rows_to_table(rows), root / t / f"phase={ph}" / "data.parquet")
             )
     return written
+
+
+def export_observer_records(store: DemoStore, out_dir: str | os.PathLike[str]) -> Path | None:
+    """Market Structure Observer (shadow): persisted observer records as ONE flat Parquet table.
+
+    Written to ``observer_records/data.parquet``. Columns are exactly those of
+    ``market_observer.schema.ObserverRecord.to_row()`` (event_id, market, ..., ``v_<group>``,
+    ``f_<group>__<name>``, ``m_<name>``), i.e. the names the offline backfill produces.
+    Not part of ``export_all`` (the observer is opt-in); returns None if there are no rows."""
+    rows = store.list_observer_rows()
+    if not rows:
+        return None
+    out = Path(out_dir) / "observer_records" / "data.parquet"
+    return write_parquet_atomic(rows_to_table(rows), out)

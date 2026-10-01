@@ -385,6 +385,10 @@ class RunnerConfig:
     shadow_universe: tuple[str, ...] = ()  # canonicals of configs/markets_shadow to scan (empty = off)
     shadow_universe_max_symbols_per_cycle: int = 12
     shadow_universe_budget_s: float = 2.0
+    # ---- Market Structure Observer (shadow, OBSERVATION ONLY, DEFAULT OFF; docs/OBSERVER.md): records market-structure features of every opportunity of a
+    # closed bar AFTER its decision is final; never changes an opportunity, decision, intent, stop, target, size, risk or execution. Forced OFF in flatten_only.
+    market_observer_enabled: bool = False
+    market_observer_budget_s: float = 0.4  # wall budget of ALL observer work of one runner cycle
 
     def __post_init__(self) -> None:
         if self.mode not in MODES:
@@ -504,6 +508,13 @@ class DemoRunner:
             self._oow = OutOfWindowShadow(
                 cap_per_zone_day=self.cfg.out_of_window_cap_per_zone_day, budget_s=self.cfg.out_of_window_budget_s,
             )
+        self._observer: Any | None = None  # ObserverShadow (Market Structure Observer), created when the flag is on (never in flatten_only)
+        self._observer_written = 0
+        if self.cfg.market_observer_enabled and not self.cfg.flatten_only:
+            from demo.opportunity.observer_hook import ObserverShadow
+
+            self._observer = ObserverShadow(budget_s=self.cfg.market_observer_budget_s)
+            self.engine.retain_frame = True  # the engine only keeps a reference to its closed-bar frame for the (read-only) hook
         self.submit_count = 0
         self.shadow_submit_count = 0  # dry-run submits (shadow mode); never counted as trades
         self.milestones: list[int] = []
@@ -969,6 +980,8 @@ class DemoRunner:
         # intent with reason 'halted' (recorded, counterfactually labelled); nothing is lost silently.
         if self._oow is not None:
             self._oow.begin_cycle()
+        if self._observer is not None:
+            self._observer.begin_cycle()
         if self.fail_reason is None and not self._stopping:
             for m in new_bars:
                 if self.fail_reason is not None:
@@ -976,6 +989,8 @@ class DemoRunner:
                 self._section(now, f"scan:{m}", lambda n, m=m: self._scan_market(m, n), event_critical=False)
             if self.shadow_universe is not None and self.fail_reason is None:
                 self._section(now, "shadow_universe", self._shadow_universe_cycle, event_critical=False)
+            if self._observer is not None and self.fail_reason is None:
+                self._section(now, "market_observer", self._observer_warm, event_critical=False)
         self._section(now, "periodic", self._periodic, event_critical=False)
         self._heartbeat(now)
 
@@ -1113,9 +1128,48 @@ class DemoRunner:
                         self._process_pair(snap, dec, intents.get(snap.opportunity_id), now, catchup=not live)
             finally:
                 self._release_seen()
+            self._observer_after_bar(market, pairs)  # shadow, after the decisions of the bar are final and persisted
             self.store.set_bar_pointer(market, _iso(close))  # only after the bar is fully processed
         self._oow_after_scan(market, newest, now)
         self._scan_pending.discard(market)
+
+    # ------------------------------------------------------------ Market Structure Observer (shadow; observation only)
+    def _observer_after_bar(self, market: str, pairs: Any) -> None:
+        """Hand the FINAL (snapshot, decision) pairs + the engine's closed-bar frame to the observer hook. Everything is contained: the observer can never
+        change a decision or raise into the scan; it only appends rows to its own table."""
+        obs = self._observer
+        if obs is None:
+            return
+        try:
+            records = obs.on_bar(market, self.engine.market_spec(market), getattr(self.engine, "last_frame", None), pairs or ())
+            self._observer_persist(records)
+        except Exception as exc:
+            obs.note_persist_error(exc)
+
+    def _observer_warm(self, now: datetime) -> None:
+        obs = self._observer
+        if obs is None:
+            return
+        try:
+            self._observer_persist(obs.warm_step())
+        except Exception as exc:
+            obs.note_persist_error(exc)
+
+    def _observer_persist(self, records: Sequence[Any]) -> None:
+        obs = self._observer
+        for rec in records:
+            try:
+                if self.store.record_observer(rec):
+                    self._observer_written += 1
+            except Exception as exc:
+                if obs is not None:
+                    obs.note_persist_error(exc)
+
+    def _observer_status(self) -> dict[str, Any]:
+        obs = self._observer
+        if obs is None:
+            return {"enabled": False}
+        return {**obs.stats(), "records_written": self._observer_written}
 
     def _release_seen(self) -> None:
         fn = getattr(self.engine, "release_seen", None)
@@ -1981,6 +2035,7 @@ class DemoRunner:
             "intents_today": self._day_counts["intents"],
             "broker_trades_today": self._day_counts["filled"],
             **self._shadow_status(),
+            "market_observer": self._observer_status(),
             "last_signal": self._last_signal,
             "last_fill": self._last_fill,
             "last_error": self._last_error,
@@ -2273,6 +2328,7 @@ def build_live_runner(
     out_of_window_shadow: bool | None = None,
     shadow_exit_lab: bool | None = None,
     shadow_universe: str | Sequence[str] | None = None,
+    market_observer: bool | None = None,
     shadow_source_factory: Callable[[Any, Mapping[str, str]], Any] | None = None,
     signal_sequence_metrics: bool = True,
     flatten_only: bool = False,
@@ -2421,7 +2477,8 @@ def build_live_runner(
                        operating_policy=operating_policy, daily=daily, flatten_only=flatten_only,
                        out_of_window_shadow_enabled=False if flatten_only else (DEFAULT_OUT_OF_WINDOW_SHADOW if out_of_window_shadow is None else bool(out_of_window_shadow)),
                        shadow_exit_lab_enabled=False if flatten_only else (DEFAULT_SHADOW_EXIT_LAB if shadow_exit_lab is None else bool(shadow_exit_lab)),
-                       shadow_universe=tuple(sorted(su_specs)))
+                       shadow_universe=tuple(sorted(su_specs)),
+                       market_observer_enabled=False if flatten_only else bool(market_observer))
     runner = DemoRunner(
         stack, engine, store, config=cfg, predictor=predictor, trainer=trainer,
         learning_error=err, production=production,
