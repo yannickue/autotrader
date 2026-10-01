@@ -136,3 +136,43 @@ uv run pytest tests/unit/observer_lab/test_ol_backfill.py tests/unit/observer_la
   `--exclusion-bars`): GER40 12 bars -> 1166 controls (12.2 %), 4 bars -> 5454 (57.1 %); XAUUSD 12 -> 159 (2.2 %), 4 -> 2032 (28.3 %). A smaller exclusion makes
   event and control label windows overlap, so it is a lead decision (alternatives: exclusion only around same-family opportunities, or a placebo / time-shifted
   control design for the core markets). Until then control-based statistics exist only for BTCUSD and BRENT.
+
+## observer-controls-3: same clock time, other day (Lane D3)
+
+Reason: the controls-2 exclusion (+-48 bars around every opportunity) leaves the five core markets practically without controls (match rates 0.06-1.5 %) and
+biased (GER40 controls 100 % censored vs 15.6 % of the events). `observer-controls-3` (`observer_lab/controls_sametime.py`, step in
+`observer_lab/backfill_controls3.py`) drops the radius and matches on the clock instead:
+
+* candidates: the bar at the EXACT same Europe/Berlin bar clock time on the 10 nearest trading days before / after the event day (trading day = Berlin date
+  with bars of that market; gaps and holidays are skipped; a missing clock time on a day gives no candidate; the ambiguous repeated autumn-DST hour is never a candidate);
+* same partition as the event (TRAIN / VALIDATION / FROZEN_OOS) from `bar_partitions` with the 48-bar horizon, so the control's full label horizon lies inside the partition; PURGED /
+  EMBARGO / FORWARD bars are never controls; a FORWARD event or a control on a day >= 2026-09-01 raises `ForwardHoldoutError`;
+* the control is never an opportunity bar (events + every generator candidate); there is NO neighbourhood rule - `dist_to_opportunity_bars` is a diagnostic column only;
+* selection: nearest day (|offset|, seeded coin on ties) inside the same session bucket and the ATR / spread percentile bands (partition-internal ranks, bands 0.10 / 0.15 as in controls-2),
+  direction inherited, without replacement in a seeded random event order; `--n-controls` (default 1); `controls_b` = disjoint second set with seed + 1_000_003 for the A/A test;
+* every control carries its event's id (`control_of`; diagnostic `controls_diag.parquet`: `control_of`, `control_set`, `day_offset`, `dist_to_opportunity_bars`, `ev_*` / `c_*` covariates).
+
+Files (the controls-2 files and the events/features/labels files are NOT touched): `<MARKET>/controls3/` (set A) and `<MARKET>/controls3_b/` (set B), each with
+`controls{,_events,_features,_labels}.parquet`, `controls_diag.parquet`, `controls_manifest.json` (incl. `balance_gate`, `market_status`). `load_event_table(path, controls_dir="controls3")`
+loads them. CLI: `observer_backfill.py --step controls` now defaults to `--control-method 3` (`--control-method 2` = legacy), `--n-controls N`, `--no-controls-b`.
+
+Blocking balance gate per market x partition (`controls_sametime.balance_gate`, recomputed by `scripts/observer_controls_balance.py`; reads counts, manifests, matching covariates and label
+AVAILABILITY only, never a feature-vs-label distribution): match rate >= 0.90; |SMD| <= 0.10 for local_minute, atr_pct, spread_pct; max session-share difference <= 0.02 (equal by
+construction); |censored share(controls) - censored share(events)| <= 0.05 (censored = `y_fav050_before_adv050` is None, over the matched events). A partition with < 20 events is
+`INSUFFICIENT_N`. A market with any partition that has events and is not PASS is marked `descriptive_only` in `controls_manifest.json` (`market_status`) and in the script output.
+
+### Measured outcome (run of 2026-10-01, seed 0, set A; thresholds NOT tuned)
+
+| market | controls A | match rate TRAIN / VAL / OOS | max abs SMD | censored events vs controls | status |
+|---|---|---|---|---|---|
+| GER40 | 7854 | 0.844 / 0.777 / 0.812 | 0.03 | 16.2 % vs 16.4 % (TRAIN) | descriptive_only (match rate) |
+| NAS100 | 4008 | 0.762 / 0.747 / 0.666 | 0.02 | 0.1 % vs 0.4 % | descriptive_only (match rate) |
+| SPX500 | 2165 | 0.725 / 0.723 / 0.717 | 0.02 | 0.1 % vs 0.1 % | descriptive_only (match rate) |
+| XAUUSD | 5860 | 0.843 / 0.782 / 0.766 | 0.02 | 0.0 % vs 0.0 % | descriptive_only (match rate) |
+| EURUSD | 2418 | 0.841 / 0.854 / 0.833 | 0.01 | 0.1 % vs 0.1 % | descriptive_only (match rate) |
+| BTCUSD | 2110 | 0.883 / 0.914 / 0.920 | 0.03 | 5.6 % vs 6.2 % | descriptive_only (TRAIN match rate 0.883) |
+| BRENT | 2890 | 0.974 / 0.972 / 0.967 | 0.02 | 14.7 % vs 15.4 % | analysis_eligible |
+
+Covariate balance (SMD, session share) and the censoring bias are fine everywhere; the only failing criterion is the match rate (0.67-0.92 vs the 0.90 threshold). Controls sit
+close to other opportunities (median 2-4 bars to the nearest one, 90th percentile 4-12), unavoidable because the core generators fire on ~10 % of the bars; the day-block bootstrap is the
+remedy for the resulting dependence. The disjoint A/A set B has lower match rates (0.40-0.93; the nearest free day is further away, mean |offset| ~4.3 vs ~2.7 days).

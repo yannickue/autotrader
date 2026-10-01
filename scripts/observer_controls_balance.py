@@ -18,7 +18,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
-sys.path.insert(0, str(ROOT / "scripts"))
 
 ACTIVE = ("GER40", "NAS100", "SPX500", "XAUUSD", "EURUSD", "BTCUSD", "BRENT")
 DEFAULT_ROOT = "C:/Users/yanni/AppData/Local/Temp/observer_backfill"
