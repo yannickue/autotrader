@@ -17,7 +17,8 @@
 param(
     [string]$ArtifactsDir = 'artifacts\demo_100k',
     [string]$AccountPhase = 'ALPHA_EXECUTION_DISCOVERY',
-    [ValidateSet('auto', 'on', 'off')][string]$Daily = 'auto',
+    # Lane Z (M2): --daily is passed EXPLICITLY ('on'): the zero-overnight contract must not hinge on a --help probe.
+    [ValidateSet('auto', 'on', 'off')][string]$Daily = 'on',
     [int]$MaxRestartsPerDay = 8,
     [string]$BackoffSeconds = '30,60,120,300,600',
     [string]$EndOfDay = '22:15',

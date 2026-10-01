@@ -263,3 +263,31 @@ times Berlin (DST-aware via zoneinfo); only the final flatten window (plus a 10 
   RECONCILED with 0 positions and no open/in-doubt intent is left, the runner finalizes (final label/report) and exits 0 with
   `stop_reason = eod_flat_shutdown`; otherwise it keeps running. Entries outside Mon-Fri (Berlin date) are refused
   (`outside_operating_day`). The CLI always loads the policy; `build_live_runner(operating_policy=None)` stays the library default.
+
+### Lane Z - zero-overnight safety fixes (Opus audit C1, H1, M1, M2, M3, M5, BTC window)
+
+* C1 `Mt5DemoStack`: with an operating policy the row-based forced flat uses `escalate=False`; the end-of-day sweep counts failures
+  only in `_eod_failures` (never in the shared `_flatten_failures`), so the fatal `flatten_failed:<M>` can no longer pre-empt the
+  retrying sweep. `_flatten` judges success by OWN-magic positions only (a foreign/canary ticket on the symbol neither fails nor is
+  closed; the adapter's reduce-only path also filters to the own magic). `on_clock` still runs (row loop + sweep) while a fatal other
+  than `non_demo_account` / `account_identity_changed` / `mt5_lane_timeout` is latched, and the runner's `_manage` calls `on_clock`
+  even when `poll_events`/`manage_exits` raise (the failure is re-raised afterwards): flatten attempts only reduce exposure.
+* M1 a position the Nautilus cache never adopted (strategy answers `flat/no_open_position`) is closed by broker ticket through
+  `exec_client.emergency_close` (reuses the reduce-only checks: own magic, opposite side, never larger than the position, ticket
+  re-read at the broker; booked like a restart-time fill).
+* H1 supervisor: while the last heartbeat of today shows own exposure (open positions / intents / flatten WINDOW|OVERDUE) the 22:15
+  cut-off and the restart/give-up budgets are suspended, bounded by 23:30 Berlin; exit 0 is "done" only with
+  `stop_reason == eod_flat_shutdown`; STOP file + exposure in the flatten window writes a CRITICAL `watchdog_alert.json`. Runner:
+  `_has_open_exposure` counts open intents also while disconnected (no more immediate exit 7), a STOP inside the flatten window
+  finishes the sweep first (`stop_flatten_grace_s` = 900 s after the deadline) and a shutdown with exposure left logs
+  `overnight_exposure_at_shutdown`. Task XML: the 08:30 trigger repeats every 15 min for 15 h (until 23:30) and a logon trigger
+  (1 min delay) re-enters the supervisor after reboot/sleep (no BootTrigger: needs admin). `IgnoreNew` + the two locks keep it single.
+* M2 `--daily` is passed explicitly (`run_trader_day.ps1 -Daily on`, supervisor default `on`); `--exit-policy` is untouched.
+* M3 the EOD family keeps its frozen window: `MarketCalendar.research_entry_end_min` / `semantic_entry_end_min` (set only by
+  `engine.live_family_calendar`) pins `session_end` and `effective_window`; the live `entry_end_live` extension gates entries only.
+* M5 start failures (never READY, exit 3/7/8: MT5 not running / not reachable) retry every 60 s for 45 min, then every 5 min until
+  12:00 Berlin with a loud alert, outside the crash budget (never starts MT5); crashes after READY keep the old budget.
+* BTCUSD: `entry_end_live = "flat"` (policy `live-op-2`): entry end = effective flat - runway, computed per day (summer 19:45 UTC =
+  21:45 Berlin, winter 20:20 UTC). The research forced flat (20:30 UTC) is deliberately NOT extended, so the winter window ends
+  earlier than the 21:55-Berlin / Friday-break bound. BRENT is unchanged until the winter break is observed.
+* L1-L5 were not enumerated in the Lane Z brief and are therefore not documented here.

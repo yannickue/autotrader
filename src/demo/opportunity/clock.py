@@ -79,7 +79,8 @@ def live_spec(spec: MarketSpec, operating: OperatingPolicy | None, signal_utc: d
         return spec
     cal = spec.calendar
     end = cal.entry_end_min
-    live_end = operating.market(spec.canonical).entry_end_live_min
+    mkt = operating.market(spec.canonical)
+    live_end = cal.forced_flat_min if mkt.entry_end_live_to_flat else mkt.entry_end_live_min
     if live_end is not None:
         end = min(max(end, live_end), cal.forced_flat_min)
     sig = to_utc(signal_utc)

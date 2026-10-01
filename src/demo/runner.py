@@ -350,6 +350,9 @@ class RunnerConfig:
     # operating day (Mon-Fri Berlin date). Default off.
     operating_policy: Any = None
     daily: bool = False
+    # Lane Z (H1): a STOP (file / signal) that arrives inside the flatten window with own exposure still open finishes the
+    # sweep first, bounded by this grace after the 22:00 deadline; then it exits with a loud alert.
+    stop_flatten_grace_s: float = 900.0
 
     def __post_init__(self) -> None:
         if self.mode not in MODES:
@@ -411,6 +414,7 @@ class DemoRunner:
         self.halt_reason: str | None = None  # new exposure stopped
         self.fail_reason: str | None = None  # fail-closed (=> exit 7)
         self.stop_reason: str | None = None
+        self._stop_deferral_noted = False
         self._stopping = False
         self._last_close: dict[str, datetime | None] = {}
         self._feed: dict[str, dict[str, Any]] = {}
@@ -926,15 +930,29 @@ class DemoRunner:
                 self._note_error(now, text)
 
     def _manage(self, now: datetime) -> None:
-        events = list(self.stack.poll_events())
-        # Lane E1: deterministic exit-engine cycle (partials / tighten-only stops). Optional port method:
-        # the real stack returns [] unless exit_policy == "staged"; stacks without it are untouched.
-        manage_exits = getattr(self.stack, "manage_exits", None)
-        if manage_exits is not None:
-            events += list(manage_exits(now))
-        events += list(self.stack.on_clock(now))
+        pending: StackFailClosed | None = None
+        events: list[ExecutionEvent] = []
+        try:
+            events += list(self.stack.poll_events())
+            # Lane E1: deterministic exit-engine cycle (partials / tighten-only stops). Optional port method:
+            # the real stack returns [] unless exit_policy == "staged"; stacks without it are untouched.
+            manage_exits = getattr(self.stack, "manage_exits", None)
+            if manage_exits is not None:
+                events += list(manage_exits(now))
+        except StackFailClosed as exc:
+            if self.cfg.operating_policy is None:
+                raise
+            # Lane Z (C1): with an operating policy the zero-overnight sweep (inside on_clock) is exposure-REDUCING and must
+            # still be attempted while the stack is latched fail-closed; the failure is re-raised right after it.
+            pending = exc
+        try:
+            events += list(self.stack.on_clock(now))
+        except StackFailClosed as exc:
+            pending = pending or exc
         self._handle_events(events, now)
         self._note_eod(now)
+        if pending is not None:
+            raise pending
 
     def _eod_status(self) -> dict[str, Any] | None:
         if self.cfg.operating_policy is None:
@@ -1767,6 +1785,7 @@ class DemoRunner:
             "flatten_state": eod.get("flatten_state", "UNKNOWN"),
             "eod_flat_confirmed_utc": eod.get("eod_flat_confirmed_utc"),
             "eod_detail": eod.get("eod_detail"),
+            "eod_own_positions_open": eod.get("eod_own_positions_open"),
         }
 
     def _heartbeat(self, now: datetime, *, alive: bool = True) -> None:
@@ -1807,7 +1826,7 @@ class DemoRunner:
 
     def _should_exit(self, now: datetime) -> bool:
         if self._stopping:
-            return True
+            return not self._stop_must_finish_flatten(now)
         if self._eod_shutdown_ready(now):
             self.request_stop("eod_flat_shutdown")
             return True
@@ -1818,11 +1837,40 @@ class DemoRunner:
             return (now - self._halted_since).total_seconds() >= self.cfg.manage_after_halt_s
         return False
 
-    def _has_open_exposure(self) -> bool:
+    def _flatten_pending(self) -> bool:
+        eod = self._eod_status() or {}
         try:
-            return bool(self.store.recover_open_intents()) and bool(self._last_account and self._last_account.connected)
+            own = int(eod.get("eod_own_positions_open") or 0)
+        except (TypeError, ValueError):
+            own = 0
+        return eod.get("flatten_state") in ("WINDOW", "OVERDUE") or own > 0 or self._has_open_exposure()
+
+    def _stop_must_finish_flatten(self, now: datetime) -> bool:
+        """A STOP inside the flatten window with own exposure pending does NOT end the process: the sweep must finish
+        (bounded by ``stop_flatten_grace_s`` after the deadline), otherwise a STOP file at 21:58 leaves a position
+        overnight.  Flat confirmed / outside the window / grace over -> the stop proceeds."""
+        op = self.cfg.operating_policy
+        if op is None or self.stop_reason == "eod_flat_shutdown" or not op.flatten_active(now):
+            return False
+        if (now - op.deadline_utc(op.day_of(now))).total_seconds() > self.cfg.stop_flatten_grace_s:
+            return False
+        if not self._flatten_pending():
+            return False
+        if not self._stop_deferral_noted:
+            self._stop_deferral_noted = True
+            self._note_error(now, f"stop_deferred_flatten_pending: stop_reason={self.stop_reason}; finishing the sweep first")
+        return True
+
+    def _has_open_exposure(self) -> bool:
+        """Open registry / store intents ARE exposure whether or not the broker connection is up right now (a
+        disconnected runner with a position must keep trying, not exit).  Own positions the stack reports count too."""
+        try:
+            if self.store.recover_open_intents():
+                return True
         except Exception:
             return False
+        acct = self._last_account
+        return bool(acct is not None and acct.connected and acct.open_positions)
 
     def run(self, max_cycles: int | None = None, *, install_signals: bool = False) -> int:
         if install_signals:
@@ -1858,6 +1906,12 @@ class DemoRunner:
         self._stopping = True
         self.halt(self.fail_reason or self.stop_reason or "shutdown", now)
         self._section(now, "final_manage", self._manage)
+        op = self.cfg.operating_policy
+        if op is not None and op.flatten_active(now) and self._flatten_pending():
+            self._warnings.append(
+                f"overnight_exposure_at_shutdown: flatten window, own exposure still open ({self.stop_reason or self.fail_reason})"
+            )
+            self._note_error(now, "overnight_exposure_at_shutdown")
         if self.cfg.forced_flat_on_shutdown:
             flatten = getattr(self.stack, "flatten_all", None)
             if flatten is None:

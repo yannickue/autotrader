@@ -34,12 +34,20 @@ class MarketCalendar:
     entry_start_min: int = 9 * 60
     entry_end_min: int = 20 * 60
     flat_min: int = 21 * 60 + 30
+    # Lane Z (M3): the frozen, RESEARCH entry end.  Only the live overlay sets it (demo.opportunity.engine.live_family_calendar)
+    # when it widened/cut ``entry_end_min`` for entry GATING; families whose semantics are defined by the window end (EOD:
+    # T = min(cash_close, entry_end)) read ``semantic_entry_end_min`` so a live extension never moves their fitted window.
+    research_entry_end_min: int | None = None
 
     def __post_init__(self) -> None:
         if not (0 <= self.cash_open_min < self.cash_close_min <= 1440):
             raise ValueError("cash session must satisfy 0 <= open < close <= 1440")
         if not (0 <= self.entry_start_min < self.entry_end_min <= self.flat_min <= 1440):
             raise ValueError("need 0 <= entry_start < entry_end <= flat <= 1440")
+
+    @property
+    def semantic_entry_end_min(self) -> int:
+        return self.entry_end_min if self.research_entry_end_min is None else self.research_entry_end_min
 
     @classmethod
     def from_market_spec(cls, spec: Any) -> MarketCalendar:

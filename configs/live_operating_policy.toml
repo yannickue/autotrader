@@ -8,7 +8,7 @@
 #   * all times Europe/Berlin (DST-aware through zoneinfo), never fixed UTC offsets;
 #   * only the final mandatory flatten window blocks new exposure (plus the short entry runway below).
 [policy]
-version = "live-op-1"
+version = "live-op-2"   # Lane Z: BTCUSD entry_end_live = "flat" (entries to the season-dependent flatten runway)
 tz = "Europe/Berlin"
 global_flat_deadline = "22:00"   # broker flat confirmed before this instant
 flatten_start = "21:55"          # mandatory flatten phase: entries refused, every own-magic position closed reduce-only
@@ -88,6 +88,11 @@ tz = "UTC"
 end = "00:00"
 
 [markets.BTCUSD]
+# Lane Z: entries run to the flatten runway instead of the research entry end (19:30 UTC). "flat" = computed per day in
+# clock.live_spec: entry end = (effective flat) - min_entry_runway, where effective flat = MIN(research forced flat 20:30 UTC,
+# 21:55 Berlin, Fri broker break 20:55 UTC - buffer): summer -> 19:45 UTC (21:45 Berlin), winter -> 20:20 UTC (21:20 Berlin).
+# The research forced flat (20:30 UTC) is NOT extended (frozen holding semantics), so winter entries end earlier than summer.
+entry_end_live = "flat"
 [markets.BTCUSD.session]
 status = "provisional"
 source = "docs/evidence/phase2_symbol_probe.json (summer only): only break is Fri 22:55 -> Sat 09:00 server clock (= Fri 20:55 -> Sat 07:00 UTC); trades all other hours incl. weekend (weekend stays not-an-operating-day). PROVISIONAL."

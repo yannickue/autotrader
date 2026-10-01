@@ -17,10 +17,17 @@ It never starts, stops, kills or touches MetaTrader 5 and never kills the runner
 protected by broker-side stops; an operator stop is a STOP file or Ctrl+C -> orderly runner shutdown).
 
 Runner exit-code contract consumed here (src/demo/runner.py, scripts/demo_trader.py):
-0 done (``eod_flat_shutdown`` with --daily; before that contract lands: day finished, never restart),
+0 = done ONLY when the runner's final heartbeat says ``stop_reason == eod_flat_shutdown`` (Lane Z: any other exit 0,
+e.g. a SIGTERM/CTRL_BREAK shutdown that flattens nothing, is an unexpected stop -> bounded restart),
 2 bad args / DEMO auth refused (no restart), 7 fail-closed orderly stop (bounded restart, surfaced),
 8 MT5 stack unavailable (bounded restart), 9 second runner refused (no restart), other / signal =
 crash (bounded restart).
+
+Lane Z (zero overnight): while the last heartbeat shows own exposure (open positions / intents / flatten not confirmed) the
+end-of-day cut-off (22:15) and the restart/give-up budgets are suspended, bounded by ``Policy.exposure_end`` (23:30 Berlin):
+the supervisor keeps (re)launching the runner (whose sweep flattens) instead of leaving the position overnight.  A runner that
+never became READY because MT5 is not reachable yet (exit 3/7/8) is a START failure with its own longer retry schedule
+(60 s for 45 min, then 300 s until 12:00 Berlin, loud alert) that does not consume the crash budget.  MT5 is never started.
 """
 
 from __future__ import annotations
@@ -72,6 +79,14 @@ class Policy:
     end_of_day: dtime = dtime(22, 15)
     stable_reset_s: float = 1800.0  # a run this long resets the consecutive-failure streak
     alert_after_consecutive: int = 2
+    # Lane Z: exposure-driven continuation bound (Berlin) and the start-failure (MT5 not reachable) schedule
+    exposure_end: dtime = dtime(23, 30)
+    exposure_backoff_cap_s: float = 30.0
+    start_fast_s: float = 60.0
+    start_fast_window_s: float = 45 * 60.0
+    start_slow_s: float = 300.0
+    start_retry_until: dtime = dtime(12, 0)
+    alert_flatten_from: dtime = dtime(21, 55)
 
 
 @dataclass
@@ -80,6 +95,8 @@ class WatchdogState:
     restarts_today: int = 0
     fail_closed_restarts_today: int = 0
     consecutive_failures: int = 0
+    start_failures_today: int = 0
+    start_failure_since: str = ""  # ISO of the first start failure of the current streak ("" = none)
 
     @classmethod
     def load(cls, path: Path, today: str) -> WatchdogState:
@@ -104,6 +121,7 @@ class Decision:
     alert: bool = False
     consecutive: int = 0
     exit_code: int = SUP_OK
+    start_failure: bool = False
 
 
 def parse_hhmm(text: str) -> dtime:
@@ -138,34 +156,121 @@ def backoff_for(consecutive_failures: int, schedule: Sequence[float]) -> float:
     return float(schedule[min(max(consecutive_failures, 1) - 1, len(schedule) - 1)])
 
 
+RUN_START_FAILURE_CODES = (RUN_NO_HEARTBEAT, RUN_FAIL_CLOSED, RUN_UNAVAILABLE)
+EOD_STOP_REASON = "eod_flat_shutdown"
+
+
+def _parse_iso(text: str) -> datetime | None:
+    try:
+        dt = datetime.fromisoformat(str(text).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return dt if dt.tzinfo is not None else dt.replace(tzinfo=UTC)
+
+
+def status_shows_exposure(st: dict[str, Any] | None, now: datetime) -> tuple[bool, str]:
+    """Pure: does the LAST heartbeat (of today, Berlin) show own exposure - open positions / intents, or a flatten that is
+    not confirmed?  A missing / older-day heartbeat is 'unknown' = no exposure claim (nothing ran today)."""
+    if not st:
+        return False, "no heartbeat"
+    updated = _parse_iso(str(st.get("updated_utc", "")))
+    if updated is None or updated.astimezone(now.tzinfo).date() != now.date():
+        return False, "heartbeat not from today"
+
+    def num(key: str) -> int:
+        try:
+            return int(st.get(key) or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    parts = []
+    for key in ("open_positions", "open_intents", "eod_own_positions_open"):
+        if num(key):
+            parts.append(f"{key}={num(key)}")
+    if st.get("flatten_state") in ("WINDOW", "OVERDUE"):
+        parts.append(f"flatten_state={st.get('flatten_state')}")
+    return bool(parts), ", ".join(parts) or "flat"
+
+
+def heartbeat_exposure(artifacts: Path, now: datetime) -> tuple[bool, str]:
+    try:
+        st = _heartbeat(artifacts, now.astimezone(UTC)).get("status")
+    except Exception as exc:  # unreadable -> unknown, never a crash of the watchdog
+        return False, f"heartbeat unreadable: {exc!r}"
+    return status_shows_exposure(st, now)
+
+
+def exposure_continuation(now: datetime, policy: Policy, artifacts: Path) -> tuple[bool, str]:
+    """True while own exposure is pending and we are inside the bounded continuation window (weekday, < exposure_end)."""
+    if now.weekday() >= 5 or now.time() >= policy.exposure_end:
+        return False, "outside the exposure continuation window"
+    return heartbeat_exposure(artifacts, now)
+
+
+def operating_day_or_exposure(now: datetime, policy: Policy, artifacts: Path, *, ignore: bool = False) -> tuple[bool, str]:
+    ok, why = operating_day(now, policy.end_of_day, ignore=ignore)
+    if ok:
+        return ok, why
+    exposed, detail = exposure_continuation(now, policy, artifacts)
+    if exposed:
+        return True, (f"exposure pending after the end-of-day cut-off ({detail}): bounded continuation until "
+                      f"{policy.exposure_end:%H:%M}")
+    return ok, why
+
+
 def decide(exit_code: int, *, stop_file_exists: bool, now: datetime, state: WatchdogState,
-           policy: Policy, ran_s: float, ignore_operating_day: bool = False) -> Decision:
-    """Exit-code policy table (pure).  ``state`` is the budget BEFORE this exit."""
+           policy: Policy, ran_s: float, ignore_operating_day: bool = False,
+           stop_reason: str | None = None, ready: bool = True, exposure: bool = False) -> Decision:
+    """Exit-code policy table (pure).  ``state`` is the budget BEFORE this exit.  ``stop_reason`` = the runner's final
+    heartbeat stop reason; ``ready`` = it reached READY/RECONCILED; ``exposure`` = own exposure pending inside the bounded
+    continuation window (suspends the end-of-day cut-off and the restart budgets)."""
     consecutive = 1 if ran_s >= policy.stable_reset_s else state.consecutive_failures + 1
     if stop_file_exists:
         return Decision("done", "STOP file present: never restart", consecutive=consecutive)
-    if exit_code == RUN_OK:
-        return Decision("done", "runner exited 0 (day finished / eod_flat_shutdown): do not restart")
+    if exit_code == RUN_OK and stop_reason == EOD_STOP_REASON:
+        return Decision("done", "runner exited 0 with stop_reason eod_flat_shutdown: day finished, do not restart")
     if exit_code == RUN_ALREADY_RUNNING:
         return Decision("done", "runner refused: another runner holds runner.lock", consecutive=consecutive)
     if exit_code == RUN_BAD_ARGS:
         return Decision("no_restart", "exit 2 (bad arguments / DEMO authorisation refused): "
                         "restart cannot help", alert=True, consecutive=consecutive, exit_code=RUN_BAD_ARGS)
+    unexpected_zero = exit_code == RUN_OK  # stopped without eod_flat_shutdown: nothing was flattened by the stop
     ok, why = operating_day(now, policy.end_of_day, ignore=ignore_operating_day)
+    if not ok and exposure:
+        ok, why = True, "exposure pending: bounded continuation past the end-of-day cut-off"
     if not ok:
-        return Decision("no_restart", f"exit {exit_code} but {why}: no restart", alert=exit_code != 0,
+        return Decision("no_restart", f"exit {exit_code} but {why}: no restart", alert=exit_code != 0 or unexpected_zero,
                         consecutive=consecutive, exit_code=SUP_OK)
-    if exit_code == RUN_FAIL_CLOSED and state.fail_closed_restarts_today >= policy.max_fail_closed_restarts_per_day:
-        return Decision("give_up", f"fail-closed stop (7) repeated: {state.fail_closed_restarts_today} restarts "
-                        "today already", alert=True, consecutive=consecutive, exit_code=SUP_GAVE_UP)
-    if state.restarts_today >= policy.max_restarts_per_day:
-        return Decision("give_up", f"restart budget exhausted ({state.restarts_today}/"
-                        f"{policy.max_restarts_per_day} today)", alert=True, consecutive=consecutive,
-                        exit_code=SUP_GAVE_UP)
-    label = {RUN_FAIL_CLOSED: "fail-closed orderly stop (7)", RUN_UNAVAILABLE: "MT5 stack unavailable (8)"}.get(
+    if not ready and exit_code in RUN_START_FAILURE_CODES:
+        # START failure (MT5 not reachable / not started yet / connection busy): separate, longer bounded schedule
+        since = _parse_iso(state.start_failure_since) or now
+        elapsed = (now - since).total_seconds()
+        if not exposure and now.time() >= policy.start_retry_until:
+            return Decision("give_up", f"start failures persisted until {policy.start_retry_until:%H:%M}: giving up for "
+                            "today (MT5 must be started by the operator)", alert=True, consecutive=consecutive,
+                            exit_code=SUP_GAVE_UP, start_failure=True)
+        delay = policy.start_fast_s if elapsed <= policy.start_fast_window_s else policy.start_slow_s
+        return Decision("restart", f"START failure (exit {exit_code}, never READY; MT5 reachable? failing for "
+                        f"{elapsed / 60:.0f} min): retry in {delay:.0f}s", delay_s=delay, alert=True,
+                        consecutive=consecutive, start_failure=True)
+    if not exposure:
+        if exit_code == RUN_FAIL_CLOSED and state.fail_closed_restarts_today >= policy.max_fail_closed_restarts_per_day:
+            return Decision("give_up", f"fail-closed stop (7) repeated: {state.fail_closed_restarts_today} restarts "
+                            "today already", alert=True, consecutive=consecutive, exit_code=SUP_GAVE_UP)
+        if state.restarts_today >= policy.max_restarts_per_day:
+            return Decision("give_up", f"restart budget exhausted ({state.restarts_today}/"
+                            f"{policy.max_restarts_per_day} today)", alert=True, consecutive=consecutive,
+                            exit_code=SUP_GAVE_UP)
+    label = {RUN_FAIL_CLOSED: "fail-closed orderly stop (7)", RUN_UNAVAILABLE: "MT5 stack unavailable (8)",
+             RUN_OK: f"exit 0 without eod_flat_shutdown (stop_reason={stop_reason!r}): unexpected stop"}.get(
         exit_code, f"unexpected exit {exit_code}")
-    return Decision("restart", f"{label}: bounded restart", delay_s=backoff_for(consecutive, policy.backoff_s),
-                    alert=exit_code in (RUN_FAIL_CLOSED, RUN_UNAVAILABLE) or consecutive >= policy.alert_after_consecutive,
+    delay = backoff_for(consecutive, policy.backoff_s)
+    if exposure:
+        delay = min(delay, policy.exposure_backoff_cap_s)
+        label += " WITH OWN EXPOSURE pending (budgets suspended, bounded by the exposure window)"
+    return Decision("restart", f"{label}: bounded restart", delay_s=delay,
+                    alert=exposure or unexpected_zero or exit_code in (RUN_FAIL_CLOSED, RUN_UNAVAILABLE)
+                    or consecutive >= policy.alert_after_consecutive,
                     consecutive=consecutive)
 
 
@@ -279,6 +384,8 @@ class Supervisor:
     stop_grace_s: float = 120.0
     now_fn: Callable[[], datetime] = berlin_now
     stop_requested: bool = False
+    last_ready: bool = False
+    _launched_utc: datetime | None = None
 
     @property
     def stop_file(self) -> Path:
@@ -349,6 +456,8 @@ class Supervisor:
     def _run_once(self) -> tuple[int | None, float]:
         """Launch + watch one runner process.  (None, ran_s) = supervisor stop requested."""
         launched_utc = datetime.now(UTC)
+        self._launched_utc = launched_utc
+        self.last_ready = False
         t0 = time.monotonic()
         proc = self._launch()
         ready = warned = False
@@ -362,7 +471,7 @@ class Supervisor:
             st = self._check_ready(proc.pid, launched_utc)
             if st is not None and st.get("reconciliation") == "RECONCILED" and not st.get("fail_closed") \
                     and not st.get("halted"):
-                ready = True
+                ready = self.last_ready = True
                 self.log.info(f"READY: pid {proc.pid} heartbeat fresh, reconciliation=RECONCILED, open_positions="
                               f"{st.get('open_positions')}, open_orders={st.get('open_orders')}, "
                               f"mt5_connected={st.get('mt5_connected')}, account_phase={st.get('account_phase')}, "
@@ -376,6 +485,28 @@ class Supervisor:
         time.sleep(0.2)  # let the pump drain
         return code, time.monotonic() - t0
 
+    def _stop_reason_of_last_run(self) -> str | None:
+        """Final heartbeat stop reason of the run that just ended (only if written by THAT run)."""
+        try:
+            st = _heartbeat(self.artifacts).get("status") or {}
+        except Exception:
+            return None
+        updated = _parse_iso(str(st.get("updated_utc", "")))
+        if self._launched_utc is not None and (updated is None or updated < self._launched_utc):
+            return None
+        return st.get("stop_reason")
+
+    def alert_stop_with_exposure(self, now: datetime) -> None:
+        """A STOP file with own exposure inside the flatten window must never be silent: the runner's own sweep finishes
+        while it stops, but with no runner alive nothing can flatten - say so, loudly."""
+        if now.time() < self.policy.alert_flatten_from:
+            return
+        exposed, detail = heartbeat_exposure(self.artifacts, now)
+        if exposed:
+            self._alert("CRITICAL", f"STOP file present in the flatten window WITH OWN EXPOSURE ({detail}): positions "
+                        "are only protected by their broker-side stops; clear STOP and restart to flatten",
+                        stop_file=str(self.stop_file), exposure=detail)
+
     def run(self) -> int:
         state_path = self.artifacts / "watchdog_state.json"
         self.install_signals()
@@ -384,31 +515,45 @@ class Supervisor:
             state = WatchdogState.load(state_path, f"{now:%Y-%m-%d}")
             if self.stop_file.exists():
                 self.log.info(f"STOP file present ({self.stop_file}): not starting / restarting; done")
+                self.alert_stop_with_exposure(now)
                 return SUP_OK
-            ok, why = operating_day(now, self.policy.end_of_day, ignore=self.ignore_operating_day)
+            ok, why = operating_day_or_exposure(now, self.policy, self.artifacts, ignore=self.ignore_operating_day)
             if not ok:
                 self.log.info(f"not launching: {why}")
                 return SUP_OK
+            if "exposure pending" in why:
+                self.log.alert(why)
             code, ran_s = self._run_once()
             if code is None:
                 self.log.info("stopped by operator/signal; not restarting")
                 return SUP_OK
             now = self.now_fn()
             state = WatchdogState.load(state_path, f"{now:%Y-%m-%d}")
+            exposed, exp_detail = exposure_continuation(now, self.policy, self.artifacts)
+            stop_reason = self._stop_reason_of_last_run()
             d = decide(code, stop_file_exists=self.stop_file.exists(), now=now, state=state, policy=self.policy,
-                       ran_s=ran_s, ignore_operating_day=self.ignore_operating_day)
-            self.log.info(f"runner exit code {code} after {ran_s:.0f}s -> {d.action}: {d.reason}")
+                       ran_s=ran_s, ignore_operating_day=self.ignore_operating_day, stop_reason=stop_reason,
+                       ready=self.last_ready, exposure=exposed)
+            self.log.info(f"runner exit code {code} (stop_reason={stop_reason}, ready={self.last_ready}, exposure="
+                          f"{exp_detail if exposed else 'none'}) after {ran_s:.0f}s -> {d.action}: {d.reason}")
             state.consecutive_failures = d.consecutive
-            if d.action == "restart":
+            if d.start_failure:
+                if not state.start_failure_since:
+                    state.start_failure_since = now.isoformat()
+                state.start_failures_today += 1
+            else:
+                state.start_failure_since = ""
+            if d.action == "restart" and not d.start_failure:
                 state.restarts_today += 1
                 if code == RUN_FAIL_CLOSED:
                     state.fail_closed_restarts_today += 1
             with contextlib.suppress(OSError):
                 state.save(state_path)
             if d.alert:
-                self._alert("CRITICAL" if d.action in ("give_up", "no_restart") else "WARNING", d.reason,
+                self._alert("CRITICAL" if d.action in ("give_up", "no_restart") or exposed else "WARNING", d.reason,
                             exit_code=code, restarts_today=state.restarts_today,
-                            consecutive_failures=state.consecutive_failures)
+                            consecutive_failures=state.consecutive_failures,
+                            start_failures_today=state.start_failures_today, exposure=exp_detail if exposed else None)
             if d.action != "restart":
                 return d.exit_code
             self.log.info(f"restart {state.restarts_today}/{self.policy.max_restarts_per_day} today in "
@@ -424,8 +569,9 @@ def _parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Bounded supervisor for the DEMO trader")
     p.add_argument("--artifacts", type=Path, default=REPO_ROOT / "artifacts" / "demo_100k")
     p.add_argument("--account-phase", default="ALPHA_EXECUTION_DISCOVERY")
-    p.add_argument("--daily", choices=("auto", "on", "off"), default="auto",
-                   help="pass --daily to the runner: auto = only if demo_trader.py --help lists it")
+    p.add_argument("--daily", choices=("auto", "on", "off"), default="on",
+                   help="pass --daily to the runner (default ON: the zero-overnight contract must not depend on a "
+                        "--help probe); auto = only if demo_trader.py --help lists it")
     p.add_argument("--python", default=sys.executable, help="interpreter for the runner (default: this one)")
     p.add_argument("--runner-cmd-json", default=None, help="TEST ONLY: full runner command as a JSON list")
     p.add_argument("--backoff", default=",".join(str(int(x)) for x in DEFAULT_BACKOFF_S),
@@ -467,12 +613,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                                                                              ignore=a.ignore_operating_day)},
                                               default=str))
             return SUP_OK
-        ok, why = operating_day(now, policy.end_of_day, ignore=a.ignore_operating_day)
+        ok, why = operating_day_or_exposure(now, policy, artifacts, ignore=a.ignore_operating_day)
         if not ok:
             log.info(f"not launching: {why}")
             return SUP_OK
         if sup.stop_file.exists():
             log.info(f"STOP file present ({sup.stop_file}); delete it to allow the trader to start. Exit 0")
+            sup.alert_stop_with_exposure(now)
             return SUP_OK
         with contextlib.ExitStack() as stack:
             sup_lock = instance_lock.InstanceLock(artifacts / "supervisor.lock", role="supervisor")

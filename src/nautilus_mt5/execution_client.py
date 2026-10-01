@@ -1132,7 +1132,12 @@ class Mt5LiveExecutionClient(LiveExecutionClient):
             return
         mapping, spec = prepared
         try:
-            positions = self._broker_positions(mapping.broker_symbol)
+            # OWN magic only: a foreign ticket on the symbol never blocks / receives our close
+            positions = [
+                p
+                for p in self._broker_positions(mapping.broker_symbol)
+                if int(p.magic) == int(self._cfg.magic)
+            ]
             base = admit(OutboundKind.REDUCE_ONLY, self.status)  # normal (reconciled) authority
             if len(positions) != 1:
                 return self._deny(
@@ -1540,6 +1545,99 @@ class Mt5LiveExecutionClient(LiveExecutionClient):
                 venue_id,
                 self._now_ns(),
             )
+        return None
+
+    def emergency_close(self, position_ticket: int, *, tag: str = "emergency-close") -> str | None:
+        """Reduce-only close, by broker ticket, of an OWN-magic position Nautilus does not hold.
+
+        Same guarantees as the Nautilus reduce-only path: the position is read from the broker
+        just now, must be ours, the deal is opposite-side, bound to the ticket and never larger
+        than the position; allowed in every reconciliation state (it can only reduce exposure).
+        The deal is booked like a restart-time fill of a known row (no mismatch flag). Returns a
+        denial reason, or None when the order was sent (the caller re-reads broker truth)."""
+        if not self._session.is_connected:
+            return f"SESSION_{self._session.state.value}"
+        try:
+            rows = self._broker_positions_by_ticket(position_ticket)
+            if len(rows) != 1:
+                return "CLOSE_TICKET_NOT_AT_BROKER"
+            position = rows[0]
+            if int(position.magic) != int(self._cfg.magic):
+                return "CLOSE_TICKET_NOT_OWN_MAGIC"
+            mapping = self._provider.registry.by_broker_symbol(position.symbol)
+            if mapping is None:
+                return "CLOSE_UNKNOWN_SYMBOL"
+            spec = self._provider.spec(mapping.instrument_id)
+            is_long = str(position.side) == "BUY"
+            admission = admit(OutboundKind.REDUCE_ONLY, self.status, position_verified=True)
+            if not admission.ok:
+                return admission.reason
+            client_order_id = f"{tag}-{position.ticket}-{self._now_ns()}"
+            token = self._store.record_intent(
+                created_ns=self._now_ns(),
+                client_order_id=client_order_id,
+                strategy_id="emergency-close",
+                instrument_id=str(mapping.instrument_id),
+                kind=KIND_EXIT,
+                side="SELL" if is_long else "BUY",
+                quantity=str(position.volume),
+                position_ticket=position.ticket,
+            )
+            request = close_request(
+                spec,
+                symbol_filling_mask=self._filling_mask(position.symbol),
+                position_ticket=position.ticket,
+                position_is_long=is_long,
+                quantity=position.volume,
+                quote=self._quote(position.symbol),
+                magic=self._cfg.magic,
+                token=token,
+                deviation_points=self._cfg.deviation_points,
+            )
+            check = self._call("order_check", self._session.client.order_check, request)
+            if int(check.retcode) != ORDER_CHECK_OK:
+                self._store.update_order(client_order_id, status="REJECTED")
+                return f"ORDER_CHECK_{int(check.retcode)}:{check.comment}"
+        except RequestRejected as exc:
+            return f"{exc.code}:{exc.detail}"
+        except Mt5CallError as exc:
+            self.recon.invalidate(str(exc))
+            return f"BROKER_UNREACHABLE:{exc}"
+        problem = self._identity_problem()
+        if problem is not None:
+            self._store.update_order(client_order_id, status="REJECTED")
+            self.recon.invalidate(problem)
+            return problem
+        if self._cfg.dry_run:
+            self._store.update_order(client_order_id, status="REJECTED")
+            return f"DRY_RUN_ORDER_CHECK_OK:{check.comment}"
+        self._store.update_order(client_order_id, status="SENT")
+        try:
+            result = self._session.client.order_send(request)
+        except Exception as exc:
+            self.recon.invalidate("EMERGENCY_CLOSE_OUTCOME_UNKNOWN")
+            self._store.update_order(client_order_id, status="IN_DOUBT")
+            return f"order_send raised: {exc!r}"
+        if result is None:
+            self.recon.invalidate("EMERGENCY_CLOSE_OUTCOME_UNKNOWN")
+            self._store.update_order(client_order_id, status="IN_DOUBT")
+            return "order_send returned None"
+        outcome = classify_send_retcode(int(result.retcode))
+        if outcome is SendOutcome.REJECTED:
+            self._store.update_order(client_order_id, status="REJECTED")
+            return f"ORDER_SEND_{int(result.retcode)}:{result.comment}"
+        if outcome is SendOutcome.IN_DOUBT:
+            self.recon.invalidate("EMERGENCY_CLOSE_OUTCOME_UNKNOWN")
+            self._store.update_order(client_order_id, status="IN_DOUBT")
+            return f"retcode {int(result.retcode)} {result.comment}"
+        self._store.update_order(
+            client_order_id,
+            status="ACCEPTED",
+            order_ticket=int(result.order),
+            venue_order_id=str(int(result.order)),
+        )
+        with contextlib.suppress(Exception):  # best-effort; caller verifies broker truth
+            self._book_deals_of_order(int(result.order))
         return None
 
     def _sl_tp_present(self, ticket: int, sl: Decimal | None, tp: Decimal | None) -> bool:
