@@ -15,6 +15,7 @@ matching covariates of both bars (``ev_*`` / ``c_*``: session, local minute, par
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import time
 from collections import defaultdict
@@ -32,6 +33,7 @@ from coverage_analysis.observer_lab.controls import bar_covariates, bar_partitio
 from coverage_analysis.observer_lab.labels import DEFAULT_MAX_BARS, LABEL_CONVENTION_VERSION
 from coverage_analysis.observer_lab.splits import guard_dev_only
 from market_observer.observer import event_id_for
+from research_speed.segments import atomic_write_text
 
 CONTROLS3_PIPELINE_VERSION = "observer-backfill-controls3-1"
 SUBDIRS = {"a": "controls3", "b": "controls3_b"}
@@ -95,7 +97,8 @@ def _write_set(
     mdir: Path, subname: str, *, bars, cfg, market: str, events: pd.DataFrame, cs, cov: dict[str, np.ndarray], part: np.ndarray, spec: CS.SameTimeSpec, seed: int, fp: str,
     evm: dict[str, Any], match_spec_dict: dict[str, Any], opp: np.ndarray, eligible: np.ndarray, max_label_bars: int, chunk_rows: int, code: dict[str, Any], regular: bool, t0: float,
 ) -> dict[str, Any]:
-    sub = mdir / subname
+    final = mdir / subname
+    sub = mdir / f"{subname}._tmp"  # everything is built in a temp directory and swapped in at the very end: an abort never leaves a half set
     shutil.rmtree(sub, ignore_errors=True)
     parts_dir = sub / "_parts"
     parts_dir.mkdir(parents=True)
@@ -162,16 +165,27 @@ def _write_set(
             "market_status = descriptive_only when any partition with events does not pass the blocking balance gate (match rate, SMD, session share, censoring share)",
         ],
     }
-    (sub / "controls_manifest.json").write_text(json.dumps(manifest, indent=1, default=str), encoding="utf-8")
+    atomic_write_text(sub / "controls_manifest.json", json.dumps(manifest, indent=1, default=str))  # commit marker inside the temp dir
+    shutil.rmtree(final, ignore_errors=True)
+    os.replace(sub, final)
     BF.log.info("controls3[%s] done market=%s n=%d match_rate=%.4f status=%s rows=%s", spec.control_set, market, len(cs.control_idx), cs.report.match_rate, gate["market_status"], counts)
     return manifest
 
 
 def run_controls3_step(
     frame: pd.DataFrame, mspec: Any, market: str, out_dir: str | Path, *, seed: int = 0, force: bool = False, spec: CS.SameTimeSpec | None = None, with_b: bool = True,
-    chunk_rows: int = BF.DEFAULT_CHUNK_ROWS, max_label_bars: int = DEFAULT_MAX_BARS, code: dict[str, Any] | None = None,
+    chunk_rows: int = BF.DEFAULT_CHUNK_ROWS, max_label_bars: int = DEFAULT_MAX_BARS, code: dict[str, Any] | None = None, only_set: str | None = None,
 ) -> dict[str, Any]:
-    """Controls-3 selection (set A, optionally the disjoint A/A set B) + control features/labels + balance gate. Needs a COMPLETE events step of the same data; only READS it."""
+    """Controls-3 selection (set A, optionally the disjoint A/A set B) + control features/labels + balance gate. Needs a COMPLETE events step of the same data; only READS it.
+
+    ``only_set`` ("a" | "b") writes just that set (set B still derives the selection of A first - it is disjoint from it - which is cheap and deterministic), so the
+    two expensive observer passes can run in separate worker processes; the files of a set are identical whichever way it was produced."""
+    if only_set not in (None, "a", "b"):
+        raise ValueError("only_set must be None, 'a' or 'b'")
+    if only_set == "b" and not with_b:
+        raise ValueError("only_set='b' needs with_b=True (the set B fingerprint includes the A/A design)")
+    want_a = only_set in (None, "a")
+    want_b = with_b and only_set in (None, "b")
     t0 = time.time()
     mdir = Path(out_dir) / market
     spec = spec or CS.SameTimeSpec()
@@ -190,11 +204,12 @@ def run_controls3_step(
     cfg = BF.observer_config_for(mspec)
     fp = controls3_fingerprint(evm["fingerprint"], seed, spec, with_b, max_label_bars)
     if not force:
-        old = BF._complete(mdir / SUBDIRS["a"], "controls_manifest.json", BF.CONTROL_FILES, fp)
-        if old is not None and (not with_b or BF._complete(mdir / SUBDIRS["b"], "controls_manifest.json", BF.CONTROL_FILES, fp) is not None):
+        old_a = BF._complete(mdir / SUBDIRS["a"], "controls_manifest.json", BF.CONTROL_FILES, fp) if want_a else None
+        old_b = BF._complete(mdir / SUBDIRS["b"], "controls_manifest.json", BF.CONTROL_FILES, fp) if want_b else None
+        if (old_a is not None or not want_a) and (old_b is not None or not want_b):
+            old = old_a if want_a else old_b
             old["status_this_call"] = "SKIPPED_COMPLETE"
             return old
-    (mdir / SUBDIRS["a"]).mkdir(exist_ok=True)
     fh = BF._attach_log(mdir)
     try:
         BF.log.info("controls3 step start market=%s seed=%s events_fp=%s method=%s", market, seed, evm["fingerprint"][:12], CS.CONTROL_METHOD_VERSION)
@@ -216,8 +231,10 @@ def run_controls3_step(
         BF.log.info("controls3 A: %d controls match_rate=%.4f", len(cs_a.control_idx), cs_a.report.match_rate)
         common = {"bars": bars, "cfg": cfg, "market": market, "events": events, "cov": cov, "part": part, "seed": seed, "fp": fp, "evm": evm, "opp": opp, "eligible": eligible,
                   "max_label_bars": max_label_bars, "chunk_rows": chunk_rows, "code": code, "regular": regular, "t0": t0}
-        out = _write_set(mdir, SUBDIRS["a"], cs=cs_a, spec=spec, match_spec_dict=asdict(spec), **common)
-        if with_b:
+        out: dict[str, Any] = {}
+        if want_a:
+            out = _write_set(mdir, SUBDIRS["a"], cs=cs_a, spec=spec, match_spec_dict=asdict(spec), **common)
+        if want_b:
             from dataclasses import replace
 
             spec_b = replace(spec, control_set="b")
@@ -225,7 +242,11 @@ def run_controls3_step(
             if set(cs_a.control_idx.tolist()) & set(cs_b.control_idx.tolist()):
                 raise RuntimeError("controls_b is not disjoint from controls_a")
             BF.log.info("controls3 B: %d controls match_rate=%.4f", len(cs_b.control_idx), cs_b.report.match_rate)
-            out["controls_b"] = _write_set(mdir, SUBDIRS["b"], cs=cs_b, spec=spec_b, match_spec_dict=asdict(spec_b), **common)
+            mb = _write_set(mdir, SUBDIRS["b"], cs=cs_b, spec=spec_b, match_spec_dict=asdict(spec_b), **common)
+            if want_a:
+                out["controls_b"] = mb
+            else:
+                out = mb
         out["status_this_call"] = "BUILT"
         return out
     finally:

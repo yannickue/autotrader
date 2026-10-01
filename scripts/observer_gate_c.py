@@ -17,7 +17,7 @@ What it does (see ``docs/OBSERVER_GATE_C_PREREGISTRATION.md``, the single source
 * reads the preregistration from the machine-readable block of that document and records the file hash and the block hash in the report;
 * PREFLIGHT (always first; ``--preflight`` runs only this): reads ONLY counts and the per-market ``controls_manifest.json`` (control method version, content
   fingerprint, balance gate). A failing preflight registers NOTHING and does not consume the stop rule (exit code 5);
-* per market (``--jobs`` worker processes, default 2, max 2; results independent of the number of workers): loads ONLY the rows of the stage's partition,
+* per market (``--jobs`` worker processes, default 2, max 3; results independent of the number of workers): loads ONLY the rows of the stage's partition,
   builds the derived features, freezes the cells on TRAIN (``fit``) or applies the stored ones, and calls ``observer_lab.enrichment.incremental_ablation``
   (``observer-stats-2``: controls blocked by the day of their EVENT, blocks counted per arm) for the predeclared contrasts, the random negative control,
   the A/A test (NC-A), the shift placebo (NC-B) and, for explore markets, the controls-3 vs controls-2 bridge (NC-C, descriptive);
@@ -41,7 +41,6 @@ import re
 import sys
 import time
 import zlib
-from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -61,7 +60,7 @@ DEFAULT_PREREG = ROOT / "docs" / "OBSERVER_GATE_C_PREREGISTRATION.md"
 REGISTRY_FILE = "observer_gate_c2_registry.json"
 REPORT_STEM = "observer_gate_c2_report"
 PREFLIGHT_STEM = "observer_gate_c2_preflight"
-MAX_JOBS = 2  # 8 GB machine
+MAX_JOBS = 3  # 8 GB machine (research_speed.parallel.MAX_WORKERS); the effective count is also capped by free memory
 FILE_PARTITION = {"TRAIN": "TRAIN", "VALIDATION": "VALIDATION", "OOS": "FROZEN_OOS"}  # partition names as written by the backfill
 UNUSABLE_TAGS = ("PURGED", "EMBARGO")
 BASE_COLS = ("event_id", "is_control", "control_of", "decision_ts_ns", "direction", "warmup_ok", "partition")
@@ -1007,17 +1006,55 @@ def register_stage(reg: Any, plan: list[dict[str, Any]], existing: dict[str, Any
     return False
 
 
+_CODE_HASH: str | None = None
+
+
+def code_hash() -> str:
+    """Content hash of this script and of every repo module it (transitively, also lazily) imports: a changed enrichment / stats / split module can never be served from the cache."""
+    global _CODE_HASH
+    if _CODE_HASH is None:
+        from research_speed.importgraph import code_hash as _ch
+
+        _CODE_HASH = _ch([Path(__file__).resolve()], [ROOT / "src", ROOT / "scripts"], ROOT)
+    return _CODE_HASH
+
+
 def fingerprint(prereg: Prereg, task: dict[str, Any]) -> str:
-    """Cache key: script version, prereg block, stage/market/parameters AND the CONTENT fingerprint of the data (file hashes, row counts, schema hash,
+    """Cache key: script version, CODE content hash, prereg block, stage/market/parameters AND the CONTENT fingerprint of the data (file hashes, row counts, schema hash,
     partition counts, manifest hash), never just size / mtime."""
-    body = {"v": SCRIPT_VERSION, "prereg": prereg.json_sha256, "stage": task["stage"], "market": task["market"], "B": task["B"], "B_week": task["B_week"], "seed": task["seed"], "data": task["data_fingerprint"],
+    body = {"v": SCRIPT_VERSION, "code": code_hash(), "prereg": prereg.json_sha256, "stage": task["stage"], "market": task["market"], "B": task["B"], "B_week": task["B_week"], "seed": task["seed"], "data": task["data_fingerprint"],
             "contrasts": [(c["id"], c["kind"], c["feature"], c["cell"]) for c in task["contrasts"]], "cell_defs": _sha(task.get("cell_defs")), "nc_base_alpha": task["nc_base_alpha"], "nc_b_tol_s": task["nc_b_tol_s"], "bridge": task.get("bridge")}
     return _sha(body)
 
 
+def read_cache_record(cp: Path, fp: str) -> dict[str, Any] | None:
+    """The cached per-market result when the record is readable, well-formed and carries ``fp``; any corruption / IO error is a cache miss (never an exception)."""
+    try:
+        c = json.loads(cp.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if isinstance(c, dict) and c.get("fingerprint") == fp and isinstance(c.get("result"), dict):
+        return c["result"]
+    return None
+
+
+def write_cache_record(cp: Path, fp: str, res: dict[str, Any]) -> None:
+    """Atomic write (tmp + os.replace): an interrupted write never leaves a truncated record behind."""
+    tmp = cp.with_name(f"{cp.name}.{os.getpid()}.tmp")
+    tmp.write_text(json.dumps({"fingerprint": fp, "result": res}, indent=1), encoding="utf-8")
+    os.replace(tmp, cp)
+
+
+def _init_worker(src: str) -> None:
+    """Pool initializer (same as the other entry points): ``scripts/`` is first on sys.path in a spawned child and scripts/coverage_analysis.py would shadow the src package."""
+    sys.path.insert(0, src)
+
+
 def _evaluate_markets(tasks: list[dict[str, Any]], jobs: int) -> list[dict[str, Any]]:
     if jobs > 1 and len(tasks) > 1:
-        with ProcessPoolExecutor(max_workers=min(jobs, len(tasks))) as ex:
+        from research_speed.parallel import clamp_jobs, managed_pool
+
+        with managed_pool(clamp_jobs(jobs, len(tasks)), _init_worker, (str(ROOT / "src"),)) as ex:
             return list(ex.map(run_market, tasks))  # order preserved: the result never depends on completion order
     return [run_market(t) for t in tasks]
 
@@ -1182,16 +1219,16 @@ def run_stage(a: argparse.Namespace, prereg: Prereg, stage: str, markets: list[s
         cp = cache_dir / f"{t['market']}.json"
         fp = fingerprint(prereg, t)
         if cp.is_file() and not a.force:
-            c = json.loads(cp.read_text(encoding="utf-8"))
-            if c.get("fingerprint") == fp:
-                results_by_market[t["market"]] = c["result"]
+            cached = read_cache_record(cp, fp)
+            if cached is not None:
+                results_by_market[t["market"]] = cached
                 continue
         todo.append((t, fp, cp))
     t0 = time.time()
     fresh = _evaluate_markets([x[0] for x in todo], a.jobs)
     for (t, fp, cp), res in zip(todo, fresh, strict=True):
         res = _clean(res)
-        cp.write_text(json.dumps({"fingerprint": fp, "result": res}, indent=1), encoding="utf-8")
+        write_cache_record(cp, fp, res)
         results_by_market[t["market"]] = res
     timing = {"evaluated_markets": [x[0]["market"] for x in todo], "cached_markets": [m for m in by_market if m not in {x[0]["market"] for x in todo}], "seconds": round(time.time() - t0, 2), "jobs": a.jobs}
     # ---- record p-values (a re-run must reproduce the registered ones exactly), Holm within the family
@@ -1373,6 +1410,10 @@ def main(argv: list[str] | None = None) -> int:
     a = ap.parse_args(argv)
     if not 1 <= a.jobs <= MAX_JOBS:
         ap.error(f"--jobs must be 1..{MAX_JOBS}")
+    if not a.dry_run:
+        from research_speed.parallel import harden_process
+
+        a.jobs = harden_process(a.jobs)  # FIRST: low priority, 1 BLAS thread, fail-closed memory, jobs=1 next to the live trader, workers die with this process
     prereg = load_prereg(a.prereg)
     markets = a.markets or list(prereg.spec["markets"]["core"])
     for m in markets:

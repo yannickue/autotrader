@@ -348,6 +348,7 @@ def test_unplanted_data_gives_no_enrichment_and_the_stop_rule_blocks_the_next_st
 
 def test_parallel_equals_serial_bit_identical(planted_run, prereg_path, tmp_path, monkeypatch):
     monkeypatch.setattr(G, "LOCK_DIR", tmp_path / "locks2")  # an independent fit (the first one is locked)
+    monkeypatch.setattr("research_speed.parallel.available_memory_mb", lambda: 100000.0)  # the memory guard fails closed: make the real 2-worker pool independent of this machine's free RAM
     out2 = tmp_path / "out_parallel"
     assert run(planted_run["root"], out2, prereg_path, "fit", jobs=2) == 0
     a, b = stage_of(planted_run["out"], "fit"), stage_of(out2, "fit")
@@ -560,7 +561,7 @@ def test_out_inside_root_and_bad_jobs_are_refused(tmp_path, prereg, prereg_path)
     with pytest.raises(SystemExit):
         G.main(["--root", str(root), "--out", str(root / "gate_c"), "--markets", "GER40", "--prereg", str(prereg_path)])
     with pytest.raises(SystemExit):
-        G.main(["--root", str(root), "--out", str(tmp_path / "o"), "--jobs", "3", "--prereg", str(prereg_path)])
+        G.main(["--root", str(root), "--out", str(tmp_path / "o"), "--jobs", "4", "--prereg", str(prereg_path)])
     with pytest.raises(ValueError):
         G.main(["--root", str(root), "--out", str(tmp_path / "o"), "--markets", "FOOBAR", "--prereg", str(prereg_path)])
 
