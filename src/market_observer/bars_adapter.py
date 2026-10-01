@@ -199,7 +199,13 @@ class BarBuffer:
         self._lm[sl], self._ld[sl] = lm, ld
         self._n = n0 + k
 
-    def sync(self, ts_ns: np.ndarray, o: np.ndarray, h: np.ndarray, low: np.ndarray, c: np.ndarray, tick_volume: np.ndarray, spread: np.ndarray) -> str:
+    def sync(
+        self, ts_ns: np.ndarray, o: np.ndarray, h: np.ndarray, low: np.ndarray, c: np.ndarray, tick_volume: np.ndarray, spread: np.ndarray,
+        max_append: int | None = None,
+    ) -> str:
+        """Append the frame bars newer than the buffer's last. ``max_append`` bounds the work of ONE call (the ATR of an appended bar is the expensive
+        part: ~6000 bars at a cold start / reset): at most that many bars are appended, the caller calls again with the SAME frame until
+        ``last_ts_ns`` equals the frame's last bar (the buffer then holds exactly what an unbounded call would have produced, tested bit-identical)."""
         ts = np.asarray(ts_ns, dtype=np.int64)
         n_f = len(ts)
         if n_f == 0:
@@ -208,7 +214,8 @@ class BarBuffer:
         step = self.bar_seconds * NS
 
         def take(a: int) -> tuple[np.ndarray, ...]:
-            return (ts[a:], *(np.asarray(x, dtype=float)[a:] for x in arrs))
+            b = n_f if max_append is None else min(n_f, a + max(1, int(max_append)))
+            return (ts[a:b], *(np.asarray(x, dtype=float)[a:b] for x in arrs))
 
         if self._n == 0:
             self._append(*take(0))

@@ -3,7 +3,7 @@
 exit profile, arbitration result or snapshot byte.
 
 The REAL ``OpportunityEngine`` (frozen production spec v1.2 = the committed production universe incl. BTCUSD / BRENT STRUCT variants) is driven bar by bar
-over the SAME historical inputs TWICE: observer OFF (engine untouched) vs observer ON (``retain_frame`` + ``ObserverShadow.on_bar`` after every decision),
+over the SAME historical inputs TWICE: observer OFF (engine untouched) vs observer ON (``retain_frame`` + ``ObserverShadow.on_bar`` after every decision + ``drain_cycle``),
 for every market of the production universe, several hundred bars each. Everything the engine returns is compared byte for byte, and the engine's full
 state fingerprint is compared before / after every hook call. Data: real DEV bars of the five core markets (data/markets); BTCUSD / BRENT have no history in
 the repo, so their frames are price-rescaled copies of real XAUUSD bars (real timestamps, ranges and tick volumes; synthetic price level only) - the engine
@@ -111,7 +111,9 @@ def run(market: str, start: str, n_bars: int, *, observer: bool, catchup: bool =
         if hook is not None:
             before = fingerprint(engine)
             snap_json = [(s.to_json(), d.to_json()) for s, d in pairs]
-            recs = hook.on_bar(market, mspecs[market], engine.last_frame, pairs)
+            hook.on_bar(market, mspecs[market], engine.last_frame, pairs)  # the O(1) in-scan stash ...
+            hook.begin_cycle()
+            recs = hook.drain_cycle()  # ... and the post-scan budgeted work
             n_records += len(recs)
             assert fingerprint(engine) == before, "the hook changed engine state"
             assert [(s.to_json(), d.to_json()) for s, d in pairs] == snap_json, "the hook changed a snapshot / decision"

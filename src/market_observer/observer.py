@@ -106,6 +106,12 @@ def event_id_for(market: str, decision_ts_ns: int, family: str | None, variant: 
 
 
 # ---------------------------------------------------------------------------------------------- warm-up
+# AUDIT-ONLY meta fields: they describe how much history THIS process happened to hold (they depend on process start / buffer age), not the event.
+# A persisted record's immutability check must ignore them: the same opportunity re-observed after a restart (e.g. a crash between the observer write
+# and the bar pointer) has identical features but may legitimately report different amounts of loaded history.
+AUDIT_META_KEYS: frozenset[str] = frozenset({"bars_available", "prev_days_available"})
+
+
 def previous_trading_days(bars: ObserverBars, i: int) -> int:
     """Distinct ``local_day`` values before the decision bar's day among bars ``<= i``."""
     ld = bars.local_day[: i + 1]

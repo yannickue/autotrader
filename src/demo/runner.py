@@ -510,6 +510,7 @@ class DemoRunner:
             )
         self._observer: Any | None = None  # ObserverShadow (Market Structure Observer), created when the flag is on (never in flatten_only)
         self._observer_written = 0
+        self._observer_store: Any | None = None  # demo.observer_store.ObserverStore: its OWN observer.sqlite, opened lazily on the first record
         if self.cfg.market_observer_enabled and not self.cfg.flatten_only:
             from demo.opportunity.observer_hook import ObserverShadow
 
@@ -1135,35 +1136,55 @@ class DemoRunner:
 
     # ------------------------------------------------------------ Market Structure Observer (shadow; observation only)
     def _observer_after_bar(self, market: str, pairs: Any) -> None:
-        """Hand the FINAL (snapshot, decision) pairs + the engine's closed-bar frame to the observer hook. Everything is contained: the observer can never
-        change a decision or raise into the scan; it only appends rows to its own table."""
+        """Hand the FINAL (snapshot, decision) pairs + the engine's closed-bar frame to the observer hook. O(1) (a stash of references, no computation, no
+        I/O): ALL observer work runs in the post-scan ``market_observer`` section, after every market's live scan and order handling, so the observer can
+        never delay a later market's evaluation or order submission. Contained: it can never change a decision or raise into the scan."""
         obs = self._observer
         if obs is None:
             return
         try:
-            records = obs.on_bar(market, self.engine.market_spec(market), getattr(self.engine, "last_frame", None), pairs or ())
-            self._observer_persist(records)
+            obs.on_bar(market, self.engine.market_spec(market), getattr(self.engine, "last_frame", None), pairs or ())
         except Exception as exc:
             obs.note_persist_error(exc)
 
     def _observer_warm(self, now: datetime) -> None:
+        """Post-scan observer section: the hook's ONE budgeted drain (arrays, buffer sync, registry, features), then ONE transaction for the cycle's
+        records into the observer's own database; the persist time counts against the same per-cycle budget."""
         obs = self._observer
         if obs is None:
             return
         try:
-            self._observer_persist(obs.warm_step())
+            records = obs.drain_cycle()
+            if records:
+                t0 = time.perf_counter()
+                try:
+                    self._observer_persist(records)
+                finally:
+                    obs.charge(time.perf_counter() - t0)
         except Exception as exc:
             obs.note_persist_error(exc)
 
     def _observer_persist(self, records: Sequence[Any]) -> None:
         obs = self._observer
-        for rec in records:
-            try:
-                if self.store.record_observer(rec):
-                    self._observer_written += 1
-            except Exception as exc:
+        try:
+            if self._observer_store is None:
+                from demo.observer_store import OBSERVER_DB_NAME, ObserverStore
+
+                self._observer_store = ObserverStore(self.cfg.artifacts_dir / OBSERVER_DB_NAME, clock=lambda: self._clock().isoformat())
+            written, conflicts = self._observer_store.record_many(records)
+            self._observer_written += written
+            for exc in conflicts:
                 if obs is not None:
                     obs.note_persist_error(exc)
+        except Exception as exc:
+            if obs is not None:
+                obs.note_persist_error(exc)
+
+    def _observer_close(self) -> None:
+        store, self._observer_store = self._observer_store, None
+        if store is not None:
+            with contextlib.suppress(Exception):
+                store.close()
 
     def _observer_status(self) -> dict[str, Any]:
         obs = self._observer
@@ -2035,7 +2056,7 @@ class DemoRunner:
             "intents_today": self._day_counts["intents"],
             "broker_trades_today": self._day_counts["filled"],
             **self._shadow_status(),
-            "market_observer": self._observer_status(),
+            **({"market_observer": self._observer_status()} if self._observer is not None else {}),  # flag off: the heartbeat is exactly as before the observer
             "last_signal": self._last_signal,
             "last_fill": self._last_fill,
             "last_error": self._last_error,
@@ -2286,6 +2307,7 @@ class DemoRunner:
                 self._note_error(now, f"{name}: {type(exc).__name__}: {exc}")
         with contextlib.suppress(Exception):
             self.stack.stop()
+        self._observer_close()
         if self._lane_wedged():
             self.fail_reason = self.fail_reason or LANE_TIMEOUT_FATAL  # exit 7 whatever stopped us first
         recovered = self.stop_reason == RECOVERY_STOP_REASON and not self._lane_wedged()  # Lane R: own exposure confirmed flat (foreign-only recon mismatch tolerated)
