@@ -260,3 +260,24 @@ def test_observer_cycle_time_is_reported_and_bounded_by_the_configured_budget(ru
     """The budget enforcement itself is tested at hook level (test_observer_hook.py); here the section reports the per-cycle observer time and the budget."""
     mo = runs["on"]["mo"]
     assert mo["last_cycle_ms"] >= 0 and mo["budget_s"] == 1e9
+
+
+def test_a_corrupt_observer_sqlite_isolates_the_live_path(tmp_path):
+    """observer.sqlite is garbage on disk: the observer counts errors, writes nothing, and the live DB / submits stay identical to observer OFF."""
+    for sub in ("ref", "bad"):
+        (tmp_path / sub).mkdir()
+    ref_clock, ref_store, ref_stack, _e, ref_runner = rig(tmp_path / "ref", observer=False)
+    drive(ref_clock, ref_runner, 60)
+    d_ref = dump(ref_store)
+    ref_submits = [i.to_json() for i in ref_stack.submits]
+    ref_store.close()
+    clock, store, stack, _engine, runner = rig(tmp_path / "bad", observer=True)
+    runner.cfg.artifacts_dir.mkdir(parents=True, exist_ok=True)
+    (runner.cfg.artifacts_dir / "observer.sqlite").write_bytes(b"this is not a sqlite database" * 50)
+    drive(clock, runner, 60)
+    d = dump(store)
+    assert runner._observer.stats()["errors"] > 0 and runner.status()["market_observer"]["records_written"] == 0
+    for table in d_ref:
+        assert d[table] == d_ref[table], table
+    assert [i.to_json() for i in stack.submits] == ref_submits
+    store.close()

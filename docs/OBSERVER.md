@@ -179,3 +179,15 @@ tens of ms. Default cycle budget 0.15 s (all of it: arrays, sync, registry, feat
   emits intents with `risk_fraction`; the fake stack does no sizing); the runner/engine boundary is what the observer could possibly touch and is proven identical.
 * The new real-data tests are heavy (parity ~130 s, runner parity ~90 s, timing parity ~25 s) and are unmarked, i.e. they fall into the `fast` tier by path: `tests/conftest.py`
   (not owned by this lane) may want to list them as `slow`.
+
+## Activation path for the live SHADOW run (release candidate release/2026-10-02-candidate)
+
+* Default OFF. The production start path (`scripts/autostart/supervisor.py` `PRODUCTION_RUNNER_FLAGS`, `run_trader_day.ps1`, the task XMLs) does NOT contain `--market-observer`
+  (pinned by `tests/unit/scripts/test_autostart.py::test_market_observer_is_never_part_of_the_production_start_path`); activation is an explicit, deliberate edit/launch only.
+* Activate: add `--market-observer` to the `scripts/demo_trader.py` command line (`--no-market-observer` / `--flatten-only` force it off). Wall budget per runner cycle: `RunnerConfig.market_observer_budget_s` = 0.15 s.
+* Output: `<artifacts_dir>/observer.sqlite` (table `observer_records` + `definitions`), a SEPARATE file; the live `demo.sqlite` is untouched. Export: `demo.export.export_observer_records`.
+* Monitoring: heartbeat `market_observer.errors` must stay 0 (`last_error` shows the last exception text); also `records_written`, `budget_exhausted`, `skipped_*`, `dropped_pending`. Errors never reach the live path.
+* Version fields: `OBSERVER_VERSION` = `market-structure-observer-v1` (`market_observer.schema`), `SCHEMA_VERSION` = `mso-schema-1`, stored in every record. `CONTROL_VERSION` / `PREREG_VERSION`
+  do not exist in this candidate (they belong to research lanes not merged here).
+* IMPLEMENTED != VALIDATED != LIVE-ALPHA. The observer being implemented and passing its parity/no-order tests says nothing about predictive value (validated) nor about any use in signal
+  admission, sizing, risk, entries or exits (live alpha). In this candidate it is observation only; nothing reads its output.

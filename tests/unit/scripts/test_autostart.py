@@ -550,3 +550,24 @@ def test_ps_register_task_dry_run_validates_xml_without_registering() -> None:
     assert "DRY RUN: nothing registered" in cp.stdout and "register_task.ps1" in cp.stdout
     assert "T08:30:00" in cp.stdout
     assert _task_count("AutoTrader-DemoDaily") == before  # a dry run registers/changes nothing
+
+
+def test_market_observer_is_never_part_of_the_production_start_path() -> None:
+    """The Market Structure Observer (shadow) is opt-in: the production runner command / autostart scripts must NOT carry --market-observer."""
+    assert not [f for f in sup.PRODUCTION_RUNNER_FLAGS if "observer" in f]
+    for daily in (False, True):
+        assert not [a for a in sup.build_runner_cmd("PY", Path("R"), Path("A"), "X", daily=daily) if "observer" in a]
+    root = Path(sup.__file__).resolve().parent
+    for p in list(root.glob("*.ps1")) + list(root.glob("*.xml")) + list(root.glob("*.py")):
+        assert "market-observer" not in p.read_text(encoding="utf-8", errors="replace"), p.name
+
+
+def test_demo_trader_market_observer_flag_defaults_to_off() -> None:
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("demo_trader_cli", Path(sup.__file__).resolve().parents[1] / "demo_trader.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    parser = mod._parser()
+    assert not parser.parse_args(["--demo-auto"]).market_observer
+    assert parser.parse_args(["--demo-auto", "--market-observer"]).market_observer is True
