@@ -131,10 +131,17 @@ MATRIX: list[tuple[str, list[str]]] = [
         "src/alpha/common/",
         [*_ALPHA_TARGETS, "tests/unit/demo", "tests/unit/markets"],
     ),
-    (
-        "src/alpha/session.py",
-        [*_ALPHA_TARGETS, "tests/unit/demo"],
-    ),
+    *[
+        (prefix, [*_ALPHA_TARGETS, "tests/unit/demo"])
+        for prefix in (
+            "src/alpha/session.py",
+            "src/alpha/context",
+            "src/alpha/timeframe",
+            "src/alpha/regime",
+            "src/alpha/signals/",
+            "src/alpha/__init__.py",
+        )
+    ],
     ("src/alpha/", _ALPHA_TARGETS),
     ("src/data/", ["tests/unit/data", "tests/events"]),
     ("src/temporal/", ["tests/temporal", "tests/events"]),
