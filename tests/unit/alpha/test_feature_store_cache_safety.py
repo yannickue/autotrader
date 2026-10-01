@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 from dataclasses import replace
 from pathlib import Path
 
@@ -93,8 +94,9 @@ def test_interrupted_npz_write_leaves_no_manifest_and_next_call_rebuilds(
         raise OSError("disk went away")
 
     monkeypatch.setattr(store_module.np, "savez_compressed", boom)
-    with pytest.raises(OSError):
-        FeatureStore.load_or_build(frame, CONFIG, tmp_path)
+    result = FeatureStore.load_or_build(frame, CONFIG, tmp_path)
+    assert "cache_write_skipped" in result.metadata and result.metadata["cache_hit"] is False
+    assert _same(result, fresh)
     monkeypatch.undo()
     (target,) = _dirs(tmp_path)
     assert list(target.iterdir()) == []  # no manifest, no artifact, no temp leftovers
@@ -114,8 +116,8 @@ def test_interrupted_replace_leaves_no_committed_manifest(
         return real_replace(src, dst)
 
     monkeypatch.setattr(store_module.os, "replace", replace_then_die_on_manifest)
-    with pytest.raises(OSError):
-        FeatureStore.load_or_build(frame, CONFIG, tmp_path)
+    result = FeatureStore.load_or_build(frame, CONFIG, tmp_path)
+    assert "cache_write_skipped" in result.metadata and _same(result, fresh)
     monkeypatch.undo()
     (target,) = _dirs(tmp_path)
     assert calls[0].endswith("features.npz")  # arrays were published first ...
@@ -134,8 +136,8 @@ def test_interrupted_rewrite_never_leaves_valid_manifest_over_bad_arrays(
         raise OSError("interrupted")
 
     monkeypatch.setattr(store_module.np, "savez_compressed", boom)
-    with pytest.raises(OSError):
-        FeatureStore.load_or_build(frame, CONFIG, tmp_path)
+    result = FeatureStore.load_or_build(frame, CONFIG, tmp_path)
+    assert "cache_write_skipped" in result.metadata and _same(result, fresh)
     monkeypatch.undo()
     assert not manifest_path.exists()
     _rebuilds_equal_fresh(tmp_path, frame, fresh)
@@ -257,33 +259,32 @@ def _key(frame) -> str:
     return store_module._cache_key(store_module._key_components(frame, CONFIG))
 
 
-def test_real_fingerprint_follows_closure_content_not_unrelated_files(frame, monkeypatch) -> None:
-    src_root = Path(store_module.__file__).resolve().parents[2]
-    baseline = _key(frame)
-    real_digest = importgraph.content_digest
-    in_closure = (src_root / "alpha" / "session.py").resolve()
-    unrelated = (src_root / "risk" / "__init__.py").resolve()
-    assert unrelated.is_file() and unrelated not in importgraph.closure(
-        [Path(store_module.__file__).resolve()], [src_root]
-    )
+def _tmp_tree(root: Path) -> Path:
+    src = root / "src"
+    (src / "pkg").mkdir(parents=True)
+    (src / "pkg" / "__init__.py").write_text("")
+    (src / "pkg" / "entry.py").write_text("from pkg import dep\nVALUE = dep.X\n")
+    (src / "pkg" / "dep.py").write_text("X = 1\n")
+    (src / "pkg" / "unrelated.py").write_text("Y = 2\n")
+    return src
 
-    def patched(target: Path) -> str:
-        if target.resolve() == in_closure:
-            return "edited"
-        if target.resolve() == unrelated:
-            return "edited-unrelated"
-        return real_digest(target)
 
-    monkeypatch.setattr(importgraph, "content_digest", patched)
-    # an edit of a closure module (alpha.session) changes the key ...
-    assert _key(frame) != baseline
-    # ... and an edit of a file outside the closure does not
-    monkeypatch.setattr(
-        importgraph,
-        "content_digest",
-        lambda t: "edited-unrelated" if t.resolve() == unrelated else real_digest(t),
-    )
-    assert _key(frame) == baseline
+def test_fingerprint_follows_real_closure_edits_not_unrelated_file_edits(tmp_path) -> None:
+    src = _tmp_tree(tmp_path)
+    entries = (src / "pkg" / "entry.py",)
+    baseline = store_module._code_fingerprint(entries, src)
+    assert not baseline.startswith("UNCACHEABLE")
+    (src / "pkg" / "unrelated.py").write_text("Y = 999  # real edit outside the closure\n")
+    assert store_module._code_fingerprint(entries, src) == baseline
+    (src / "pkg" / "dep.py").write_text("X = 2\n")  # real edit of a dependency
+    changed = store_module._code_fingerprint(entries, src)
+    assert changed != baseline
+    (src / "pkg" / "dep.py").write_text("import importlib\nX = importlib.import_module('os')\n")
+    assert store_module._code_fingerprint(entries, src).startswith("UNCACHEABLE:dynamic_import:")
+
+
+def test_real_store_fingerprint_is_cacheable_and_covers_session(frame) -> None:
+    assert not store_module._code_fingerprint().startswith("UNCACHEABLE")
 
 
 def test_closure_covers_formerly_unfingerprinted_dependencies() -> None:
@@ -329,3 +330,176 @@ def test_store_has_no_module_level_research_imports() -> None:
     text = Path(store_module.__file__).read_text(encoding="utf-8")
     top = [ln for ln in text.splitlines() if ln.startswith(("import ", "from "))]
     assert not any("research_speed" in ln for ln in top)
+
+
+def test_timezone_rules_fingerprint_is_in_key_and_changes_it(frame, monkeypatch) -> None:
+    components = store_module._key_components(frame, CONFIG)
+    tz = components["timezone_rules"]
+    assert "Europe/Berlin" in tz["zones"] and "tzdata" in tz["packages"]
+    baseline = store_module._cache_key(components)
+    monkeypatch.setattr(
+        store_module, "_timezone_fingerprint", lambda names: {"zones": {"x": "new-rules"}}
+    )
+    assert _key(frame) != baseline
+
+
+def test_timezone_digest_is_deterministic_and_zone_specific() -> None:
+    assert store_module._tz_rules_digest("Europe/Berlin") == store_module._tz_rules_digest(
+        "Europe/Berlin"
+    )
+    assert store_module._tz_rules_digest("Europe/Berlin") != store_module._tz_rules_digest("UTC")
+
+
+def test_session_tz_is_fingerprinted(frame) -> None:
+    other = replace(CONFIG, session=replace(CONFIG.session, tz="America/New_York"))
+    zones = store_module._key_components(frame, other)["timezone_rules"]["zones"]
+    assert set(zones) == {"Europe/Berlin", "America/New_York"}
+
+
+def test_two_writers_same_key_no_raise_valid_manifest_cold_equals_warm(
+    tmp_path, frame, fresh
+) -> None:
+    results: list = []
+    errors: list = []
+    barrier = threading.Barrier(4)
+
+    def worker() -> None:
+        try:
+            barrier.wait()
+            results.append(FeatureStore.load_or_build(frame, CONFIG, tmp_path))
+        except BaseException as exc:
+            errors.append(exc)
+
+    threads = [threading.Thread(target=worker) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert not errors and len(results) == 4
+    assert all(_same(r, fresh) for r in results)
+    (target,) = _dirs(tmp_path)
+    assert sorted(p.name for p in target.iterdir()) == ["features.npz", "manifest.json"]
+    warm = FeatureStore.load_or_build(frame, CONFIG, tmp_path)
+    assert warm.metadata["cache_hit"] is True and _same(warm, fresh)
+
+
+def test_failing_writer_leaves_valid_published_entry_untouched(
+    tmp_path, frame, fresh, monkeypatch
+) -> None:
+    target, manifest, npz = _published(tmp_path, frame)
+    before = (manifest.read_bytes(), npz.read_bytes())
+
+    def boom(*args, **kwargs):
+        raise OSError("x")
+
+    monkeypatch.setattr(store_module, "_write_artifacts", boom)
+    key = store_module._cache_key(store_module._key_components(frame, CONFIG))
+    components = store_module._key_components(frame, CONFIG)
+    # another writer already committed this exact entry: the loser skips, never deletes/rewrites
+    assert store_module._publish(target, key, components, fresh, {}) is None
+    assert (manifest.read_bytes(), npz.read_bytes()) == before
+    # and even a failing write over an invalid entry never touches a manifest it did not write
+    monkeypatch.setattr(store_module, "_verified_cache_hit", lambda *a, **k: None)
+    assert "OSError" in store_module._publish(target, key, components, fresh, {})
+
+
+def test_valid_entry_published_by_another_writer_is_not_rewritten(tmp_path, frame, fresh) -> None:
+    key = store_module._cache_key(store_module._key_components(frame, CONFIG))
+    components = store_module._key_components(frame, CONFIG)
+    target, manifest, npz = _published(tmp_path, frame)
+    stamp = (manifest.stat().st_mtime_ns, npz.stat().st_mtime_ns)
+    assert store_module._publish(target, key, components, fresh, dict(fresh.metadata)) is None
+    assert (manifest.stat().st_mtime_ns, npz.stat().st_mtime_ns) == stamp
+
+
+def test_lock_busy_skips_cache_write_but_returns_arrays(
+    tmp_path, frame, fresh, monkeypatch
+) -> None:
+    monkeypatch.setattr(store_module, "_LOCK_WAIT_SECONDS", 0.2)
+    key = store_module._cache_key(store_module._key_components(frame, CONFIG))
+    target = tmp_path / key
+    target.mkdir()
+    (target / ".publish.lock").write_text("other-writer")
+    result = FeatureStore.load_or_build(frame, CONFIG, tmp_path)
+    assert result.metadata["cache_write_skipped"] == "publish lock busy"
+    assert _same(result, fresh)
+    assert (target / ".publish.lock").read_text() == "other-writer"  # not ours: untouched
+    assert not (target / "manifest.json").exists()
+
+
+def test_stale_lock_is_taken_over(tmp_path, frame, fresh, monkeypatch) -> None:
+    key = store_module._cache_key(store_module._key_components(frame, CONFIG))
+    target = tmp_path / key
+    target.mkdir()
+    lock = target / ".publish.lock"
+    lock.write_text("dead-writer")
+    old = lock.stat().st_mtime - 10_000
+    os.utime(lock, (old, old))
+    result = FeatureStore.load_or_build(frame, CONFIG, tmp_path)
+    assert "cache_write_skipped" not in result.metadata
+    assert FeatureStore.load_or_build(frame, CONFIG, tmp_path).metadata["cache_hit"] is True
+    assert not lock.exists()
+
+
+def test_replace_retries_on_permission_error_then_succeeds(
+    tmp_path, frame, fresh, monkeypatch
+) -> None:
+    real_replace = os.replace
+    failures = {"n": 0}
+
+    def flaky(src, dst):
+        if str(dst).endswith("features.npz") and failures["n"] < 2:
+            failures["n"] += 1
+            raise PermissionError("file in use")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(store_module.os, "replace", flaky)
+    result = FeatureStore.load_or_build(frame, CONFIG, tmp_path)
+    monkeypatch.undo()
+    assert failures["n"] == 2 and "cache_write_skipped" not in result.metadata
+    assert FeatureStore.load_or_build(frame, CONFIG, tmp_path).metadata["cache_hit"] is True
+
+
+def test_persistent_permission_error_returns_arrays_not_raise(
+    tmp_path, frame, fresh, monkeypatch
+) -> None:
+    real_replace = os.replace
+
+    def locked(src, dst):
+        if str(dst).endswith("features.npz"):
+            raise PermissionError("held open")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(store_module.os, "replace", locked)
+    monkeypatch.setattr(store_module.time, "sleep", lambda s: None)
+    result = FeatureStore.load_or_build(frame, CONFIG, tmp_path)
+    monkeypatch.undo()
+    assert "PermissionError" in result.metadata["cache_write_skipped"]
+    assert _same(result, fresh)
+    (target,) = _dirs(tmp_path)
+    assert not (target / "manifest.json").exists()
+    assert [p.name for p in target.iterdir()] == []  # no temps, lock released
+    _rebuilds_equal_fresh(tmp_path, frame, fresh)
+
+
+@pytest.mark.skipif(
+    os.name != "nt", reason="POSIX replaces open files; the Windows failure mode cannot occur"
+)
+def test_reader_holding_npz_open_during_replacement_never_raises_or_accepts_partial(
+    tmp_path, frame, fresh
+) -> None:
+    _, manifest, npz = _published(tmp_path, frame)
+    npz.write_bytes(b"corrupt")  # force a republish
+    holder = npz.open("rb")  # a reader keeps the artifact open (Windows blocks os.replace)
+    released = threading.Timer(0.12, holder.close)
+    released.start()
+    try:
+        result = FeatureStore.load_or_build(frame, CONFIG, tmp_path)
+    finally:
+        released.join()
+        holder.close()
+    assert _same(result, fresh)
+    final = FeatureStore.load_or_build(frame, CONFIG, tmp_path)
+    assert _same(final, fresh)
+    if "cache_write_skipped" not in result.metadata:
+        assert final.metadata["cache_hit"] is True and manifest.is_file()

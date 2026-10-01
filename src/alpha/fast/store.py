@@ -37,11 +37,13 @@ All rolling calculations are trailing and causal; bar i is known at its close.
 from __future__ import annotations
 
 import contextlib
+import functools
 import hashlib
 import json
 import os
 import tempfile
 import time
+import uuid
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field, is_dataclass
 from pathlib import Path
@@ -194,7 +196,7 @@ def _hash_frame(frame: pd.DataFrame) -> str:
     return hashlib.sha256(hashed.tobytes()).hexdigest()
 
 
-def _code_fingerprint() -> str:
+def _code_fingerprint(entries: tuple[Path, ...] | None = None, src_root: Path | None = None) -> str:
     """Content hash of the static import closure of ``alpha.fast.store`` + ``alpha.fast.__init__``.
 
     Reuses ``research_speed.importgraph`` (imported lazily so the live trader never loads research
@@ -206,10 +208,15 @@ def _code_fingerprint() -> str:
     try:
         from research_speed import importgraph
 
-        src_root = Path(__file__).resolve().parents[2]
-        entries = [Path(__file__).resolve(), Path(__file__).resolve().with_name("__init__.py")]
+        src_root = (src_root or Path(__file__).resolve().parents[2]).resolve()
+        if entries is None:
+            here = Path(__file__).resolve()
+            entries = (here, here.with_name("__init__.py"))
         files = importgraph.closure(entries, [src_root])
-        dynamic = importgraph.dynamic_import_files(files)
+        # research_speed/* (the analyser) is in the closure, so its edits change the key, but its
+        # tables name the functions it detects, so it is not scanned for dynamic imports.
+        scanned = [f for f in files if "research_speed" not in f.relative_to(src_root).parts]
+        dynamic = importgraph.dynamic_import_files(scanned)
         if dynamic:
             names = ",".join(sorted(f.relative_to(src_root).as_posix() for f in dynamic))
             return f"{_UNCACHEABLE_PREFIX}dynamic_import:{names}"
@@ -231,6 +238,38 @@ def _library_versions() -> dict[str, str]:
     return versions
 
 
+@functools.lru_cache(maxsize=16)
+def _tz_rules_digest(name: str) -> str:
+    """Hash of the UTC offsets pandas applies for ``name`` over 1990-2045, sampled hourly.
+
+    Hourly sampling captures every DST transition date/instant, so any tz-rule update (tzdata,
+    pytz, system zoneinfo) that changes a wall-clock conversion changes the digest.
+    """
+    index = pd.date_range("1990-01-01", "2045-12-31 23:00", freq="h", tz="UTC")
+    local = index.tz_convert(name)
+    offsets = np.asarray(local.tz_localize(None) - index.tz_localize(None), dtype="timedelta64[s]")
+    return hashlib.sha256(offsets.astype(np.int64).tobytes()).hexdigest()
+
+
+def _timezone_fingerprint(names: tuple[str, ...]) -> dict[str, Any]:
+    """Deterministic fingerprint of the timezone rules the features depend on."""
+    from importlib import metadata
+
+    packages = {}
+    for package in ("tzdata", "pytz"):
+        try:
+            packages[package] = metadata.version(package)
+        except metadata.PackageNotFoundError:
+            packages[package] = "NOT_INSTALLED"
+    zones = {}
+    for name in sorted(set(names)):
+        try:
+            zones[name] = _tz_rules_digest(name)
+        except Exception as exc:  # unknown tz: key stays deterministic, build will fail loudly
+            zones[name] = f"ERROR:{type(exc).__name__}"
+    return {"zones": zones, "packages": packages}
+
+
 def _key_components(frame: pd.DataFrame, config: FeatureConfig) -> dict[str, Any]:
     return {
         "dataset_hash": _hash_frame(frame),
@@ -243,6 +282,7 @@ def _key_components(frame: pd.DataFrame, config: FeatureConfig) -> dict[str, Any
         "parameters": _plain(config),
         "code_fingerprint": _code_fingerprint(),
         "library_versions": _library_versions(),
+        "timezone_rules": _timezone_fingerprint(("Europe/Berlin", config.session.tz)),
     }
 
 
@@ -311,19 +351,69 @@ def _verified_cache_hit(
         return None
 
 
-def _publish(
+_LOCK_STALE_SECONDS = 120.0
+_LOCK_WAIT_SECONDS = 30.0
+_REPLACE_ATTEMPTS = 6
+
+
+@contextlib.contextmanager
+def _publish_lock(target: Path):
+    """Per-cache-directory publisher lock (O_CREAT|O_EXCL lock file, stale after 120 s).
+
+    Yields True if acquired, False if it could not be acquired within the wait budget.
+    """
+    lock_path = target / ".publish.lock"
+    token = f"{os.getpid()}:{uuid.uuid4().hex}"
+    deadline = time.monotonic() + _LOCK_WAIT_SECONDS
+    acquired = False
+    while True:
+        try:
+            fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            with contextlib.suppress(OSError):
+                if time.time() - lock_path.stat().st_mtime > _LOCK_STALE_SECONDS:
+                    lock_path.unlink()  # stale: its owner died or hung
+                    continue
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(0.05)
+            continue
+        except OSError:
+            break
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(token)
+        acquired = True
+        break
+    try:
+        yield acquired
+    finally:
+        if acquired:
+            with contextlib.suppress(OSError):
+                if lock_path.read_text(encoding="utf-8") == token:  # never drop someone else's lock
+                    lock_path.unlink()
+
+
+def _replace_with_retry(source: str, destination: Path) -> None:
+    """os.replace with short backoff: on Windows it fails while a reader holds the target open."""
+    for attempt in range(_REPLACE_ATTEMPTS):
+        try:
+            os.replace(source, destination)
+            return
+        except PermissionError:
+            if attempt == _REPLACE_ATTEMPTS - 1:
+                raise
+            time.sleep(0.05 * 2**attempt)
+
+
+def _write_artifacts(
     target: Path,
     key: str,
     components: Mapping[str, Any],
     built: Mapping[str, np.ndarray],
     metadata: dict[str, Any],
 ) -> None:
-    """Atomically publish arrays, then the manifest (commit marker); temps cleaned on failure."""
-    target.mkdir(parents=True, exist_ok=True)
     manifest_path = target / "manifest.json"
     arrays_path = target / "features.npz"
-    # No committed manifest may exist while its arrays are being replaced.
-    manifest_path.unlink(missing_ok=True)
     temps: list[str] = []
     try:
         fd, arrays_tmp = tempfile.mkstemp(dir=target, prefix=".features-", suffix=".tmp")
@@ -334,7 +424,7 @@ def _publish(
             os.fsync(handle.fileno())
         size = os.path.getsize(arrays_tmp)
         digest = _sha256_file(Path(arrays_tmp))
-        os.replace(arrays_tmp, arrays_path)
+        _replace_with_retry(arrays_tmp, arrays_path)
         temps.remove(arrays_tmp)
         manifest = {
             "key": key,
@@ -351,16 +441,42 @@ def _publish(
             handle.write(json.dumps(manifest, sort_keys=True, indent=2))
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(manifest_tmp, manifest_path)
+        _replace_with_retry(manifest_tmp, manifest_path)
         temps.remove(manifest_tmp)
         _fsync_dir(target)
-    except BaseException:
-        manifest_path.unlink(missing_ok=True)  # never leave a commit marker for unverified arrays
-        raise
     finally:
         for leftover in temps:
             with contextlib.suppress(OSError):
                 os.unlink(leftover)
+
+
+def _publish(
+    target: Path,
+    key: str,
+    components: Mapping[str, Any],
+    built: Mapping[str, np.ndarray],
+    metadata: dict[str, Any],
+) -> str | None:
+    """Publish arrays then manifest (commit marker) under a per-directory lock.
+
+    Returns None when published (or an equivalent verified entry already exists) and a short reason
+    string when the cache write was skipped. A cache failure never raises (KeyboardInterrupt and
+    friends still propagate after temp-file cleanup).
+    """
+    try:
+        target.mkdir(parents=True, exist_ok=True)
+        with _publish_lock(target) as locked:
+            if not locked:
+                return "publish lock busy"
+            if _verified_cache_hit(target, key, components) is not None:
+                return None  # another writer already published this exact entry
+            # No committed manifest may exist while its arrays are being replaced. It is invalid or
+            # absent here (we just failed to verify it) and we hold the lock.
+            (target / "manifest.json").unlink(missing_ok=True)
+            _write_artifacts(target, key, components, built, metadata)
+        return None
+    except Exception as exc:
+        return f"{type(exc).__name__}: {exc}"
 
 
 def _true_range(high: np.ndarray, low: np.ndarray, close: np.ndarray) -> np.ndarray:
@@ -767,8 +883,10 @@ class FeatureStore:
         built = FeatureStore.build(df, cfg)
         metadata = dict(built.metadata)
         metadata["cache_key"] = key
-        if cacheable:
-            _publish(target, key, components, built, metadata)
+        skipped = _publish(target, key, components, built, metadata) if cacheable else None
+        if skipped is not None:
+            metadata["cache_write_skipped"] = skipped
+            print(f"[features] cache write skipped: {skipped}")
         built.metadata = metadata
         state = "cached" if cacheable else "built (uncacheable code closure, cache bypassed)"
         print(f"[features] {state} {key}: {time.perf_counter() - started:.3f} s")

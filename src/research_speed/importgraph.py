@@ -106,12 +106,91 @@ def closure(
     return sorted(seen)
 
 
-_DYNAMIC_IMPORT_NAMES = frozenset({"__import__", "import_module", "spec_from_file_location", "spec_from_loader", "exec_module", "run_path", "run_module"})
+_DYNAMIC_IMPORT_NAMES = frozenset(
+    {
+        "__import__",
+        "import_module",
+        "spec_from_file_location",
+        "spec_from_loader",
+        "module_from_spec",
+        "exec_module",
+        "load_module",
+        "load_source",
+        "load_dynamic",
+        "find_spec",
+        "run_path",
+        "run_module",
+        "resolve_name",
+        "get_loader",
+        "find_loader",
+        "iter_modules",
+        "walk_packages",
+    }
+)
+# Modules whose members load code; any alias of one of them is tracked.
+_LOADER_MODULES = frozenset({"importlib", "runpy", "pkgutil", "imp", "builtins"})
+_EXEC_BUILTINS = frozenset({"exec", "eval", "compile"})
+
+
+def _is_literal_without_import(node: ast.AST) -> bool:
+    """A literal string argument that does not mention ``import`` cannot load a module."""
+    return isinstance(node, ast.Constant) and isinstance(node.value, str) and "import" not in node.value
+
+
+def _has_dynamic_import(tree: ast.AST) -> bool:
+    """Conservative AST scan: True if the file can load code the static closure does not see.
+
+    Flags (resolving import aliases): calls of / references to the loader functions (``importlib.import_module``,
+    ``__import__``, ``spec_from_file_location``, ``module_from_spec``, ``runpy``, ``pkgutil`` helpers ...) however they are
+    aliased, ``getattr``/``globals()`` lookups by those names, ``getattr(<loader module>, <non-literal>)``, and
+    ``exec``/``eval``/``compile`` with a non-literal argument or a literal containing ``import``.
+    """
+    module_aliases: set[str] = set()
+    function_aliases: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for a in node.names:
+                if a.name.split(".")[0] in _LOADER_MODULES:
+                    module_aliases.add(a.asname or a.name.split(".")[0])
+        elif isinstance(node, ast.ImportFrom):
+            top = (node.module or "").split(".")[0]
+            if top in _LOADER_MODULES:
+                for a in node.names:
+                    if a.name in _DYNAMIC_IMPORT_NAMES or a.name in {"util", "machinery", "abc"}:
+                        function_aliases.add(a.asname or a.name)
+                    if a.name == "*":
+                        return True
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+            if node.id in _DYNAMIC_IMPORT_NAMES or node.id in function_aliases:
+                return True
+        elif isinstance(node, ast.Attribute):
+            if node.attr in _DYNAMIC_IMPORT_NAMES:
+                return True
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+            if node.value in _DYNAMIC_IMPORT_NAMES:  # getattr(m, "import_module"), globals()["__import__"]
+                return True
+        elif isinstance(node, ast.Call):
+            fn = node.func
+            if (
+                isinstance(fn, ast.Name)
+                and fn.id in _EXEC_BUILTINS
+                and (not node.args or not _is_literal_without_import(node.args[0]))
+            ):
+                return True
+            if isinstance(fn, ast.Name) and fn.id == "getattr" and len(node.args) >= 2:
+                target, attr = node.args[0], node.args[1]
+                tracked = isinstance(target, ast.Name) and (target.id in module_aliases or target.id in function_aliases)
+                if tracked and not (isinstance(attr, ast.Constant) and isinstance(attr.value, str)):
+                    return True
+    return False
 
 
 def dynamic_import_files(files: Iterable[Path]) -> list[Path]:
-    """Files that load code dynamically (``importlib.import_module``, ``__import__``, importlib.util spec loading, runpy): the static closure cannot see
-    what they load, so a result that depends on them must never be served from a cache keyed by the static closure."""
+    """Files that load code dynamically (``importlib.import_module``, ``__import__``, importlib.util spec loading, runpy,
+    pkgutil loaders, exec/eval of non-literal code, also through aliases): the static closure cannot see what they load, so a
+    result that depends on them must never be served from a cache keyed by the static closure. Over-approximate by design:
+    a false positive only costs a cache miss."""
     out = []
     for f in files:
         try:
@@ -119,13 +198,8 @@ def dynamic_import_files(files: Iterable[Path]) -> list[Path]:
         except (SyntaxError, ValueError, OSError):
             out.append(Path(f))  # unparsable => unknown => treat as dynamic
             continue
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Call):
-                fn = node.func
-                name = fn.id if isinstance(fn, ast.Name) else fn.attr if isinstance(fn, ast.Attribute) else None
-                if name in _DYNAMIC_IMPORT_NAMES:
-                    out.append(Path(f))
-                    break
+        if _has_dynamic_import(tree):
+            out.append(Path(f))
     return sorted(set(out))
 
 
