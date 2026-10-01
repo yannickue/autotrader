@@ -81,7 +81,7 @@ def perturb_future(bars: ObserverBars, i: int, fields: Sequence[str], rng: np.ra
 def _evaluate(fn: Callable[[ObserverBars, int], Any], bars: ObserverBars, i: int) -> tuple[bool, Any]:
     try:
         return True, canon(fn(bars, i))
-    except Exception as exc:  # noqa: BLE001 - an exception under perturbation is itself the signal
+    except Exception as exc:
         return False, f"{type(exc).__name__}"
 
 

@@ -10,7 +10,13 @@ import dataclasses
 
 import numpy as np
 import pytest
-from _leak_harness import ARRAY_FIELDS, assert_no_future_dependence, leaked_field_names, leaking_fields, perturb_future
+from _leak_harness import (
+    ARRAY_FIELDS,
+    assert_no_future_dependence,
+    leaked_field_names,
+    leaking_fields,
+    perturb_future,
+)
 from test_levels_support import random_walk
 
 from market_observer import schema as S
