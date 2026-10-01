@@ -20,7 +20,8 @@ MODES
 SCENARIOS (``--scenario``, default ``base`` = the 10-step canary above, unchanged)
   b1   CONTINUATION row, ``staged_profiles``: TP1 partial / structure trail / structure-failure close decided by the ENGINE
        through the real ``stack.manage_exits`` path (real reduce-only / modify orders at the real market).
-  b2   REVERSION row with a broker TP and an engine single full-close stage at the same level.
+  b2   REVERSION row with a broker TP and an engine single full-close stage at the same level: the engine LEAVES that target to the
+       broker TP (Lane V MEDIUM-1, no market close racing the fill) and still closes the row on thesis (structure) failure.
   b3   restart with an OPEN position: adoption, frozen profile / exit_state, no stage re-fire, tighten-only, flatten.
   all  base, b1, b2, b3 sequentially with a read-only flat-account check between.
   The engine's market-state INPUTS (quote / closed bars) are injected for the evaluation only, never order prices; every
@@ -118,7 +119,8 @@ B1_STEP_NAMES = (
     "protection_after_partial", "engine_structure_trail", "engine_cannot_loosen", "engine_final_close", "restart_reconcile",
 )
 B2_STEP_NAMES = (
-    "entry_profile_row_broker_tp", "broker_stop_and_far_tp", "engine_target_full_close", "clean_state_no_halt", "restart_reconcile",
+    "entry_profile_row_broker_tp", "broker_stop_and_far_tp", "engine_leaves_target_to_broker_tp", "engine_structure_failure_full_close",
+    "clean_state_no_halt", "restart_reconcile",
 )
 B3_STEP_NAMES = (
     "entry_profile_row", "broker_protective_stop", "engine_tp1_partial", "volume_broker_eq_local",
@@ -139,9 +141,10 @@ STATIC_PLAN_STEPS_B1 = (
 STATIC_PLAN_STEPS_B2 = (
     "1  open 2 x min lot LONG with a REVERSION row (ROUND reject) carrying a broker TP at the target level T (engine stage at the SAME T)",
     "2  broker stop covers the full volume; broker TP == T and far from the market (cannot fill by itself)",
-    "3  manage_exits (INJECTED quote at T): the ENGINE single full-close target stage fires -> real full reduce-only close",
-    "4  broker flat, no stray order (TP gone), registry terminal, no halt / flatten-failure / row-error counter",
-    "5  stop the stack, start a NEW stack on the same state dir: RECONCILED, flat, no orphans, registry terminal",
+    "3  manage_exits (INJECTED quote at T): the ENGINE leaves the target to the broker TP (stage_left_to_broker_tp, NO engine close, position + TP + SL unchanged, no halt / failure count / stray order)",
+    "4  manage_exits (INJECTED structure failure; the broker TP stays far away): the ENGINE closes the row (thesis failure) -> real full reduce-only close, EXIT_ENGINE_STRUCTURE",
+    "5  broker flat, no stray order (TP gone), registry terminal, no halt / flatten-failure / row-error counter",
+    "6  stop the stack, start a NEW stack on the same state dir: RECONCILED, flat, no orphans, registry terminal",
 )
 STATIC_PLAN_STEPS_B3 = (
     "1  open 2 x min lot LONG with a CONTINUATION row (profile frozen at entry)",
@@ -1403,31 +1406,74 @@ def stepK_b2_stop_and_far_tp(c: Canary) -> dict[str, Any]:
     return {**data, "broker_tp": tp, "engine_stage_price": plan["tp1_price"], "distance_to_tp": tp - ask}
 
 
-def stepK_b2_engine_target_close(c: Canary) -> dict[str, Any]:
-    """The ENGINE's single full-close target stage fires (injected quote at the target) -> real full reduce-only close."""
+def stepK_b2_engine_leaves_target_to_broker_tp(c: Canary) -> dict[str, Any]:
+    """Lane V (MEDIUM-1) design: the broker TP and the profile's final stage sit at the SAME price T, so the engine must NOT race the
+    broker fill with a market close at T.  Injected quote at T: no engine close, ``stage_left_to_broker_tp`` counted, the position,
+    its broker TP and SL untouched, nothing halted / counted as failed, no stray order."""
     plan = c.plan
+    pos0 = _own_one(c)
+    if pos0 is None:
+        raise StepFail("canary position vanished at the broker")
+    before = (_dec(pos0.volume), _dec(pos0.tp or 0), _dec(pos0.sl or 0))
+    mgr = c.stack._exit_manager
+    left0 = mgr.counters["stage_left_to_broker_tp"]
     bid, ask, _ = c.view.quote()
     target = plan["tp1_price"]
-    t0 = time.perf_counter()
     events, rec, log = run_manage(c, "target", bid=target, ask=target + (ask - bid), frame=_flat_frame(c, bid),
-                                  note="REVERSION target level reached (the same price as the broker TP)")
-    c.latencies["engine_target_close_ms"] = (time.perf_counter() - t0) * 1000.0
+                                  note="REVERSION target level reached (the same price as the broker TP): the engine must leave it to the broker")
     c.hook("after_action_3")
     problems: list[str] = []
+    _expect(rec["quote_reads"] >= 1, "the engine never read the injected quote", problems)
+    acts = [e for e in log if e["kind"] in ("full_close", "partial_exit", "stop_moved")]
+    _expect(not acts, f"the engine acted at the broker-TP level instead of leaving it to the broker: {[e['kind'] for e in acts]}", problems)
+    _expect(mgr.counters["stage_left_to_broker_tp"] > left0, "stage_left_to_broker_tp was not counted (the engine did not recognise the broker TP)", problems)
+    _expect(not [e for e in events if type(e).__name__ == "PositionClosed"], "a PositionClosed event came out of the target cycle", problems)
+    problems.extend(_manager_problems(c))
+    pos = _own_one(c)
+    if pos is None:
+        problems.append("canary position vanished at the broker (the broker TP is far from the market: it must not fill)")
+    else:
+        after = (_dec(pos.volume), _dec(pos.tp or 0), _dec(pos.sl or 0))
+        _expect(after == before, f"position changed in the target cycle: {before} -> {after}", problems)
+    stack = c.stack
+    _expect(stack._halt_reason is None and not stack._fatal, f"halt/fatal after the target cycle: {stack._halt_reason} / {stack._fatal}", problems)
+    _expect(not stack._flatten_failures, f"flatten failure counter incremented: {dict(stack._flatten_failures)}", problems)
+    if problems:
+        raise StepFail("; ".join(problems))
+    return {"engine_close": False, "stage_left_to_broker_tp": mgr.counters["stage_left_to_broker_tp"] - left0, "broker_tp": before[1],
+            "engine_stage_price": target, "position_unchanged": True}
+
+
+def stepK_b2_engine_structure_failure_close(c: Canary) -> dict[str, Any]:
+    """The engine keeps the thesis-failure exit for a REVERSION row: injected structure failure with the broker TP still far away
+    (not equal to any engine price) -> real full reduce-only close through ``_flatten``.  ``tolerate_tp_race`` (fake only): the broker
+    TP may fill first - the engine close is then harmless (broker truth: flat) and the row still ends terminal."""
+    race = c.env.tolerate_tp_race
+    pos = _own_one(c)
+    if pos is None and not race:
+        raise StepFail("canary position vanished at the broker")
+    bid, _ask, _ = c.view.quote()
+    tick = c.plan["tick_size"]
+    sl_now = _dec(pos.sl or 0) if pos is not None else bid - c.plan["stop_distance"]  # (fake race: the broker TP already took the position)
+    swing = sl_now - 10 * tick
+    frame = synthetic_m5_frame(_entered_at(c), bid, tick, swing_low=swing, last_close=swing - tick)
+    t0 = time.perf_counter()
+    events, _rec, log = run_manage(c, "failure", frame=frame, note=f"closed bar {swing - tick} breaks the swing low {swing}")
+    c.latencies["engine_structure_close_ms"] = (time.perf_counter() - t0) * 1000.0
+    c.hook("after_action_4")
+    problems: list[str] = []
     closes = [e for e in log if e["kind"] == "full_close"]
-    if c.env.tolerate_tp_race:  # B2b (fake only): the broker TP may have consumed the position before the engine close
+    if race:
         _expect(len(closes) <= 1, f"more than one engine full_close: {len(closes)}", problems)
     else:
-        _expect(rec["quote_reads"] >= 1, "the engine never read the injected quote", problems)
         _expect(len(closes) == 1, f"expected exactly 1 engine full_close, got {len(closes)}: {[e['kind'] for e in log]}", problems)
     if closes:
-        _expect(closes[0]["reason"] == "TAKE_PROFIT" and closes[0]["exit_reason"] == "EXIT_ENGINE_TP1",
-                f"engine close {closes[0]['reason']} / {closes[0]['exit_reason']}", problems)
+        _expect(closes[0]["exit_reason"] == "EXIT_ENGINE_STRUCTURE" and closes[0]["flat"] is True,
+                f"engine close {closes[0]['exit_reason']} flat={closes[0]['flat']}", problems)
         _expect(closes[0]["exit_profile"] == "REVERSION", f"close attributed to {closes[0]['exit_profile']}", problems)
-        _expect(closes[0]["flat"] is True, "the engine close reported failure (flat=False)", problems)
     problems.extend(_manager_problems(c))
     _poll_until(c, lambda: not c.view.own(), timeout_s=12.0)
-    _expect(not c.view.own(), "canary position still open at the broker after the engine target close", problems)
+    _expect(not c.view.own(), "canary position still open at the broker after the engine structure close", problems)
     _poll_until(c, _registry_closed, timeout_s=12.0)
     _record_close(c, events)
     if problems:
@@ -1437,7 +1483,7 @@ def stepK_b2_engine_target_close(c: Canary) -> dict[str, Any]:
 
 
 def stepK_b2_clean_state(c: Canary) -> dict[str, Any]:
-    """After the engine close: flat, the broker TP is gone (cancelled or consumed), nothing stray, nothing halted or counted as failed."""
+    """After the engine structure close: flat, the broker TP is gone (cancelled or consumed), nothing stray, nothing halted or counted as failed."""
     stack = c.stack
 
     def clean() -> bool:
@@ -1574,7 +1620,8 @@ SCENARIO_STEPS.update({
         stepK_engine_structure_trail, stepK_engine_cannot_loosen, stepK_engine_final_close, step10_restart,
     )),
     "b2": (B2_STEP_NAMES, (
-        step1_entry, stepK_b2_stop_and_far_tp, stepK_b2_engine_target_close, stepK_b2_clean_state, step10_restart,
+        step1_entry, stepK_b2_stop_and_far_tp, stepK_b2_engine_leaves_target_to_broker_tp, stepK_b2_engine_structure_failure_close,
+        stepK_b2_clean_state, step10_restart,
     )),
     "b3": (B3_STEP_NAMES, (
         step1_entry, step2_protective_stop, stepK_engine_tp1_partial, step4_volume_equality, step5_protection_after_partial,

@@ -618,6 +618,7 @@ class Mt5DemoStack:
         self._eod_foreign: list[dict[str, Any]] = []
         self._eod_failures: dict[str, int] = {}
         self._eod_next_try: dict[str, datetime] = {}
+        self._lane_wedged = False  # Lane V2: ANY MT5-lane timeout ever seen (independent of which fatal latched first)
         self._skew_obs: collections.deque[float] = collections.deque(
             maxlen=max(1, self._cfg.clock_skew_sustain_obs)
         )
@@ -666,6 +667,11 @@ class Mt5DemoStack:
         if self._stopped or not self._started:
             raise StackFailClosed("stack_not_running")
 
+    @property
+    def lane_wedged(self) -> bool:
+        """True once ANY MT5-lane call timed out (a blocked C call may never return): this process can no longer act on the broker."""
+        return self._lane_wedged
+
     def _set_fatal(self, reason: str) -> None:
         if self._fatal is None:
             self._fatal = reason
@@ -703,6 +709,7 @@ class Mt5DemoStack:
                 return self._lane.run_sync(fn, *args, timeout=limit)
             except LaneTimeout as exc:
                 # A blocked C call cannot be cancelled: the terminal state is unknown => fail closed.
+                self._lane_wedged = True
                 self._set_fatal("mt5_lane_timeout")
                 raise StackFailClosed("mt5_lane_timeout") from exc
             except Mt5CallError as exc:
@@ -1220,7 +1227,8 @@ class Mt5DemoStack:
         if adapter is not None:
             with contextlib.suppress(Exception):
                 if adapter.lane is not None:
-                    adapter.lane.shutdown()
+                    # Lane V2: never join a wedged lane thread (a hung C call would block shutdown / interpreter exit forever)
+                    adapter.lane.shutdown(wait=not self._lane_wedged)
             with contextlib.suppress(Exception):
                 adapter.store.close()
         if kernel is not None:
@@ -1878,12 +1886,13 @@ class Mt5DemoStack:
         # position id the NETTING OMS refuses); the normal sweep keeps one broker attempt per backoff step (Lane P semantics).
         # Lane V (HIGH-1): the EOD window of a normal runner behaves like the recovery mode - a refused / timed-out Nautilus close
         # (REDUCE_ONLY_LOCAL_BROKER_POSITION_MISMATCH, an EXTERNAL-adopted id under NETTING, a timeout) must not leave exposure overnight.
-        eod_window = (
-            not escalate
-            and self._cfg.operating_policy is not None
-            and self._cfg.operating_policy.flatten_active((now or self._now()).astimezone(UTC))
-        )
-        if still_open and ((outcome.status != "flat" and (self._cfg.flatten_only or eod_window)) or outcome.reason == "no_open_position"):
+        t_now = (now or self._now()).astimezone(UTC)
+        op = self._cfg.operating_policy
+        # Lane V2 (HIGH): a market whose broker session closes before the global flatten start sweeps from ITS OWN start (``sweep_start_utc``,
+        # e.g. BRENT / BTCUSD in winter: 21:50 Berlin) - that sweep gets the ticket fallback too, not only the global 21:55 window.
+        eod_window = (not escalate) and op is not None and (op.flatten_active(t_now) or t_now >= op.sweep_start_utc(info.canonical, t_now))
+        # Inside the EOD window broker truth wins: a Nautilus 'flat' with a still-open own position at the broker also takes the fallback.
+        if still_open and (eod_window or (self._cfg.flatten_only and outcome.status != "flat") or outcome.reason == "no_open_position"):
             # M1: Nautilus holds no position but the broker does (never adopted / cache lost) - or Nautilus could not close it
             # (Lane R: e.g. an EXTERNAL-adopted position id the NETTING OMS refuses, a denial, a timeout): reduce-only close by
             # the broker ticket through the adapter (verifies own magic, side and volume against the broker).
@@ -2634,6 +2643,8 @@ class Mt5DemoStack:
             else:
                 self._check_fatal()
             current = now.astimezone(UTC)
+            if op is not None:
+                self._eod_roll_day(current, op)  # before the row loop: it shares the sweep's per-day backoff state
             events: list[ExecutionEvent] = []
             for row in self._registry.with_status(reg.OPEN):
                 if row.forced_flat_utc is None or current < parse_utc(row.forced_flat_utc):
@@ -2642,12 +2653,18 @@ class Mt5DemoStack:
                 if info is None:  # must not happen (exposed markets are kept registered); never a silent KeyError
                     self._halt(f"forced_flat_market_unregistered:{row.market}")
                     continue
+                if op is not None and current < self._eod_next_try.get(row.market, current):
+                    continue  # Lane V2: ONE attempt per market per backoff step - the row loop shares the sweep's backoff (no 2 x 35 s per cycle)
                 still_open = self._own_symbol_positions(info)
                 # With an operating policy the sweep below retries with backoff and must never be pre-empted by the
                 # fatal flatten escalation (Lane Z / C1): the row loop only escalates when there is no sweep.
                 if still_open and not self._flatten(
                     info, tag=f"forced-flat:{row.intent_id}", hint="SESSION_END", escalate=op is None, now=current
                 ):
+                    if op is not None:  # a failed attempt schedules the next one exactly like a failed sweep attempt (retry NOT weakened)
+                        count = self._eod_failures.get(row.market, 0) + 1
+                        self._eod_failures[row.market] = count
+                        self._eod_next_try[row.market] = current + timedelta(seconds=op.backoff_s(count))
                     continue
                 fresh = self._registry.get(row.intent_id) or row
                 closed = self._on_lane(self._lane_build_closed, fresh, strict=True)
@@ -2672,6 +2689,13 @@ class Mt5DemoStack:
             ),
         }
 
+    def _eod_roll_day(self, current: datetime, op: OperatingPolicy) -> None:
+        day = op.day_of(current)
+        if self._eod_day != day:  # a new Berlin day starts clean
+            self._eod_day, self._eod_confirmed_utc, self._eod_detail = day, None, None
+            self._eod_failures.clear()
+            self._eod_next_try.clear()
+
     def _eod_sweep(self, current: datetime, op: OperatingPolicy) -> list[ExecutionEvent]:
         """Defence in depth behind the row-based forced flat: from the flatten start (Berlin; earlier for an
         instrument whose broker session closes before it) close EVERY own-magic broker position reduce-only,
@@ -2681,11 +2705,7 @@ class Mt5DemoStack:
         close is retried with bounded backoff and NEVER given up: past the deadline the state is OVERDUE and the
         detail names what is still open.  Entries are refused by ``_pre_reject`` from the same instant."""
         assert self._registry is not None
-        day = op.day_of(current)
-        if self._eod_day != day:  # a new Berlin day starts clean
-            self._eod_day, self._eod_confirmed_utc, self._eod_detail = day, None, None
-            self._eod_failures.clear()
-            self._eod_next_try.clear()
+        self._eod_roll_day(current, op)
         events: list[ExecutionEvent] = []
         global_window = op.flatten_active(current) or self._cfg.flatten_only  # Lane R: recovery mode = the window is always open
         positions = self._on_lane(self._lane_positions, strict=True)

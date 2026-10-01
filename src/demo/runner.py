@@ -2096,7 +2096,21 @@ class DemoRunner:
         except Exception:
             return False
 
+    def _lane_wedged(self) -> bool:
+        """Lane V2 (HIGH-2 gap B): the stack saw an MT5-lane timeout at any time (independent of the first-wins fatal reason)."""
+        try:
+            return bool(getattr(self.stack, "lane_wedged", False))
+        except Exception:
+            return False
+
+    @property
+    def lane_wedged(self) -> bool:
+        return self._lane_wedged()
+
     def _should_exit(self, now: datetime) -> bool:
+        if self._lane_wedged():
+            # Checked FIRST, also while a stop is being deferred for the flatten sweep: this process can never act on the broker again.
+            return True
         if self._stopping:
             return not self._stop_must_finish_flatten(now)
         if self._eod_shutdown_ready(now):
@@ -2217,7 +2231,9 @@ class DemoRunner:
                 self._note_error(now, f"{name}: {type(exc).__name__}: {exc}")
         with contextlib.suppress(Exception):
             self.stack.stop()
-        recovered = self.stop_reason == RECOVERY_STOP_REASON  # Lane R: own exposure confirmed flat (foreign-only recon mismatch tolerated)
+        if self._lane_wedged():
+            self.fail_reason = self.fail_reason or LANE_TIMEOUT_FATAL  # exit 7 whatever stopped us first
+        recovered = self.stop_reason == RECOVERY_STOP_REASON and not self._lane_wedged()  # Lane R: own exposure confirmed flat (foreign-only recon mismatch tolerated)
         self.exit_code = EXIT_FAIL_CLOSED if self.fail_reason and not recovered else EXIT_OK
         self._heartbeat(self._clock(), alive=False)
         return self.exit_code
