@@ -23,9 +23,14 @@ def market(make_bars):
     return build_bars(close, close + 0.2, close - 0.2, close, spread=spread, atr=atr, local_minute=minute, local_day=day)
 
 
+def match_cov(bars):
+    """The covariates the matcher itself uses by default (partition ranks over the bars' own partitions)."""
+    return CT.bar_covariates(bars, rank_mode="partition", partition=CT.bar_partitions(bars))
+
+
 def pick_events(bars, seed=1, k=15, high_atr=False):
     rng = np.random.default_rng(seed)
-    pct = CT.bar_covariates(bars)["atr_pct"]
+    pct = match_cov(bars)["atr_pct"]
     ok = np.where((np.arange(len(bars)) > 60) & (np.arange(len(bars)) < len(bars) - 60) & ((pct > 0.7) if high_atr else True))[0]
     ev = np.sort(rng.choice(ok, size=k, replace=False))
     # keep events apart so their exclusion zones are disjoint enough to leave candidates
@@ -53,7 +58,7 @@ def test_controls_match_variables_and_exclude_event_neighbourhoods(market):
     ev = pick_events(market)
     spec = CT.MatchSpec(minute_tol=30, atr_pct_band=0.10, spread_pct_band=0.15, n_controls=2, exclusion_bars=48)
     cs = CT.match_controls(market, ev, spec=spec, seed=2)
-    cov = CT.bar_covariates(market)
+    cov = match_cov(market)
     assert len(cs.control_idx) > 0
     for pos, j in zip(cs.event_pos, cs.control_idx, strict=True):
         i = ev[pos]
@@ -78,7 +83,7 @@ def test_matching_report_numbers_and_smd_vs_naive_random(market):
     assert sorted(r.unmatched_event_pos + tuple(set(cs.event_pos.tolist()))) == list(range(len(ev)))
     assert abs(r.smd["atr_pct"]) < 0.15 and abs(r.smd["local_minute"]) < 0.25
     # a NAIVE random-bar control group is far worse on volatility (events sit in the high-ATR tail)
-    cov = CT.bar_covariates(market)
+    cov = match_cov(market)
     naive = np.random.default_rng(0).choice(np.arange(60, len(market) - 60), size=len(ev))
     naive_smd = CT.standardised_mean_difference(cov["atr_pct"][ev], cov["atr_pct"][naive])
     assert abs(naive_smd) > 1.0 > abs(r.smd["atr_pct"]) * 4
