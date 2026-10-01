@@ -7,6 +7,7 @@ Harness: real Nautilus kernel + fake MT5 broker (GER40 tick 0.01, EURUSD tick 0.
 from __future__ import annotations
 
 import dataclasses
+import itertools
 import json
 from decimal import Decimal
 
@@ -14,8 +15,15 @@ import pytest
 
 from demo import exit_profiles as xp
 from demo.execution import exit_manager as em
+from nautilus_mt5.constants import TradeAction
 from tests.unit.demo.execution.stack_harness import FAST, build_broker, make_intent, make_stack
-from tests.unit.demo.execution.test_exit_manager import now_of, triple, wait_sync
+from tests.unit.demo.execution.test_exit_manager import (
+    now_of,
+    policy,
+    staged_cfg,
+    triple,
+    wait_sync,
+)
 
 D = Decimal
 
@@ -177,3 +185,67 @@ def test_e2e_looser_rounded_continuation_entry_partial_keeps_protection_invarian
     after = triple(stack, broker)
     assert after[0] == after[1] == after[2] == D(str(pos.volume))  # broker == local == SL child
     assert D(str(broker.positions_get()[0].sl)) == D("24927.72")
+
+
+# -- (8) trailing with a tick-UNALIGNED new_stop + a broker that rounds LOOSER: no churn, never looser -----------------------
+# Characterisation of an audit hypothesis ("every cycle re-sends a SLTP modify"). Proven false: ``_tighten_stop`` aligns the
+# proposed stop to the TIGHTER tick side before the modify (so the looser-rounding broker keeps it exactly), and the engine
+# ratchets from the broker stop, so an unchanged market yields no further improvement.
+
+
+TRAIL_CYCLES = 6
+
+
+@pytest.mark.parametrize(
+    ("kind", "quote", "atr", "tick", "min_step"),
+    [
+        ("long", (25055.0, 25056.5), "20", D("0.01"), D("0.1")),
+        ("long", (25055.0, 25056.5), "20", D("0.01"), D("0")),  # throttle off: only the tick alignment guards
+        ("short", (1.16000, 1.16010), "0.0008", D("0.00001"), D("0.1")),
+        ("short", (1.16000, 1.16010), "0.0008", D("0.00001"), D("0")),
+    ],
+)
+def test_trailing_unaligned_stop_with_looser_broker_rounding_sends_one_modify_and_never_loosens(tmp_path, kind, quote, atr, tick, min_step):
+
+    pol = policy(
+        trailing_activation_r_multiple=D("1"), trailing_distance_volatility_multiplier=D("0.77137"),
+        breakeven_trigger_r_multiple=D("99"),
+    )
+    broker = build_broker(sl_tick_rounding="looser")
+    stack = make_stack(broker, tmp_path, config=staged_cfg(pol=pol, staged_stop_min_step_r=min_step))
+    stack.start()
+    try:
+        if kind == "long":
+            intent = make_intent(stop=24950.0)
+        else:
+            intent = make_intent(market="EURUSD", broker_symbol="EURUSD", direction=-1, entry_ref=1.16995, stop=SHORT_STOP, target=1.14)
+        events = stack.submit(intent, {"family": "fam-a", "atr": atr, "exit_plan": {"stages": []}})
+        assert [type(e).__name__ for e in events] == ["Accepted", "Fill", "ProtectionConfirmed"], events
+        (pos0,) = broker.positions_get()
+        sl0 = D(str(pos0.sl))
+        if kind == "long":
+            broker.set_quote(*quote)
+        else:
+            broker.set_symbol_quote("EURUSD", *quote)
+        n0 = len([r for r in broker.request_log if r.get("action") == TradeAction.SLTP])
+        stops = [sl0]
+        for _ in range(TRAIL_CYCLES):
+            stack.manage_exits(now_of(stack))
+            wait_sync(stack)
+            stops.append(D(str(broker.positions_get()[0].sl)))
+        sltp = [r for r in broker.request_log if r.get("action") == TradeAction.SLTP][n0:]
+        moved = [e for e in stack.exit_log() if e["kind"] == "stop_moved"]
+        failed = [e for e in stack.exit_log() if e["kind"] == "stop_move_failed"]
+        # exactly ONE trailing modify, no per-cycle churn, no failures
+        assert len(sltp) == 1, sltp
+        assert len(moved) == 1 and not failed
+        assert stack._exit_manager.counters["stop_moves"] == 1
+        assert ctx_of(stack)["exit_state"]["stop_moves"] == 1
+        # the stop only ever moves in the protective direction, lands on the tick grid, and is stable afterwards
+        long_ = kind == "long"
+        assert all((b >= a) if long_ else (b <= a) for a, b in itertools.pairwise(stops))
+        assert stops[1] != sl0 and len(set(stops[1:])) == 1
+        assert (stops[1] / tick) == (stops[1] / tick).to_integral_value()
+        assert not [e for e in stack.exit_log() if e["kind"] == "skip_invalid_position"]
+    finally:
+        stack.stop()
