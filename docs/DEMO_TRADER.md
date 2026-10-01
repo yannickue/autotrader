@@ -291,3 +291,77 @@ times Berlin (DST-aware via zoneinfo); only the final flatten window (plus a 10 
   21:45 Berlin, winter 20:20 UTC). The research forced flat (20:30 UTC) is deliberately NOT extended, so the winter window ends
   earlier than the 21:55-Berlin / Friday-break bound. BRENT is unchanged until the winter break is observed.
 * L1-L5 were not enumerated in the Lane Z brief and are therefore not documented here.
+
+## Lane Y: family thesis -> exit PROFILE router on the existing ExitEngine (2026-10-01)
+
+**Architecture (binding).** The mechanics already exist; the problem was rule competition. Lane Y selects a small coherent
+subset of the existing `ExitEngine` rules per entry thesis. There is exactly ONE execution authority (`exits.ExitEngine` driven by
+`StagedExitManager`); the router (`src/demo/exit_profiles.py`) is pure data + `profile_policy()` and holds no state, calls no
+execution and bypasses no risk. Flow: family/mode -> profile -> existing ExitEngine -> reduce-only admission -> execution -> MT5 ->
+persistence/reconciliation. A market can use different profiles for different families (the profile is per INTENT).
+
+**Activation.** New stack policy `exit_policy="staged_profiles"` (`--exit-policy staged_profiles`). The code DEFAULT stays `fixed_1_5r`;
+legacy `staged` is untouched (no routing, `staged-e2-v1` golden). Under `staged_profiles` FIXED_1_5R-mapped / unmapped / profile-less rows
+keep the unchanged fixed behaviour (broker SL + intent fixed-R TP; the manager skips them). The lead flips the flag only after the Lane C
+real-broker canary. `fixed_1_5r` is retained as baseline / shadow comparator / fallback.
+
+**Per-intent persistence.** The runner (`_exit_geometry`) computes `route_for(family, signal.variant)` and puts
+`ctx["exit_profile"] = {profile, mapping_version, family, mode, thesis, stop_basis, tp1_fraction, runner_fraction, tp2: DORMANT_SHADOW,
+time_stop_minutes}` into the stack context; `Mt5DemoStack.submit` stores it in the registry row context (restart-safe). The profile is
+FROZEN at entry: the manager records it in `exit_state.exit_profile` and refuses (skips + `profile_mutation_refused`) any later change; an
+open trade is never converted. Attribution: registry context, `GEOMETRY` TCA record (`exit_profile`, family vs structure geometry, TP2
+shadow level in `exit_plan.tp2_shadow`), partial records (`exit_profile`, `mapping_version`), `full_close` log. This is the hook for the
+shadow exit lab (Lane W / Lane X `exit_policies`): profile + TP1 / return target / TP2 / invalidation levels per row.
+
+**Profiles (ACTIVE V1).**
+
+| Profile | Stop | Targets | Runner | Trail | Failure exit | Time stop |
+|---|---|---|---|---|---|---|
+| CONTINUATION | thesis invalidation (family stop if already structural, else chart structural stop) | structural TP1 = 50 % partial (TP2 dormant) | 50 % until stopped / failed / EOD | structure trail only, cost-floored | structure failure | none |
+| REVERSION | as above | ONE target: the family's structural mean target (anchor / prev close / range) first, else first opposing structure; 100 % | none | none | structure failure | family-aware, OFF (see below) |
+| FAILED_MOVE | behind the failure extreme (family stop) | first structural RETURN target 100 % (TP2 dormant/shadow) | none | none | structure failure / renewed break through the stop | none |
+| FIXED_1_5R | unchanged | broker TP ~1.5R | - | - | - | - |
+
+Hard EOD flat (Lane P/Z) is the final authority in every profile and is not touched.
+
+**Policy defaults (profile rows only, `profile_policy()`):** break-even R trigger 99 / after-first-stage OFF / late-window break-even OFF
+(no independent break-even); ATR/percentage trail OFF; momentum exit OFF (recorded as `shadow_momentum_exit` at the old -1.0 threshold,
+never an order); MFE give-back OFF; late-session loser rule (`EXIT_ENGINE_EOD`) OFF; global max-hold OFF; TP2 not a stage (shadow only);
+structure failure exit ON. New engine flag `ExitPolicy.structure_cost_floor` (CONTINUATION only): when a NEW valid structure stop is
+already beyond entry it is floored at the cost-adjusted break-even; it never acts without a structure. Stops are tighten-only
+(engine + manager `stop_is_unchanged_or_tighter`); the partial-fill protection invariant (broker == local == protected) is tested for TP1 + runner.
+
+**Time stop (REVERSION).** Mechanism implemented (`FamilyRoute.time_stop_minutes`, engine time-ALPHA decay: not fired if the trade reached
+0.5R). NO family documents a duration horizon (all use clock exits `exit_clock` = the forced flat), so it is OFF for ROUND reject,
+VOLREV fade and GAP fade. Nothing is invented.
+
+**Router audit (machine-readable: `exit_profiles.ROUTES`; coverage + exactly-one test over specs v1 / v1.1 / v1.2).**
+
+| FAMILY | MODE | THESIS | PROFILE | RATIONALE |
+|---|---|---|---|---|
+| STRUCT | breakout | compressed-range break continues | CONTINUATION | entry at break close; family stop = opposite range edge (already structural) |
+| STRUCT | confirmed | same break, one-bar confirmation | CONTINUATION | continuation |
+| STRUCT | retest | retest of the BROKEN edge that still closes beyond it | CONTINUATION | the break continues after the retest (documented decision) |
+| STRUCT | fade | failed break, close back inside the range | FAILED_MOVE | stop = failed excursion extreme |
+| ORB | breakout | close beyond the opening range continues | CONTINUATION | initiative flow |
+| ORB | fade | breach rejected within fail_bars | FAILED_MOVE | trapped traders; stop = breach extreme + pad |
+| ROUND | reject | wick rejection at a round number | REVERSION | level rejection / reversion (explicit classification); ATR family stop -> chart stop |
+| ROUND | break | break-and-hold beyond the level | CONTINUATION | continuation |
+| VOLREV | fade | high-vol overshoot reverts to anchor | REVERSION | anchor = structural mean target |
+| VOLREV | expand | compression -> expansion | CONTINUATION | continuation |
+| GAP | fade | gap fills to previous close | REVERSION | previous close = documented structural target |
+| GAP | go | gap extends | CONTINUATION | continuation |
+| OVERNIGHT | continue | overnight flow persists | CONTINUATION | continuation |
+| OVERNIGHT | reverse | overnight flow faded | FIXED_1_5R (TEMPORARY) | reversion hypothesis but R-only target, no documented equilibrium level / failed-move structure |
+| EOD | continue | last-hour day-trend continues | CONTINUATION | hard EOD flat stays final authority |
+| EOD | reverse | last-hour move faded | FIXED_1_5R (TEMPORARY) | reversion hypothesis, R-only target, no documented equilibrium level |
+| LEADLAG | - | follower catches up with leader (sign=-1 = fade control) | FIXED_1_5R (TEMPORARY) | cross-market catch-up, neither continuation nor reversion; M5 caveat in the family doc |
+
+An unmapped `(family, mode)` is never guessed: runtime falls to the flagged FIXED_1_5R baseline and the coverage test fails.
+"Chart stop" families (ROUND, VOLREV, GAP, OVERNIGHT, EOD) get the structural stop from `demo.structure` BEFORE sizing (only under
+`staged_profiles`); STRUCT/ORB keep their family stop, which already is the thesis invalidation.
+
+**Known gaps.** `ExitMarketState.signal_reversal` is still not fed (opposite signals never reverse a trade; the thesis-failure rule is the
+structure-failure exit; a later opposite signal is a NEW trade only after the exposure is closed and risk/arbitration permit);
+"renewed breakout" for FAILED_MOVE is expressed by the structural stop + structure failure, not a separate rule; the fixed-1.5R baseline
+outcome is recorded as shadow geometry (family stop/target) and counterfactually evaluated by the exit lab, not by a second live path.

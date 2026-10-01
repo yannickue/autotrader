@@ -91,7 +91,8 @@ from demo.execution.events import (
 from demo.execution.exit_manager import (
     EXIT_POLICIES,
     EXIT_POLICY_FIXED,
-    EXIT_POLICY_STAGED,
+    EXIT_POLICY_PROFILES,
+    MANAGED_EXIT_POLICIES,
     ExitPlanConfig,
     StagedExitManager,
     broker_target_for_staged,
@@ -128,6 +129,7 @@ from demo.execution.tranches import (
     TrancheLedger,
     classify_addon,
 )
+from demo.exit_profiles import ENGINE_PROFILES
 from demo.opportunity.bar_source import Quote, validate_frame
 from demo.opportunity.operating_policy import (
     FLATTEN_CONFIRMED,
@@ -257,8 +259,8 @@ class StackConfig:
     def __post_init__(self) -> None:
         if self.exit_policy not in EXIT_POLICIES:
             raise ValueError(f"exit_policy must be one of {EXIT_POLICIES}, got {self.exit_policy!r}")
-        if self.exit_policy == EXIT_POLICY_STAGED and self.staged_exit is None:
-            raise ValueError("exit_policy='staged' requires staged_exit (an ExitPolicy)")
+        if self.exit_policy in MANAGED_EXIT_POLICIES and self.staged_exit is None:
+            raise ValueError(f"exit_policy={self.exit_policy!r} requires staged_exit (an ExitPolicy)")
 
 
 # ---------------------------------------------------------------------------------------------
@@ -619,8 +621,8 @@ class Mt5DemoStack:
         self._foreign: tuple[str, ...] = ()
         self._start_notes: dict[str, Any] = {}
         self._exit_manager: StagedExitManager | None = (
-            StagedExitManager(self, self._cfg.staged_exit)
-            if self._cfg.exit_policy == EXIT_POLICY_STAGED and self._cfg.staged_exit is not None
+            StagedExitManager(self, self._cfg.staged_exit, profiles=self._cfg.exit_policy == EXIT_POLICY_PROFILES)
+            if self._cfg.exit_policy in MANAGED_EXIT_POLICIES and self._cfg.staged_exit is not None
             else None
         )
 
@@ -1612,7 +1614,17 @@ class Mt5DemoStack:
             "cluster": detail.get("cluster"),
         }
         broker_target = None if intent.target is None else Decimal(str(intent.target))
-        if self._exit_manager is not None:
+        # Lane Y: per-intent profile (``staged_profiles``). A FIXED_1_5R-mapped / unmapped intent keeps the unchanged fixed
+        # behaviour (broker SL + the intent's fixed-R TP, the engine never touches the row); an engine profile is persisted
+        # with the registry row (FROZEN at entry, survives restart).
+        profile_attr = context.get("exit_profile") if self._cfg.exit_policy == EXIT_POLICY_PROFILES else None
+        managed = self._exit_manager is not None and (
+            self._cfg.exit_policy != EXIT_POLICY_PROFILES
+            or (isinstance(profile_attr, dict) and profile_attr.get("profile") in ENGINE_PROFILES)
+        )
+        if self._cfg.exit_policy == EXIT_POLICY_PROFILES and isinstance(profile_attr, dict):
+            ctx_summary["exit_profile"] = profile_attr
+        if managed:
             # staged: the ExitEngine owns the exit plan. Broker TP = ABSENT or the FINAL stage only.
             plan = context.get("exit_plan")
             ctx_summary["exit_plan"] = plan
@@ -1628,7 +1640,7 @@ class Mt5DemoStack:
             stop=str(intent.stop),
             target=(
                 (None if intent.target is None else str(intent.target))
-                if self._exit_manager is None  # fixed_1_5r: byte-identical to before Lane E
+                if not managed  # fixed_1_5r (or a FIXED_1_5R-mapped profile): byte-identical to before Lane E
                 else (None if broker_target is None else str(broker_target))
             ),
             forced_flat_utc=intent.forced_flat_utc,

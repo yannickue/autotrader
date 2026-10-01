@@ -443,6 +443,14 @@ class ExitEngine:
             improves = structure > stop_price if is_long else structure < stop_price
             safe = structure < market.price if is_long else structure > market.price
             if improves and safe:
+                if policy.structure_cost_floor:
+                    # Lane Y: valid new structure already beyond entry -> never below the cost-adjusted break-even
+                    floor = position.entry_price + cost if is_long else position.entry_price - cost
+                    beyond_entry = structure > position.entry_price if is_long else structure < position.entry_price
+                    lifts = structure < floor if is_long else structure > floor
+                    floor_safe = floor < market.price if is_long else floor > market.price
+                    if beyond_entry and lifts and floor_safe:
+                        structure = floor
                 stop_price = structure
                 stop_stage = StopStage.TRAILING
 
