@@ -38,6 +38,9 @@ from market_observer.observer import AUDIT_META_KEYS
 
 OBSERVER_DB_NAME = "observer.sqlite"
 OBSERVER_STORE_SCHEMA = "observer-store-1"
+# The store runs on the trading thread: a locked / slow observer.sqlite must cost at most this long per attempt (then the batch is dropped and counted
+# as an observer error by the runner), never the 30 s default busy timeout.
+OBSERVER_BUSY_TIMEOUT_S = 0.05
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS definitions (
@@ -131,13 +134,17 @@ class ObserverStore:
     def _db(self) -> sqlite3.Connection:
         if self._conn is None:
             self.path.parent.mkdir(parents=True, exist_ok=True)
-            conn = sqlite3.connect(self.path, isolation_level=None, timeout=30.0, check_same_thread=False)
-            conn.row_factory = sqlite3.Row
-            conn.execute("PRAGMA journal_mode = WAL")
-            conn.execute("PRAGMA synchronous = NORMAL")
-            conn.executescript(_SCHEMA)
-            conn.executescript(_TRIGGERS)
-            conn.execute("INSERT OR IGNORE INTO meta(key,value) VALUES('schema_version',?)", (OBSERVER_STORE_SCHEMA,))
+            conn = sqlite3.connect(self.path, isolation_level=None, timeout=OBSERVER_BUSY_TIMEOUT_S, check_same_thread=False)
+            try:
+                conn.row_factory = sqlite3.Row
+                conn.execute("PRAGMA journal_mode = WAL")
+                conn.execute("PRAGMA synchronous = NORMAL")
+                conn.executescript(_SCHEMA)
+                conn.executescript(_TRIGGERS)
+                conn.execute("INSERT OR IGNORE INTO meta(key,value) VALUES('schema_version',?)", (OBSERVER_STORE_SCHEMA,))
+            except BaseException:
+                conn.close()  # a half-initialised connection is never kept; the next batch retries the open
+                raise
             self._conn = conn
         return self._conn
 

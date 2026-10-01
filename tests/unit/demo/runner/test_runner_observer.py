@@ -281,3 +281,108 @@ def test_a_corrupt_observer_sqlite_isolates_the_live_path(tmp_path):
         assert d[table] == d_ref[table], table
     assert [i.to_json() for i in stack.submits] == ref_submits
     store.close()
+
+
+# ------------------------------------------------------------------ failure isolation (HIGH-1 / HIGH-2 of the release-candidate review)
+def _reference(tmp_path, cycles):
+    (tmp_path / "ref").mkdir()
+    ref_clock, ref_store, ref_stack, _e, ref_runner = rig(tmp_path / "ref", observer=False)
+    drive(ref_clock, ref_runner, cycles)
+    d_ref = dump(ref_store)
+    out = (d_ref, [i.to_json() for i in ref_stack.submits])
+    ref_store.close()
+    return out
+
+
+@pytest.mark.parametrize("where", ["on_bar", "drain_cycle", "persist"])
+def test_a_memory_error_in_the_observer_is_contained_and_trading_continues(tmp_path, monkeypatch, where):
+    from demo.observer_store import ObserverStore
+    from demo.opportunity import observer_hook as H
+
+    d_ref, ref_submits = _reference(tmp_path, 60)
+
+    def boom(*a, **k):
+        raise MemoryError("observer out of memory")
+
+    if where == "on_bar":
+        monkeypatch.setattr(H.ObserverShadow, "on_bar", boom)
+    elif where == "drain_cycle":
+        monkeypatch.setattr(H.ObserverShadow, "drain_cycle", boom)
+    else:
+        monkeypatch.setattr(ObserverStore, "record_many", boom)
+    (tmp_path / "obs").mkdir()
+    clock, store, stack, _engine, runner = rig(tmp_path / "obs", observer=True)
+    drive(clock, runner, 60)  # every run_cycle completes (drive asserts no fail_reason)
+    d = dump(store)
+    assert runner._observer.stats()["errors"] > 0
+    for table in d_ref:
+        assert d[table] == d_ref[table], table  # exits / intents / risk unchanged: management kept running every cycle
+    assert [i.to_json() for i in stack.submits] == ref_submits
+    store.close()
+
+
+@pytest.mark.parametrize("exc_type", [KeyboardInterrupt, SystemExit])
+@pytest.mark.parametrize("where", ["on_bar", "drain_cycle", "persist"])
+def test_operator_stop_signals_still_propagate_from_the_observer(tmp_path, monkeypatch, where, exc_type):
+    from demo.observer_store import ObserverStore
+    from demo.opportunity import observer_hook as H
+
+    def stop(*a, **k):
+        raise exc_type()
+
+    if where == "on_bar":
+        monkeypatch.setattr(H.ObserverShadow, "on_bar", stop)
+    elif where == "drain_cycle":
+        monkeypatch.setattr(H.ObserverShadow, "drain_cycle", stop)
+    else:
+        monkeypatch.setattr(ObserverStore, "record_many", stop)
+    clock, store, _stack, _engine, runner = rig(tmp_path, observer=True)
+    try:
+        with pytest.raises(exc_type):
+            drive(clock, runner, 60)
+    finally:
+        store.close()
+
+
+def test_a_locked_observer_sqlite_neither_blocks_the_cycle_nor_touches_the_live_path(tmp_path):
+    import time
+
+    (tmp_path / "obs").mkdir()
+    clock, store, stack, _engine, runner = rig(tmp_path / "obs", observer=True)
+    runner.start()
+    for _ in range(25):  # create observer.sqlite and write some rows first
+        runner.run_cycle()
+        clock.advance(minutes=5)
+    path = runner.cfg.artifacts_dir / "observer.sqlite"
+    assert path.exists()
+    written_before = runner.status()["market_observer"]["records_written"]
+    errors_before = runner._observer.stats()["errors"]
+    locker = sqlite3.connect(path, isolation_level=None, timeout=0)
+    locker.execute("BEGIN IMMEDIATE")  # a second process holds the observer database's write lock
+    try:
+        worst = 0.0
+        for _ in range(20):
+            t0 = time.perf_counter()
+            runner.run_cycle()
+            worst = max(worst, time.perf_counter() - t0)
+            assert runner.fail_reason is None, runner.fail_reason
+            clock.advance(minutes=5)
+        assert worst < 2.0, f"a cycle took {worst:.2f}s while observer.sqlite was locked"
+        assert runner._observer.stats()["errors"] > errors_before
+        assert runner.status()["market_observer"]["records_written"] == written_before  # the locked batches were dropped, not written
+    finally:
+        locker.execute("ROLLBACK")
+        locker.close()
+    for _ in range(15):
+        runner.run_cycle()
+        assert runner.fail_reason is None, runner.fail_reason
+        clock.advance(minutes=5)
+    assert runner.status()["market_observer"]["records_written"] > written_before  # normal writes resume once the lock is gone
+    # the live path is identical to a run without the observer over the same number of cycles
+    ref2 = tmp_path / "ref2"
+    ref2.mkdir()
+    rc, rs, rst, _e, rr = rig(ref2, observer=False)
+    drive(rc, rr, 60)
+    assert dump(store) == dump(rs) and [i.to_json() for i in stack.submits] == [i.to_json() for i in rst.submits]
+    rs.close()
+    store.close()
