@@ -47,6 +47,7 @@ markers = [
     "replay: deterministic replay / parity suites (overlay)",
     "broker: MT5 / venue-adapter boundary tests, fake broker only (overlay)",
     "serial: shares on-disk/process-global resources; never run concurrently with other serial tests (overlay)",
+    "perf: wall-clock measurement of the observer's scheduling impact; meaningful only on an otherwise idle machine, run alone and never concurrently with CPU-heavy suites (overlay, classification only)",
     "xdist_group: pytest-xdist loadgroup grouping (inert without xdist)",
 ]
 

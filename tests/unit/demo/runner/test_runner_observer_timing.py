@@ -29,6 +29,8 @@ from demo.store import DemoStore
 from demo.testing import FakeClock, FakeStack
 
 MARKETS = ("GER40", "XAUUSD", "EURUSD", "NAS100")
+pytestmark = pytest.mark.perf  # PERFORMANCE / SERIAL test: relative wall-clock offsets (ON vs OFF, min of 3 repeats, eps from measured noise); with CPU
+# contention the noise term can exceed 0.75 * BUDGET_S ("run-to-run noise ... too large") and the test fails without any observer regression. Run it ALONE.
 WINDOW = 6000
 BUDGET_S = 0.15
 N_CYCLES = 3
