@@ -14,6 +14,7 @@ import os
 import shutil
 import sys
 from pathlib import Path
+from unittest import mock
 
 import numpy as np
 import pandas as pd
@@ -150,6 +151,12 @@ def build_root(tmp_path: Path, prereg: G.Prereg, markets=CORE2, planted=0.3, see
 
 
 def run(root: Path, out: Path, prereg_path: Path, stage: str = "fit", jobs: int = 1, markets=CORE2, extra: tuple[str, ...] = ()) -> int:
+    # The synthetic test preregistrations are NOT the frozen file: register their hash for this call only (the production table is never touched).
+    with mock.patch.dict(G.FROZEN_PREREG_SHA256, {G.load_prereg(prereg_path).spec["prereg_version"]: G.frozen_file_sha256(prereg_path)}):
+        return _run_main(root, out, prereg_path, stage, jobs, markets, extra)
+
+
+def _run_main(root, out, prereg_path, stage, jobs, markets, extra) -> int:
     return G.main(["--root", str(root), "--out", str(out), "--stage", stage, "--jobs", str(jobs), "--markets", *markets, "--prereg", str(prereg_path), *extra])
 
 
@@ -832,3 +839,60 @@ def test_fit_under_prereg3_uses_stats_3_blocks_its_own_registry_lock_and_names(t
     assert reg["name"] == "observer_gate_c_prereg3" and all(h.startswith("gatec3|") for h in reg["hypotheses"])
     h01 = next(r for r in st["results"] if r["market"] == "GER40" and r["id"] == "H01")
     assert h01["n_blocks_event"] == 3 and h01["n_blocks_control"] == 3 and h01["n_nan_draws"] == 0  # 3 blocks of >= 21 days, not 70 single days
+
+
+# ---------------------------------------------------------------------------------------------- OBS-FIX H3 semantics: INCONCLUSIVE_NOT_ASKED vs NOT_CONFIRMED (never 'no enrichment' for inconclusive states)
+def test_validate_oos_verdict_separates_not_asked_from_not_confirmed():
+    fams = {"gatec2|validate|core|y|all": {"m": 4, "power_limited": False}}
+    mk = {"GER40": {"nc_a_base": {"null": True}}}
+    ctl = [_row("nc_a", ST.NOT_SIGNIFICANT), _row("nc_b", ST.NOT_SIGNIFICANT)]
+    for stage in ("validate", "oos"):
+        assert G.stage_verdict(stage, [_row("hyp", ST.NOT_SIGNIFICANT), *ctl], mk, fams)[0] == G.V_NOT_CONFIRMED  # evaluated, not replicated
+        assert G.stage_verdict(stage, [_row("hyp", ST.INSUFFICIENT_EVIDENCE), *ctl], mk, fams)[0] == G.V_NOT_ASKED  # (a) all INSUFFICIENT_EVIDENCE: question not askable
+        assert G.stage_verdict(stage, [_row("hyp", G.CELL_UNDEFINED), *ctl], mk, fams)[0] == G.V_NOT_ASKED
+        assert G.stage_verdict(stage, [_row("hyp", ST.NOT_SIGNIFICANT), _row("hyp", G.DESCRIPTIVE_ONLY, market="NAS100", descriptive=True), *ctl], mk, fams)[0] == G.V_NOT_ASKED  # a survivor market is descriptive_only
+        assert G.stage_verdict(stage, [_row("hyp", G.DESCRIPTIVE_ONLY, descriptive=True), *ctl], mk, fams)[0] == G.V_NOT_ASKED
+    assert G.V_NOT_ASKED != G.V_NOT_CONFIRMED and "NO_ENRICHMENT" not in G.V_NOT_ASKED
+
+
+def test_previous_survivors_text_for_inconclusive_is_not_no_enrichment(prereg):
+    for verdict in (G.V_INCONCLUSIVE, G.V_NOT_ASKED):  # (b)
+        rep = {"stages": {"fit": {"status": "COMPLETE", "verdict": verdict, "survivors": [], "prereg_json_sha256": prereg.json_sha256}}}
+        with pytest.raises(G.StopRule) as ei:
+            G.previous_survivors(prereg, "validate", rep, False, check_lock=False)
+        msg = str(ei.value)
+        assert 'INCONCLUSIVE - the question was not asked (no confirmatory result, NOT "no enrichment")' in msg and "documented as 'no enrichment'" not in msg
+    rep = {"stages": {"fit": {"status": "COMPLETE", "verdict": G.V_NONE, "survivors": [], "prereg_json_sha256": prereg.json_sha256}}}
+    with pytest.raises(G.StopRule, match="documented as 'no enrichment'"):  # a genuinely evaluated null keeps its wording
+        G.previous_survivors(prereg, "validate", rep, False, check_lock=False)
+
+
+def test_validate_with_all_survivor_markets_descriptive_is_not_asked_not_no_survivors(prereg):
+    plan = G.build_plan(prereg, "validate", list(CORE2), ["GER40|H01"], {"GER40"})  # (c) the only surviving market failed the balance gate in VALIDATION
+    with pytest.raises(G.NoConfirmatoryTestLeft, match=G.V_NOT_ASKED):
+        G.confirmatory_eligibility("validate", plan, list(CORE2), {"GER40"})
+    with pytest.raises(G.StopRule) as ei:  # no survivors at all and no descriptive market: plain stop rule, not NOT_ASKED
+        G.confirmatory_eligibility("validate", G.build_plan(prereg, "validate", list(CORE2), [], set()), list(CORE2), set())
+    assert not isinstance(ei.value, G.NoConfirmatoryTestLeft)
+
+
+# ---------------------------------------------------------------------------------------------- OBS-FIX MEDIUM-1: DRAFT / freeze guard
+def test_prereg3_draft_is_refused_for_every_executing_stage_and_writes_nothing(tmp_path):
+    assert "observer-gate-c-prereg-3" not in G.FROZEN_PREREG_SHA256
+    for stage, extra in (("fit", ()), ("validate", ()), ("oos", ("--confirm-oos-once",))):
+        out = tmp_path / f"o_{stage}"
+        rc = G.main(["--root", str(tmp_path / "no_such_backfill"), "--out", str(out), "--stage", stage, "--prereg", str(PREREG3), *extra])
+        assert rc == G.EXIT_NOT_FROZEN == 2
+        assert not out.exists()  # no preflight file, no registry, no report
+    assert not G.lock_path(G.load_prereg(PREREG3)).exists()
+    assert G.main(["--root", str(tmp_path / "no_such_backfill"), "--out", str(tmp_path / "o_dry"), "--dry-run", "--prereg", str(PREREG3)]) == 0  # the draft stays plannable
+
+
+def test_a_changed_prereg2_file_is_refused_and_the_real_one_passes_the_guard(tmp_path, real_prereg):
+    assert G.check_frozen(real_prereg) is None
+    p = tmp_path / "prereg_edited.md"
+    p.write_bytes(Path(G.DEFAULT_PREREG).read_bytes() + b"\r\n")
+    out = tmp_path / "o"
+    assert G.main(["--root", str(tmp_path / "no_such_backfill"), "--out", str(out), "--stage", "fit", "--prereg", str(p)]) == G.EXIT_NOT_FROZEN
+    assert not out.exists()
+    assert "NOT the frozen one" in G.check_frozen(G.load_prereg(p))

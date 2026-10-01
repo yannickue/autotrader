@@ -80,6 +80,8 @@ V_VAL_OK, V_OOS_OK, V_NOT_CONFIRMED = "CONFIRMED_ON_VALIDATION", "REPLICATED_ON_
 KINDS = ("hyp", "nc", "nc_a", "nc_b")  # confirmatory hypothesis | random-feature control | A/A test | shift placebo
 EXIT_STOP, EXIT_NAN, EXIT_PREFLIGHT = 3, 4, 5
 EXIT_ATTEST = 6
+FROZEN_PREREG_SHA256 = {"observer-gate-c-prereg-2": "4413e35ea3fc7fe38131a3956875ec1402534f10ba55b711d199722300091110"}  # prereg_version -> SHA-256 (CRLF-normalised bytes) of the FROZEN file; prereg-3 is a DRAFT and deliberately NOT listed
+EXIT_NOT_FROZEN = 2
 V_NOT_ASKED = "INCONCLUSIVE_NOT_ASKED"  # no market passed the balance gate / no confirmatory test eligible: the question was never asked (NOT "no enrichment")
 ATTEST_FILE = "observer_controls_attestation.json"  # written next to the report in --out (never into --root, the artifacts stay byte-identical)
 ATTEST_VERSION = "observer-controls-attest-1"
@@ -189,6 +191,24 @@ def load_prereg(path: str | Path) -> Prereg:
     spec = json.loads(m.group(1))
     _validate_prereg(spec)
     return Prereg(spec, hashlib.sha256(text.encode("utf-8")).hexdigest(), _sha(spec), str(p))
+
+
+def frozen_file_sha256(path: str | Path) -> str:
+    """SHA-256 of the preregistration file on CRLF-normalised bytes (checkout independent)."""
+    raw = Path(path).read_bytes().replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
+    return hashlib.sha256(raw).hexdigest()
+
+
+def check_frozen(prereg: Prereg) -> str | None:
+    """DRAFT guard: a preregistration may only be EXECUTED (fit / validate / oos) when its file hash equals the registered freeze hash of its version. Returns an error text or None."""
+    version = str(prereg.spec.get("prereg_version"))
+    want = FROZEN_PREREG_SHA256.get(version)
+    if want is None:
+        return f"{version} is a DRAFT: no freeze hash is registered in FROZEN_PREREG_SHA256 ({prereg.path}); only --dry-run / --attest / --preflight are allowed"
+    have = frozen_file_sha256(prereg.path)
+    if have != want:
+        return f"{version}: the file {prereg.path} is NOT the frozen one (sha256 {have} != frozen {want}); a changed preregistration needs a new version"
+    return None
 
 
 def _validate_prereg(s: dict[str, Any]) -> None:
@@ -938,6 +958,10 @@ def confirmatory_eligibility(stage: str, plan: list[dict[str, Any]], markets: li
         raise NoConfirmatoryTestLeft(
             f"no confirmatory test left: no core market is eligible (balance gate not passed -> descriptive_only: {sorted(descriptive & set(markets))}; explore markets never confirm); "
             f"nothing registered, no fit lock taken. {V_NOT_ASKED} (kein no-enrichment): the controls are not good enough to ask the confirmatory question.")
+    if any(p["kind"] == "hyp" and p["scope"] == "core" and p["descriptive"] for p in plan):
+        raise NoConfirmatoryTestLeft(
+            f"no confirmatory test left: every surviving core market of the previous stage is descriptive_only in stage {stage!r} (balance gate not passed: {sorted(descriptive & set(markets))}); "
+            f"nothing registered. {V_NOT_ASKED} (kein no-enrichment): the controls are not good enough to ask the replication question.")
     raise StopRule(f"no confirmatory test left: stage {stage!r} has no survivors of the previous stage to replicate; nothing registered")
 
 
@@ -1058,6 +1082,8 @@ def previous_survivors(prereg: Prereg, stage: str, report: dict[str, Any], confi
         if lock is None or not fit or lock.get("fit_stage_sha256") != stage_hash(fit) or (out is not None and lock.get("out") != str(out)):
             raise StopRule("the fit report does not match the fit lock (hash / --out): the fit stage is run exactly once per preregistration version; the stage chain is refused")
     if not st.get("survivors"):
+        if st.get("verdict") in (V_INCONCLUSIVE, V_NOT_ASKED):
+            raise StopRule(f"STOP RULE: stage {prev!r} ended with {st.get('verdict')} and no survivors: INCONCLUSIVE - the question was not asked (no confirmatory result, NOT \"no enrichment\"); {stage!r} is not run")
         raise StopRule(f"STOP RULE: stage {prev!r} ended with {st.get('verdict')} and no survivors: documented as 'no enrichment' / not confirmed; {stage!r} is not run")
     if stage == "oos" and not confirm_oos:
         raise StopRule("the OOS partition is touched exactly once; pass --confirm-oos-once to proceed")
@@ -1090,6 +1116,9 @@ def stage_verdict(stage: str, results: list[dict[str, Any]], markets: dict[str, 
         return V_NONE, [], []
     if surv:
         return (V_VAL_OK if stage == "validate" else V_OOS_OK), surv, []
+    asked = [r for r in hyp if r["status"] not in (ST.INSUFFICIENT_EVIDENCE, ST.POWER_LIMITED, CELL_UNDEFINED)]
+    if not asked or any(r["kind"] == "hyp" and r["descriptive"] for r in results):  # nothing evaluable, or a surviving market was descriptive_only: the replication question was not (fully) asked
+        return V_NOT_ASKED, [], []
     return V_NOT_CONFIRMED, [], []
 
 
@@ -1242,7 +1271,7 @@ def render_md(report: dict[str, Any]) -> str:
               f"* stats `{st['stats_version']}`; B = {st['B']} (required {st['required_B']}); hypotheses ever registered: {st['n_hypotheses_ever']}; registered-stage resume: {st['resumed_registered_stage']}"]
         if st.get("b_warning"):
             L.append(f"* WARNING: {st['b_warning']}")
-        if st["verdict"] in (V_NONE, V_INCONCLUSIVE, V_INVALID, V_NOT_CONFIRMED):
+        if st["verdict"] in (V_NONE, V_INCONCLUSIVE, V_INVALID, V_NOT_CONFIRMED, V_NOT_ASKED):
             L.append("* STOP RULE applies: documented, the next stage is not run, no variants are tried inside this preregistration.")
         L += ["", "Controls and balance (preflight):", "", "| market | controls version | status | match | smd min | smd atr | smd spread | cens. diff pp (manifest / observed) | manifest sha | data fingerprint |", "|---|---|---|---|---|---|---|---|---|---|"]
         for m, v in st["preflight"].items():
@@ -1358,6 +1387,9 @@ def main(argv: list[str] | None = None) -> int:
     a.out, a.root = str(out), str(root)
     if a.attest:
         return attest(prereg, root, out, markets)
+    if not a.preflight and (err := check_frozen(prereg)) is not None:  # BEFORE any file is written (preflight file, report, registry, lock)
+        print(f"REFUSED (not frozen): {err}")
+        return EXIT_NOT_FROZEN
     # ---- preflight FIRST: a failure registers nothing and consumes no stop rule
     pre = preflight(prereg, root, a.stage, markets, load_attestation(out))
     out.mkdir(parents=True, exist_ok=True)
