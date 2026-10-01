@@ -12,6 +12,8 @@ not available in this checkout; 9 a second ``--shadow``/``--demo-auto`` on the s
                      ZERO orders (stack constructed in shadow mode, runner never creates intents).
 * ``--demo-auto --confirm-demo-auto=I-AUTHORIZE-ACTIVTRADES-DEMO-TRADING-ONLY``
                      same loop, accepted opportunities are traded on the ActivTrades DEMO account.
+* ``--demo-auto --flatten-only``  Lane R EOD recovery: flatten own-magic exposure only, never opens anything, exit 0 when flat.
+* ``--print-operating-policy``  per-market effective flat deadline + derived entry runway (read-only diagnostic).
 * ``--status``       print the heartbeat + verdict (older than 90 s => NOT RUNNING).
 * ``--analyze``      offline report (+ parquet export) over the recorded DEMO data; ``--phase`` filters.
 * ``--restart-proof`` the proven C7 restart worker.
@@ -53,6 +55,11 @@ def _parser() -> argparse.ArgumentParser:
     modes.add_argument("--status", action="store_true")
     modes.add_argument("--analyze", action="store_true")
     modes.add_argument("--restart-proof", action="store_true")
+    modes.add_argument(
+        "--print-operating-policy", action="store_true",
+        help="Lane R: print the versioned live operating policy with the per-market EFFECTIVE flat deadline and the DERIVED entry "
+             "runway (summer / winter, incl. Brent). Read-only: no broker, no store.",
+    )
     modes.add_argument("--record-canary", type=Path, default=None, metavar="FILE")
     parser.add_argument(
         "--exit-policy", choices=("fixed_1_5r", "staged", "staged_profiles"), default="fixed_1_5r",
@@ -65,6 +72,12 @@ def _parser() -> argparse.ArgumentParser:
         "--geometry-source", choices=("family", "structure"), default="family",
         help="initial stop geometry: family (DEFAULT, unchanged) or structure (chart invalidation stop; per-family "
              "opt-in is the supported use). The structure geometry is always logged next to the family one (shadow)",
+    )
+    parser.add_argument(
+        "--flatten-only", action="store_true",
+        help="Lane R EOD RECOVERY (with --demo-auto): DEMO/account checks, broker connect, state recovery, reconciliation, then ONLY "
+             "reduce-only flatten of own-magic positions (bounded backoff) until the broker is flat and reconciled -> exit 0 "
+             "(stop_reason eod_recovery_flat_confirmed). Never scans, never submits an entry, never learns; usable at any time/day.",
     )
     parser.add_argument("--confirm-demo-auto")
     parser.add_argument("--heartbeat", type=Path, default=None)
@@ -183,7 +196,7 @@ def _run(args: argparse.Namespace, mode: str) -> int:
             exit_policy=args.exit_policy,
             out_of_window_shadow=args.out_of_window_shadow, shadow_universe=args.shadow_universe,
             exit_plan=None if args.geometry_source == "family" else ExitPlanConfig(geometry_source=args.geometry_source),
-            operating_policy=operating, daily=args.daily,
+            operating_policy=operating, daily=args.daily, flatten_only=args.flatten_only,
         )
     except rn.LiveStackRefused as exc:
         print(f"REFUSED: {exc}", file=sys.stderr)
@@ -199,7 +212,8 @@ def _run(args: argparse.Namespace, mode: str) -> int:
 
 def _run_single_instance(args: argparse.Namespace, mode: str) -> int:
     """One runner per artifacts directory.  Refused BEFORE any MT5 attach / store open."""
-    lock = instance_lock.InstanceLock(args.artifacts / "runner.lock", role=f"runner:{mode}")
+    lock = instance_lock.InstanceLock(args.artifacts / "runner.lock",
+                                      role=f"runner:{mode}{':flatten-only' if args.flatten_only else ''}")
     try:
         lock.acquire()
     except instance_lock.LockHeld as exc:
@@ -217,6 +231,12 @@ def main(argv: list[str] | None = None) -> int:
         return _status(args.heartbeat or args.artifacts / "heartbeat.json")
     if args.analyze:
         return _analyze(args)
+    if args.print_operating_policy:
+        from demo.opportunity.operating_policy import load_operating_policy
+        from demo.opportunity.policy_report import operating_policy_report
+
+        print(json.dumps(operating_policy_report(load_operating_policy()), indent=1, sort_keys=True))
+        return 0
     if args.record_canary is not None:
         return _record_canary(args)
     if os.environ.get("MT5_ALLOW_ACCOUNT_LOGIN") == "1":
@@ -230,6 +250,9 @@ def main(argv: list[str] | None = None) -> int:
         return subprocess.run(command, cwd=REPO_ROOT, check=False).returncode
     if args.restart_proof:
         return _proven_worker("--restart-proof")
+    if args.flatten_only and not args.demo_auto:
+        print("REFUSED: --flatten-only is a modifier of --demo-auto", file=sys.stderr)
+        return 2
     if args.demo_auto and args.confirm_demo_auto != CONFIRMATION:
         print(
             "REFUSED: --demo-auto requires "

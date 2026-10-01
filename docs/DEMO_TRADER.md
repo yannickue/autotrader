@@ -365,3 +365,31 @@ An unmapped `(family, mode)` is never guessed: runtime falls to the flagged FIXE
 structure-failure exit; a later opposite signal is a NEW trade only after the exposure is closed and risk/arbitration permit);
 "renewed breakout" for FAILED_MOVE is expressed by the structural stop + structure failure, not a separate rule; the fixed-1.5R baseline
 outcome is recorded as shadow geometry (family stop/target) and counterfactually evaluated by the exit lab, not by a second live path.
+### Lane R - independent EOD recovery (flatten-only), derived entry runway (policy `live-op-3`)
+
+**Guarantee (exact wording): every controllable execution path actively enforces flat-before-22:00; an unavailable broker cannot be
+forced to execute.** Nothing here claims more.
+
+* `AutoTrader-EodRecovery` (separate scheduled task, Mon-Fri local Berlin time): 21:45, 21:50, 21:55, 22:00, then every 2 min until
+  22:30 -> `run_eod_recovery.ps1` -> `scripts/autostart/eod_recovery.py`. The 15-min repetition of the daytime task is no longer the
+  last defence. Locks: `eod_recovery.lock` (second invocation refused, exit 9), `runner.lock`.
+* Exit codes of `eod_recovery.py`: 0 flat confirmed / healthy runner owns the day / day already finished flat; 2 bad args or DEMO
+  authorisation refused; 9 another recovery running; 10 live runner pid with stale heartbeat (CRITICAL alert, no second runner, not
+  killed); 20 retry window ended WITHOUT confirmed flat (CRITICAL).
+* State machine: CHECK -> HEALTHY_RUNNER (exit 0) | UNHEALTHY_RUNNER (10) | DAY_DONE (0) | LAUNCH -> FLAT_CONFIRMED (0) | LOCK_LOST
+  (re-CHECK) | BAD_ARGS (2) | RETRY (CRITICAL alert every cycle, 30 s) -> CHECK ... -> GAVE_UP (20) at 23:30 Berlin (a late manual run gets
+  at least 30 min).
+* `demo_trader.py --demo-auto --flatten-only`: same start path (DEMO checks, account binding, state recovery, reconciliation); then
+  only the existing sweep (reduce-only, bounded backoff 5/10/20/30/60 s, broker-ticket fallback for positions the registry lost or the
+  Nautilus cache cannot close). No feeds / scans / engine / shadow universe / learning; `StackConfig.flatten_only` closes the entry gate
+  permanently (`flatten_only_mode`). Allowed at any time/weekday; STOP file and `deploy_approved.json` do not gate it. Foreign
+  (other magic) positions are never closed: heartbeat `eod_foreign_positions` + WARNING alert. Exit 0, `stop_reason=eod_recovery_flat_confirmed`.
+* Deployment gate (normal task only): `deploy_approved.json` (`approve_deploy.ps1`, `-Revoke`); supervisor exit 30
+  (NOT_APPROVED / SHA_MISMATCH / DIRTY_CHECKOUT / GIT_UNAVAILABLE), never restarted. `register_task.ps1 -Disabled`, `enable_task.ps1`, `disable_task.ps1`.
+* Derived entry runway: `latest_safe_entry = effective_flat - derive_entry_runway(...)` = decision latency (bar + evaluation budget)
+  + execution/reconcile (2 x flatten_wait + backoff[0] + close_grace) + broker-session margin (non-zero only if the broker closes sooner
+  than that after the flat) + per-asset-class liquidity allowance (placeholder; measured p95 hook not wired to the store), rounded up to
+  whole minutes and a bar multiple. `demo_trader.py --print-operating-policy` prints every market, summer/winter.
+* Brent stops earlier on purpose: its (provisional) calendar flat is 18:55 Berlin and binds before the global 21:55; the observed broker
+  break is 20:55 UTC (22:55 Berlin summer / 21:55 Berlin winter, winter break not yet observed). effective deadline = MIN(global flatten
+  start, broker close - buffer, calendar flat); no late-session extension is invented.

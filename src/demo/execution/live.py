@@ -255,8 +255,14 @@ class StackConfig:
     # Lane P: live operating policy (global flatten deadline / flatten sweep / entry gate). None (DEFAULT) = behaviour
     # exactly as before (row-based forced flat only); the runner factory passes the versioned live policy.
     operating_policy: OperatingPolicy | None = None
+    # Lane R: FLATTEN-ONLY recovery mode (``demo_trader.py --demo-auto --flatten-only``). The entry gate is PERMANENTLY closed
+    # (``submit`` can never reach the broker, ``_pre_reject`` repeats the refusal) and the end-of-day sweep is ALWAYS active:
+    # every own-magic position is closed reduce-only whatever the time of day, weekday or registry state. Never reopens trading.
+    flatten_only: bool = False
 
     def __post_init__(self) -> None:
+        if self.flatten_only and self.operating_policy is None:
+            raise ValueError("flatten_only requires the live operating policy (the sweep backoff / deadline come from it)")
         if self.exit_policy not in EXIT_POLICIES:
             raise ValueError(f"exit_policy must be one of {EXIT_POLICIES}, got {self.exit_policy!r}")
         if self.exit_policy in MANAGED_EXIT_POLICIES and self.staged_exit is None:
@@ -609,6 +615,7 @@ class Mt5DemoStack:
         self._eod_confirmed_utc: str | None = None
         self._eod_detail: str | None = None
         self._eod_open_positions = 0
+        self._eod_foreign: list[dict[str, Any]] = []
         self._eod_failures: dict[str, int] = {}
         self._eod_next_try: dict[str, datetime] = {}
         self._skew_obs: collections.deque[float] = collections.deque(
@@ -1381,6 +1388,8 @@ class Mt5DemoStack:
         there), ``_repair_protection`` / ``_lane_protect`` (tighten-only SL changes through the
         adapter) and the tranche ledger; none of them widens a stop.
         """
+        if self._cfg.flatten_only:  # Lane R: the entry gate is permanently closed in recovery mode (no registry write, no broker)
+            return [Rejected(intent_id=intent.intent_id, reason=G.R_FLATTEN_ONLY)]
         with self._submit_lock:
             cached = self._results.get(intent.intent_id)
             if cached is not None:
@@ -1467,6 +1476,8 @@ class Mt5DemoStack:
         return [rejected] if accepted is None else [accepted, rejected]
 
     def _pre_reject(self, intent: TradeIntent, now: datetime) -> str | None:
+        if self._cfg.flatten_only:
+            return G.R_FLATTEN_ONLY
         if self._halt_reason:
             return G.R_HALTED
         info = self._markets.get(intent.market)
@@ -1486,10 +1497,10 @@ class Mt5DemoStack:
         if op is not None:
             if op.flatten_active(now):
                 return G.R_FLATTEN_WINDOW  # mandatory flatten phase: no new exposure at all
-            if intent.forced_flat_utc is not None and (
-                now >= parse_utc(intent.forced_flat_utc) - timedelta(minutes=op.min_entry_runway_min)
-            ):
-                return G.R_ENTRY_RUNWAY
+            if intent.forced_flat_utc is not None:
+                flat = parse_utc(intent.forced_flat_utc)
+                if now >= flat - timedelta(minutes=op.entry_runway_min(intent.market, flat)):  # Lane R: DERIVED runway
+                    return G.R_ENTRY_RUNWAY
         return None
 
     @staticmethod
@@ -1863,8 +1874,11 @@ class Mt5DemoStack:
         except concurrent.futures.TimeoutError:
             outcome = JobOutcome("failed", "flatten_timeout")
         still_open = self._own_symbol_positions(info)
-        if outcome.status == "flat" and outcome.reason == "no_open_position" and still_open:
-            # M1: Nautilus holds no position but the broker does (never adopted / cache lost): reduce-only close by
+        # Lane R: ONLY the flatten-only recovery also falls back to the ticket close when Nautilus FAILED (e.g. an EXTERNAL-adopted
+        # position id the NETTING OMS refuses); the normal sweep keeps one broker attempt per backoff step (Lane P semantics).
+        if still_open and ((outcome.status != "flat" and self._cfg.flatten_only) or outcome.reason == "no_open_position"):
+            # M1: Nautilus holds no position but the broker does (never adopted / cache lost) - or Nautilus could not close it
+            # (Lane R: e.g. an EXTERNAL-adopted position id the NETTING OMS refuses, a denial, a timeout): reduce-only close by
             # the broker ticket through the adapter (verifies own magic, side and volume against the broker).
             with contextlib.suppress(_Reject):  # a refused / unreachable close = still open: the caller retries
                 self._on_lane(self._lane_close_by_ticket, info, tag, retry_reads=False)
@@ -2629,6 +2643,10 @@ class Mt5DemoStack:
             "eod_flat_confirmed_utc": self._eod_confirmed_utc,
             "eod_detail": self._eod_detail,
             "eod_own_positions_open": self._eod_open_positions,
+            **(
+                {"eod_foreign_positions": list(self._eod_foreign), "flatten_only": True}
+                if self._cfg.flatten_only or self._eod_foreign else {}
+            ),
         }
 
     def _eod_sweep(self, current: datetime, op: OperatingPolicy) -> list[ExecutionEvent]:
@@ -2646,9 +2664,14 @@ class Mt5DemoStack:
             self._eod_failures.clear()
             self._eod_next_try.clear()
         events: list[ExecutionEvent] = []
-        global_window = op.flatten_active(current)
+        global_window = op.flatten_active(current) or self._cfg.flatten_only  # Lane R: recovery mode = the window is always open
         positions = self._on_lane(self._lane_positions, strict=True)
         own = [p for p in positions if int(p.magic) == self._cfg.magic]
+        # foreign / canary positions are NEVER touched: they are only reported (heartbeat ``eod_foreign_positions``)
+        self._eod_foreign = [
+            {"ticket": int(p.ticket), "symbol": str(p.symbol), "magic": int(p.magic), "volume": float(p.volume)}
+            for p in positions if int(p.magic) != self._cfg.magic
+        ][:20]
         due: dict[str, list[Any]] = {}
         unmapped: list[str] = []
         for position in own:
@@ -2665,6 +2688,11 @@ class Mt5DemoStack:
         problems: list[str] = [f"unmapped_own_position:{sym}" for sym in unmapped]
         if unmapped:
             self._halt("eod_unmapped_own_position")
+            if self._cfg.flatten_only and current >= self._eod_next_try.get("__unmapped__", current):
+                # Lane R: an own-magic position on a symbol the registry does not know is still OURS: reduce-only close by ticket
+                denied = self._close_unmapped_own(own, current)
+                if denied:
+                    problems.extend(f"unmapped_close_denied:{d}" for d in denied)
         for market in sorted(due):
             info = self._markets.get(market)
             if info is None:
@@ -2694,6 +2722,32 @@ class Mt5DemoStack:
         self._eod_open_positions = remaining
         self._eod_update(current, op, global_window, remaining=remaining, problems=problems)
         return events
+
+    def _close_unmapped_own(self, own: list[Any], current: datetime) -> list[str]:
+        """Lane R (flatten-only): reduce-only close by broker ticket of own-magic positions whose symbol has no registered market.
+        Returns the denial reasons; schedules a bounded backoff retry on any denial."""
+        denied: list[str] = []
+        for position in own:
+            if self._canonical_of(str(position.symbol)) is not None:
+                continue
+            try:
+                denial = self._on_lane(self._lane_close_ticket, int(position.ticket), "eod-flat:unmapped", retry_reads=False)
+            except _Reject as exc:
+                denial = exc.reason
+            if denial:
+                denied.append(f"{position.ticket}:{denial}")
+        count = self._eod_failures.get("__unmapped__", 0) + 1 if denied else 0
+        if denied:
+            self._eod_failures["__unmapped__"] = count
+            self._eod_next_try["__unmapped__"] = current + timedelta(seconds=self._cfg.operating_policy.backoff_s(count))  # type: ignore[union-attr]
+        else:
+            self._eod_failures.pop("__unmapped__", None)
+            self._eod_next_try.pop("__unmapped__", None)
+        return denied
+
+    def _lane_close_ticket(self, ticket: int, tag: str) -> str | None:
+        assert self._adapter is not None
+        return self._adapter.exec_client.emergency_close(ticket, tag=tag)
 
     def _eod_update(
         self, current: datetime, op: OperatingPolicy, global_window: bool, *, remaining: int, problems: list[str]

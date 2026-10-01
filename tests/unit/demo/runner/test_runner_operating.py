@@ -165,7 +165,7 @@ def test_daily_exits_zero_with_eod_flat_shutdown_only_after_deadline_when_flat_a
     hb = json.loads(r.cfg.heartbeat_path.read_text())
     assert hb["stop_reason"] == "eod_flat_shutdown" and hb["process_alive"] is False
     assert hb["flatten_state"] == "FLAT_CONFIRMED" and hb["eod_flat_confirmed_utc"] and hb["daily_mode"] is True
-    assert hb["operating_policy"]["version"] == "live-op-2"
+    assert hb["operating_policy"]["version"] == "live-op-3"
     store.close()
 
 

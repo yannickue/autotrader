@@ -1,12 +1,14 @@
 <#
 .SYNOPSIS
-  Remove the AutoTrader-DemoDaily scheduled task (does not stop a running trader, does not touch MT5).
+  Remove the AutoTrader-DemoDaily and AutoTrader-EodRecovery scheduled tasks (does not stop a running trader, does not touch MT5).
 #>
 [CmdletBinding()]
-param([string]$TaskName = 'AutoTrader-DemoDaily', [switch]$DryRun)
+param([string]$TaskName = 'AutoTrader-DemoDaily', [string]$EodTaskName = 'AutoTrader-EodRecovery', [switch]$DryRun)
 $ErrorActionPreference = 'Stop'
-$t = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
-if (-not $t) { Write-Host "task '$TaskName' is not registered."; exit 0 }
-if ($DryRun) { Write-Host "DRY RUN: would run Unregister-ScheduledTask -TaskName '$TaskName' -Confirm:`$false"; exit 0 }
-Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
-Write-Host "task '$TaskName' unregistered. A running supervisor/runner is NOT stopped (use stop_trader.ps1)."
+foreach ($name in @($TaskName, $EodTaskName)) {
+    $t = Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue
+    if (-not $t) { Write-Host "task '$name' is not registered."; continue }
+    if ($DryRun) { Write-Host "DRY RUN: would run Unregister-ScheduledTask -TaskName '$name' -Confirm:`$false"; continue }
+    Unregister-ScheduledTask -TaskName $name -Confirm:$false
+    Write-Host "task '$name' unregistered. A running supervisor/runner/recovery is NOT stopped (use stop_trader.ps1)."
+}
