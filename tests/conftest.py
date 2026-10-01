@@ -67,6 +67,8 @@ SLOW_FILES = frozenset(
         # GATE A: real OpportunityEngine replayed over real DEV slices, observer on/off
         # (~130 s, 12 tests): real-data parity suite, kept out of the < 2 min FAST loop.
         "tests/unit/demo/test_observer_parity.py",
+        # research workbench: real Nautilus BacktestEngine x ~12 scenarios (~250 MB each, ~40 s)
+        "tests/unit/research_workbench/test_differential_e2e.py",
     }
 )
 
