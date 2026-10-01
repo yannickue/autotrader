@@ -43,3 +43,23 @@ def test_research_only_alpha_path_stays_demo_free() -> None:
 
 def test_alpha_common_also_pulls_markets_tests() -> None:
     assert "tests/unit/markets" in _flat(run_tests.plan_for(["src/alpha/common/market_costs.py"]))
+
+
+def test_unmapped_non_doc_path_fails_open_to_fast_tier() -> None:
+    plan = run_tests.plan_for(["totally_new_dir/thing.py"])
+    assert ["-m", "fast"] in plan
+
+
+def test_docs_only_change_selects_nothing() -> None:
+    assert run_tests.plan_for(["docs/ARCHITECTURE.md", "README.md"]) == []
+
+
+def test_git_failure_is_loud_not_an_empty_plan(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _Res:
+        returncode = 128
+        stdout = ""
+        stderr = "fatal: bad revision"
+
+    monkeypatch.setattr(run_tests.subprocess, "run", lambda *a, **k: _Res())
+    with pytest.raises(RuntimeError, match="git diff --name-only"):
+        run_tests.changed_paths("main")

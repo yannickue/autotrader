@@ -189,18 +189,25 @@ def run(cmd: list[str], timeout: int, dry: bool) -> int:
     return rc
 
 
-def changed_paths(base: str) -> list[str]:
-    out = subprocess.run(
-        ["git", "diff", "--name-only", f"{base}...HEAD"],
+def _git_names(args: list[str]) -> list[str]:
+    """`git diff --name-only ...`; a git failure must be loud (never an empty = 'no tests' plan)."""
+    res = subprocess.run(
+        ["git", "diff", "--name-only", *args],
         cwd=ROOT,
         capture_output=True,
         text=True,
         check=False,
-    ).stdout.split()
-    out += subprocess.run(
-        ["git", "diff", "--name-only"], cwd=ROOT, capture_output=True, text=True, check=False
-    ).stdout.split()
-    return sorted(set(out))
+    )
+    if res.returncode != 0:
+        raise RuntimeError(
+            f"git diff --name-only {' '.join(args)} failed (rc={res.returncode}): "
+            f"{res.stderr.strip()[:300]}"
+        )
+    return res.stdout.split()
+
+
+def changed_paths(base: str) -> list[str]:
+    return sorted(set(_git_names([f"{base}...HEAD"]) + _git_names([])))
 
 
 def plan_for(paths: list[str]) -> list[list[str]]:
@@ -223,6 +230,10 @@ def plan_for(paths: list[str]) -> list[list[str]]:
                         t[2:] if t.startswith("m:") else t
                     )
                 break
+        else:
+            # Unmapped path: fail OPEN to more tests (FAST tier), never to none; pure docs exempt.
+            if not (p.startswith("docs/") or p.endswith(".md")):
+                marks.append("fast")
     plan: list[list[str]] = []
     expanded: list[str] = []
     for t in targets:
