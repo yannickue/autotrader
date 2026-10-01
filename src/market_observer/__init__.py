@@ -1,4 +1,4 @@
-"""Market Structure Observer: observation-only, shadow-only, NOT alpha validated. See schema.py for the contract."""
+"""Market Structure Observer: observation-only, shadow-only, NOT alpha validated (contract in schema.py)."""
 
 from market_observer.schema import (  # noqa: F401
     GROUP_VERSIONS,
