@@ -388,7 +388,7 @@ class RunnerConfig:
     # ---- Market Structure Observer (shadow, OBSERVATION ONLY, DEFAULT OFF; docs/OBSERVER.md): records market-structure features of every opportunity of a
     # closed bar AFTER its decision is final; never changes an opportunity, decision, intent, stop, target, size, risk or execution. Forced OFF in flatten_only.
     market_observer_enabled: bool = False
-    market_observer_budget_s: float = 0.4  # wall budget of ALL observer work of one runner cycle
+    market_observer_budget_s: float = 0.15  # wall budget of ALL observer work of one runner cycle (lowered from 0.4: a cold start must not delay the next cycle)
 
     def __post_init__(self) -> None:
         if self.mode not in MODES:

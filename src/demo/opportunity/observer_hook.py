@@ -59,7 +59,7 @@ from market_observer.observer import (
 from market_observer.schema import OBSERVER_VERSION, ObserverBars, ObserverRecord
 
 NS = 10**9
-DEFAULT_BUDGET_S = 0.4  # wall budget of ALL observer work of one runner cycle (frame arrays, buffer sync, registry, features, persistence)
+DEFAULT_BUDGET_S = 0.15  # wall budget of ALL observer work of one runner cycle (frame arrays, buffer sync, registry, features, persistence)
 DEFAULT_MAX_PENDING = 64  # events waiting per market; beyond this the oldest are dropped (counted)
 SYNC_CHUNK_BARS = 500  # bars appended to a BarBuffer per budget check (ATR per bar is the expensive part of a cold start / reset)
 PERSIST_RESERVE_S = 0.02  # share of the cycle budget reserved for the runner's one-transaction persistence of the cycle's records

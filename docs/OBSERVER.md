@@ -37,7 +37,7 @@ closed M5 frame (engine, read only) --+
 
 | Where | What |
 |---|---|
-| `RunnerConfig.market_observer_enabled` (default False), `market_observer_budget_s` (0.4) | runner flag |
+| `RunnerConfig.market_observer_enabled` (default False), `market_observer_budget_s` (0.15) | runner flag |
 | `build_live_runner(market_observer=None)`, `scripts/demo_trader.py --market-observer / --no-market-observer` | CLI / factory; default OFF; `--flatten-only` forces OFF |
 | `scripts/autostart/supervisor.py` | NOT changed (production flags untouched) |
 | heartbeat `market_observer` | ONLY when the flag is on: `{enabled, version, records_written, records_built, errors, last_cycle_ms, persist_ms_total, enqueue_ms_max, warmup_false_count, budget_s, budget_exhausted, skipped_*, deferred, dropped_pending, resets, pending, bars_seen, last_error}`. With the flag OFF the key does not exist (heartbeat dict, `DemoStore` schema, every table, the artifacts dir: exactly as before Lane O; tested against a baseline built from git `0d2ec08`) |
@@ -59,7 +59,7 @@ Pattern copied from Lane U2 (`OutOfWindowShadow` / `ShadowUniverseScanner`): fla
    queue (64). No array conversion, no buffer sync, no registry step, no features, no I/O. Measured: ~0.2 ms per call even with a 6000-bar frame.
 2. `drain_cycle()`, once per cycle in the post-scan section: `frame_arrays`, `BarBuffer.sync` (chunked: `max_append` = 500 bars per budget check, so a
    6000-bar cold start or a buffer reset never runs as one block), the level-registry catch-up (~1.2 ms/bar), feature building (~34 ms per event) and
-   (`charge`) the runner's persistence: all under ONE per-cycle budget (`market_observer_budget_s`, default 0.4 s; 0.02 s of it is reserved for the persist;
+   (`charge`) the runner's persistence: all under ONE per-cycle budget (`market_observer_budget_s`, default 0.15 s; 0.02 s of it is reserved for the persist;
    an event is not started when less than the moving-average event cost is left). Work that does not fit stays queued and continues next cycle; queue
    overflow drops the oldest event and counts it (`skipped_budget`); the next cycle's start is never blocked beyond the budget.
 
@@ -131,7 +131,7 @@ had ~4.8 KB of JSON payload alone), one 200-row batch commits in ~44 ms, a typic
    `demo.sqlite` (no table differs, there is no observer table), the stack's submits and the heartbeat (minus its `market_observer` section, which only exists
    when on) are identical ON vs OFF; one observer row per persisted opportunity in `observer.sqlite`; records of a cycle go out in one batched call; a
    crashing hook and a failing observer write change nothing.
-3. Runner level, TIMING (`tests/unit/demo/runner/test_runner_observer_timing.py`, Lane H): four markets in the same cycles, the real 0.4 s budget, the
+3. Runner level, TIMING (`tests/unit/demo/runner/test_runner_observer_timing.py`, Lane H): four markets in the same cycles, the real 0.15 s budget, the
    engine's 6000-bar production window (cold start in cycle 0) and the REAL wall clock. Per cycle the scan-start offset of every market is measured with the
    observer OFF and ON (minimum over 3 interleaved repeats each); the ON-OFF difference must be <= epsilon = max(60 ms, 2 x run-to-run noise of the OFF case,
    noise = best-vs-second-best OFF run per cell), and epsilon itself must stay < 0.75 x budget. The test also asserts that all observer work (everything but the
@@ -163,7 +163,7 @@ imports `market_observer`; the engine and decision modules never reference obser
 Cold start ~5.7 s of registry work per market (spread over cycles by the budget; with four markets the observer uses the whole budget for ~1-2 minutes of
 cycles after a start / reset and delays each following cycle's start by at most the budget); steady state per bar ~1.2 ms median without an event, ~33 ms per
 observed event (all five groups at the decision bar); `frame_arrays` of a 6000-row frame ~1 ms; the in-scan `on_bar` ~0.2 ms; a 500-bar buffer chunk a few
-tens of ms. Default cycle budget 0.4 s (all of it: arrays, sync, registry, features, persist).
+tens of ms. Default cycle budget 0.15 s (all of it: arrays, sync, registry, features, persist).
 
 ## What is NOT built / honest limits
 

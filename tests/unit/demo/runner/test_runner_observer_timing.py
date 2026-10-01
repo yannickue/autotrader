@@ -1,13 +1,13 @@
 # ruff: noqa: E501
 """Runner-level TIMING PARITY (Gate A, timing half): the observer must not delay the live scan of ANY later market of a cycle.
 
-Several markets in ONE cycle, the REAL 0.4 s observer budget, a 6000-bar cold start (the engine's production window) and the REAL wall clock
+Several markets in ONE cycle, the REAL 0.15 s observer budget, a 6000-bar cold start (the engine's production window) and the REAL wall clock
 (``time.perf_counter``, no fake clock). Per cycle the offset of every market's scan start relative to the cycle start is measured with the observer OFF
 and ON; the ON-vs-OFF difference must stay within an epsilon calibrated from the run-to-run noise of two OFF runs (documented below). The observer work
 (everything but the O(1) ``on_bar`` stash) must start after the LAST market's scan, and its in-cycle time must stay within budget + slack.
 
 Calibration (measured on the development machine, 6000-bar frames, 4 markets): see the printed TIMING_PARITY line. ``eps = max(EPSILON_FLOOR_S, 2 * noise)``
-with noise = max over cells of (second best - best) OFF run; ``eps`` must stay far below the 0.4 s budget (asserted: the pre-fix implementation delayed every later
+with noise = max over cells of (second best - best) OFF run; ``eps`` must stay far below the 0.15 s budget (asserted: the pre-fix implementation delayed every later
 market by the whole budget).
 """
 
@@ -30,7 +30,7 @@ from demo.testing import FakeClock, FakeStack
 
 MARKETS = ("GER40", "XAUUSD", "EURUSD", "NAS100")
 WINDOW = 6000
-BUDGET_S = 0.4
+BUDGET_S = 0.15
 N_CYCLES = 3
 EPSILON_FLOOR_S = 0.06
 ENQUEUE_MAX_S = 0.01  # the in-scan hook call is an O(1) stash
