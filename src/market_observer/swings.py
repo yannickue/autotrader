@@ -321,7 +321,13 @@ def swing_state(bars: ObserverBars, i: int, timeframe: str, detector: SwingDetec
 
 
 class SwingReplay:
-    """Incremental variant: swings of each segment are computed once and windowed/filtered by time. Equal to ``swing_state``."""
+    """TEST-ONLY HELPER (not used by any ``src`` module; a static test forbids importing it from ``src``; not exported from ``market_observer``).
+
+    Incremental variant for OFFLINE sweeps over a finished bar array: the swings of each SEGMENT are computed ONCE over the WHOLE segment, i.e. also
+    over bars AFTER the evaluated bar ``i``, and cached by ``(timeframe, segment start)``; the result at ``i`` is then windowed / filtered by confirmation
+    time. It equals ``swing_state`` on a full array (that equality is what the swing tests pin), but it is a LATENT FUTURE-LEAK HAZARD in any live or
+    growing-array context (the cache would be computed from an incomplete segment and never refreshed, and it reads bars beyond ``i``). The live observer
+    uses the pure ``swing_features(bars, i)`` instead. Do not use this class outside tests; numerical behaviour is deliberately unchanged."""
 
     def __init__(self, bars: ObserverBars, detector: SwingDetector = confirmed_swings) -> None:
         _check(bars)
