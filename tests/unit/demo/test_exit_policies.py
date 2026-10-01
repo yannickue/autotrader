@@ -73,7 +73,7 @@ def test_all_nine_policies_run_on_the_same_entry_and_bars():
 
 
 def test_policy_set_is_versioned_and_parameters_are_declared():
-    assert POLICY_SET_VERSION == POLICY_PARAMS["version"] == "eeq-policies-1"
+    assert POLICY_SET_VERSION == POLICY_PARAMS["version"] == "eeq-policies-2"
     for k in ("fixed_r", "be_trigger_r", "time_stop_bars", "momentum_threshold_atr", "runner_fractions", "tick_model"):
         assert k in POLICY_PARAMS
 

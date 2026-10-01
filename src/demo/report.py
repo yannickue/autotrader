@@ -279,6 +279,48 @@ def entry_exit_section(store: DemoStore, phase: str | None, rows: list[dict[str,
     }
 
 
+def shadow_exit_lab_section(store: DemoStore, phase: str | None, rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """'Shadow exit lab' (Lane W): parallel hypothetical exit policies on the SAME entries, per market x family x variant
+    (and per live profile), for closed strategy trades and labelled counterfactuals.  Rows without a stored lab (flag off /
+    legacy) are counted, never imputed.  Hypotheses only; no policy is promoted from this table."""
+    from demo.shadow_exit_lab import LAB_PARAMS, STATEMENT, summarise_groups
+
+    def row_of(snap: Any, entry_id: str, lab: dict[str, Any], kind: str) -> dict[str, Any]:
+        sig = snap.signal or {}
+        return {
+            "market": snap.market, "direction": snap.direction, "family": str(sig.get("family", "unknown")),
+            "variant": sig.get("variant"), "signal_ts": parse_utc(snap.signal_ts_utc), "structure_event_id": sig.get("structure_event_id"),
+            "entry_id": entry_id, "lab": lab, "kind": kind,
+        }
+
+    real: list[dict[str, Any]] = []
+    n_real_missing = 0
+    for r in rows:
+        snap = store.get_snapshot(r["opportunity_id"]) if r.get("opportunity_id") else None
+        lab = (store.get_outcome_extra(r["intent_id"]) or {}).get("shadow_exit_lab")
+        if snap is None or not lab:
+            n_real_missing += 1
+            continue
+        real.append(row_of(snap, r["intent_id"], lab, "REAL_TRADE"))
+    cf: list[dict[str, Any]] = []
+    n_cf_missing = 0
+    for c in store.list_counterfactuals(phase):
+        snap = store.get_snapshot(c.opportunity_id)
+        if snap is None or not c.shadow_exit_lab:
+            n_cf_missing += 1
+            continue
+        cf.append(row_of(snap, c.opportunity_id, c.shadow_exit_lab, "COUNTERFACTUAL"))
+    return {
+        "lab_version": LAB_PARAMS["lab_version"], "policy_set_version": LAB_PARAMS["policy_set_version"], "statement": STATEMENT,
+        "real_trades": {**summarise_groups(real), "n_without_lab": n_real_missing},
+        "counterfactuals": {**summarise_groups(cf), "n_without_lab": n_cf_missing},
+        "note": ("real trades: shadow policies run on the actual fill / stop with the bars to the flat deadline; counterfactuals: "
+                 "intended entry, horizon bars only (open policies are censored at the horizon, structural levels not recorded -> "
+                 "structural policies NOT_APPLICABLE). Paired differences vs fixed_1_5r use only entries where both apply; the "
+                 "independent unit is the event cluster."),
+    }
+
+
 def _side_group(store: DemoStore, phase: str | None, kind: str) -> dict[str, Any]:
     """Censored (manual / external / emergency flatten) or canary trades: shown SEPARATELY, never mixed
     into the strategy metrics."""
@@ -426,6 +468,7 @@ def build_report(store: DemoStore, phase: str | None = None) -> dict[str, Any]:
         "generated_utc": datetime.now().astimezone().isoformat(),
         "execution_analytics": _execution_analytics(store, phase, rows),
         "entry_exit_quality": entry_exit_section(store, phase, rows),
+        "shadow_exit_lab": shadow_exit_lab_section(store, phase, rows),
         "censored_exits": censored,
         "canary_trades": canary,
         "account_pnl_reconciliation": {
@@ -509,6 +552,31 @@ def _render_entry_exit(eeq: dict[str, Any]) -> list[str]:
     return L
 
 
+def _render_shadow_lab(sec: dict[str, Any]) -> list[str]:
+    L = ["", "## Shadow exit lab", "",
+         f"`{sec['lab_version']}` / policies `{sec['policy_set_version']}`. {sec['note']}", "", f"**{sec['statement']}.**", ""]
+    for title, key in (("Closed strategy trades", "real_trades"), ("Labelled counterfactuals", "counterfactuals")):
+        blk = sec[key]
+        ov = blk["overall"]
+        L += [f"### {title} (n={ov.get('n', 0)}; {blk['n_without_lab']} without a stored lab)", ""]
+        if not ov.get("n"):
+            L += ["No rows.", ""]
+            continue
+        for name, c in (("ALL", ov), *blk["groups"].items(), *((f"live profile {k}", v) for k, v in blk["by_live_profile"].items())):
+            flag = " - **n too small** (descriptive only)" if c["small_n"] else ""
+            L += [f"**{name}**: n {c['n']}, event clusters {c['n_event_clusters']}, same-entry assertion "
+                  f"{'OK' if c['same_entry_assertion'] else 'VIOLATED'}, live mean R {_fmt(c['live']['mean_r'])} (n {c['live']['n']}){flag}", "",
+                  "| policy | n appl. | NA share | mean R | median R | capture | giveback | paired dR vs fixed_1_5r (pairs/clusters) |",
+                  "|---|---|---|---|---|---|---|---|"]
+            for pol, p in c["policies"].items():
+                pd_ = c["paired_vs_fixed_1_5r"].get(pol)
+                pair = "-" if pd_ is None else f"{_fmt(pd_['mean_diff_r'])} ({pd_['n_pairs']}/{pd_['n_event_clusters']}{', n too small' if pd_['small_n'] else ''})"
+                L.append(f"| {pol} | {p['n_applicable']} | {_fmt(p['share_not_applicable'])} | {_fmt(p['mean_r'])} | {_fmt(p['median_r'])} | "
+                         f"{_fmt(p['mean_capture_ratio'])} | {_fmt(p['mean_giveback_r'])} | {pair} |")
+            L.append("")
+    return L
+
+
 def render_markdown(report: dict[str, Any]) -> str:
     m = report["metrics"]
     acct = report.get("account") or {}
@@ -556,6 +624,9 @@ def render_markdown(report: dict[str, Any]) -> str:
     eeq = report.get("entry_exit_quality")
     if eeq:
         L += _render_entry_exit(eeq)
+    sel = report.get("shadow_exit_lab")
+    if sel:
+        L += _render_shadow_lab(sel)
     rec = report.get("account_pnl_reconciliation")
     if rec:
         L += ["", "## Account P/L reconciliation (closed trades)", "", f"- strategy {_fmt(rec['strategy_eur'])} | censored {_fmt(rec['censored_eur'])} | canary {_fmt(rec['canary_eur'])} | total {_fmt(rec['total_closed_eur'])} EUR"]

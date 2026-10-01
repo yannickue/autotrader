@@ -27,6 +27,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta
 from decimal import Decimal
+from time import perf_counter
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -64,6 +65,7 @@ from demo.exit_policies import (
     simulate_all,
 )
 from demo.opportunity.operating_policy import OperatingPolicy
+from demo.shadow_exit_lab import evaluate_shadow, failed_move_level
 
 STUDY_VERSION = "eeq-study-1"
 HISTORY_BARS = 120  # closed M5 bars of structure history (production ExitPlanConfig.bars)
@@ -153,8 +155,14 @@ def _series(d: FamilyData, ts: Sequence[datetime], lo: int, hi: int) -> BarSerie
 
 
 # ---- entry set ----------------------------------------------------------------------------------------
-def build_entry_rows(mi: MarketInputs, op: OperatingPolicy, *, limit: int | None = None) -> tuple[list[dict[str, Any]], dict[str, int]]:
-    """All analysed entries of one market (one row per candidate), plus exclusion counters (never silent)."""
+def build_entry_rows(
+    mi: MarketInputs, op: OperatingPolicy, *, limit: int | None = None, shadow_lab: bool = False,
+    candidates_fn: Any = None,
+) -> tuple[list[dict[str, Any]], dict[str, int]]:
+    """All analysed entries of one market (one row per candidate), plus exclusion counters (never silent).
+
+    ``shadow_lab`` (Lane W): additionally run the shadow exit lab on the SAME entry/bars (row key ``shadow_lab``; the
+    Lane X fields are unchanged).  ``candidates_fn(data, fs)`` replaces the family generator (random-entry control)."""
     d = mi.data
     n = len(d)
     ts_index = pd.DatetimeIndex(mi.frame["ts"])
@@ -166,7 +174,7 @@ def build_entry_rows(mi: MarketInputs, op: OperatingPolicy, *, limit: int | None
     rows: list[dict[str, Any]] = []
     for fs in mi.specs:
         spec = fs.spec
-        cands = generate_candidates(d, spec, fs.thr)
+        cands = candidates_fn(d, fs) if candidates_fn is not None else generate_candidates(d, spec, fs.thr)
         for ci in range(len(cands.decision_idx)):
             i = int(cands.decision_idx[ci])
             j = i + 1
@@ -225,10 +233,11 @@ def build_entry_rows(mi: MarketInputs, op: OperatingPolicy, *, limit: int | None
             if ev and ev.get("break_bar_offset") is not None:
                 event_id = f"{mi.market}:{direction}:{ts[i - int(ev['break_bar_offset'])].isoformat()}"
             entry_id = f"{mi.market}:{fs.strategy_id}:{direction}:{signal.isoformat()}"
+            fm_level = failed_move_level(direction, {"variant": str(getattr(spec, "mode", "")), "structure_levels": ev}) if ev else None
             ei = EntryInput(
                 entry_id=entry_id, market=mi.market, direction=direction, fill=fill, stop=stop, entry_ts=signal, atr=atr,
                 tp1=tp1, tp2=tp2, tp1_id=geo.tp1.structure_id if geo and geo.tp1 else "tp1",
-                tp2_id=geo.tp2.structure_id if geo and geo.tp2 else "tp2", flat_utc=flat, pre=pre,
+                tp2_id=geo.tp2.structure_id if geo and geo.tp2 else "tp2", flat_utc=flat, pre=pre, failed_move_level=fm_level,
             )
             pol = simulate_all(ei, bars)
             base = pol[P_FIXED]
@@ -258,6 +267,11 @@ def build_entry_rows(mi: MarketInputs, op: OperatingPolicy, *, limit: int | None
                 "policy_capture": {p: (capture_ratio(mfe, r.r)[1] if r.r is not None else None) for p, r in pol.items()},
                 **fields,
             }
+            if shadow_lab:
+                t_lab = perf_counter()
+                row["shadow_lab"] = evaluate_shadow(ei, bars, live={"profile": "fixed_1_5r", "r": baseline_r, "exit_reason": base.final_reason, "mfe_r": mfe})
+                row["shadow_lab_ms"] = (perf_counter() - t_lab) * 1000.0
+                row["shadow_lab_bars"] = len(bars)
             rows.append(row)
             if limit is not None and len(rows) >= limit:
                 return rows, dict(excl)
