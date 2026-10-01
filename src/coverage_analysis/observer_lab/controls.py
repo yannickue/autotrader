@@ -156,14 +156,15 @@ def _report(
     else:
         smd = {"local_minute": float("nan"), "atr_pct": float("nan"), "spread_pct": float("nan")}
     n = len(ev)
-    return MatchingReport(n, len(matched), len(matched) / n if n else float("nan"), unmatched, int(len(control_idx)), smd, share, n_rejected_neighbourhood=rej_nb, n_rejected_range=rej_rng)
+    return MatchingReport(n, len(matched), len(matched) / n if n else float("nan"), unmatched, len(control_idx), smd, share, n_rejected_neighbourhood=rej_nb, n_rejected_range=rej_rng)
 
 
 # ---------------------------------------------------------------------------------------------- matched controls
 def match_controls(
-    bars: ObserverBars, event_idx: Sequence[int], *, spec: MatchSpec = MatchSpec(), seed: int = 0, eligible: np.ndarray | None = None,
+    bars: ObserverBars, event_idx: Sequence[int], *, spec: MatchSpec | None = None, seed: int = 0, eligible: np.ndarray | None = None,
 ) -> ControlSet:
     """``eligible`` (optional bool per bar) lets the caller add its own warm-up / data-quality exclusions."""
+    spec = spec or MatchSpec()
     ev = _check_events(bars, event_idx)
     n = len(bars)
     cov = bar_covariates(bars)

@@ -1,3 +1,4 @@
+# ruff: noqa: E501
 from __future__ import annotations
 
 import numpy as np
@@ -6,14 +7,17 @@ import pytest
 from coverage_analysis.observer_lab import stats as ST
 
 
+def _shifted(p, shift):
+    return 1 / (1 + np.exp(-(np.log(p / (1 - p)) + shift)))
+
+
 def sim(rng, n_days=60, per_day=5, p_e=0.4, p_c=0.4, day_sd=0.5):
     """Events + controls sharing a day-level random effect (the clustering the block bootstrap must respect)."""
     ye, de, yc, dc = [], [], [], []
     for d in range(n_days):
         shift = rng.normal(0, day_sd)
-        lo = lambda p: 1 / (1 + np.exp(-(np.log(p / (1 - p)) + shift)))  # noqa: E731
-        ye += list((rng.random(per_day) < lo(p_e)).astype(float))
-        yc += list((rng.random(per_day) < lo(p_c)).astype(float))
+        ye += list((rng.random(per_day) < _shifted(p_e, shift)).astype(float))
+        yc += list((rng.random(per_day) < _shifted(p_c, shift)).astype(float))
         de += [d] * per_day
         dc += [d] * per_day
     return np.array(ye), np.array(de), np.array(yc), np.array(dc)

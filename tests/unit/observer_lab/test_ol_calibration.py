@@ -1,4 +1,7 @@
+# ruff: noqa: E501
 from __future__ import annotations
+
+from itertools import pairwise
 
 import numpy as np
 import pytest
@@ -61,7 +64,7 @@ def test_reliability_table_equal_count_and_ece(truth):
     tab = C.reliability_table(p, y, n_bins=10)
     assert len(tab) == 10 and max(r["n"] for r in tab) - min(r["n"] for r in tab) <= 1
     assert sum(r["n"] for r in tab) == len(p)
-    assert all(r["mean_p"] <= r2["mean_p"] for r, r2 in zip(tab, tab[1:], strict=False))
+    assert all(r["mean_p"] <= r2["mean_p"] for r, r2 in pairwise(tab))
     assert all(r["ci_low"] <= r["mean_y"] <= r["ci_high"] for r in tab)
     assert C.expected_calibration_error(p, y) < 0.03
     assert C.expected_calibration_error(sigmoid(logit(p) + 1.0), y) > 0.1

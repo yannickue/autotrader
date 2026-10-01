@@ -19,7 +19,9 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from coverage_analysis.control import wilson as wilson_interval  # noqa: F401  (re-exported on purpose)
+from coverage_analysis.control import (
+    wilson as wilson_interval,  # noqa: F401  (re-exported on purpose)
+)
 
 INSUFFICIENT_EVIDENCE = "INSUFFICIENT_EVIDENCE"
 NOT_SIGNIFICANT = "NOT_SIGNIFICANT"

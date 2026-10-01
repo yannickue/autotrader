@@ -1,3 +1,4 @@
+# ruff: noqa: E501
 from __future__ import annotations
 
 from datetime import UTC, datetime
@@ -196,9 +197,9 @@ def test_equals_demo_labeling_on_shared_definitions(make_bars, direction, spread
             exp = {True: 1, False: 0, None: None}[r2.target_before_stop]
             assert got[FP[(a, b)]] == exp, (seed, a, b)
         # path analytics of the entry/exit-quality module (exit-side prices, entry at the decision time)
-        sp = (lambda j: 0.0) if direction > 0 else (lambda j: float(bars.spread[j]))
+        spv = np.zeros(len(bars)) if direction > 0 else np.asarray(bars.spread, float)
         steps = [
-            Step(_utc(int(bars.ts_ns[j])), bars.o[j] + sp(j), bars.h[j] + sp(j), bars.l[j] + sp(j), bars.c[j] + sp(j))
+            Step(_utc(int(bars.ts_ns[j])), bars.o[j] + spv[j], bars.h[j] + spv[j], bars.l[j] + spv[j], bars.c[j] + spv[j])
             for j in range(1, len(bars))
         ]
         pm = walk_entry_path(direction=direction, entry=100.0, stop=stop, steps=steps, entry_ts=_utc(bars.decision_ts_ns(0)))

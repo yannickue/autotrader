@@ -67,7 +67,7 @@ def reliability_table(p, y, n_bins: int = 10) -> list[dict]:
             continue
         lo, hi = wilson_interval(int(y[idx].sum()), len(idx))
         rows.append({
-            "bin": k, "n": int(len(idx)), "mean_p": float(p[idx].mean()), "mean_y": float(y[idx].mean()), "ci_low": lo, "ci_high": hi,
+            "bin": k, "n": len(idx), "mean_p": float(p[idx].mean()), "mean_y": float(y[idx].mean()), "ci_low": lo, "ci_high": hi,
         })
     return rows
 
@@ -128,7 +128,7 @@ def evaluate_forecast(p, y, day, *, n_bins: int = 10, B: int = 500, seed: int = 
     day = np.asarray(day)
     kw = {"B": B, "seed": seed, "alpha": alpha}
     return {
-        "n": int(len(p)), "n_blocks": int(len(np.unique(day))), "base_rate": float(np.mean(y)),
+        "n": len(p), "n_blocks": len(np.unique(day)), "base_rate": float(np.mean(y)),
         "brier": _with_ci(brier_score, p, y, day, **kw),
         "log_loss": _with_ci(log_loss, p, y, day, **kw),
         "ece": _with_ci(lambda a, b: expected_calibration_error(a, b, n_bins), p, y, day, **kw),
