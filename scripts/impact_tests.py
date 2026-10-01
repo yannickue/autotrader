@@ -109,6 +109,11 @@ DOC_PREFIXES = ("docs/", "reports/")
 DOC_SUFFIXES = (".md", ".txt", ".rst")
 GLOBAL_PATHS = frozenset({"pyproject.toml", "uv.lock", "tests/conftest.py"})
 WIDE_MARK = "fast or integration or safety"
+# Test files that used to be in the FAST tier and were moved to a tier no `-m fast`-based selection reaches (tests/conftest.py).
+# Every plan that selects by the `fast` marker (unknown-path widening, ...) must also select them by explicit path, otherwise the
+# move would silently narrow the plan. tests/unit/scripts/test_impact_live_alpha_and_safety.py fails when conftest moves a file out
+# of FAST without listing it here.
+MOVED_OUT_OF_FAST = ["tests/unit/demo/test_observer_parity.py"]
 
 
 @dataclass
@@ -176,6 +181,10 @@ def impact(paths: list[str], matrix: list[tuple[str, list[str]]]) -> Plan:
         if not hit:
             plan.marks.append(WIDE_MARK)  # unknown path: never select less
             plan.widened.append(p)
+    if any("fast" in m.replace("(", " ").replace(")", " ").split() for m in plan.marks):
+        plan.targets += (
+            MOVED_OUT_OF_FAST  # a `fast`-marker selection must still reach files moved out of FAST
+        )
     plan.docs_only = bool(paths) and non_doc == 0
     plan.targets = list(dict.fromkeys(plan.targets))
     plan.marks = list(dict.fromkeys(plan.marks))

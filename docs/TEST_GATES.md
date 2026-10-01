@@ -141,3 +141,11 @@ are byte-identical (`scripts/test_result_cache.py`). In doubt: miss. It never se
 parity / broker / serial suites, or the integration and slow tiers (so no safety segment is ever "proved" by the cache), and the
 `fast|integration|safety|slow|full|t2|t3` commands never consult it. A hit is printed as `CACHE HIT` with the original green
 time; a safety segment must always run for a release.
+
+### Review hardening (2026-10-02)
+
+* `impact_tests.MOVED_OUT_OF_FAST` lists files moved out of the FAST tier; every plan that selects by the `fast` marker (unknown-path
+  widening) also selects them by explicit path. A guard test fails if `tests/conftest.py` moves a file out of FAST without listing it.
+* `REVIEWED_DYNAMIC_SITES` is keyed on (file, callee, normalized argument text): a new call of the same loader in a reviewed file fails `--check`.
+* `LAUNCHERS` (runtime_import_manifest.py) lists every `scripts/autostart/*.ps1|*.xml` launcher with the python entry points it starts (or a
+  "starts no python" reason); `--check` and a guard test fail on an unlisted launcher or when the regex cross-check finds a python entry point the table omits.

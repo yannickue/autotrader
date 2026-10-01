@@ -108,7 +108,7 @@ def test_unknown_paths_widen_and_never_select_less(rt):
     for p in ("src/brand_new_pkg/mod.py", "Makefile", "somewhere/else.cfg"):
         ip = rt.impact_plan([p])
         assert "fast or integration or safety" in ip.marks and p in ip.widened
-        assert rt.plan_for([p]) == [["-m", "fast or integration or safety"]]
+        assert rt.plan_for([p]) == [[*rt.impact_tests.MOVED_OUT_OF_FAST], ["-m", "fast or integration or safety"]]
 
 
 def test_global_changes_select_the_segmented_full_suite(rt):

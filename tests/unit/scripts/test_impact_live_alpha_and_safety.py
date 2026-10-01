@@ -344,3 +344,155 @@ def test_observer_parity_suite_is_slow_tier_and_tiers_still_partition():
     assert "tests/unit/demo/test_observer_store.py" not in cf.SLOW_FILES
     # every SLOW_FILES entry exists (a typo would silently leave the file in the fast tier)
     assert [f for f in cf.SLOW_FILES if not (REPO / f).is_file()] == []
+
+
+# ------------------------------------------------------------------------------------------------ files moved out of FAST stay selected
+_BASELINE_NOT_FAST = (  # slow + integration entries (dirs, files, prefixes) of tests/conftest.py at the lane base cdc8a56
+    "tests/chaos/",
+    "tests/replay/",
+    "tests/parity/",
+    "tests/unit/demo/opportunity/",
+    "tests/unit/demo/learning/",
+    "tests/temporal/test_real_events_causality.py",
+    "tests/temporal/test_prefix_cache_equivalence.py",
+    "tests/temporal/test_kernel_reference_parity.py",
+    "tests/temporal/test_spec_validate.py",
+    "tests/events/test_event_prefix_equality.py",
+    "tests/test_ar2_fast_runner.py",
+    "tests/test_v2_probe_runner.py",
+    "tests/test_alpha_fast_kernels_a.py",
+    "tests/test_alpha_fast_kernels_c.py",
+    "tests/test_v2_families_planted.py",
+    "tests/test_discovery_stages.py",
+    "tests/test_ad1_benchmark.py",
+    "tests/test_v2_rawscan_core.py",
+    "tests/test_alpha_fast_sim_target_guard.py",
+    "tests/test_alpha_fast_screen.py",
+    "tests/test_v2_probe_null.py",
+    "tests/test_temporal_discovery_search.py",
+    "tests/test_v2_multimarket_loader.py",
+    "tests/test_alpha_fast_price_action.py",
+    "tests/test_formula_alpha_gp.py",
+    "tests/test_v2_metalabel_eval.py",
+    "tests/test_formula_alpha_real.py",
+    "tests/test_v2_probe_clock.py",
+    "tests/test_v2_directional_context.py",
+    "tests/test_v2_multimarket_frame.py",
+    "tests/test_discovery_grammar.py",
+    "tests/test_temporal_discovery_genome.py",
+    "tests/test_temporal_discovery_evaluate.py",
+    "tests/test_v2_session_levels.py",
+    "tests/integration/",
+    "tests/unit/demo/runner/",
+    "tests/unit/demo/store/",
+    "tests/unit/demo/execution/test_live_stack.py",
+    "tests/unit/nautilus_mt5/",
+    "tests/unit/nautilus_kernel/",
+    "tests/unit/adapters/",
+    "tests/unit/persistence/",
+    "tests/unit/scripts/",
+    "tests/unit/research/test_backtest_cli.py",
+    "tests/events/",
+    "tests/temporal/test_real_events_frame.py",
+)
+
+
+def _conftest():
+    spec = importlib.util.spec_from_file_location(
+        "tests_conftest_moved_guard", REPO / "tests" / "conftest.py"
+    )
+    cf = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(cf)  # type: ignore[union-attr]
+    return cf
+
+
+def test_every_file_moved_out_of_fast_is_listed_in_moved_out_of_fast(rt):
+    """A test file that was FAST at the baseline and is slow/integration now must be named in impact_tests.MOVED_OUT_OF_FAST, because
+    `-m fast`-based plans (unknown-path widening) would otherwise silently stop running it."""
+    cf = _conftest()
+    now_not_fast = (*cf.SLOW_DIRS, *cf.SLOW_FILES, *cf.INTEGRATION_PREFIXES)
+    moved = []
+    for p in sorted((REPO / "tests").rglob("test_*.py")):
+        rel = p.relative_to(REPO).as_posix()
+        if rel.startswith(now_not_fast) and not rel.startswith(_BASELINE_NOT_FAST):
+            moved.append(rel)
+    missing = [m for m in moved if m not in rt.impact_tests.MOVED_OUT_OF_FAST]
+    assert not missing, (
+        f"moved out of FAST in tests/conftest.py but not in MOVED_OUT_OF_FAST: {missing}"
+    )
+    assert (
+        "tests/unit/demo/test_observer_parity.py" in moved
+    )  # the guard really detects the known move
+    assert all((REPO / m).is_file() for m in rt.impact_tests.MOVED_OUT_OF_FAST)
+
+
+@pytest.mark.parametrize(
+    "path", ["totally_new_dir/thing.py", "src/brand_new_pkg/mod.py", "src/unmapped_domain/x.py"]
+)
+def test_fast_marker_plans_also_select_the_moved_files_by_path(rt, path):
+    moved = "tests/unit/demo/test_observer_parity.py"
+    assert moved in _flat(rt.plan_for([path]))
+    assert moved in rt.impact_plan([path]).targets
+
+
+def test_changed_plan_for_unknown_paths_selects_the_moved_file(rt, monkeypatch, capsys):
+    monkeypatch.setattr(
+        sys, "argv", ["run_tests.py", "changed", "src/brand_new_pkg/mod.py", "--dry-run"]
+    )
+    assert rt.main() == 0
+    out = capsys.readouterr().out
+    assert (
+        "tests/unit/demo/test_observer_parity.py" in out
+        and "-m fast or integration or safety" in out
+    )
+
+
+def test_plans_without_a_fast_mark_do_not_add_the_moved_file(rt):
+    assert "tests/unit/demo/test_observer_parity.py" not in _flat(
+        rt.plan_for(["src/risk/policy.py"])
+    )
+
+
+# ------------------------------------------------------------------------------------------------ reviewed dynamic sites + launcher table
+def test_reviewed_dynamic_site_is_keyed_on_its_arguments(rim, tmp_path, monkeypatch):
+    root = _tree(
+        tmp_path,
+        "from pk import a\n",
+        a="import importlib\n\n\ndef f(n):\n    return importlib.import_module(n)\n",
+    )
+    monkeypatch.setattr(rim, "ENTRY_POINTS", ("scripts/e.py",))
+    reviewed = {("src/pk/a.py", "import_module", "n"): "reviewed: n is a literal-checked name"}
+    monkeypatch.setattr(rim, "REVIEWED_DYNAMIC_SITES", reviewed)
+    assert rim.check(rim.build_manifest(root)) == []  # the reviewed site stays accepted
+    (root / "src" / "pk" / "a.py").write_text(
+        "import importlib\n\n\ndef f(n):\n    return importlib.import_module(n)\n\n\ndef g(m):\n    return importlib.import_module(m)\n"
+    )
+    problems = rim.check(rim.build_manifest(root))
+    assert len(problems) == 1 and "import_module(m)" in problems[0]
+
+
+def test_launcher_table_covers_every_launcher_file_and_matches_the_regex(rim):
+    assert rim.launcher_table_problems() == []
+    assert set(rim.launcher_files()) == set(rim.LAUNCHERS)
+
+
+def test_launcher_table_drift_fails(rim, tmp_path):
+    auto = tmp_path / "scripts" / "autostart"
+    auto.mkdir(parents=True)
+    (auto / "new_launcher.ps1").write_text("Write-Host hi\n")
+    (auto / "indirect.ps1").write_text("uv run python scripts/autostart/supervisor.py\n")
+    (auto / "listed.ps1").write_text("Write-Host hi\n")
+    table = {
+        "scripts/autostart/indirect.ps1": ([], "starts no python"),
+        "scripts/autostart/listed.ps1": ([], ""),
+        "scripts/autostart/ghost.ps1": ([], "x"),
+    }
+    problems = rim.launcher_table_problems(tmp_path, table)
+    joined = "\n".join(problems)
+    assert "launcher not in LAUNCHERS table: scripts/autostart/new_launcher.ps1" in joined
+    assert (
+        "regex finds python entry point scripts/autostart/supervisor.py in scripts/autostart/indirect.ps1"
+        in joined
+    )
+    assert "gives no reason: scripts/autostart/listed.ps1" in joined
+    assert "row without a file: scripts/autostart/ghost.ps1" in joined

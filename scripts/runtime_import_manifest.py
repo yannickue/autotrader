@@ -51,8 +51,50 @@ ENTRY_POINTS: tuple[str, ...] = (
 EXCLUDED_AUTOSTART: dict[str, str] = {
     "scripts/autostart/approve_deploy.py": "interactive operator tool that writes the deploy approval; never launched by the scheduler",
 }
-# reviewed dynamic-import sites that cannot be resolved statically: (repo-relative file, callee) -> reason. Empty unless reviewed.
-REVIEWED_DYNAMIC_SITES: dict[tuple[str, str], str] = {}
+# reviewed dynamic-import sites that cannot be resolved statically:
+# (repo-relative file, callee, normalized source text of the call's arguments) -> reason. Empty unless reviewed. A second call of the
+# same loader in the same file with different arguments is a NEW site and fails --check.
+REVIEWED_DYNAMIC_SITES: dict[tuple[str, str, str], str] = {}
+
+# Every launcher file under scripts/autostart/ (*.ps1, *.xml) -> (python entry points it starts, reason). An empty list needs a reason
+# ("starts no python"). The regex scan of the launcher text stays as a CROSS-CHECK: it must not find a python file this table omits.
+LAUNCHERS: dict[str, tuple[list[str], str]] = {
+    "scripts/autostart/approve_deploy.ps1": (
+        ["scripts/autostart/deploy_gate.py"],
+        "uv run python deploy_gate.py",
+    ),
+    "scripts/autostart/run_trader_day.ps1": (
+        ["scripts/autostart/supervisor.py"],
+        "uv run python supervisor.py",
+    ),
+    "scripts/autostart/run_eod_recovery.ps1": (
+        ["scripts/autostart/eod_recovery.py"],
+        "uv run python eod_recovery.py",
+    ),
+    "scripts/autostart/status_trader.ps1": (
+        ["scripts/autostart/deploy_gate.py", "scripts/demo_trader.py"],
+        "uv run python deploy_gate.py --check; demo_trader.py --status",
+    ),
+    "scripts/autostart/stop_trader.ps1": (
+        [],
+        "starts no python: only creates/removes the STOP file",
+    ),
+    "scripts/autostart/enable_task.ps1": ([], "starts no python: Enable-ScheduledTask"),
+    "scripts/autostart/disable_task.ps1": ([], "starts no python: Disable-ScheduledTask"),
+    "scripts/autostart/register_task.ps1": (
+        [],
+        "starts no python: registers the scheduled tasks from the XML templates",
+    ),
+    "scripts/autostart/unregister_task.ps1": ([], "starts no python: Unregister-ScheduledTask"),
+    "scripts/autostart/AutoTrader-DemoDaily.task.xml": (
+        [],
+        "starts no python directly: runs run_trader_day.ps1 (in this table)",
+    ),
+    "scripts/autostart/AutoTrader-EodRecovery.task.xml": (
+        [],
+        "starts no python directly: runs run_eod_recovery.ps1 (in this table)",
+    ),
+}
 
 _IMPORT_CALLEES = frozenset({"import_module", "__import__"})
 _LOADER_CALLEES = frozenset(
@@ -82,6 +124,39 @@ def launcher_python_entry_points(root: Path = ROOT) -> list[str]:
         for m in _PY_IN_LAUNCHER.findall(f.read_text(encoding="utf-8", errors="replace")):
             out.add(m.replace("\\", "/"))
     return sorted(out)
+
+
+def launcher_files(root: Path = ROOT) -> list[str]:
+    auto = root / "scripts" / "autostart"
+    return sorted(_posix(p, root) for p in [*auto.glob("*.ps1"), *auto.glob("*.xml")])
+
+
+def launcher_table_problems(
+    root: Path = ROOT, table: dict[str, tuple[list[str], str]] | None = None
+) -> list[str]:
+    """Drift between the explicit LAUNCHERS table and the launcher files / their text: a launcher missing from the table, a table row
+    without a file, an entry-less row without a reason, a python file the regex finds that the row omits, a listed entry point that is
+    neither in ENTRY_POINTS nor excluded."""
+    tbl = LAUNCHERS if table is None else table
+    problems: list[str] = []
+    files = launcher_files(root)
+    for f in files:
+        if f not in tbl:
+            problems.append(f"launcher not in LAUNCHERS table: {f}")
+    for f, (eps, why) in tbl.items():
+        if f not in files:
+            problems.append(f"LAUNCHERS row without a file: {f}")
+            continue
+        if not eps and not why.strip():
+            problems.append(f"LAUNCHERS row starts no python but gives no reason: {f}")
+        text = (root / f).read_text(encoding="utf-8", errors="replace")
+        for m in sorted({x.replace("\\", "/") for x in _PY_IN_LAUNCHER.findall(text)}):
+            if m not in eps:
+                problems.append(f"regex finds python entry point {m} in {f} but LAUNCHERS omits it")
+        for e in eps:
+            if e not in ENTRY_POINTS and e not in EXCLUDED_AUTOSTART:
+                problems.append(f"LAUNCHERS entry point {e} ({f}) is not in ENTRY_POINTS")
+    return problems
 
 
 def autostart_python_files(root: Path = ROOT) -> list[str]:
@@ -125,7 +200,14 @@ def dynamic_sites_in(path: Path, root: Path = ROOT) -> list[dict[str, Any]]:
         tree = ast.parse(path.read_bytes().replace(b"\r\n", b"\n"))
     except (SyntaxError, ValueError, OSError):
         return [
-            {"file": rel, "line": 0, "callee": "<unparsable>", "resolved": False, "target": None}
+            {
+                "file": rel,
+                "line": 0,
+                "callee": "<unparsable>",
+                "arg": "",
+                "resolved": False,
+                "target": None,
+            }
         ]
     sites: list[dict[str, Any]] = []
     for node in ast.walk(tree):
@@ -150,6 +232,7 @@ def dynamic_sites_in(path: Path, root: Path = ROOT) -> list[dict[str, Any]]:
                 "file": rel,
                 "line": node.lineno,
                 "callee": name,
+                "arg": ", ".join(ast.unparse(a) for a in node.args),
                 "resolved": bool(resolved),
                 "target": target if resolved else None,
             }
@@ -256,22 +339,17 @@ def build_manifest(root: Path = ROOT) -> dict[str, Any]:
             row[f"{kind}_files"] += 1
         return dict(sorted(agg.items()))
 
-    reviewed = [
-        s for s in sites if not s["resolved"] and (s["file"], s["callee"]) in REVIEWED_DYNAMIC_SITES
-    ]
-    unresolved = [
-        s
-        for s in sites
-        if not s["resolved"] and (s["file"], s["callee"]) not in REVIEWED_DYNAMIC_SITES
-    ]
     for s in sites:
-        key = (s["file"], s["callee"])
-        s["reviewed_reason"] = REVIEWED_DYNAMIC_SITES.get(key)
+        s["reviewed_reason"] = REVIEWED_DYNAMIC_SITES.get((s["file"], s["callee"], s["arg"]))
+    reviewed = [s for s in sites if not s["resolved"] and s["reviewed_reason"]]
+    unresolved = [s for s in sites if not s["resolved"] and not s["reviewed_reason"]]
     src_mods = [m for m in modules if m["file"].startswith("src/")]
     return {
         "generated_commit": _git_commit(root),
         "entry_points": entry_points,
         "launcher_entry_points": launcher,
+        # the real table describes the real repo only; a synthetic root (tests) is checked against an empty table
+        "launcher_problems": launcher_table_problems(root, None if root == ROOT else {}),
         "excluded_autostart": dict(EXCLUDED_AUTOSTART),
         "missing_entry_points": missing,
         "unlisted_autostart_files": unlisted_autostart_files(root),
@@ -307,9 +385,12 @@ def check(manifest: dict[str, Any]) -> list[str]:
         f"autostart python file neither an entry point nor excluded: {p}"
         for p in manifest["unlisted_autostart_files"]
     ]
+    problems += list(manifest["launcher_problems"])
     for s in manifest["dynamic_import_sites"]:
         if not s["resolved"] and not s["reviewed_reason"]:
-            problems.append(f"unresolved dynamic import: {s['file']}:{s['line']} {s['callee']}")
+            problems.append(
+                f"unresolved dynamic import: {s['file']}:{s['line']} {s['callee']}({s['arg']})"
+            )
     return problems
 
 
