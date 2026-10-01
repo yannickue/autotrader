@@ -75,7 +75,7 @@ class ObserverBars:
     bar_seconds: int = 300
 
     def __len__(self) -> int:
-        return int(len(self.ts_ns))
+        return len(self.ts_ns)
 
     def prefix(self, n: int) -> ObserverBars:
         """The first ``n`` bars: the ONLY object a prefix-invariance test may compare against."""
