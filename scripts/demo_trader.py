@@ -55,9 +55,11 @@ def _parser() -> argparse.ArgumentParser:
     modes.add_argument("--restart-proof", action="store_true")
     modes.add_argument("--record-canary", type=Path, default=None, metavar="FILE")
     parser.add_argument(
-        "--exit-policy", choices=("fixed_1_5r", "staged"), default="fixed_1_5r",
+        "--exit-policy", choices=("fixed_1_5r", "staged", "staged_profiles"), default="fixed_1_5r",
         help="fixed_1_5r (DEFAULT, unchanged): broker SL + one fixed-R TP. staged: the ExitEngine manages TP1/TP2/runner "
-             "partials, tighten-only stop moves, structure trailing and engine exits (DEMO only)",
+             "partials, tighten-only stop moves, structure trailing and engine exits (DEMO only). staged_profiles (Lane Y): per-intent "
+             "exit profile by family thesis (CONTINUATION / REVERSION / FAILED_MOVE on the same engine; FIXED_1_5R-mapped "
+             "families unchanged) - activate only after the real-broker canary",
     )
     parser.add_argument(
         "--geometry-source", choices=("family", "structure"), default="family",

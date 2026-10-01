@@ -1255,6 +1255,7 @@ class DemoRunner:
         atr = snap.market_state.atr
         return {
             "family": sig.get("family"),
+            "variant": sig.get("variant"),  # Lane Y: the family MODE (entry thesis) the exit profile router keys on
             "atr": None if atr is None else float(atr),
             "confidence": sig.get("confidence"),
             "confluence": sig.get("confluence"),
@@ -1287,9 +1288,22 @@ class DemoRunner:
             return intent, context, None
         ctx = dict(context or {})
         try:
-            from demo.execution.exit_manager import EXIT_POLICY_STAGED, produce_exit_context
+            from demo import exit_profiles as xp
+            from demo.execution.exit_manager import (
+                EXIT_POLICY_PROFILES,
+                EXIT_POLICY_STAGED,
+                produce_exit_context,
+            )
 
-            staged = getattr(self.stack, "exit_policy", None) == EXIT_POLICY_STAGED
+            policy_name = getattr(self.stack, "exit_policy", None)
+            staged = policy_name == EXIT_POLICY_STAGED
+            route = None
+            if policy_name == EXIT_POLICY_PROFILES:
+                # Lane Y: family/mode (entry thesis) -> ONE profile, frozen at entry. FIXED_1_5R-mapped families get NO plan
+                # (unchanged fixed behaviour); the others get the plan of their profile on the SAME ExitEngine.
+                signal_variant = (ctx.get("signal") or {}).get("variant") or ctx.get("variant")
+                route = xp.route_for(ctx.get("family"), signal_variant)
+                staged = route.profile in xp.ENGINE_PROFILES
             source = self.stack.bar_source
             frame = source.m5_frame(intent.market, cfg.bars)
             quote = source.latest_quote(intent.market)
@@ -1300,7 +1314,7 @@ class DemoRunner:
                 direction=intent.direction, entry_ref=intent.entry_ref, stop=intent.stop, target=intent.target,
                 family=ctx.get("family"), market=intent.market, atr=ctx.get("atr"), frame=frame, spread=spread,
                 tick_size=None if tick is None else float(tick), structure_levels=ctx.get("structure_levels"),
-                target_is_structural=bool(signal_ctx.get("structural_target")), cfg=cfg, staged=staged,
+                target_is_structural=bool(signal_ctx.get("structural_target")), cfg=cfg, staged=staged, route=route,
             )
         except Exception as exc:  # never blocks the trade: the family geometry is the fallback
             return intent, context, {"error": f"{type(exc).__name__}:{exc}"[:200]}
@@ -1314,6 +1328,8 @@ class DemoRunner:
             ctx["exit_meta"] = out["exit_meta"]
             shadow["exit_plan"] = out["exit_meta"]
         ctx["geometry_source"] = out["source"]
+        if out.get("exit_profile") is not None:
+            ctx["exit_profile"] = out["exit_profile"]
         return intent, ctx, shadow
 
     def _execute(self, intent: TradeIntent, now: datetime, context: dict[str, Any] | None = None) -> None:
@@ -2134,8 +2150,8 @@ def build_live_runner(
 
     if mode not in MODES:
         raise ValueError(f"mode must be one of {MODES}")
-    if exit_policy not in ("fixed_1_5r", "staged"):
-        raise LiveStackRefused(f"unknown exit_policy {exit_policy!r} (fixed_1_5r | staged)")
+    if exit_policy not in ("fixed_1_5r", "staged", "staged_profiles"):
+        raise LiveStackRefused(f"unknown exit_policy {exit_policy!r} (fixed_1_5r | staged | staged_profiles)")
     if os.environ.get("MT5_ALLOW_ACCOUNT_LOGIN") == "1":
         raise LiveStackRefused("MT5_ALLOW_ACCOUNT_LOGIN=1 is not permitted; the DEMO trader only attaches")
     art = Path(artifacts_dir or "artifacts/demo_trader")
@@ -2191,10 +2207,10 @@ def build_live_runner(
             # partials, tighten-only stops, structure trailing and engine exits) and the optional ExitPlanConfig
             # (geometry source family|structure, stage fractions). Both are stack configuration, not sizing.
             exit_kw: dict[str, Any] = {}
-            if exit_policy == "staged":
+            if exit_policy in ("staged", "staged_profiles"):
                 from demo.execution.exit_manager import default_staged_exit_policy
 
-                exit_kw.update(exit_policy="staged", staged_exit=default_staged_exit_policy())
+                exit_kw.update(exit_policy=exit_policy, staged_exit=default_staged_exit_policy())
             if exit_plan is not None:
                 exit_kw["exit_plan"] = exit_plan
             kwargs["config"] = StackConfig(

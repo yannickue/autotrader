@@ -121,3 +121,60 @@ def test_cli_exposes_the_exit_policy_switch_with_a_safe_default():
     assert default.exit_policy == "fixed_1_5r" and default.geometry_source == "family"
     staged = parser.parse_args(["--shadow", "--exit-policy", "staged", "--geometry-source", "structure"])
     assert staged.exit_policy == "staged" and staged.geometry_source == "structure"
+
+
+# -- Lane Y: per-intent exit profiles (staged_profiles) ---------------------------------------------------------------
+
+
+def _profile_run(env, family, variant):
+    stack = PlanStack(env.clock, markets=("GER40", "NAS100"))
+    stack.exit_policy = "staged_profiles"
+    _structure_bars(stack)
+    snap, dec, intent = make_pair(entry=100.0, risk=1.5)
+    snap.signal["family"] = family
+    if variant is not None:
+        snap.signal["variant"] = variant
+    env.engine.push("GER40", (snap, dec, intent))
+    r = env.build(stack=stack)
+    r.start()
+    r.run_cycle()
+    return stack, intent
+
+
+@pytest.mark.parametrize(
+    ("family", "variant", "profile", "has_plan"),
+    [("STRUCT", "breakout", "CONTINUATION", True), ("STRUCT", "fade", "FAILED_MOVE", True),
+     ("ROUND", "reject", "REVERSION", True), ("LEADLAG", None, "FIXED_1_5R", False)],
+)
+def test_runner_routes_family_mode_to_one_frozen_profile(env, family, variant, profile, has_plan):
+    stack, intent = _profile_run(env, family, variant)
+    ctx = stack.contexts[intent.intent_id]
+    assert ctx["exit_profile"]["profile"] == profile and ctx["exit_profile"]["mapping_version"]
+    assert ("exit_plan" in ctx) is has_plan  # FIXED_1_5R-mapped: no plan -> unchanged fixed behaviour
+    assert env.store.get_tca(intent.intent_id, "GEOMETRY")["exit_profile"]["profile"] == profile
+    if has_plan:
+        assert ctx["exit_plan"]["stages"], "the profile plan has a structural first target"
+
+
+def test_legacy_staged_policy_does_not_route_profiles(env):
+    stack = PlanStack(env.clock, markets=("GER40", "NAS100"))
+    _structure_bars(stack)
+    intent = _run(env, stack)
+    assert "exit_profile" not in stack.contexts[intent.intent_id]
+
+
+def test_cli_and_factory_expose_staged_profiles_with_a_safe_default(tmp_path):
+    import importlib.util
+    import pathlib
+
+    from demo import runner as rn
+
+    path = pathlib.Path(__file__).resolve().parents[4] / "scripts" / "demo_trader.py"
+    spec = importlib.util.spec_from_file_location("demo_trader_y", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    parser = mod._parser()
+    assert parser.parse_args(["--status"]).exit_policy == "fixed_1_5r"
+    assert parser.parse_args(["--shadow", "--exit-policy", "staged_profiles"]).exit_policy == "staged_profiles"
+    with pytest.raises(rn.LiveStackRefused, match="exit_policy"):
+        rn.build_live_runner("shadow", exit_policy="bogus", artifacts_dir=tmp_path)

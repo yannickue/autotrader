@@ -63,6 +63,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import ROUND_CEILING, ROUND_DOWN, ROUND_FLOOR, Decimal
 from typing import TYPE_CHECKING, Any
 
+from demo import exit_profiles as xp
 from demo import structure as st
 from demo.contracts import ENGINE_EXIT_REASONS
 from demo.execution import registry as reg
@@ -92,7 +93,11 @@ ZERO = Decimal(0)
 
 EXIT_POLICY_FIXED = "fixed_1_5r"  # DEFAULT: broker SL + one fixed-R broker TP, nothing else (unchanged)
 EXIT_POLICY_STAGED = "staged"  # ExitEngine-managed partials / tighten-only stop moves
-EXIT_POLICIES = (EXIT_POLICY_FIXED, EXIT_POLICY_STAGED)
+# Lane Y: per-intent exit PROFILES (CONTINUATION / REVERSION / FAILED_MOVE on the same ExitEngine; FIXED_1_5R-mapped
+# families keep the unchanged fixed behaviour). ``staged`` itself is unchanged (legacy E2 behaviour, no profile routing).
+EXIT_POLICY_PROFILES = "staged_profiles"
+EXIT_POLICIES = (EXIT_POLICY_FIXED, EXIT_POLICY_STAGED, EXIT_POLICY_PROFILES)
+MANAGED_EXIT_POLICIES = (EXIT_POLICY_STAGED, EXIT_POLICY_PROFILES)  # the policies that run the StagedExitManager
 
 R_EXIT_TRANCHE_LIMITATION = "EXIT_PLAN_MULTI_TRANCHE_NOT_SUPPORTED"  # TEMPORARY, explicit
 R_EXIT_QUOTE_UNAVAILABLE = "EXIT_QUOTE_MISSING_OR_STALE"
@@ -228,6 +233,8 @@ def build_exit_plan(
     family_target: Decimal | None,
     target_is_structural: bool,
     structure_levels: Any = None,
+    prefer_family_target: bool = False,
+    record_tp2_shadow: bool = False,
 ) -> dict[str, Any]:
     """``{"stages": [...], ...}`` exit plan: TP1 (+ TP2 only if structurally justified) + runner remainder.
 
@@ -238,9 +245,14 @@ def build_exit_plan(
     levels: list[tuple[Decimal, str]] = []
     r_stage: tuple[Decimal, str] | None = None
     supplied = _level_prices(structure_levels, direction, entry_ref)
+    fam_ok = family_target is not None and ((family_target > entry_ref) if direction == 1 else (family_target < entry_ref))
     if supplied:
         levels = supplied
         origin = "family_structure_levels"
+    elif prefer_family_target and fam_ok and target_is_structural:
+        # Lane Y REVERSION: the family's own structural mean target (anchor / previous close / range) comes first
+        levels = [(family_target, "family_target")]  # type: ignore[list-item]
+        origin = "family_target"
     elif source == GEOMETRY_STRUCTURE and geometry is not None and geometry.tp1 is not None:
         levels = [(geometry.tp1.price, geometry.tp1.structure_id)]
         if geometry.tp2 is not None:
@@ -280,7 +292,13 @@ def build_exit_plan(
     elif len(stages) < 2 and st.SECOND_TARGET_NOT_STRUCTURALLY_JUSTIFIED not in markers:
         markers.append(st.SECOND_TARGET_NOT_STRUCTURALLY_JUSTIFIED)
     used = [Decimal(x["close_fraction"]) for x in stages]
+    # Lane Y: TP2 is implemented but DORMANT - its structural level is only recorded (shadow) for the exit lab
+    tp2_shadow = None
+    if geometry is not None and geometry.tp2 is not None and len(stages) < 2:
+        tp2_shadow = {"price": str(geometry.tp2.price), "id": geometry.tp2.structure_id}
+    extra = {"tp2_shadow": tp2_shadow} if record_tp2_shadow else {}
     return {
+        **extra,
         "stages": stages,
         "geometry_source": source,
         "target_origin": origin,
@@ -309,6 +327,7 @@ def produce_exit_context(
     target_is_structural: bool,
     cfg: ExitPlanConfig,
     staged: bool,
+    route: xp.FamilyRoute | None = None,
 ) -> dict[str, Any]:
     """Runner-side producer (pure given ``frame``): SHADOW geometry comparison + (staged) ``exit_plan``.
 
@@ -316,6 +335,14 @@ def produce_exit_context(
     "source": str}``. ``structure_stop`` is only offered when the family/market OPTED IN and a defensible
     structural stop exists; the caller decides whether to apply it (before sizing)."""
     source = cfg.source_for(family, market)
+    engine_profile = route is not None and route.profile in xp.ENGINE_PROFILES
+    plan_source = source
+    if engine_profile:
+        assert route is not None
+        # Lane Y: the PROFILE (not the stack-wide geometry config) decides where the initial stop comes from: families whose
+        # own stop is already the thesis invalidation keep it; ATR-defined family stops are replaced by the chart stop.
+        source = GEOMETRY_STRUCTURE if route.stop_basis == xp.STOP_BASIS_CHART else GEOMETRY_FAMILY
+        plan_source = GEOMETRY_STRUCTURE  # targets (TP1 / return target) always come from the chart / family structural target
     entry_d, stop_d = Decimal(str(entry_ref)), Decimal(str(stop))
     geometry: st.StructuralGeometry | None = None
     error: str | None = None
@@ -341,12 +368,19 @@ def produce_exit_context(
     if staged:
         eff_stop = Decimal(str(structure_stop)) if structure_stop is not None else stop_d
         plan = build_exit_plan(
-            direction=direction, entry_ref=entry_d, stop=eff_stop, fractions=cfg.fractions_for(family),
-            geometry=geometry, source=source, family_target=None if target is None else Decimal(str(target)),
+            direction=direction, entry_ref=entry_d, stop=eff_stop,
+            fractions=xp.PROFILE_FRACTIONS[route.profile] if engine_profile and route is not None else cfg.fractions_for(family),
+            geometry=geometry, source=plan_source, family_target=None if target is None else Decimal(str(target)),
             target_is_structural=target_is_structural, structure_levels=structure_levels,
+            prefer_family_target=bool(engine_profile and route is not None and route.profile == xp.PROFILE_REVERSION),
+            record_tp2_shadow=engine_profile,
         )
+    exit_profile = None if route is None else xp.attribution(route)
+    if exit_profile is not None:
+        shadow["exit_profile"] = exit_profile  # hook for the shadow exit lab: profile + TP2 / return-target geometry above
     return {
         "shadow": shadow, "exit_plan": plan, "structure_stop": structure_stop, "source": source,
+        "exit_profile": exit_profile,
         "exit_meta": None if plan is None else {k: plan[k] for k in ("geometry_source", "target_origin", "fractions", "markers")},
     }
 
@@ -411,11 +445,12 @@ def broker_target_for_staged(
 
 
 class StagedExitManager:
-    def __init__(self, stack: Mt5DemoStack, policy: ExitPolicy) -> None:
+    def __init__(self, stack: Mt5DemoStack, policy: ExitPolicy, *, profiles: bool = False) -> None:
         self._stack = stack
-        self._policy = policy
+        self._policy = policy  # ``profiles``: the BASE policy every engine profile is derived from (demo.exit_profiles)
+        self._profiles = profiles
         self._gate = _ReleaseRecorder()
-        self._engines: dict[str, ExitEngine] = {}
+        self._engines: dict[tuple[str, str], ExitEngine] = {}
         self._pending: dict[str, str] = {}  # intent_id -> request_id of an in-doubt reduce
         self._noted: set[tuple[str, str]] = set()
         self._stop_failures: dict[str, int] = collections.defaultdict(int)
@@ -450,18 +485,42 @@ class StagedExitManager:
 
     # ------------------------------------------------------------------------------ helpers
 
-    def _engine_for(self, market: str) -> ExitEngine:
-        engine = self._engines.get(market)
+    def _engine_for(self, market: str, base: ExitPolicy | None = None) -> ExitEngine:
+        """ONE ``ExitEngine`` per (market, policy): a profile only selects the ``ExitPolicy`` it is configured with."""
+        base = base or self._policy
+        engine = self._engines.get((market, base.policy_id))
         if engine is None:
             spec = self._stack._markets[market].spec
             policy = replace(
-                self._policy,
+                base,
                 quantity_step=spec.volume_step,
-                min_remaining_quantity=max(self._policy.min_remaining_quantity, spec.volume_min),
+                min_remaining_quantity=max(base.min_remaining_quantity, spec.volume_min),
             )
             engine = ExitEngine(policy=policy, risk_gate=self._gate)
-            self._engines[market] = engine
+            self._engines[(market, base.policy_id)] = engine
         return engine
+
+    def _row_policy(self, row: reg.IntentRow, ctx: dict[str, Any], state: dict[str, Any]) -> tuple[ExitPolicy | None, dict[str, Any] | None]:
+        """(policy, attribution) of one row. ``staged``: the single legacy policy. ``staged_profiles``: the policy of the
+        profile FROZEN at entry (registry context); ``None`` = the engine must not touch the row (FIXED_1_5R-mapped,
+        unmapped, legacy row without a profile, or a profile that changed after entry = fail-safe skip)."""
+        if not self._profiles:
+            return self._policy, None
+        attr = ctx.get("exit_profile")
+        if not isinstance(attr, dict) or attr.get("profile") not in xp.ENGINE_PROFILES:
+            self.counters["fixed_rows_skipped"] += 1
+            return None, attr if isinstance(attr, dict) else None
+        profile = str(attr["profile"])
+        seen = state.get("exit_profile")
+        if seen is not None and seen != profile:
+            self.counters["profile_mutation_refused"] += 1
+            self._log("profile_mutation_refused", row, frozen=seen, found=profile)
+            return None, attr
+        if seen is None:
+            state["exit_profile"] = profile
+            self._save_state(row, ctx, state)
+        minutes = attr.get("time_stop_minutes")
+        return xp.profile_policy(profile, self._policy, time_stop_minutes=None if minutes is None else int(minutes)), attr
 
     def _terminal(self, market: str, request_id: str, outcome: ExitOutcome) -> None:
         """Release-equivalent on every terminal outcome (fill / cancel / reject)."""
@@ -504,6 +563,9 @@ class StagedExitManager:
         info = stack._markets[row.market]
         ctx = self._ctx(row)
         state: dict[str, Any] = dict(ctx.get("exit_state") or {})
+        policy, profile_attr = self._row_policy(row, ctx, state)
+        if policy is None:
+            return []
 
         positions = [
             p
@@ -540,7 +602,7 @@ class StagedExitManager:
         except (KeyError, ValueError, TypeError, ArithmeticError) as exc:
             self._log("skip_bad_exit_plan", row, error=str(exc)[:160])
             return []
-        ladder = plan_stages or self._policy.take_profit_stages
+        ladder = plan_stages or policy.take_profit_stages
         stages_completed = self._stages_done(state, ladder, original, realized, info.spec.volume_step)
         broker_stop = Decimal(str(position.sl or 0))
         initial_stop = Decimal(row.stop)
@@ -555,7 +617,17 @@ class StagedExitManager:
         except (ValueError, ArithmeticError):
             fees_price = ZERO
         expected_cost = spread + 2 * fees_price  # close now (spread + closing fee) + the entry fee already paid
-        signals = self._signals(row, side, current_stop, price, atr, spread, now)
+        signals = self._signals(row, side, current_stop, price, atr, spread, now, policy)
+        if (
+            profile_attr is not None and signals is not None and signals.momentum_score is not None
+            and policy.momentum_deterioration_threshold is None
+            and signals.momentum_score <= xp.SHADOW_MOMENTUM_THRESHOLD
+            and (row.intent_id, "SHADOW_MOMENTUM_EXIT") not in self._noted
+        ):
+            # SHADOW only: the momentum rule is recorded, never an order (profiles run without it)
+            self._noted.add((row.intent_id, "SHADOW_MOMENTUM_EXIT"))
+            self.counters["shadow_momentum_signals"] += 1
+            self._log("shadow_momentum_exit", row, momentum_score=str(signals.momentum_score), profile=profile_attr.get("profile"))
         time_left: timedelta | None = None
         if row.forced_flat_utc:
             try:
@@ -599,7 +671,7 @@ class StagedExitManager:
             self._log("skip_invalid_position", row, error=str(exc)[:200])
             return []
 
-        evaluation = self._engine_for(row.market).evaluate(
+        evaluation = self._engine_for(row.market, policy).evaluate(
             position=exit_position, market=market_state, now=now
         )
         events: list[ExecutionEvent] = []
@@ -632,12 +704,13 @@ class StagedExitManager:
 
     def _signals(
         self, row: reg.IntentRow, side: PositionSide, current_stop: Decimal, price: Decimal,
-        atr: Any, spread: Decimal, now: datetime,
+        atr: Any, spread: Decimal, now: datetime, pol: ExitPolicy | None = None,
     ) -> st.ManagementSignals | None:
-        """Cheap structure / momentum inputs from the closed M5 frame (only when a rule needs them)."""
-        pol = self._policy
+        """Cheap structure / momentum inputs from the closed M5 frame (only when a rule needs them).
+        ``staged_profiles`` always evaluates them: the momentum score feeds the SHADOW momentum record."""
+        pol = pol or self._policy
         if not (
-            pol.structure_trailing or pol.structure_failure_exit
+            self._profiles or pol.structure_trailing or pol.structure_failure_exit
             or pol.momentum_deterioration_threshold is not None or pol.late_loser_momentum_threshold is not None
         ):
             return None
@@ -833,6 +906,8 @@ class StagedExitManager:
             "intent_id": row.intent_id,
             "tranche_id": row.intent_id,  # one tranche per netted position (see module docstring)
             "strategy_family": ctx.get("family"),
+            "exit_profile": (ctx.get("exit_profile") or {}).get("profile") if isinstance(ctx.get("exit_profile"), dict) else None,
+            "mapping_version": (ctx.get("exit_profile") or {}).get("mapping_version") if isinstance(ctx.get("exit_profile"), dict) else None,
             "stage_index": stages_completed,
             "stage_id": decision.metadata.get("stage_id"),
             "stage_source": decision.metadata.get("stage_source"),
@@ -862,7 +937,9 @@ class StagedExitManager:
         # the hint becomes the PositionClosed exit reason (EXIT_ENGINE_* = uncensored strategy exit)
         ok = stack._flatten(info, tag=f"exit:{decision.request_id}", hint=code)
         self._terminal(row.market, decision.request_id, ExitOutcome.FILLED if ok else ExitOutcome.REJECTED)
-        self._log("full_close", row, reason=decision.reason.value, exit_reason=code, flat=ok)
+        prof = self._ctx(row).get("exit_profile")
+        self._log("full_close", row, reason=decision.reason.value, exit_reason=code, flat=ok,
+                  exit_profile=prof.get("profile") if isinstance(prof, dict) else None)
         if not ok:
             return []
         fresh = stack._registry.get(row.intent_id) or row
@@ -874,10 +951,12 @@ __all__ = [
     "DEFAULT_STAGE_FRACTIONS",
     "EXIT_POLICIES",
     "EXIT_POLICY_FIXED",
+    "EXIT_POLICY_PROFILES",
     "EXIT_POLICY_STAGED",
     "GEOMETRY_FAMILY",
     "GEOMETRY_SOURCES",
     "GEOMETRY_STRUCTURE",
+    "MANAGED_EXIT_POLICIES",
     "R_EXIT_QUOTE_UNAVAILABLE",
     "R_EXIT_SIZE_BELOW_MIN_LOT",
     "R_EXIT_TRANCHE_LIMITATION",

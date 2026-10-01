@@ -217,6 +217,9 @@ class ExitPolicy:
     structure_trailing: bool = False
     # exit the remainder when a closed bar broke the latest confirmed post-entry swing against the trade
     structure_failure_exit: bool = False
+    # Lane Y: when the structure trail moves the stop beyond entry, floor it at the cost-adjusted break-even (entry +/-
+    # expected exit cost). NOT an independent break-even trigger: it only applies together with a valid new structure.
+    structure_cost_floor: bool = False
     # give back at least this fraction of a favourable excursion of >= giveback_min_mfe_r -> exit
     max_giveback_fraction: Decimal | None = None
     giveback_min_mfe_r: Decimal = Decimal("1")
