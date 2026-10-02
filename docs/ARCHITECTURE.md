@@ -187,3 +187,20 @@ part is empty in shadow; add-on execution (`ADDON_SHARED_STOP_POSSIBLE_NOT_YET_I
   (e.g. SHORT,SHORT,LONG,SHORT) - persisted in the snapshot signal JSON, sliced by later counterfactual/outcome rows. NO cooldown, NO direction lock, NO filter.
 - Observability: heartbeat `trades_today` keeps its legacy meaning (SUBMIT ATTEMPTS, not fills; `trades_today_semantics` says so); new explicit `intents_today` and `broker_trades_today` (filled).
   Report `accepted_vs_rejected.rejected.unlabelled` can no longer go negative (labels on engine-accepted non-trades are counted separately).
+
+## Boundary map: production, shared alpha, research (research workbench lane F)
+- **ACTUAL PRODUCTION RUNTIME**: the static import closure of `scripts/demo_trader.py` and the autostart entry points, computed by
+  `scripts/runtime_import_manifest.py` (146/370 `src` files at 2026-10-02). Any file in it is a production change when edited.
+- **SHARED ALPHA**: the 33 `src/alpha/**` files in that closure (`families`, `common` market_data/market_costs/frame/sim/..., `session`,
+  `context`, `regime`, `signals`, `timeframe`, `fast/sim.py`). `alpha` is NOT research-only; the list is in `alpha/__init__.py` and
+  guarded against the manifest by `tests/unit/alpha/test_boundary_docs.py`. Editing them pulls demo tests + safety in the impact matrix.
+- **OFFLINE RESEARCH**: `alpha` discovery, formula, rawscan, temporal, events, metalabel, growth, strategies, fast screen/provider/spec,
+  `families/evaluate|gate`; never reachable from production.
+- **OBSERVER / SHADOW**: market observer and out-of-window shadow collection; read-only, no order path.
+- **RESEARCH WORKBENCH**: `research_speed`, `research_workbench`; tooling only, not imported by production.
+- **FIDELITY**: the simulator mirrors demo bar semantics (`alpha.fast.sim`); the demo labeling/exit code is the reference for fills.
+- **Open boundary debt (not extracted, 2026-10-02)**: moving only `CandidateArrays`/`EXIT_TRAIL` out of `alpha.fast.sim` would not
+  keep `alpha.fast.*` out of production: `alpha/families/{common,data,eod,gap,leadlag,orb,overnight,registry,roundnum,spec,structbrk,volrev}.py`
+  also import `CandidateArrays`, `EXIT_FIXED_R`, `MarketArrays`, `SimWindow` from it, and `alpha.fast.__init__` loads `store.py`
+  (TA-Lib/pandas). A real fix needs a neutral module for `CandidateArrays`, `MarketArrays`, `SimWindow`, `EXIT_*`, `_contiguous`
+  plus import edits in those 12 families files, a lazy `FeatureStore` export in `alpha/fast/__init__.py`, and re-export identity tests.
