@@ -760,3 +760,76 @@ def test_release_never_drops_a_lock_it_does_not_own_even_with_retries(tmp_path) 
         assert locked
         lock.write_text("someone-else")  # simulates a takeover of our (stale) lock
     assert lock.read_text() == "someone-else"
+
+
+def test_persistent_unlink_failure_is_reported_not_silent(
+    tmp_path, frame, fresh, monkeypatch
+) -> None:
+    real_unlink = Path.unlink
+
+    def stuck_unlink(self, *args, **kwargs):
+        if self.name == ".publish.lock":
+            raise PermissionError("held open forever")
+        return real_unlink(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", stuck_unlink)
+    monkeypatch.setattr(store_module, "_RELEASE_ATTEMPTS", 3)
+    monkeypatch.setattr(store_module.time, "sleep", lambda s: None)
+    result = FeatureStore.load_or_build(frame, CONFIG, tmp_path)
+    monkeypatch.undo()
+    (target,) = _dirs(tmp_path)
+    assert result.metadata["publish_lock_leaked"] == str(target / ".publish.lock")
+    assert _same(result, fresh) and "cache_write_skipped" not in result.metadata
+    assert (target / ".publish.lock").exists()  # leaked on purpose of the injection
+    # a later publisher is not blocked forever: the leaked lock goes stale and is taken over
+    old = (target / ".publish.lock").stat().st_mtime - 10_000
+    os.utime(target / ".publish.lock", (old, old))
+    with store_module._publish_lock(target) as locked:
+        assert locked
+    assert not (target / ".publish.lock").exists()
+
+
+def test_nested_publish_lock_same_thread_is_immediate_and_releases(tmp_path) -> None:
+    target = tmp_path / "entry"
+    target.mkdir()
+    started = time.monotonic()
+    with store_module._publish_lock(target) as outer:
+        assert outer
+        with store_module._publish_lock(target) as inner:
+            assert inner and not inner.leaked
+            assert (target / ".publish.lock").exists()
+        assert (target / ".publish.lock").exists()  # inner exit must not release the outer lock
+    assert time.monotonic() - started < 1.0
+    assert not (target / ".publish.lock").exists()
+    # and the thread can lock again afterwards (depth bookkeeping reset)
+    with store_module._publish_lock(target) as again:
+        assert again
+    assert not (target / ".publish.lock").exists()
+
+
+def test_nested_lock_does_not_leak_into_other_threads(tmp_path) -> None:
+    target = tmp_path / "entry"
+    target.mkdir()
+    seen = {}
+
+    def other() -> None:
+        with store_module._publish_lock(target) as locked:
+            seen["locked"] = bool(locked)
+
+    with store_module._publish_lock(target):
+        thread = threading.Thread(target=other)
+        thread.start()
+        time.sleep(0.2)
+        assert thread.is_alive()  # the other thread really waits for the owner
+    thread.join(timeout=10)
+    assert seen == {"locked": True}
+
+
+def test_dir_lock_registry_is_evicted_when_idle(tmp_path) -> None:
+    before = len(store_module._DIR_LOCKS)
+    for index in range(25):
+        target = tmp_path / f"entry{index}"
+        target.mkdir()
+        with store_module._publish_lock(target):
+            pass
+    assert len(store_module._DIR_LOCKS) == before

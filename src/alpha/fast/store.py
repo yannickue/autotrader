@@ -420,33 +420,62 @@ _REPLACE_ATTEMPTS = 6
 
 
 _ACQUIRE_GUARD = threading.Lock()  # serialises lock attempts/takeovers inside one process
-_DIR_LOCKS: dict[str, threading.Lock] = {}  # one in-process lock per cache directory
+_DIR_LOCKS: dict[str, list] = {}  # key -> [threading.Lock, refcount]; evicted when idle
 _RELEASE_ATTEMPTS = 40
+_THREAD_STATE = threading.local()  # per-thread {dir: nesting depth} for re-entrant _publish_lock
 
 
-def _dir_lock(target: Path) -> threading.Lock:
+def _dir_lock_acquire(key: str, timeout: float) -> tuple[list, bool]:
     with _ACQUIRE_GUARD:
-        return _DIR_LOCKS.setdefault(str(target.resolve()), threading.Lock())
+        entry = _DIR_LOCKS.get(key)
+        if entry is None:
+            entry = _DIR_LOCKS[key] = [threading.Lock(), 0]
+        entry[1] += 1
+    return entry, entry[0].acquire(timeout=timeout)
 
 
-def _release_lock_file(lock_path: Path, token: str, identity: tuple[int, int] | None) -> None:
+def _dir_lock_release(key: str, entry: list, got: bool) -> None:
+    if got:
+        entry[0].release()
+    with _ACQUIRE_GUARD:
+        entry[1] -= 1
+        if entry[1] == 0 and _DIR_LOCKS.get(key) is entry:
+            del _DIR_LOCKS[key]  # bounded registry: no entry outlives its last user
+
+
+def _release_lock_file(lock_path: Path, token: str, identity: tuple[int, int] | None) -> bool:
     """Remove the lock file if (and only if) it is ours; retry on Windows sharing violations.
 
     Another thread polling the lock can hold it open for an instant, which makes the owner's
-    unlink fail with PermissionError; giving up there would leak the lock until it goes stale.
+    unlink fail with PermissionError. Returns False if our lock file is still present after all
+    attempts (leaked: it will be taken over as stale after ``_LOCK_STALE_SECONDS``).
     """
     for attempt in range(_RELEASE_ATTEMPTS):
         try:
             content = lock_path.read_text(encoding="utf-8")
             ours = content == token or (content == "" and _file_identity(lock_path) == identity)
             if not ours:
-                return  # never drop someone else's lock
+                return True  # never drop someone else's lock
             lock_path.unlink()
-            return
+            return True
         except FileNotFoundError:
-            return
+            return True
         except OSError:
             time.sleep(min(0.005 * (attempt + 1), 0.05))
+    return False
+
+
+class _LockState:
+    """Yielded by ``_publish_lock``: truthy iff acquired; ``leaked`` set if release failed."""
+
+    __slots__ = ("acquired", "leaked")
+
+    def __init__(self) -> None:
+        self.acquired = False
+        self.leaked: str | None = None
+
+    def __bool__(self) -> bool:
+        return self.acquired
 
 
 def _file_identity(path: Path) -> tuple[int, int] | None:
@@ -493,13 +522,22 @@ def _publish_lock(target: Path):
     rely on it (unique temp files, atomic replace, hash-verified reads).
     """
     lock_path = target / ".publish.lock"
+    key = str(target.resolve())
+    state = _LockState()
+    depths: dict[str, int] = vars(_THREAD_STATE).setdefault("depths", {})
+    if depths.get(key, 0) > 0:  # re-entrant: this thread already holds the lock for this directory
+        depths[key] += 1
+        state.acquired = True
+        try:
+            yield state
+        finally:
+            depths[key] -= 1
+        return
     token = f"{os.getpid()}:{uuid.uuid4().hex}"
     deadline = time.monotonic() + _LOCK_WAIT_SECONDS
     # Same-process contenders queue on a per-directory threading lock first, so they never poll
     # (and briefly hold open) the lock file the owner is about to delete.
-    local = _dir_lock(target)
-    have_local = local.acquire(timeout=_LOCK_WAIT_SECONDS)
-    acquired = False
+    entry, have_local = _dir_lock_acquire(key, _LOCK_WAIT_SECONDS)
     identity: tuple[int, int] | None = None
     fd: int | None = None
     try:
@@ -515,7 +553,7 @@ def _publish_lock(target: Path):
                 except OSError:
                     break
                 else:
-                    acquired = True
+                    state.acquired = True
                     identity = _file_identity(lock_path)
                     with os.fdopen(fd, "w", encoding="utf-8") as handle:
                         fd = None
@@ -524,17 +562,19 @@ def _publish_lock(target: Path):
             if time.monotonic() >= deadline:
                 break
             time.sleep(0.05)
-        yield acquired
+        if state.acquired:
+            depths[key] = 1
+        yield state
     finally:
+        depths.pop(key, None)
         if fd is not None:
             with contextlib.suppress(OSError):
                 os.close(fd)
         try:
-            if acquired:
-                _release_lock_file(lock_path, token, identity)
+            if state.acquired and not _release_lock_file(lock_path, token, identity):
+                state.leaked = str(lock_path)
         finally:
-            if have_local:
-                local.release()
+            _dir_lock_release(key, entry, have_local)
 
 
 def _replace_with_retry(source: str, destination: Path) -> None:
@@ -600,6 +640,7 @@ def _publish(
     components: Mapping[str, Any],
     built: Mapping[str, np.ndarray],
     metadata: dict[str, Any],
+    leaks: list[str] | None = None,
 ) -> str | None:
     """Publish arrays then manifest (commit marker) under a per-directory lock.
 
@@ -607,20 +648,24 @@ def _publish(
     string when the cache write was skipped. A cache failure never raises (KeyboardInterrupt and
     friends still propagate after temp-file cleanup).
     """
+    locked: _LockState | None = None
+    reason: str | None = None
     try:
         target.mkdir(parents=True, exist_ok=True)
         with _publish_lock(target) as locked:
             if not locked:
-                return "publish lock busy"
-            if _verified_cache_hit(target, key, components) is not None:
-                return None  # another writer already published this exact entry
-            # No committed manifest may exist while its arrays are being replaced. It is invalid or
-            # absent here (we just failed to verify it) and we hold the lock.
-            (target / "manifest.json").unlink(missing_ok=True)
-            _write_artifacts(target, key, components, built, metadata)
-        return None
+                reason = "publish lock busy"
+            elif _verified_cache_hit(target, key, components) is None:
+                # No committed manifest may exist while its arrays are being replaced. It is
+                # invalid or absent here (we just failed to verify it) and we hold the lock.
+                (target / "manifest.json").unlink(missing_ok=True)
+                _write_artifacts(target, key, components, built, metadata)
+            # else: another writer already published this exact entry
     except Exception as exc:
-        return f"{type(exc).__name__}: {exc}"
+        reason = f"{type(exc).__name__}: {exc}"
+    if leaks is not None and locked is not None and locked.leaked:
+        leaks.append(locked.leaked)
+    return reason
 
 
 def _true_range(high: np.ndarray, low: np.ndarray, close: np.ndarray) -> np.ndarray:
@@ -1028,7 +1073,11 @@ class FeatureStore:
         built = FeatureStore.build(df, cfg)
         metadata = dict(built.metadata)
         metadata["cache_key"] = key
-        skipped = _publish(target, key, components, built, metadata) if cacheable else None
+        leaks: list[str] = []
+        skipped = _publish(target, key, components, built, metadata, leaks) if cacheable else None
+        if leaks:
+            metadata["publish_lock_leaked"] = leaks[0]
+            print(f"[features] publish lock could not be removed (stale takeover will): {leaks[0]}")
         if skipped is not None:
             metadata["cache_write_skipped"] = skipped
             print(f"[features] cache write skipped: {skipped}")
