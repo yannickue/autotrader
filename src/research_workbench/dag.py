@@ -336,6 +336,14 @@ def _tmp_owner(directory: Path) -> int | None:
         return None
 
 
+def _manifest_fingerprint(directory: Path) -> str | None:
+    try:
+        value = json.loads((directory / _MANIFEST).read_text("utf-8")).get("fingerprint")
+        return value if isinstance(value, str) else None
+    except Exception:
+        return None
+
+
 def _rmtree_retry(path: Path, attempts: int = 4) -> bool:
     """Remove a directory tree, retrying on Windows sharing violations. True only if it is really gone."""
     for attempt in range(attempts):
@@ -473,8 +481,55 @@ class ArtifactStore:
     def _before_move_aside(self, final: Path) -> None:
         """Test seam: runs between the 'target is invalid' check and the re-verification before moving it aside."""
 
+    @classmethod
+    def _safe_verify(cls, directory: Path, market: str, stage: str, key: str) -> Lookup:
+        try:
+            return cls._verify_dir(directory, market, stage, key)
+        except Exception as exc:
+            return Lookup(False, f"UNREADABLE:{type(exc).__name__}")
+
     def _before_move(self, final: Path) -> None:
         """Test seam: runs AFTER the second verification and right before the target is moved aside."""
+
+    def _after_move_aside(self, final: Path, aside: Path) -> None:
+        """Test seam: runs right after the target was moved aside (interrupt / concurrent-install injection)."""
+
+    def _rescue_aside(
+        self, aside: Path, final: Path, market: str, stage: str, key: str
+    ) -> dict[str, Any] | None:
+        """Make sure a moved-aside directory is never stranded and never destroys a valid copy.
+
+        * target missing            -> restore the aside (valid or not: it is the previous state);
+        * target present and VALID  -> the aside is redundant (content-addressed) and is removed;
+        * target present, INVALID, aside VALID -> the invalid target is moved to a trash directory, the aside restored;
+        * target present, INVALID, aside invalid -> the aside is removed.
+        Returns the manifest of the valid publication now at ``final`` (or None). Never raises OSError."""
+        parent = final.parent
+        try:
+            if not aside.exists():
+                current = self._safe_verify(final, market, stage, key)
+                return (current.manifest or {}) if current.hit else None
+            if not final.exists():
+                os.replace(aside, final)
+                current = self._safe_verify(final, market, stage, key)
+                return (current.manifest or {}) if current.hit else None
+            current = self._safe_verify(
+                final, market, stage, key
+            )  # VERIFY the reappeared target, never trust its mere existence
+            if current.hit:
+                _rmtree_retry(aside)
+                return current.manifest or {}
+            if self._safe_verify(aside, market, stage, key).hit:
+                trash = parent / f"{final.name}.trash.{uuid.uuid4().hex[:12]}"
+                os.replace(final, trash)
+                os.replace(aside, final)
+                _rmtree_retry(trash)
+                again = self._safe_verify(final, market, stage, key)
+                return (again.manifest or {}) if again.hit else None
+            _rmtree_retry(aside)
+        except OSError:
+            pass  # best effort; a remaining .stale.* is handled by the verifying cleanup
+        return None
 
     def _install(
         self, tmp: Path, final: Path, market: str, stage: str, key: str, *, locked: bool = True
@@ -482,7 +537,8 @@ class ArtifactStore:
         """Rename ``tmp`` to ``final``. Returns the winner's manifest if another valid publication exists.
 
         The previous target is moved aside only after our temp directory is verified and only if it is STILL invalid at that
-        moment; it is restored if the install fails."""
+        moment. The move-aside .. install region is a try/finally (BaseException included): whatever happens, a verified-valid
+        aside is restored and an invalid previous target is restored if the install fails."""
         parent = final.parent
         deadline = time.monotonic() + INSTALL_BUDGET_S
         delay = 0.02
@@ -505,30 +561,37 @@ class ArtifactStore:
                     self._before_move(final)
                     aside = parent / f"{final.name}.stale.{uuid.uuid4().hex[:12]}"
                     os.replace(final, aside)
-                    # COMPENSATING check: a valid publication installed in the gap before the move must win
-                    moved = self._verify_dir(aside, market, stage, key)
-                    if moved.hit:
-                        restored = False
-                        if not final.exists():
-                            try:
-                                os.replace(aside, final)
-                                restored = True
-                            except OSError:
-                                restored = False
-                        if restored or final.exists():
-                            if not restored:
-                                _rmtree_retry(aside)  # another valid copy is in place; same content
-                            return moved.manifest or {}
-                        raise CacheWriteSkipped("could not restore a valid publication moved aside")
+                    try:
+                        self._after_move_aside(final, aside)
+                        # COMPENSATING check: a valid publication installed in the gap before the move must win
+                        if self._verify_dir(aside, market, stage, key).hit:
+                            winner = self._rescue_aside(aside, final, market, stage, key)
+                            aside = None
+                            if winner is not None:
+                                return winner
+                            raise CacheWriteSkipped(
+                                "could not restore a valid publication moved aside"
+                            )
+                        if (
+                            final.exists()
+                        ):  # something appeared while our aside is invalid: it must be valid to win
+                            current = self.lookup(market, stage, key)
+                            if current.hit:
+                                return current.manifest or {}
+                            raise OSError("target reappeared invalid")
+                        os.rename(tmp, final)
+                        _rmtree_retry(aside)  # the moved-aside copy was verified invalid
+                        aside = None
+                        return None
+                    finally:
+                        if (
+                            aside is not None
+                        ):  # interrupt, crash or failed install: never strand or lose the aside
+                            self._rescue_aside(aside, final, market, stage, key)
                 os.rename(tmp, final)
-                if aside is not None:
-                    _rmtree_retry(aside)  # the moved-aside copy was verified invalid
                 return None
             except OSError as exc:  # lost a race (target appeared) or a transient sharing violation
                 last_error = exc
-                if aside is not None and aside.exists() and not final.exists():
-                    with contextlib.suppress(OSError):  # restore the previous target
-                        os.replace(aside, final)
                 current = self.lookup(market, stage, key)
                 if current.hit:
                     return current.manifest or {}
@@ -539,16 +602,21 @@ class ArtifactStore:
                 time.sleep(delay)
                 delay = min(delay * 2, 0.5)
 
-    @staticmethod
-    def _cleanup_leftovers(parent: Path, name: str) -> dict[str, list[str]]:
-        """Defensive cleanup of this key's ``.tmp.*`` / ``.stale.*`` siblings. Returns {"removed": [...], "failed": [...]}."""
+    @classmethod
+    def _cleanup_leftovers(cls, parent: Path, name: str) -> dict[str, list[str]]:
+        """Defensive cleanup of this key's ``.tmp.*`` / ``.stale.*`` / ``.trash.*`` siblings.
+
+        Returns {"removed": [...], "failed": [...], "restored": [...]}. A ``.stale.*`` directory that is a VALID publication
+        whose target is missing or invalid is RESTORED instead of deleted (it may be the only valid copy)."""
         removed: list[str] = []
         failed: list[str] = []
+        restored: list[str] = []
         now = time.time()
         try:
             entries = list(parent.iterdir())
         except OSError:
-            return {"removed": removed, "failed": failed}
+            return {"removed": removed, "failed": failed, "restored": restored}
+        market, stage = parent.parent.name, parent.name
         for entry in entries:
             try:
                 if entry.name.startswith(f"{name}.tmp."):
@@ -556,14 +624,26 @@ class ArtifactStore:
                     owner = _tmp_owner(entry)
                     delete = (owner is not None and not _owner_alive(owner)) or age > TMP_MAX_AGE_S
                 elif entry.name.startswith(f"{name}.stale."):
+                    fingerprint = _manifest_fingerprint(entry)
+                    if (
+                        fingerprint is not None
+                        and cls._verify_dir(entry, market, stage, fingerprint).hit
+                    ):
+                        winner = cls(parent)._rescue_aside(
+                            entry, parent / name, market, stage, fingerprint
+                        )
+                        (restored if winner is not None else failed).append(entry.name)
+                        continue
+                    delete = now - entry.stat().st_mtime > LEFTOVER_MAX_AGE_S
+                elif entry.name.startswith(f"{name}.trash."):
                     delete = now - entry.stat().st_mtime > LEFTOVER_MAX_AGE_S
                 else:
                     continue
                 if delete:
                     (removed if _rmtree_retry(entry) else failed).append(entry.name)
-            except OSError:
+            except Exception:
                 failed.append(entry.name)
-        return {"removed": removed, "failed": failed}
+        return {"removed": removed, "failed": failed, "restored": restored}
 
     # -- status / run records --
     def set_status(

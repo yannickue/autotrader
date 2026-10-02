@@ -35,6 +35,21 @@ sys.path.insert(0, str(ROOT))
 STAGES = ("FEATURES", "SIGNALS", "SIMULATION", "METRICS")
 
 
+RUNS_MARKER = ".bench_workbench_runs"
+ALLOWED_OUT_ROOTS = (ROOT / "artifacts" / "research_workbench_bench",)
+
+
+def resolve_out_dir(raw: str) -> Path:
+    """``--out`` must resolve below artifacts/research_workbench_bench or the OS temp dir; anything else is rejected."""
+    import tempfile
+
+    out = Path(raw).resolve()
+    roots = [r.resolve() for r in ALLOWED_OUT_ROOTS] + [Path(tempfile.gettempdir()).resolve()]
+    if not any(out == r or r in out.parents for r in roots):
+        raise SystemExit(f"--out {out} is not below {roots[0]} or the OS temp dir: refused")
+    return out
+
+
 def peak_working_set_mb() -> float | None:
     if sys.platform != "win32":
         return None
@@ -160,10 +175,19 @@ def main() -> int:
         os.environ[var] = "1"
     from research_workbench import dag
 
-    out_dir = Path(args.out)
+    out_dir = resolve_out_dir(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
     work = out_dir / "runs"
-    shutil.rmtree(work, ignore_errors=True)
+    if work.exists():
+        if not (work / RUNS_MARKER).is_file():
+            print(
+                f"refusing to delete {work}: it has no {RUNS_MARKER} marker written by this script",
+                file=sys.stderr,
+            )
+            return 2
+        shutil.rmtree(work)
+    work.mkdir(parents=True)
+    (work / RUNS_MARKER).write_text("created by scripts/bench_workbench.py\n", encoding="utf-8")
     jobs_list = [int(x) for x in args.jobs.split(",")]
     report: dict = {
         "config": {"markets": args.markets, "days": args.days, "jobs": jobs_list,
