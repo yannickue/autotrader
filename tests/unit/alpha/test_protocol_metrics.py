@@ -171,6 +171,8 @@ def test_research_package_is_isolated_from_production_and_vice_versa():
             continue  # frozen causal signal kernels only; constrained by the allowlist test below
         if rel[:1] == ("coverage_analysis",):
             continue  # offline read-only hindsight analysis; constrained by the dedicated test below
+        if rel[:1] == ("research_workbench",):
+            continue  # offline research harness; production reachability pinned by test_workbench_production_closure
         if rel == ("markets", "phase2.py"):
             continue  # offline preflight cost wiring; only alpha.common.market_costs, see dedicated test below
         assert not importing_alpha.search(py.read_text(encoding="utf-8")), (
@@ -220,8 +222,8 @@ def test_coverage_analysis_is_offline_only_and_never_imported_by_production():
     for py in (src / "coverage_analysis").rglob("*.py"):
         assert not _imports(py, forbidden), f"{py} couples offline analysis to production"
     for py in src.rglob("*.py"):
-        if py.relative_to(src).parts[:1] == ("coverage_analysis",):
-            continue
+        if py.relative_to(src).parts[:1] in (("coverage_analysis",), ("research_workbench",)):
+            continue  # research_workbench (offline) may reuse it; never reachable from production
         assert not _imports(py, r"^\s*(?:from|import)\s+coverage_analysis\b"), f"{py} imports offline analysis"
 
 
