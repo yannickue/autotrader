@@ -1,6 +1,9 @@
 # ruff: noqa: E501
 """Experiment identity for the research workbench (OFFLINE ONLY).
 
+Timing convention: decision at the close of bar t (features of bar t use its full OHLC and nothing later), fill at the next
+open (bar t+1); bar timestamps in the feature set are bar-OPEN times.
+
 ``ExperimentSpec`` wraps the existing declarative ``alpha.fast.spec.StrategySpec`` (no second strategy language) together
 with everything else that determines a result: markets, dataset identity, date range, split, cost model, sizing, sim
 rules, seed, engine mode, feature config. ``experiment_hash()`` is the sha256 of the canonical JSON of that identity
@@ -264,6 +267,7 @@ def load_market_frame(experiment: ExperimentSpec, market: str) -> pd.DataFrame:
 
 
 CAUSALITY_STATEMENT = (
+    "TIMING: features are keyed at bar-OPEN timestamps but use that bar's full OHLC (known only at the bar CLOSE) and nothing after it: the decision is made at the close of bar t and the fill happens at the next bar open (t+1). "
     "Features are computed over ALL loaded bars (including warm-up, gap and embargo bars) and are CAUSAL by the "
     "existing FeatureStore guarantee: tests/test_alpha_fast_store.py::test_all_features_are_truncation_invariant "
     "asserts that every feature array at bar t is unchanged when later bars are removed (so rolling windows, "

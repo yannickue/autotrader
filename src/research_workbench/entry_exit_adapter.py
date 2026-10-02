@@ -53,16 +53,37 @@ def right_tail(
     mfe = np.asarray(mfe_r, dtype=float)
     if len(r) != len(mfe):
         raise ValueError("realized_r and mfe_r must be aligned")
-    out: dict[str, Any] = {"n": len(r), "levels": {}}
+    finite_r = np.isfinite(r)
+    finite_both = finite_r & np.isfinite(mfe)
+    rf = r[finite_r]
+    out: dict[str, Any] = {
+        "n": int(finite_r.sum()),  # rows with a finite realized R (basis of P(realized >= L))
+        "n_total": len(r),
+        "n_finite": int(finite_r.sum()),
+        "n_excluded_nonfinite": int((~finite_r).sum()),
+        "n_excluded_nonfinite_mfe": int((finite_r & ~np.isfinite(mfe)).sum()),
+        "levels": {},
+    }
     for level in levels:
-        sub = r[mfe >= level]
-        out["levels"][f"{level:g}R"] = {
-            "p_realized_ge": float((r >= level).mean()) if len(r) else None,
-            "n_realized_ge": int((r >= level).sum()),
-            "n_mfe_ge": len(sub),
-            "mean_realized_given_mfe_ge": float(sub.mean()) if len(sub) else None,
-            "median_realized_given_mfe_ge": float(np.median(sub)) if len(sub) else None,
+        bucket = r[finite_both & (mfe >= level)]
+        entry: dict[str, Any] = {
+            "p_realized_ge": float((rf >= level).mean()) if len(rf) else None,
+            "n_realized_ge": int((rf >= level).sum()),
+            "n_p_basis": len(rf),
+            "n_mfe_ge": len(bucket),
+            "n_bucket_excluded_nonfinite": int(
+                ((~finite_r | ~np.isfinite(mfe)) & (np.nan_to_num(mfe, nan=-np.inf) >= level)).sum()
+            ),
+            "mean_realized_given_mfe_ge": float(bucket.mean()) if len(bucket) else None,
+            "median_realized_given_mfe_ge": float(np.median(bucket)) if len(bucket) else None,
         }
+        if not len(rf):
+            entry["p_reason"] = "no_finite_rows"
+        if not len(bucket):
+            entry["bucket_reason"] = "no_finite_rows"
+        out["levels"][f"{level:g}R"] = entry
+    if not len(rf):
+        out["reason"] = "no_finite_rows"
     return out
 
 

@@ -15,18 +15,36 @@ Store layout below ``artifact_root``::
 
     features/<store_key>/...                    the existing ``FeatureStore`` cache (NOT duplicated)
     dag/<market>/<STAGE>/<key40>/<files>        compact npz/json payload
-    dag/<market>/<STAGE>/<key40>/manifest.json  commit marker, written LAST (atomic, fsync'd)
+    dag/<market>/<STAGE>/<key40>/manifest.json  commit marker, written LAST inside the directory
     experiments/<experiment_id>/<market>.json   run record (stage keys of the latest run)
     experiments/<experiment_id>/status/<market>__<STAGE>.json   PENDING | RUNNING | COMPLETE | FAILED
 
 A lookup is a HIT only when the manifest is complete, names the requested stage/key/market and every payload file
 matches its recorded size and sha256. Anything else (no manifest, partial/corrupt/changed file, unreadable JSON,
 unprovable code closure) is a MISS with a reason; a lookup never raises and never returns stale data.
+
+Publication is a directory TRANSACTION on a content-addressed key (same key => same content):
+
+1. a COMPLETE, fully verified publication for the key already exists => ``publish`` is a no-op (a valid manifest is
+   never deleted or rewritten);
+2. otherwise payload + manifest (last) are written into a unique sibling ``<key40>.tmp.<uuid>`` (every file temp +
+   fsync + os.replace), the temp directory is verified, and then renamed to ``<key40>``. An existing but INVALID target is
+   first moved aside to ``<key40>.stale.<uuid>``; if the rename loses a race against another publisher whose valid
+   publication appeared meanwhile, our temp directory is discarded. A crash/Ctrl+C at any point leaves either the previous
+   state or the complete new one, never a half publication under ``<key40>``;
+3. leftover ``.tmp.``/``.stale.`` directories older than ``LEFTOVER_MAX_AGE_S`` are removed defensively.
+
+Status files (PENDING/RUNNING/COMPLETE/FAILED) are informational and never decide cache hits (only the verified manifest
+does). They record the owner pid: after an interrupted run or an OS crash a ``RUNNING`` status whose owner process is
+dead is reported as ``STALE`` (the stage is simply recomputed, nothing relies on the status being cleaned up).
+No lock is needed for correctness (duplicate computation is only wasted work).
 """
 
 from __future__ import annotations
 
 import json
+import os
+import shutil
 import time
 import uuid
 from dataclasses import asdict, dataclass, is_dataclass
@@ -52,6 +70,7 @@ UNCACHEABLE = "UNCACHEABLE:"
 _SRC_ROOT = Path(__file__).resolve().parents[1]
 _MANIFEST = "manifest.json"
 MANIFEST_SCHEMA = "research-workbench-artifact-1"
+LEFTOVER_MAX_AGE_S = 30 * 60
 
 
 class StageStatus(StrEnum):
@@ -251,6 +270,15 @@ def report_key(keys: dict[str, str]) -> str:
     return config_hash(keys)
 
 
+def _owner_alive(pid: Any) -> bool:
+    from research_speed.runlock import pid_alive
+
+    try:
+        return pid_alive(int(pid))
+    except (TypeError, ValueError):
+        return False
+
+
 # ---- store ----
 class ArtifactStore:
     """Persistent, content-addressed (by stage key) artifact store with atomic publish and verified load."""
@@ -278,7 +306,10 @@ class ArtifactStore:
             return Lookup(False, f"UNREADABLE:{type(exc).__name__}")
 
     def _lookup(self, market: str, stage: str, key: str) -> Lookup:
-        directory = self.stage_dir(market, stage, key)
+        return self._verify_dir(self.stage_dir(market, stage, key), market, stage, key)
+
+    @staticmethod
+    def _verify_dir(directory: Path, market: str, stage: str, key: str) -> Lookup:
         path = directory / _MANIFEST
         if not path.is_file():
             return Lookup(False, "NO_MANIFEST")
@@ -303,7 +334,7 @@ class ArtifactStore:
                 return Lookup(False, f"FILE_CHANGED:{name}")
         return Lookup(True, "HIT", key, manifest)
 
-    # -- publish --
+    # -- publish (directory transaction) --
     def publish(
         self,
         market: str,
@@ -316,30 +347,86 @@ class ArtifactStore:
         runtime_s: float,
         extra: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Atomically publish payload files, then the manifest (commit marker) LAST."""
-        directory = self.stage_dir(market, stage, key)
-        (directory / _MANIFEST).unlink(missing_ok=True)  # no stale marker over fresh files
-        meta = {}
-        for name, data in sorted(files.items()):
-            atomic_write_bytes(directory / name, data)
-            meta[name] = {"size": len(data), "sha256": file_sha256(directory / name)}
-        primary = sorted(files)[0]
-        manifest = {
-            "schema": MANIFEST_SCHEMA,
-            "experiment_id": experiment_id,
-            "market": market,
-            "stage": stage,
-            "fingerprint": key,
-            "artifact_sha256": meta[primary]["sha256"],
-            "files": meta,
-            "code_hash": code,
-            "runtime_s": round(runtime_s, 4),
-            "created_utc": datetime.now(UTC).isoformat(timespec="seconds"),
-            "complete": True,
-            **(extra or {}),
-        }
-        atomic_write_json(directory / _MANIFEST, manifest)
-        return manifest
+        final = self.stage_dir(market, stage, key)
+        existing = self.lookup(market, stage, key)
+        if existing.hit:  # content-addressed: a valid publication is never touched
+            return existing.manifest or {}
+        parent = final.parent
+        parent.mkdir(parents=True, exist_ok=True)
+        tmp = parent / f"{final.name}.tmp.{uuid.uuid4().hex[:12]}"
+        tmp.mkdir()
+        try:
+            meta = {}
+            for name, data in sorted(files.items()):
+                atomic_write_bytes(tmp / name, data)
+                meta[name] = {"size": len(data), "sha256": file_sha256(tmp / name)}
+            primary = sorted(files)[0]
+            manifest = {
+                "schema": MANIFEST_SCHEMA,
+                "experiment_id": experiment_id,
+                "market": market,
+                "stage": stage,
+                "fingerprint": key,
+                "artifact_sha256": meta[primary]["sha256"],
+                "files": meta,
+                "code_hash": code,
+                "runtime_s": round(runtime_s, 4),
+                "created_utc": datetime.now(UTC).isoformat(timespec="seconds"),
+                "complete": True,
+                **(extra or {}),
+            }
+            atomic_write_json(
+                tmp / _MANIFEST, manifest
+            )  # commit marker LAST, inside the temp directory
+            if not self._verify_dir(tmp, market, stage, key).hit:
+                raise RuntimeError(f"{stage}/{key[:12]}: temp publication failed verification")
+            winner = self._install(tmp, final, market, stage, key)
+            return winner if winner is not None else manifest
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+            self._cleanup_leftovers(parent, final.name)
+
+    def _install(
+        self, tmp: Path, final: Path, market: str, stage: str, key: str
+    ) -> dict[str, Any] | None:
+        """Rename ``tmp`` to ``final``. Returns the winner's manifest if another valid publication won the race."""
+        parent = final.parent
+        last_error: OSError | None = None
+        for _ in range(5):
+            if final.exists():
+                current = self.lookup(market, stage, key)
+                if current.hit:
+                    return current.manifest or {}
+                try:  # invalid target: move aside first, never delete in place
+                    os.replace(final, parent / f"{final.name}.stale.{uuid.uuid4().hex[:12]}")
+                except OSError as exc:
+                    last_error = exc
+                    time.sleep(0.05)
+                    continue
+            try:
+                os.rename(tmp, final)
+                return None
+            except OSError as exc:  # lost a race (target appeared) or transient sharing violation
+                last_error = exc
+                time.sleep(0.05)
+        current = self.lookup(market, stage, key)
+        if current.hit:
+            return current.manifest or {}
+        raise RuntimeError(f"could not install {final}: {last_error!r}")
+
+    @staticmethod
+    def _cleanup_leftovers(parent: Path, name: str) -> None:
+        cutoff = time.time() - LEFTOVER_MAX_AGE_S
+        try:
+            for entry in parent.iterdir():
+                if entry.name.startswith((f"{name}.tmp.", f"{name}.stale.")):
+                    try:
+                        if entry.stat().st_mtime < cutoff:
+                            shutil.rmtree(entry, ignore_errors=True)
+                    except OSError:
+                        pass
+        except OSError:
+            pass
 
     # -- status / run records --
     def set_status(
@@ -351,6 +438,7 @@ class ArtifactStore:
             "stage": stage,
             "status": str(status),
             "updated_utc": datetime.now(UTC).isoformat(timespec="seconds"),
+            "pid": os.getpid(),
             **info,
         }
         atomic_write_json(
@@ -360,9 +448,16 @@ class ArtifactStore:
     def read_status(self, experiment_id: str, market: str, stage: str) -> dict[str, Any] | None:
         path = self.run_dir(experiment_id) / "status" / f"{market}__{stage}.json"
         try:
-            return json.loads(path.read_text(encoding="utf-8"))
+            status = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return None
+        if status.get("status") == str(StageStatus.RUNNING) and not _owner_alive(status.get("pid")):
+            return {
+                **status,
+                "status": "STALE",
+                "was": "RUNNING",
+            }  # owner died: never trust RUNNING
+        return status
 
     def write_run_record(self, experiment_id: str, market: str, record: dict[str, Any]) -> None:
         atomic_write_json(self.run_dir(experiment_id) / f"{market}.json", record)
@@ -420,10 +515,6 @@ class ArtifactStore:
             experiment_id, market, stage, StageStatus.COMPLETE, fingerprint=key, runtime_s=runtime
         )
         return value, runtime, manifest
-
-
-def new_tmp_name(prefix: str) -> str:
-    return f"{prefix}-{uuid.uuid4().hex[:8]}"
 
 
 __all__ = (

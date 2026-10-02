@@ -330,7 +330,11 @@ def _right_tail_lines(title: str, tail: dict[str, Any] | None) -> list[str]:
         parts.append(
             f"{level}: P(R>=L)={_f(v['p_realized_ge'])}, N(MFE>=L)={v['n_mfe_ge']}, mean/median R|MFE>=L={_f(v['mean_realized_given_mfe_ge'])}/{_f(v['median_realized_given_mfe_ge'])}"
         )
-    return [f"{title} (N={tail['n']}): " + " | ".join(parts)]
+    head = (
+        f"{title} (N total={tail.get('n_total', tail['n'])}, finite={tail.get('n_finite', tail['n'])}, "
+        f"excluded non-finite={tail.get('n_excluded_nonfinite', 0)})"
+    )
+    return [f"{head}: " + " | ".join(parts)]
 
 
 __all__ = ("REPORT_VERSION", "build_report", "render_markdown")
