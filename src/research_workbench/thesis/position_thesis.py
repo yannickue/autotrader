@@ -11,7 +11,7 @@ and are derived OFFLINE by this module.
 FROZEN CLASSIFICATION RULES (``observe``; evidence is evaluated at ONE decision time T using only data <= T)
   ``opp`` = ``direction.opposite()``. ``status`` = ``premise_status`` (Condition.name -> bool | None; a MISSING key means "not supplied" and is
   never evidence; an explicit ``None`` means "evaluated, no longer observable").
-  * OPPOSING_EVENT   an ``OpposingEvent`` with direction == opp, ``entry_ts <= ts_ns == T`` that is not a setup-sourced record. A lone
+  * OPPOSING_EVENT   an ``OpposingEvent`` with direction == opp, ``ts_ns == T`` (events supplied later than their own bar are ignored) that is not a setup-sourced record. A lone
                      opposing trigger is information only: it never invalidates and never exits.
   * OPPOSING_SETUP   an INDEPENDENT, COMPLETE opposite ``SetupThesis`` (market equal, direction == opp, state ARMED or TRIGGERED,
                      ``updated_at_ns <= T``, every required condition ``observed is True``). Recorded once as an ``OpposingEvent`` with
