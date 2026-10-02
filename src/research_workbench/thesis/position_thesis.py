@@ -39,7 +39,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, fields, replace
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from typing import Any, NamedTuple
@@ -75,6 +75,19 @@ _INVALID = PositionThesisState.THESIS_INVALIDATED
 _CLOSED = PositionThesisState.CLOSED
 
 
+@dataclass(frozen=True)
+class ObservedPositionThesis(PositionThesis):
+    """A PositionThesis that also remembers the last decision time it was observed at (contracts.py stays untouched)."""
+
+    last_observed_ns: int | None = None
+
+
+def _as_observed(pt: PositionThesis) -> ObservedPositionThesis:
+    if isinstance(pt, ObservedPositionThesis):
+        return pt
+    return ObservedPositionThesis(**{f.name: getattr(pt, f.name) for f in fields(PositionThesis)})
+
+
 # ------------------------------------------------------------------------------------------------ opening
 def open_position_thesis(
     position_id: str,
@@ -84,7 +97,7 @@ def open_position_thesis(
     setup_thesis: SetupThesis | None,
     family_trigger: str | None,
     premise: Sequence[Condition],
-) -> PositionThesis:
+) -> ObservedPositionThesis:
     """The entry thesis of a filled trade; keeps the setup identity after the fill. Starts HEALTHY with an empty history."""
     if setup_thesis is None and family_trigger is None:
         raise ValueError("a position thesis needs a setup_thesis or a family_trigger")
@@ -92,7 +105,7 @@ def open_position_thesis(
         setup_thesis.direction is not direction or setup_thesis.market != market
     ):
         raise ValueError("setup_thesis market/direction must equal the position's")
-    return PositionThesis(
+    return ObservedPositionThesis(
         position_id=position_id,
         market=market,
         direction=direction,
@@ -186,23 +199,27 @@ def observe(
     closed: bool = False,
 ) -> PositionThesis:
     """PURE causal step: the position thesis as of ``market_map.decision_ts_ns``. Data stamped after that time is ignored."""
-    pt = position_thesis
+    pt = _as_observed(position_thesis)
     if pt.state is _CLOSED:
         return pt
     if market_map.market != pt.market:
         raise ValueError(f"market mismatch: {market_map.market} != {pt.market}")
     t = market_map.decision_ts_ns
-    last_ts = pt.history[-1].ts_ns if pt.history else pt.entry_ts_ns
-    if t < pt.entry_ts_ns or t < last_ts:
-        raise ValueError("decision time must be >= entry time and monotone")
+    if t < pt.entry_ts_ns:
+        raise ValueError("decision time must be >= entry time")
+    if pt.last_observed_ns is not None and t <= pt.last_observed_ns:
+        raise ValueError(
+            "observe is exactly once per decision bar: decision time must strictly increase"
+        )
     status = premise_status or {}
     opp = pt.direction.opposite()
 
-    # 1. record causal opposing events (deduplicated); setups are recorded once as SETUP:* events
+    # 1. record opposing events visible AT this decision time (ts_ns == T). An event supplied later than its own decision bar was not
+    # visible then and is ignored (no retroactive exits); setups are recorded once as SETUP:* events
     seen = {_event_key(e) for e in pt.opposing_events}
     new_events: list[OpposingEvent] = []
     for e in sorted(opposing_events, key=_event_key):
-        if e.direction is opp and pt.entry_ts_ns <= e.ts_ns <= t and _event_key(e) not in seen:
+        if e.direction is opp and e.ts_ns == t and _event_key(e) not in seen:
             seen.add(_event_key(e))
             new_events.append(e)
     event_now = any(
@@ -285,6 +302,7 @@ def observe(
         worst_state=worst,
         opposing_events=pt.opposing_events + tuple(new_events),
         history=pt.history + tuple(transitions),
+        last_observed_ns=t,
     )
 
 

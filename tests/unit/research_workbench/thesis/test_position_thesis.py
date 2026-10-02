@@ -181,8 +181,37 @@ def test_same_state_is_not_a_transition():
     states = run(L, [{"ts": 1100}, {"ts": 1200}])
     assert states[-1].history == ()
     s2 = run(L, [{"ts": 1200, "events": [ev(1200, SH)]}])[0]
-    again = observe(s2, mk_map(1200), [ev(1200, SH)])  # same decision time re-observed: idempotent
-    assert again == s2
+    # exactly once per decision bar: a second observe at the same T is rejected and cannot rewrite state
+    with pytest.raises(ValueError):
+        observe(s2, mk_map(1200), [ev(1200, SH)], (), {"FLIPPED_TO_SUPPORT": False})
+    quiet = run(L, [{"ts": 1100}])[0]  # no transition happened, the observation is still recorded
+    assert quiet.history == () and quiet.last_observed_ns == 1100
+    with pytest.raises(ValueError):
+        observe(quiet, mk_map(1100), [ev(1100, SH)])
+    assert quiet.state is S.HEALTHY
+
+
+def test_late_supplied_event_cannot_create_a_retroactive_exit():
+    steps_on_time = [{"ts": 1100}, {"ts": 1200, "events": [ev(1200, SH)]}, {"ts": 1300}]
+    steps_late = [
+        {"ts": 1100},
+        {"ts": 1200},
+        {"ts": 1300, "events": [ev(1200, SH)]},
+    ]  # same event, supplied at 1300
+    on_time = run(L, steps_on_time)[-1]
+    late = run(L, steps_late)[-1]
+    assert variant_trigger_ts(on_time, Variant.A) == 1200
+    # the late event was not visible at its own decision time: it is ignored, so variant A has no exit at 1200
+    assert late.opposing_events == () and variant_trigger_ts(late, Variant.A) is None
+    # supplying the full list from the start gives the on-time result (events are taken only at ts == T)
+    full = [ev(1200, SH)]
+    cur = new_pt()
+    for t in (1100, 1200, 1300):
+        cur = observe(cur, mk_map(t), full)
+    assert (
+        variant_trigger_ts(cur, Variant.A) == 1200
+        and cur.opposing_events == on_time.opposing_events
+    )
 
 
 # ---------------------------------------------------------------------------------------- classification
@@ -246,12 +275,6 @@ def test_at_risk_signals():
 
 def test_invalidation_needs_failed_premise_and_established_acceptance():
     acc = {"SHORT:L1": "ACCEPTED"}
-    assert (
-        run(L, [{"ts": 1100, "acceptance": acc}])[0].state
-        is S.THESIS_AT_RISK
-        is not S.THESIS_INVALIDATED
-        or True
-    )
     only_acc = run(L, [{"ts": 1100, "acceptance": acc}])[0]
     assert only_acc.state is S.HEALTHY  # acceptance without a failed premise
     only_fail = run(L, [{"ts": 1100, "status": {"FLIPPED_TO_SUPPORT": False}}])[0]
