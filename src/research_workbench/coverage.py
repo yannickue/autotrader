@@ -219,6 +219,8 @@ class CoverageContext:
     boundary_sha: str = BOUNDARY_SHA
     cache: dict[str, Any] = field(default_factory=dict)
     notes: list[str] = field(default_factory=list)
+    # optional offline research output for the position_thesis section (see resolve_position_thesis_input)
+    position_thesis_input: Any = None
 
     def cached(self, key: str, fn: Callable[[], Any], default: Any) -> Any:
         if key not in self.cache:
@@ -902,7 +904,7 @@ def section_epochs(ctx: CoverageContext) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------------------------------------------
-# position thesis (placeholder for the later monitor)
+# position thesis (fed by the offline research output of thesis/position_thesis.summary())
 # ---------------------------------------------------------------------------------------------------------------
 POSITION_THESIS_FIELDS = (
     "open_positions_eligible",
@@ -913,13 +915,120 @@ POSITION_THESIS_FIELDS = (
     "pending",
     "unexpected_missing",
 )
+_PT_NO_PROMOTION_UNAVAILABLE = "position_thesis: no offline position-thesis output supplied - NOT_AVAILABLE (not zero); no promotion claim"
+
+
+def _na_section(why: str) -> dict[str, Any]:
+    return {
+        "status": NOT_AVAILABLE,
+        "fields": {f: NOT_AVAILABLE for f in POSITION_THESIS_FIELDS},
+        "reasons": [],
+        "no_promotion_claim": True,
+        "no_promotion_reasons": [_PT_NO_PROMOTION_UNAVAILABLE, why],
+        "note": why,
+    }
+
+
+def resolve_position_thesis_input(raw: Any, phase: str | None) -> tuple[Any, str]:
+    """Pick the phase-matching payload of ``raw`` (never pools phases).  Returns ``(payload | None, why)``.
+
+    ``raw`` may be a json path / json text / dict.  Accepted shapes: ``{PHASE: payload}`` or a flat payload tagged with
+    ``"phase": PHASE``.  A payload is either a precomputed ``summary()`` dict (``open_positions_eligible`` ...) or
+    ``{"position_theses": [...], "variants": {...}}``.  An untagged flat payload is refused (phase unknown)."""
+    if raw is None:
+        return None, "no position-thesis input supplied"
+    if isinstance(raw, (str, Path)):
+        text = str(raw)
+        try:
+            blob = text if text.lstrip().startswith(("{", "[")) else Path(text).read_text("utf-8")
+            raw = json.loads(blob)
+        except (OSError, ValueError) as exc:
+            return None, f"position-thesis input unreadable: {type(exc).__name__}: {exc}"
+    if not isinstance(raw, dict):
+        return None, "position-thesis input must be a mapping (phase-keyed or phase-tagged)"
+    if phase is None:
+        return None, "phase not given: position-thesis input is per phase and is never pooled"
+    if any(k in PHASES for k in raw):
+        if phase not in raw:
+            return None, f"position-thesis input has no payload for phase {phase}"
+        return raw[phase], f"phase {phase}"
+    if "phase" in raw:
+        if raw["phase"] != phase:
+            return None, f"position-thesis input is tagged phase {raw['phase']}, not {phase}"
+        return raw, f"phase {phase}"
+    return None, "position-thesis input is not phase-keyed or phase-tagged; phases are not poolable"
+
+
+def _pt_summary(payload: Any) -> tuple[dict[str, Any] | None, str]:
+    if isinstance(payload, dict) and "open_positions_eligible" in payload:
+        s = {k: payload[k] for k in POSITION_THESIS_FIELDS if k in payload}
+        if set(s) != set(POSITION_THESIS_FIELDS):
+            return None, f"summary dict lacks fields {sorted(set(POSITION_THESIS_FIELDS) - set(s))}"
+        return s, "precomputed summary"
+    if isinstance(payload, dict) and "position_theses" in payload:
+        from research_workbench.thesis.position_thesis import summary
+
+        variants = payload.get("variants")
+        out = summary(list(payload["position_theses"]), variants)
+        if variants is None:  # nothing supplied is not "0 complete / 0 missing"
+            out["hypothetical_exit_complete"] = NOT_AVAILABLE
+            out["pending"]["hypothetical_exit"] = NOT_AVAILABLE
+            out["unexpected_missing"] = NOT_AVAILABLE
+        return out, "computed from position theses"
+    return None, "unrecognised position-thesis payload"
+
+
+def assess_position_thesis(
+    fields: dict[str, Any], th: CoverageThresholds
+) -> tuple[str, list[str], list[str]]:
+    """(status, reasons, no_promotion_reasons).  PENDING / NOT_OPEN never count as failure; only an eligible position
+    without ANY variant result (unexpected_missing) does.  A missing variant result is not a negative outcome."""
+    reasons: list[str] = []
+    nop: list[str] = []
+    status = GREEN
+    miss = fields["unexpected_missing"]
+    eligible = fields["open_positions_eligible"]
+    if miss == NOT_AVAILABLE:
+        nop.append(
+            "position_thesis: variant results not supplied - hypothetical exits NOT_AVAILABLE"
+        )
+    elif miss:
+        pairs = eligible * 5  # control + Variants A-D per eligible position (len(Variant))
+        frac = miss / pairs if pairs else 1.0
+        status = RED if frac > th.unexplained_red_frac else AMBER
+        reasons.append(
+            f"{status}: {miss} unexpected missing variant result(s) ({100 * frac:.1f}% of {pairs} eligible position x variant pairs)"
+        )
+        nop.append(f"position_thesis: {miss} unexpected missing variant result(s)")
+    pending_total = sum(v for v in fields["pending"].values() if isinstance(v, int))
+    if pending_total:
+        nop.append(
+            f"position_thesis: {pending_total} pending item(s) (not a failure; assessment incomplete)"
+        )
+    return status, reasons, nop
 
 
 def section_position_thesis(ctx: CoverageContext) -> dict[str, Any]:
+    payload, why = resolve_position_thesis_input(ctx.position_thesis_input, ctx.phase)
+    if payload is None:
+        return _na_section(why)
+    fields, how = _pt_summary(payload)
+    if fields is None:
+        return {
+            "status": RED,
+            "fields": {f: NOT_AVAILABLE for f in POSITION_THESIS_FIELDS},
+            "reasons": [f"RED: position-thesis input invalid: {how}"],
+            "no_promotion_claim": True,
+            "no_promotion_reasons": [f"position_thesis: input invalid: {how}"],
+        }
+    status, reasons, nop = assess_position_thesis(fields, ctx.thresholds)
     return {
-        "status": NOT_IMPLEMENTED_YET,
-        "fields": {f: NOT_IMPLEMENTED_YET for f in POSITION_THESIS_FIELDS},
-        "note": "placeholder: the position-thesis monitor registers its own implementation via register_section('position_thesis', fn)",
+        "status": status,
+        "fields": fields,
+        "reasons": reasons,
+        "no_promotion_claim": bool(nop),
+        "no_promotion_reasons": nop,
+        "source": f"{how} ({why})",
     }
 
 
@@ -969,6 +1078,7 @@ def build_phase_coverage(
     thresholds: CoverageThresholds | None = None,
     bars_provider: Callable[[str, str, str], Sequence[Any]] | None = None,
     boundary_sha: str = BOUNDARY_SHA,
+    position_thesis_input: Any = None,
 ) -> dict[str, Any]:
     """Coverage report for an (already read-only) store.  Never writes."""
     when = now if isinstance(now, datetime) else (parse_utc(now) if now else datetime.now(UTC))
@@ -979,6 +1089,7 @@ def build_phase_coverage(
         thresholds=thresholds or CoverageThresholds(),
         bars_provider=bars_provider,
         boundary_sha=boundary_sha,
+        position_thesis_input=position_thesis_input,
     )
     sections: dict[str, Any] = {}
     for name, fn in SECTIONS.items():
@@ -1005,6 +1116,13 @@ def build_phase_coverage(
         r for sec in sections.values() for r in sec.get("reasons", []) if r.startswith("RED")
     ]
     ep = sections.get("epochs", {})
+    # sections with their own no-promotion claim (position_thesis NOT_AVAILABLE / pending / missing): kept visible; they do
+    # not flip the RED-population claim of the committed verdict semantics (RED sections do, via `red`)
+    section_nop = {
+        name: sec["no_promotion_reasons"]
+        for name, sec in sections.items()
+        if sec.get("no_promotion_claim") and sec.get("no_promotion_reasons")
+    }
     return {
         "coverage_version": COVERAGE_VERSION,
         "db": str(store.path),
@@ -1015,6 +1133,7 @@ def build_phase_coverage(
         "no_promotion_claim": bool(red),
         "no_promotion_reasons": reasons if red else [],
         "red_populations": red,
+        "section_no_promotion": section_nop,
         "mixed_epochs": ep.get("mixed_epochs", False),
         "epoch_pooling_warning": ep.get("pooling_warning"),
         "sections": sections,

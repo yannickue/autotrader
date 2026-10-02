@@ -414,17 +414,17 @@ def test_epochs_never_pooled_silently(tmp_path, store):
     assert "epoch:deadbeef000/opportunities" in rep["red_populations"] and rep["no_promotion_claim"]
 
 
-def test_position_thesis_placeholder_and_registry(tmp_path, store):
+def test_position_thesis_not_available_and_registry(tmp_path, store):
     rep = _report(tmp_path, store, T0)
     pt = rep["sections"]["position_thesis"]
-    assert pt["status"] == C.NOT_IMPLEMENTED_YET
+    assert pt["status"] == C.NOT_AVAILABLE and pt["no_promotion_claim"] is True
     assert tuple(pt["fields"]) == C.POSITION_THESIS_FIELDS
     assert set(C.POSITION_THESIS_FIELDS) >= {
         "open_positions_eligible",
         "hypothetical_exit_complete",
         "unexpected_missing",
     }
-    assert rep["status"] == C.GREEN  # a not-implemented section never changes the verdict
+    assert rep["status"] == C.GREEN  # a NOT_AVAILABLE section never changes the verdict
     C.register_section("custom_probe", lambda ctx: {"status": C.RED, "reasons": ["RED: probe"]})
     try:
         s2 = C.open_readonly(tmp_path / "d.db")
@@ -508,7 +508,7 @@ def test_cli_coverage_json_markdown_and_refusal(tmp_path, cli, capsys):
     )
     assert cli.main(["coverage", "--db", str(tmp_path / "d.db"), "--now", now]) == 0
     md = capsys.readouterr().out
-    assert "Coverage audit" in md and "position_thesis" in md and "NOT_IMPLEMENTED_YET" in md
+    assert "Coverage audit" in md and "position_thesis" in md and "NOT_AVAILABLE" in md
     prod = tmp_path / "artifacts" / "demo_100k"
     prod.mkdir(parents=True)
     (prod / "x.db").write_bytes(b"")
