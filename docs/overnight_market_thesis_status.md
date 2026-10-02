@@ -1,6 +1,10 @@
 # Overnight market-thesis programme — status ledger (final, 02.10.2026 ~05:00)
+- FINAL_VERIFICATION: ACTIVE
+- PRODUCTION_RELEASE: BLOCKED
+- DEPLOY_GATE: REVOKED
+- RUNNER: OFF
 
-- CURRENT_PHASE: DONE — waiting for local time >= 08:30 Europe/Berlin for the production start sequence
+- CURRENT_PHASE: FINAL_VERIFICATION ACTIVE
 - PRODUCTION_BASELINE: sprint1/integration @ 11c6aec, tree clean (verified 04:5x), STOP set, no research merge
 - RESEARCH_BRANCH: research/workbench-v1 (pushed to origin); LAST_GREEN_RESEARCH_COMMIT: see `git log` (7eb4153 code; report commit follows)
 - WORKBENCH_STATUS: DONE (CODEX-0 closed; Safety 3246 passed, Integration 1122 passed twice, Slow 830 passed; FAST: run_tests.py fast = TIMEOUT_INCOMPLETE at 600 s (known budget problem), direct run 5011 passed + 2 isolation-guard failures, fixed and re-verified)
