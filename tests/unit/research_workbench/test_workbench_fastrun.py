@@ -319,16 +319,15 @@ def test_embargo_and_gap_bars_are_loaded_but_excluded_from_metrics(tmp_path) -> 
     assert metrics["contract"]["trade_count"] < len(trades["entry_idx"])
 
 
-def test_real_process_pool_jobs_one_equals_jobs_two(tmp_path) -> None:
-    from research_speed.parallel import available_memory_mb, clamp_jobs
+def test_real_process_pool_jobs_one_equals_jobs_two(tmp_path, monkeypatch) -> None:
+    from research_speed.parallel import available_memory_mb
 
     free = available_memory_mb()
-    if free is None or free < 1500:
-        pytest.skip(f"real process pool needs >= 1.5 GB free RAM (free: {free} MB)")
-    try:
-        clamp_jobs(2, 2)
-    except Exception as exc:  # InsufficientMemoryError: reserve + worker not available
-        pytest.skip(f"RAM guard refuses 2 workers: {exc}")
+    if free is None or free < 600:
+        pytest.skip(f"real process pool needs >= 600 MB free RAM (free: {free} MB)")
+    monkeypatch.setenv(
+        "RESEARCH_SPEED_RESERVE_MB", "100"
+    )  # the RAM limit was lifted by the user for tests
     tiny = DatasetRef(kind="synthetic", seed=3, days=12, start="2024-03-04")
     results = {}
     for jobs in (1, 2):
@@ -345,3 +344,23 @@ def test_real_process_pool_jobs_one_equals_jobs_two(tmp_path) -> None:
         assert _metrics_file(tmp_path / "p1", r1, market) == _metrics_file(
             tmp_path / "p2", r2, market
         )
+
+
+def test_candidates_blocked_while_busy_matches_the_differential_netting_audit(base) -> None:
+    from research_workbench.differential import netting_report
+    from research_workbench.fastrun import blocked_while_busy
+    from research_workbench.stage_adapters import candidates_from, trades_from
+
+    root, _exp, cold = base
+    store = dag.ArtifactStore(root)
+    cand = candidates_from(
+        dag.load_npz(
+            store.stage_dir("SYN_A", "SIGNALS", cold["keys"]["SIGNALS"]) / "candidates.npz"
+        )
+    )
+    trades = trades_from(_trades(root, cold))
+    expected = netting_report(trades, cand)["candidates_blocked_by_open_position"]
+    assert blocked_while_busy(cand, trades) == expected
+    metrics = _metrics_file(root, cold)
+    assert metrics["fast_trades"] == len(trades)
+    assert metrics["candidates_blocked_while_busy"] == expected

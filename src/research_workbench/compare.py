@@ -143,6 +143,7 @@ def fidelity_view(
         "scope": result["summary"].get("scope"),
         "by_construction_fields": result["summary"].get("by_construction_fields"),
         "mismatch_leg_counts": result["summary"].get("mismatch_leg_counts"),
+        "netting": result["summary"].get("netting"),
         "not_applicable": result["summary"].get("not_applicable"),
         "fast_trade_count": result["fast_trade_count"],
         "fidelity_trade_count": result["fidelity_trade_count"],

@@ -27,24 +27,34 @@ Publication is a directory TRANSACTION on a content-addressed key (same key => s
 
 1. a COMPLETE, fully verified publication for the key already exists => ``publish`` is a no-op (a valid manifest is
    never deleted or rewritten);
-2. otherwise payload + manifest (last) are written into a unique sibling ``<key40>.tmp.<uuid>`` (every file temp +
+2. otherwise (under a per-directory publisher lock, ``alpha.fast.store._publish_lock``: O_EXCL token file, verified stale
+   takeover; correctness does NOT depend on it) payload + manifest (last) are written into a unique sibling ``<key40>.tmp.<uuid>`` (every file temp +
    fsync + os.replace), the temp directory is verified, and then renamed to ``<key40>``. An existing but INVALID target is
    first moved aside to ``<key40>.stale.<uuid>``; if the rename loses a race against another publisher whose valid
    publication appeared meanwhile, our temp directory is discarded. A crash/Ctrl+C at any point leaves either the previous
    state or the complete new one, never a half publication under ``<key40>``;
-3. leftover ``.tmp.``/``.stale.`` directories older than ``LEFTOVER_MAX_AGE_S`` are removed defensively.
+   The target is re-verified IMMEDIATELY before it is moved aside; if it became valid meanwhile nothing is moved and our temp
+   directory is discarded. If the install keeps failing (Windows sharing violations, bounded backoff of about
+   ``INSTALL_BUDGET_S``) the old target is restored and the freshly computed result is returned UNCACHED
+   (``cache_write_skipped`` in the stage status), never as an exception into the research run;
+3. leftover directories are removed defensively: ``.tmp.*`` only if its owner marker (pid + token file inside) names a dead
+   process or the directory is older than ``TMP_MAX_AGE_S``; ``.stale.*`` after ``LEFTOVER_MAX_AGE_S``. Removal errors are
+   retried and reported, not claimed.
 
 Status files (PENDING/RUNNING/COMPLETE/FAILED) are informational and never decide cache hits (only the verified manifest
 does). They record the owner pid: after an interrupted run or an OS crash a ``RUNNING`` status whose owner process is
-dead is reported as ``STALE`` (the stage is simply recomputed, nothing relies on the status being cleaned up).
+dead is reported as ``STALE`` (the stage is simply recomputed, nothing relies on the status being cleaned up). Status is
+informational only (a recycled pid can make a dead RUNNING look alive); it never affects cache decisions.
 No lock is needed for correctness (duplicate computation is only wasted work).
 """
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import shutil
+import threading
 import time
 import uuid
 from dataclasses import asdict, dataclass, is_dataclass
@@ -57,6 +67,7 @@ from alpha.fast.store import (
     CACHE_FORMAT_VERSION,
     FEATURE_SCHEMA_VERSION,
     FEATURE_SET_VERSION,
+    _publish_lock,
 )
 from research_speed import importgraph
 from research_speed.artifact import config_hash
@@ -70,7 +81,10 @@ UNCACHEABLE = "UNCACHEABLE:"
 _SRC_ROOT = Path(__file__).resolve().parents[1]
 _MANIFEST = "manifest.json"
 MANIFEST_SCHEMA = "research-workbench-artifact-1"
-LEFTOVER_MAX_AGE_S = 30 * 60
+LEFTOVER_MAX_AGE_S = 30 * 60  # .stale.* directories
+TMP_MAX_AGE_S = 6 * 3600  # .tmp.* directories whose owner marker still names a live pid
+INSTALL_BUDGET_S = 5.0
+_OWNER_FILE = ".owner"
 
 
 class StageStatus(StrEnum):
@@ -279,6 +293,45 @@ def _owner_alive(pid: Any) -> bool:
         return False
 
 
+_THREAD_LOCKS: dict[str, threading.Lock] = {}
+_THREAD_LOCKS_GUARD = threading.Lock()
+
+
+@contextlib.contextmanager
+def _publisher_guard(parent: Path):
+    """Threads of this process are serialised by an in-process lock; other processes by the store's O_EXCL token lock
+    (``alpha.fast.store._publish_lock``). The in-process lock exists because that file lock is meant for cross-process
+    contention: on Windows its unlink can lose against a sibling thread's open and then waits out its stale timeout.
+    Neither lock is needed for correctness (``_install`` re-verifies)."""
+    with _THREAD_LOCKS_GUARD:
+        lock = _THREAD_LOCKS.setdefault(str(parent), threading.Lock())
+    with lock, _publish_lock(parent):
+        yield
+
+
+class CacheWriteSkipped(RuntimeError):
+    """The artifact could not be installed; the computed result is still valid but uncached."""
+
+
+def _tmp_owner(directory: Path) -> int | None:
+    try:
+        return int(json.loads((directory / _OWNER_FILE).read_text("utf-8"))["pid"])
+    except Exception:
+        return None
+
+
+def _rmtree_retry(path: Path, attempts: int = 4) -> bool:
+    """Remove a directory tree, retrying on Windows sharing violations. True only if it is really gone."""
+    for attempt in range(attempts):
+        if not path.exists():
+            return True
+        shutil.rmtree(path, ignore_errors=True)
+        if not path.exists():
+            return True
+        time.sleep(0.05 * (attempt + 1))
+    return not path.exists()
+
+
 # ---- store ----
 class ArtifactStore:
     """Persistent, content-addressed (by stage key) artifact store with atomic publish and verified load."""
@@ -347,6 +400,7 @@ class ArtifactStore:
         runtime_s: float,
         extra: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        """Returns the manifest. Raises ``CacheWriteSkipped`` if the install could not be completed (nothing destroyed)."""
         final = self.stage_dir(market, stage, key)
         existing = self.lookup(market, stage, key)
         if existing.hit:  # content-addressed: a valid publication is never touched
@@ -356,6 +410,9 @@ class ArtifactStore:
         tmp = parent / f"{final.name}.tmp.{uuid.uuid4().hex[:12]}"
         tmp.mkdir()
         try:
+            (tmp / _OWNER_FILE).write_text(
+                json.dumps({"pid": os.getpid(), "token": uuid.uuid4().hex}), encoding="utf-8"
+            )
             meta = {}
             for name, data in sorted(files.items()):
                 atomic_write_bytes(tmp / name, data)
@@ -380,53 +437,87 @@ class ArtifactStore:
             )  # commit marker LAST, inside the temp directory
             if not self._verify_dir(tmp, market, stage, key).hit:
                 raise RuntimeError(f"{stage}/{key[:12]}: temp publication failed verification")
-            winner = self._install(tmp, final, market, stage, key)
+            (tmp / _OWNER_FILE).unlink(
+                missing_ok=True
+            )  # the marker must not become part of the publication
+            with _publisher_guard(parent):  # best-effort exclusion; _install re-verifies regardless
+                winner = self._install(tmp, final, market, stage, key)
             return winner if winner is not None else manifest
         finally:
-            shutil.rmtree(tmp, ignore_errors=True)
+            _rmtree_retry(tmp)
             self._cleanup_leftovers(parent, final.name)
+
+    def _before_move_aside(self, final: Path) -> None:
+        """Test seam: runs between the 'target is invalid' check and the re-verification before moving it aside."""
 
     def _install(
         self, tmp: Path, final: Path, market: str, stage: str, key: str
     ) -> dict[str, Any] | None:
-        """Rename ``tmp`` to ``final``. Returns the winner's manifest if another valid publication won the race."""
+        """Rename ``tmp`` to ``final``. Returns the winner's manifest if another valid publication exists.
+
+        The previous target is moved aside only after our temp directory is verified and only if it is STILL invalid at that
+        moment; it is restored if the install fails."""
         parent = final.parent
+        deadline = time.monotonic() + INSTALL_BUDGET_S
+        delay = 0.02
         last_error: OSError | None = None
-        for _ in range(5):
-            if final.exists():
+        while True:
+            aside: Path | None = None
+            try:
+                if final.exists():
+                    current = self.lookup(market, stage, key)
+                    if current.hit:
+                        return current.manifest or {}
+                    self._before_move_aside(final)
+                    current = self.lookup(
+                        market, stage, key
+                    )  # re-verify immediately before the move
+                    if current.hit:
+                        return current.manifest or {}
+                    aside = parent / f"{final.name}.stale.{uuid.uuid4().hex[:12]}"
+                    os.replace(final, aside)
+                os.rename(tmp, final)
+                return None
+            except OSError as exc:  # lost a race (target appeared) or a transient sharing violation
+                last_error = exc
+                if aside is not None and aside.exists() and not final.exists():
+                    with contextlib.suppress(OSError):  # restore the previous target
+                        os.replace(aside, final)
                 current = self.lookup(market, stage, key)
                 if current.hit:
                     return current.manifest or {}
-                try:  # invalid target: move aside first, never delete in place
-                    os.replace(final, parent / f"{final.name}.stale.{uuid.uuid4().hex[:12]}")
-                except OSError as exc:
-                    last_error = exc
-                    time.sleep(0.05)
-                    continue
-            try:
-                os.rename(tmp, final)
-                return None
-            except OSError as exc:  # lost a race (target appeared) or transient sharing violation
-                last_error = exc
-                time.sleep(0.05)
-        current = self.lookup(market, stage, key)
-        if current.hit:
-            return current.manifest or {}
-        raise RuntimeError(f"could not install {final}: {last_error!r}")
+                if time.monotonic() >= deadline:
+                    raise CacheWriteSkipped(
+                        f"could not install {final.name}: {last_error!r}"
+                    ) from exc
+                time.sleep(delay)
+                delay = min(delay * 2, 0.5)
 
     @staticmethod
-    def _cleanup_leftovers(parent: Path, name: str) -> None:
-        cutoff = time.time() - LEFTOVER_MAX_AGE_S
+    def _cleanup_leftovers(parent: Path, name: str) -> dict[str, list[str]]:
+        """Defensive cleanup of this key's ``.tmp.*`` / ``.stale.*`` siblings. Returns {"removed": [...], "failed": [...]}."""
+        removed: list[str] = []
+        failed: list[str] = []
+        now = time.time()
         try:
-            for entry in parent.iterdir():
-                if entry.name.startswith((f"{name}.tmp.", f"{name}.stale.")):
-                    try:
-                        if entry.stat().st_mtime < cutoff:
-                            shutil.rmtree(entry, ignore_errors=True)
-                    except OSError:
-                        pass
+            entries = list(parent.iterdir())
         except OSError:
-            pass
+            return {"removed": removed, "failed": failed}
+        for entry in entries:
+            try:
+                if entry.name.startswith(f"{name}.tmp."):
+                    age = now - entry.stat().st_mtime
+                    owner = _tmp_owner(entry)
+                    delete = (owner is not None and not _owner_alive(owner)) or age > TMP_MAX_AGE_S
+                elif entry.name.startswith(f"{name}.stale."):
+                    delete = now - entry.stat().st_mtime > LEFTOVER_MAX_AGE_S
+                else:
+                    continue
+                if delete:
+                    (removed if _rmtree_retry(entry) else failed).append(entry.name)
+            except OSError:
+                failed.append(entry.name)
+        return {"removed": removed, "failed": failed}
 
     # -- status / run records --
     def set_status(
@@ -489,17 +580,23 @@ class ArtifactStore:
             files, extra, value = compute()
             runtime = time.perf_counter() - started
             manifest = None
+            skipped = None
             if cacheable:
-                manifest = self.publish(
-                    market,
-                    stage,
-                    key,
-                    files,
-                    experiment_id=experiment_id,
-                    code=code,
-                    runtime_s=runtime,
-                    extra=extra,
-                )
+                try:
+                    manifest = self.publish(
+                        market,
+                        stage,
+                        key,
+                        files,
+                        experiment_id=experiment_id,
+                        code=code,
+                        runtime_s=runtime,
+                        extra=extra,
+                    )
+                except (
+                    CacheWriteSkipped
+                ) as exc:  # same degrade policy as FeatureStore: result stays valid, uncached
+                    skipped = str(exc)
         except BaseException as exc:
             self.set_status(
                 experiment_id,
@@ -512,7 +609,13 @@ class ArtifactStore:
             )
             raise
         self.set_status(
-            experiment_id, market, stage, StageStatus.COMPLETE, fingerprint=key, runtime_s=runtime
+            experiment_id,
+            market,
+            stage,
+            StageStatus.COMPLETE,
+            fingerprint=key,
+            runtime_s=runtime,
+            **({"cache_write_skipped": skipped} if skipped else {}),
         )
         return value, runtime, manifest
 

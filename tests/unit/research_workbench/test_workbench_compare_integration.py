@@ -81,28 +81,36 @@ def test_market_promotes_and_compare_runs_the_real_differential(e2e) -> None:
     )
     result = read_fidelity(store, "SYN_E2E", ident["key"])
     assert result is not None, "FIDELITY artifact must verify under the current key"
-    # the real engines ran: a PASS or a FAIL with explained diffs; BLOCKED/ERROR would hide a defect here
-    assert result["status"] in {"PASS", "FAIL"}, (result["status"], result.get("blocked_reason"))
-    assert result["fast_trade_count"] > 0 and result["fidelity_trade_count"] > 0
-    assert (
-        result["promotion_status"]
-        == {"PASS": "READY_FOR_ROBUSTNESS", "FAIL": "FIDELITY_MISMATCH"}[result["status"]]
-    )
+    # PINNED (seed 21, deterministic after the replay timing fix): the real engines agree
+    assert result["status"] == "PASS", (result["status"], result.get("blocked_reason"))
+    assert (result["fast_trade_count"], result["fidelity_trade_count"]) == (33, 33)
+    summary = result["summary"]
+    assert summary["nautilus_ignored_candidates"] == []
+    assert summary["netting"]["overlap_violations"] == 0
+    assert summary["netting"]["same_bar_reentries"] == 15
+    assert summary["class_counts"]["BUG_SUSPECTED"] == 0
+    assert result["promotion_status"] == "READY_FOR_ROBUSTNESS"
     manifest = store.lookup("SYN_E2E", "FIDELITY", ident["key"]).manifest
     assert (
         manifest["complete"] is True
         and manifest["stage"] == "FIDELITY"
         and manifest["artifact_sha256"]
     )
-    assert e2e["rc_compare"] == (0 if result["status"] == "PASS" else 1)
+    assert e2e["rc_compare"] == 0
 
 
 def test_report_shows_fidelity_with_scope_and_by_construction_disclosure(e2e, cli, capsys) -> None:
     report = _report(cli, capsys, e2e["path"])
     market = report["MARKETS"]["SYN_E2E"]
-    assert market["FIDELITY_STATUS"] in {"FIDELITY_PASS", "FIDELITY_MISMATCH"}
-    assert market["DIFFERENTIAL_STATUS"] in {"PASS", "FAIL"}
-    assert market["PROMOTION_STATUS"] in {"READY_FOR_ROBUSTNESS", "FIDELITY_MISMATCH"}
+    assert market["FIDELITY_STATUS"] == "FIDELITY_PASS"
+    assert market["DIFFERENTIAL_STATUS"] == "PASS"
+    assert market["PROMOTION_STATUS"] == "READY_FOR_ROBUSTNESS"
+    joint = market["JOINT_STRATEGY_RESULT"]
+    assert joint["fast_trades"] == 33 and isinstance(joint["candidates_blocked_while_busy"], int)
+    assert (
+        market["FIDELITY"]["netting"]["candidates_blocked_by_open_position"]
+        == joint["candidates_blocked_while_busy"]
+    )
     fid = market["FIDELITY"]
     assert "EXECUTION semantics" in fid["scope"] and "Does NOT validate" in fid["scope"]
     assert set(fid["by_construction_fields"]) >= {"direction", "stop", "target", "qty"}

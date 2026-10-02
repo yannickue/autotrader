@@ -127,6 +127,23 @@ def _permitted_mask(experiment: ExperimentSpec, dates: np.ndarray) -> np.ndarray
     return mask
 
 
+def blocked_while_busy(candidates: CandidateArrays, trades: TradeArrays) -> int:
+    """Candidates FAST dropped because a position was open (decision strictly inside a trade: dec < i < exit).
+
+    Same definition as ``differential.netting_report`` (``candidates_blocked_by_open_position``). FAST already enforces one
+    position at a time (``next_free`` in sim.py), so this is only a disclosure, never a 'netting-adjusted' count."""
+    if not len(trades):
+        return 0
+    dec, ext = trades.decision_idx, trades.exit_idx
+    cand = candidates.decision_idx
+    traded = np.isin(cand, dec)
+    pos = np.searchsorted(dec, cand, side="left") - 1  # last trade with decision < i
+    inside = np.zeros(len(cand), dtype=bool)
+    ok = pos >= 0
+    inside[ok] = ext[pos[ok]] > cand[ok]
+    return int((inside & ~traded).sum())
+
+
 # ---- metrics ----
 def compute_metrics(
     experiment: ExperimentSpec,
@@ -249,6 +266,8 @@ def compute_metrics(
             "oos": oos,
             "partitions_read": experiment.partitions_actually_read(),
             "n_candidates": len(candidates.decision_idx),
+            "fast_trades": len(trades),
+            "candidates_blocked_while_busy": blocked_while_busy(candidates, trades),
             "invalid_stop_count": int(invalid_stop_count),
             "skips": trades.skips,
         }

@@ -166,17 +166,111 @@ def test_concurrent_publishers_over_an_invalid_target(tmp_path) -> None:
     assert store.lookup("M", "SIGNALS", KEY).hit
 
 
-def test_old_leftover_directories_are_cleaned_young_ones_kept(tmp_path) -> None:
+def _mk_tmp(parent, suffix, pid=None, age_s=0.0):
+    d = parent / f"{KEY[:40]}.tmp.{suffix}"
+    d.mkdir(parents=True)
+    if pid is not None:
+        (d / ".owner").write_text(json.dumps({"pid": pid, "token": "t"}), encoding="utf-8")
+    if age_s:
+        old = time.time() - age_s
+        os.utime(d, (old, old))
+    return d
+
+
+def test_leftover_cleanup_respects_ownership_and_age(tmp_path) -> None:
     store = dag.ArtifactStore(tmp_path)
     parent = store.stage_dir("M", "SIGNALS", KEY).parent
     parent.mkdir(parents=True)
-    old, young = parent / f"{KEY[:40]}.tmp.old", parent / f"{KEY[:40]}.stale.young"
-    old.mkdir()
-    young.mkdir()
-    ancient = time.time() - dag.LEFTOVER_MAX_AGE_S - 60
-    os.utime(old, (ancient, ancient))
+    live_old = _mk_tmp(
+        parent, "live", pid=os.getpid(), age_s=dag.LEFTOVER_MAX_AGE_S + 600
+    )  # live owner, older than 30 min
+    dead = _mk_tmp(parent, "dead", pid=2_000_000_000)  # dead owner, brand new
+    no_marker_young = _mk_tmp(parent, "nomarker")
+    no_marker_ancient = _mk_tmp(parent, "ancient", age_s=dag.TMP_MAX_AGE_S + 60)
+    stale_young = parent / f"{KEY[:40]}.stale.young"
+    stale_old = parent / f"{KEY[:40]}.stale.old"
+    stale_young.mkdir()
+    stale_old.mkdir()
+    old = time.time() - dag.LEFTOVER_MAX_AGE_S - 60
+    os.utime(stale_old, (old, old))
+    result = dag.ArtifactStore._cleanup_leftovers(parent, KEY[:40])
+    assert (
+        live_old.exists() and no_marker_young.exists() and stale_young.exists()
+    )  # a live slow publisher is never hit
+    assert not dead.exists() and not no_marker_ancient.exists() and not stale_old.exists()
+    assert sorted(result["removed"]) == sorted([dead.name, no_marker_ancient.name, stale_old.name])
+    assert result["failed"] == []
+
+
+def test_leftover_removal_failure_is_reported_not_claimed(tmp_path, monkeypatch) -> None:
+    store = dag.ArtifactStore(tmp_path)
+    parent = store.stage_dir("M", "SIGNALS", KEY).parent
+    parent.mkdir(parents=True)
+    dead = _mk_tmp(parent, "dead", pid=2_000_000_000)
+    monkeypatch.setattr(dag.shutil, "rmtree", lambda *a, **k: None)  # removal silently fails
+    monkeypatch.setattr(dag.time, "sleep", lambda *_: None)
+    result = dag.ArtifactStore._cleanup_leftovers(parent, KEY[:40])
+    assert dead.exists() and result["failed"] == [dead.name] and result["removed"] == []
+
+
+def test_interleaved_valid_install_between_check_and_move_survives(tmp_path, monkeypatch) -> None:
+    """Deterministic interleaving: A saw an INVALID target; before A moves it aside, B installs a VALID publication."""
+    donor = dag.ArtifactStore(tmp_path / "donor")
+    _publish(donor)
+    valid_dir = donor.stage_dir("M", "SIGNALS", KEY)
+    store = dag.ArtifactStore(tmp_path / "root")
     _publish(store)
-    assert not old.exists() and young.exists()
+    _corrupt(store)  # A's view: the target is invalid
+    final = store.stage_dir("M", "SIGNALS", KEY)
+    fired = []
+
+    def b_installs(self, target):
+        import shutil
+
+        fired.append(True)
+        shutil.rmtree(target)  # B replaces the invalid target by its valid publication
+        shutil.copytree(valid_dir, target)
+
+    monkeypatch.setattr(dag.ArtifactStore, "_before_move_aside", b_installs)
+    manifest = _publish(store)  # A
+    monkeypatch.undo()
+    assert fired == [True]
+    assert manifest["complete"] is True
+    assert store.lookup("M", "SIGNALS", KEY).hit  # B's publication survived
+    assert _snapshot(final) == _snapshot(valid_dir)
+    assert not _leftovers(store)  # A moved nothing aside and discarded its temp dir
+
+
+def test_failing_install_degrades_to_uncached_and_restores_the_old_target(
+    tmp_path, monkeypatch
+) -> None:
+    store = dag.ArtifactStore(tmp_path)
+    _publish(store)
+    _corrupt(store)
+    final = store.stage_dir("M", "SIGNALS", KEY)
+    before = _snapshot(final)
+    real_rename = os.rename
+
+    def failing(src, dst, *a, **k):
+        if str(dst).endswith(KEY[:40]):
+            raise PermissionError("sharing violation")
+        return real_rename(src, dst, *a, **k)
+
+    monkeypatch.setattr(dag.os, "rename", failing)
+    monkeypatch.setattr(dag, "INSTALL_BUDGET_S", 0.3)
+
+    def compute():
+        return {"payload.npz": dag.npz_bytes({"x": np.arange(10)})}, {}, "fresh"
+
+    value, _rt, manifest = store.compute_and_publish(
+        "exp-1", "M", "SIGNALS", KEY, compute, code="c"
+    )
+    monkeypatch.undo()
+    assert value == "fresh" and manifest is None  # computed result returned, no exception leaked
+    status = store.read_status("exp-1", "M", "SIGNALS")
+    assert status["status"] == "COMPLETE" and "cache_write_skipped" in status
+    assert _snapshot(final) == before  # the previous target was restored, not destroyed
+    assert not [n for n in _leftovers(store) if ".tmp." in n]
 
 
 def test_running_status_with_a_dead_owner_is_reported_stale(tmp_path) -> None:

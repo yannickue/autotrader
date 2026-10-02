@@ -100,6 +100,10 @@ def _joint(metrics: dict[str, Any]) -> dict[str, Any]:
         "train": metrics["train"],
         "validation": metrics["validation"],
         "oos": metrics["oos"] if metrics["partitions_read"].get("OOS") else "NOT_READ",
+        "fast_trades": metrics.get("fast_trades"),
+        "candidates_blocked_while_busy": metrics.get(
+            "candidates_blocked_while_busy", "not computed"
+        ),
     }
 
 
@@ -285,6 +289,7 @@ def render_markdown(report: dict[str, Any]) -> str:
         j = m["JOINT_STRATEGY_RESULT"]
         lines += [
             f"trades {j['trade_count']} over {j['days']} days ({_f(j['trades_per_day'])}/day); expectancy {_f(j['expectancy_R'])} R, median {_f(j['median_R'])} R, win rate {_f(j['win_rate'])}",
+            f"FAST trades {j['fast_trades']}; candidates blocked while busy {j['candidates_blocked_while_busy']} (FAST enforces one position at a time via next_free; disclosure only, no netting-adjusted count)",
             f"gross PnL {_f(j['gross_PnL'], 1)} EUR, net PnL {_f(j['net_PnL'], 1)} EUR, cost burden {_f(j['cost_burden'])} R, max drawdown {_f(j['max_drawdown_R'])} R",
             f"MFE {_f(j['MFE'])} MAE {_f(j['MAE'])} capture {_f(j['capture'])} giveback {_f(j['giveback'])}; favorable-before-adverse: {j['favorable_before_adverse']}",
             f"TRAIN n={j['train']['n_trades']} exp={_f(j['train']['expectancy_r'])}; VALIDATION n={j['validation']['n_trades']} exp={_f(j['validation']['expectancy_r'])}; OOS: "
@@ -305,6 +310,7 @@ def _fidelity_lines(fid: dict[str, Any]) -> list[str]:
             f"- BY_CONSTRUCTION fields (copied from FAST, not independent): {fid.get('by_construction_fields')}",
             f"- mismatch legs: {fid.get('mismatch_leg_counts')}; blocked/error reason: {fid.get('blocked_reason')}",
             f"- trades fast/fidelity: {fid.get('fast_trade_count')}/{fid.get('fidelity_trade_count')}; nautilus {fid.get('nautilus_version')}",
+            f"- netting: candidates blocked by open position {(fid.get('netting') or {}).get('candidates_blocked_by_open_position')}, overlap violations {(fid.get('netting') or {}).get('overlap_violations')}, same-bar re-entries {(fid.get('netting') or {}).get('same_bar_reentries')}",
         ]
     return out
 
@@ -328,13 +334,16 @@ def _right_tail_lines(title: str, tail: dict[str, Any] | None) -> list[str]:
     parts = []
     for level, v in tail["levels"].items():
         parts.append(
-            f"{level}: P(R>=L)={_f(v['p_realized_ge'])}, N(MFE>=L)={v['n_mfe_ge']}, mean/median R|MFE>=L={_f(v['mean_realized_given_mfe_ge'])}/{_f(v['median_realized_given_mfe_ge'])}"
+            f"{level}: P(R>=L)={_f(v['p_realized_ge'])}, N(MFE>=L)={v['n_mfe_ge']}, mean/median R|MFE>=L={_f(v['mean_realized_given_mfe_ge'])}/{_f(v['median_realized_given_mfe_ge'])}, excluded non-finite in bucket={v.get('n_bucket_excluded_nonfinite', 0)}"
         )
     head = (
         f"{title} (N total={tail.get('n_total', tail['n'])}, finite={tail.get('n_finite', tail['n'])}, "
         f"excluded non-finite={tail.get('n_excluded_nonfinite', 0)})"
     )
-    return [f"{head}: " + " | ".join(parts)]
+    return [
+        f"{head}, excluded non-finite MFE={tail.get('n_excluded_nonfinite_mfe', 0)}: "
+        + " | ".join(parts)
+    ]
 
 
 __all__ = ("REPORT_VERSION", "build_report", "render_markdown")
