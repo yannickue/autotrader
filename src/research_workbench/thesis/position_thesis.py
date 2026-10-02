@@ -80,7 +80,10 @@ class ObservedPositionThesis(PositionThesis):
     """A PositionThesis that also remembers the last decision time it was observed at (contracts.py stays untouched)."""
 
     last_observed_ns: int | None = None
-    late_events_ignored: int = 0  # opposing events supplied with ts < T (late: not visible at their own bar) and therefore ignored; counted per supplying call, future ts > T are not counted (prefix-invariant)
+    late_event_keys: tuple[
+        tuple[int, str, str], ...
+    ] = ()  # identities of the late events already counted
+    late_events_ignored: int = 0  # opposing events supplied with ts < T (late: not visible at their own bar) and therefore ignored; each DISTINCT late event (source/ts/direction) counts once; future ts > T are not counted (prefix-invariant)
 
 
 def _as_observed(pt: PositionThesis) -> ObservedPositionThesis:
@@ -219,7 +222,13 @@ def observe(
     # visible then and is ignored (no retroactive exits); setups are recorded once as SETUP:* events
     seen = {_event_key(e) for e in pt.opposing_events}
     new_events: list[OpposingEvent] = []
-    late = sum(1 for e in opposing_events if e.direction is opp and e.ts_ns < t)
+    # an event that was visible on time (recorded at its own bar) and is re-supplied later is NOT late; a late first-seen event counts once
+    counted = set(pt.late_event_keys)
+    late_keys = sorted(
+        {_event_key(e) for e in opposing_events if e.direction is opp and e.ts_ns < t}
+        - counted
+        - seen
+    )
     for e in sorted(opposing_events, key=_event_key):
         if e.direction is opp and e.ts_ns == t and _event_key(e) not in seen:
             seen.add(_event_key(e))
@@ -305,7 +314,8 @@ def observe(
         opposing_events=pt.opposing_events + tuple(new_events),
         history=pt.history + tuple(transitions),
         last_observed_ns=t,
-        late_events_ignored=pt.late_events_ignored + late,
+        late_event_keys=pt.late_event_keys + tuple(late_keys),
+        late_events_ignored=pt.late_events_ignored + len(late_keys),
     )
 
 

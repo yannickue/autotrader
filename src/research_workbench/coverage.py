@@ -184,17 +184,21 @@ def open_readonly(path: str | Path, *, allow_production_readonly: bool = False) 
         conn = sqlite3.connect(
             f"{copy.as_uri()}?mode=ro", uri=True, timeout=30.0, check_same_thread=False
         )
-    except BaseException:
+        try:
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA query_only = ON")
+            store = _SnapshotStore.__new__(_SnapshotStore)
+            store.path = p
+            store._tmpdir = tmp
+            store._clock = lambda: datetime.now(UTC).isoformat()
+            store._lock = threading.RLock()
+            store._conn = conn
+        except BaseException:
+            conn.close()
+            raise
+    except BaseException:  # any failure after the copy: nothing of the snapshot may survive
         shutil.rmtree(tmp, ignore_errors=True)
         raise
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA query_only = ON")
-    store = _SnapshotStore.__new__(_SnapshotStore)
-    store.path = p
-    store._tmpdir = tmp
-    store._clock = lambda: datetime.now(UTC).isoformat()
-    store._lock = threading.RLock()
-    store._conn = conn
     return store
 
 
@@ -841,7 +845,15 @@ def section_shadow_exit_lab(ctx: CoverageContext) -> dict[str, Any]:
         reasons.append(
             "RED: shadow lab produced no result for any eligible closed trade (disabled / never ran): required lab absent, blocks promotion claims"
         )
-    return {"status": status, "reasons": reasons, "metrics": m}
+    out: dict[str, Any] = {"status": status, "reasons": reasons, "metrics": m}
+    if tb[
+        "pending"
+    ]:  # pending is not a failure for the status, but no promotion claim until the lab is complete
+        out["no_promotion_claim"] = True
+        out["no_promotion_reasons"] = [
+            f"shadow_exit_lab: {tb['pending']} lab evaluation(s) still pending (not a failure; incomplete evidence)"
+        ]
+    return out
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -1004,7 +1016,13 @@ def assess_position_thesis(
             f"{status}: {miss} unexpected missing variant result(s) ({100 * frac:.1f}% of {pairs} eligible position x variant pairs)"
         )
         nop.append(f"position_thesis: {miss} unexpected missing variant result(s)")
-    late = fields.get("late_events_ignored", 0)
+    na = sorted(
+        {k for k, v in fields.items() if v == NOT_AVAILABLE}
+        | {f"pending.{k}" for k, v in fields.get("pending", {}).items() if v == NOT_AVAILABLE}
+    )
+    if na:  # an evidence field that is not available can never support a promotion claim
+        nop.append(f"position_thesis: evidence field(s) NOT_AVAILABLE: {', '.join(na)}")
+    late = fields.get("late_events_ignored", NOT_AVAILABLE)
     if isinstance(late, int) and late:
         nop.append(
             f"position_thesis: {late} opposing event(s) supplied after their own decision bar were ignored (late events are not used)"

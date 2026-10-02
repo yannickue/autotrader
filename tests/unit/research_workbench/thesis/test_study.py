@@ -503,3 +503,50 @@ def test_causal_control_ranks_run_end_to_end(study_run):
     assert res.controls["n_controls"] > 0 and res.controls["control_method"].startswith(
         "observer-controls"
     )
+
+
+def test_registry_identity_hashes_names_families_and_results_not_just_counts():
+    bars = _bars(300)
+    maps = [mm(i, decision_ts_ns=int(bars.decision_ts_ns(i)), market="SYN") for i in range(300)]
+    events = {int(bars.decision_ts_ns(5)): (LONG_TRIG,)}
+
+    def reg_with(name, fam="f", p=None):
+        r = ST.HypothesisRegistry("same")
+        r.register(name, fam)
+        if p is not None:
+            r.record(name, p)
+        return r
+
+    base = _key(_inputs(bars, events, maps, registry=reg_with("h|a")))
+    assert base == _key(_inputs(bars, events, maps, registry=reg_with("h|a")))
+    assert (
+        _key(_inputs(bars, events, maps, registry=reg_with("h|b"))) != base
+    )  # equal counts, other name
+    assert (
+        _key(_inputs(bars, events, maps, registry=reg_with("h|a", fam="g"))) != base
+    )  # other family
+    assert (
+        _key(_inputs(bars, events, maps, registry=reg_with("h|a", p=0.2))) != base
+    )  # recorded result
+
+
+def test_cache_hit_into_an_incompatible_registry_is_a_miss(tmp_path):
+    bars = _bars(300)
+    maps = [mm(i, decision_ts_ns=int(bars.decision_ts_ns(i)), market="SYN") for i in range(300)]
+    store = dag.ArtifactStore(tmp_path)
+    kw = {"maps": maps, "partition": None, "config": S.StudyConfig(directions=(LONG,))}
+    a = S.run_study_cached(
+        store, "e", bars, {}, parent_key="p", registry=ST.HypothesisRegistry("r"), **kw
+    )
+    # the stored run claims a different starting state than the registry presented: not restorable
+    key_dir = store.stage_dir(bars.market, S.THESIS_STUDY_STAGE, a.key)
+    stored = (key_dir / "study.json").read_text("utf-8")
+    assert a.registry_state_at_start and a.registry_state_at_start in stored
+    reg = ST.HypothesisRegistry("r")
+    b = S.run_study_cached(store, "e", bars, {}, parent_key="p", registry=reg, **kw)
+    assert b.cached and reg.n_hypotheses == a.multiplicity["n_hypotheses"]
+    res = S.StudyResult(**{**a.to_dict(), "registry_state_at_start": "other-state"})
+    assert not S._registry_compatible(ST.HypothesisRegistry("r"), res, a.registry_state_at_start)
+    clash = ST.HypothesisRegistry("r")
+    clash.register(a.registry_entries[0][0], a.registry_entries[0][1])
+    assert not S._registry_compatible(clash, a, a.registry_state_at_start)

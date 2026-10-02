@@ -220,6 +220,13 @@ def registry_digest(reg: ST.HypothesisRegistry) -> dict[str, Any]:
         "path": None if reg.path is None else str(reg.path),
         "n_hypotheses": reg.n_hypotheses,
         "n_families": reg.n_families,
+        # names, family assignment, recorded p-values and family definitions (NOT the declaration timestamps): equal counts with
+        # different content are a different registry state
+        "hypotheses": sorted((h, reg._family[h], reg._p.get(h)) for h in reg._names),
+        "families": {
+            f: [v.get("definition"), v.get("n_results_recorded_at_declaration")]
+            for f, v in sorted(reg._families.items())
+        },
     }
 
 
@@ -258,7 +265,7 @@ def study_inputs(
         "maps": maps_digest(maps),
         "geometry": geo,
         "partition": partition_digest(partition),
-        "registry": registry_digest(registry),
+        "registry": config_hash(registry_digest(registry)),
         "exit_variants": exit_variants_digest(exit_variants),
     }
 
@@ -515,6 +522,9 @@ class StudyResult:
     warnings: list[str] = field(default_factory=list)
     limitations: list[str] = field(default_factory=lambda: list(LIMITATIONS))
     exit_variants: list[dict[str, Any]] = field(default_factory=list)
+    registry_state_at_start: str = (
+        ""  # digest of the registry (names, families, results) the run started from
+    )
     registry_entries: list[list[str]] = field(
         default_factory=list
     )  # [hypothesis, family] registered by this run (re-registered on a cache hit)
@@ -612,7 +622,7 @@ def run_study(
         events={"full_spec": len(full.events), "no_level_spec": len(abl.events), "union": len(ordered),
                 "overlap_dropped_full": full.n_overlap_dropped, "overlap_dropped_no_level": abl.n_overlap_dropped, "maps": full.n_maps},
         arms=[], ablation=[], controls={}, multiplicity={}, promotion_status=str(PromotionStatus.REJECT_FAST),
-        multiplicity_scope=scope, warnings=list(scope_notes),
+        multiplicity_scope=scope, warnings=list(scope_notes), registry_state_at_start=inputs["registry"],
     )  # fmt: skip
     out.no_promotion_reasons.append(
         "exploratory adapter: no end-to-end OOS / embargo validation (see limitations)"
@@ -746,6 +756,13 @@ def _finish(out: StudyResult, reg: ST.HypothesisRegistry, n_start: int) -> None:
     out.no_promotion_claim = True
 
 
+def _registry_compatible(reg: ST.HypothesisRegistry, res: StudyResult, state: str) -> bool:
+    """A stored result may be restored only into a registry in the SAME state it started from, with none of its names present."""
+    return res.registry_state_at_start == state and not any(
+        n in reg._family for n, _ in res.registry_entries
+    )
+
+
 def _replay_registration(reg: ST.HypothesisRegistry, res: StudyResult) -> None:
     """Cache hit: put the stored run's hypotheses into the caller's registry so the multiplicity count stays honest."""
     for fam in dict.fromkeys(f for _, f in res.registry_entries):
@@ -806,9 +823,11 @@ def run_study_cached(
             )
         )
         res = StudyResult(**data)
-        _replay_registration(reg, res)
-        res.cached = True
-        return res
+        if _registry_compatible(reg, res, inputs["registry"]):
+            _replay_registration(reg, res)
+            res.cached = True
+            return res
+        # incompatible registry state: treated as a MISS (recompute; reuse errors surface exactly as in a fresh run)
     t0 = time.perf_counter()
     res = run_study(
         bars, events_by_ts, spec=spec, config=cfg, registry=registry, maps=maps, geometry_fn=geometry_fn, geometry_version=geometry_version,

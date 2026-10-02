@@ -205,3 +205,41 @@ def test_late_events_ignored_is_surfaced():
         summary([out]) | {"unexpected_missing": 0}, C.CoverageThresholds()
     )
     assert any("after their own decision bar" in r for r in sec[2])
+
+
+def test_older_summary_without_late_counter_never_allows_a_promotion_claim(tmp_path, store):
+    old = {k: v for k, v in _summary().items() if k != "late_events_ignored"}
+    rep = _rep(tmp_path, store, {"DISCOVERY": old})
+    sec = rep["sections"]["position_thesis"]
+    assert sec["fields"]["late_events_ignored"] == C.NOT_AVAILABLE and sec["status"] == C.GREEN
+    assert sec["no_promotion_claim"] is True and any(
+        "late_events_ignored" in r for r in sec["no_promotion_reasons"]
+    )
+    assert rep["promotion_claim_allowed"] is False and rep["no_promotion_claim"] is True
+    ok = _rep(tmp_path, store, {"DISCOVERY": _summary()})
+    assert ok["promotion_claim_allowed"] is True
+
+
+def test_late_counter_counts_each_distinct_late_event_once_and_ignores_on_time_events():
+    from research_workbench.thesis.contracts import Direction as D
+    from research_workbench.thesis.contracts import OpposingEvent
+    from research_workbench.thesis.position_thesis import observe, summary
+
+    from .thesis._synth import mm
+
+    sh = D.SHORT
+    pt = open_position_thesis("p8", "EURUSD", D.LONG, 0, None, "STRUCT_RETEST", ())
+    on_time = OpposingEvent(mm(1).decision_ts_ns, sh, "ROUND_REJECT", True, True)
+    cum: list = []
+    for i in (1, 2, 3, 4):  # callers legitimately pass the CUMULATIVE event list every bar
+        if i == 1:
+            cum.append(on_time)
+        pt = observe(pt, mm(i), list(cum))
+    assert pt.late_events_ignored == 0 and len(pt.opposing_events) == 1
+    late = OpposingEvent(
+        mm(2).decision_ts_ns, sh, "OTHER_REJECT", True, True
+    )  # first supplied at bar 5, stamped bar 2
+    for i in (5, 6, 7):
+        pt = observe(pt, mm(i), [*cum, late])
+    assert pt.late_events_ignored == 1 and summary([pt])["late_events_ignored"] == 1
+    assert len(pt.opposing_events) == 1  # the causal rule is unchanged: a late event is never used

@@ -656,3 +656,40 @@ def test_cli_production_override_still_opens_read_only(tmp_path, cli, capsys):
     assert cli.main(argv) == 0
     assert json.loads(capsys.readouterr().out)["phase"] == "FROZEN"
     assert _tree(prod) == before
+
+
+def test_pending_lab_blocks_promotion_claim_but_is_not_a_failure(tmp_path, store):
+    one, two = _closed_trades(store, 2)
+    for it in (one, two):
+        store.record_outcome_extra(it.intent_id, {"final_gross_r": 1.0, "entry_exit": {"x": 1}})
+    sig = make_snapshot(i=240).signal_ts_utc
+    before = parse(sig) + timedelta(hours=12) - timedelta(minutes=1)
+    full_pt = {
+        "DISCOVERY": {
+            "open_positions_eligible": 1, "opposing_events_detected": 0, "opposing_events_future_path_complete": 0,
+            "position_thesis_assessment_complete": 1, "hypothetical_exit_complete": 5,
+            "pending": {"opposing_events": 0, "position_thesis_assessment": 0, "hypothetical_exit": 0},
+            "unexpected_missing": 0, "late_events_ignored": 0,
+        }
+    }  # fmt: skip
+    rep = _report(tmp_path, store, before, position_thesis_input=full_pt)
+    lab = rep["sections"]["shadow_exit_lab"]
+    assert lab["metrics"]["closed_trades"]["pending"] >= 1 and lab["status"] != C.RED  # pending != failure
+    assert lab["no_promotion_claim"] is True and "shadow_exit_lab" in rep["section_no_promotion"]
+    assert rep["no_promotion_claim"] is True and rep["promotion_claim_allowed"] is False
+
+
+def test_snapshot_cleanup_covers_connection_init(tmp_path, store, monkeypatch):
+    store.close()
+    made = []
+    real = C.tempfile.mkdtemp
+    monkeypatch.setattr(C.tempfile, "mkdtemp", lambda **kw: made.append(real(**kw)) or made[-1])
+
+    class Boom(C._SnapshotStore):
+        def __new__(cls, *a, **k):
+            raise RuntimeError("init failed")
+
+    monkeypatch.setattr(C, "_SnapshotStore", Boom)
+    with pytest.raises(RuntimeError, match="init failed"):
+        C.open_readonly(tmp_path / "d.db")
+    assert made and not Path(made[0]).exists()
