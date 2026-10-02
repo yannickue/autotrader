@@ -48,7 +48,7 @@ class FieldDiff:
 
 @dataclass(frozen=True)
 class DifferentialResult:
-    scenario_id: str; status: str            # "PASS" | "FAIL" | "BLOCKED"
+    scenario_id: str; status: str            # "PASS" | "FAIL" | "BLOCKED" | "ERROR"
     fast_trade_count: int; fidelity_trade_count: int
     field_diffs: tuple[FieldDiff, ...]; blocked_reason: str | None; summary: dict
 
@@ -57,7 +57,7 @@ def run_differential(market, candidates, cost, sizing, rules, window=None, *, sc
                      catalog_dir=None) -> DifferentialResult
 ```
 `BUG_SUSPECTED` or an unclassified difference => `status="FAIL"`. Missing Nautilus capability for a scenario =>
-`status="BLOCKED"` with the exact reason (never silently PASS).
+`status="BLOCKED"` with the exact reason (never silently PASS); an unexpected harness/replay exception => `status="ERROR"` (not passing).
 
 ## `experiment.py` (A)
 `ExperimentSpec` frozen dataclass: `experiment_version, strategy_spec (StrategySpec), markets (tuple[str]), dataset (DatasetRef),

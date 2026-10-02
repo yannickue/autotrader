@@ -35,6 +35,15 @@ _COST_SLIP0 = CostScenario("GOLDEN_SPREAD1_SLIP0", spread_mult=1.0, slippage_pts
 _COST_ONE_TICK = CostScenario("GOLDEN_SPREAD2_SLIP1TICK", spread_mult=1.0, slippage_pts=0.01)
 
 
+def array_digest_update(h: Any, name: str, arr: np.ndarray) -> None:
+    """Feed a CANONICAL encoding of ``arr`` into hash ``h``: name, dtype string, shape and the
+    little-endian C-contiguous bytes (independent of the platform byte order / memory layout)."""
+    a = np.ascontiguousarray(arr)
+    le = a.astype(a.dtype.newbyteorder("<"), copy=False)
+    h.update(f"|{name}|{le.dtype.str}|{le.shape!r}|".encode())
+    h.update(le.tobytes())
+
+
 @dataclass(frozen=True)
 class GoldenScenario:
     scenario_id: str
@@ -80,16 +89,25 @@ class GoldenScenario:
         m = self.market()
         h = hashlib.sha256()
         h.update(self.version.encode())
-        for arr in (m.o, m.h, m.l, m.c, m.spread, m.minute, m.day, m.contig_next):
-            h.update(np.ascontiguousarray(arr).tobytes())
+        named = (
+            ("o", m.o), ("h", m.h), ("l", m.l), ("c", m.c),
+            ("spread", m.spread), ("minute", m.minute), ("day", m.day),
+            ("contig_next", m.contig_next),
+        )  # fmt: skip
+        for name, arr in named:
+            array_digest_update(h, name, arr)
         return h.hexdigest()
 
     def candidate_hash(self) -> str:
         c = self.candidate_arrays()
         h = hashlib.sha256()
         h.update(self.version.encode())
-        for arr in (c.decision_idx, c.direction, c.stop, c.target, c.target_r, c.exit_kind):
-            h.update(np.ascontiguousarray(arr).tobytes())
+        named = (
+            ("decision_idx", c.decision_idx), ("direction", c.direction), ("stop", c.stop),
+            ("target", c.target), ("target_r", c.target_r), ("exit_kind", c.exit_kind),
+        )  # fmt: skip
+        for name, arr in named:
+            array_digest_update(h, name, arr)
         return h.hexdigest()
 
     def inputs(self) -> tuple[MarketArrays, CandidateArrays, CostScenario, SimWindow | None]:
@@ -467,46 +485,46 @@ GOLDEN_SCENARIOS: dict[str, GoldenScenario] = {
 
 # Pinned sha256 of each scenario's arrays (see ``GoldenScenario.data_hash`` / ``candidate_hash``).
 PINNED_DATA_HASH: dict[str, str] = {
-    "long_normal_target": ("a42eebf5cade0a6079ba78b75797fc593f69bdbc6f2184eb38b940e5764a0679"),
-    "short_normal_target": ("3965d6bb5aabba7cfcf6f35eba0cfffadb6dc718acbbdb5aa09809d20fe4a731"),
-    "long_normal_stop": ("51e0d1d75050dddb18c2bfd51c35421793ebc1224462123e90edc6076438f3c3"),
-    "short_normal_stop": ("b1183012caa6a4af5ab7de32e319433f788795e0aad3c03781818526c869e56c"),
-    "gap_through_stop": ("9ed759d1690447b243d186457fea017e6820aa4a30b813a5c6c47d3f675984b3"),
-    "target_crossed_at_fill": ("00be33fbbed59d8d0d85989a215fd59cc3083c6f4f60d11f887fdf382c0bbe17"),
-    "session_end": ("28fc6a0c8dfa96aa283c89546f4a14a4a9ed402df24b24dfe92a0988b5d8c934"),
-    "data_gap": ("a3ff00b5dc919034535f7fa7f36f5c7ab2ab6c87a7b0a9948ab0907484bc548d"),
+    "long_normal_target": ("57d955d052ad915b2df83dadfaa1338e1e33013dae2d2354855b7a833f4d96fc"),
+    "short_normal_target": ("ba5a21a0958d37952cca2613327b89ad2fc4b1e64816576471f4ce9c27de867a"),
+    "long_normal_stop": ("5c2588206bf7bf2c772143f10d1ba9e1ff8afcfd4c4a8652204a78bcddd587e5"),
+    "short_normal_stop": ("247229ccb3d3a96896daeed65a83ae32c24de812bc57e21cd90f563424027e60"),
+    "gap_through_stop": ("bd7d4ba83db421d068019ec9ffca83b8d38adf57c7871558e31ba7ac7ef859dc"),
+    "target_crossed_at_fill": ("d7626115e7265688b5a65a7a7ef198a84d474899e610d3292b7258b8fee63382"),
+    "session_end": ("742fcb790ed9d9d34d817b024711b4ad0b16c5a79342c3a9e9e10a66de878c23"),
+    "data_gap": ("756cb5c104f13eb1d44bd6391dbec34ac13b96081ece026fba4f11e269905d7d"),
     "spread_slippage_cost_target": (
-        "80626e35d2caed79c3a972a2b1a52afa0c73568f0f6bf80d38d114ef6c7320db"
+        "c583fbe61c9c25bf166f5218abb9de1805a4add6782e0a12f4029d6be4b3e30e"
     ),
     "spread_slippage_cost_stop": (
-        "6c6aa643ed003a9680125be7b8b9367ffc492ca7eaa9db6dd245d8b835e06a1e"
+        "aeb27d1e36f266f927558e13c6f23c920256d8189e0bc196997819f552944b79"
     ),
     "long_stop_and_target_same_bar": (
-        "0e128748a1d20351418fee2585d9814b14656905f23be881c177ee56696aa49b"
+        "042cff1c3d23ff60b01f09ad5da70ed4067ef1552cc8e200f8a162dd5ae47d21"
     ),
     "short_stop_and_target_same_bar": (
-        "cdb101dc038e2ef5249ff8b76b1015e597de1eb0cd5369fb61c1da59c580fb7f"
+        "c587fc6142ddf9925c2d605fd16e066de297b738515933c60138397a2b5a98b9"
     ),
 }
 PINNED_CANDIDATE_HASH: dict[str, str] = {
-    "long_normal_target": ("bba6bd81862a47cc3d1396b6c8bf8fa0178542603f6fdd76247a05c8188bf6f6"),
-    "short_normal_target": ("d6ed7b61baa2491cc277ff95f109dc994dc3a37abcb0f47c9f361fde33b3c927"),
-    "long_normal_stop": ("bba6bd81862a47cc3d1396b6c8bf8fa0178542603f6fdd76247a05c8188bf6f6"),
-    "short_normal_stop": ("d6ed7b61baa2491cc277ff95f109dc994dc3a37abcb0f47c9f361fde33b3c927"),
-    "gap_through_stop": ("bba6bd81862a47cc3d1396b6c8bf8fa0178542603f6fdd76247a05c8188bf6f6"),
-    "target_crossed_at_fill": ("6852636ecce17472b7e73f100c595e127876a69ec14e26b37a36fd36994f0ae8"),
-    "session_end": ("bba6bd81862a47cc3d1396b6c8bf8fa0178542603f6fdd76247a05c8188bf6f6"),
-    "data_gap": ("bba6bd81862a47cc3d1396b6c8bf8fa0178542603f6fdd76247a05c8188bf6f6"),
+    "long_normal_target": ("9ef8ac9df27b317922981bff426d4aa90cafeb818f5bcf61e6e7b2563bc1ec20"),
+    "short_normal_target": ("b754b5bee7206daa0e08022ee00eaa3f642cae4480cc3a21706e0a008da87174"),
+    "long_normal_stop": ("9ef8ac9df27b317922981bff426d4aa90cafeb818f5bcf61e6e7b2563bc1ec20"),
+    "short_normal_stop": ("b754b5bee7206daa0e08022ee00eaa3f642cae4480cc3a21706e0a008da87174"),
+    "gap_through_stop": ("9ef8ac9df27b317922981bff426d4aa90cafeb818f5bcf61e6e7b2563bc1ec20"),
+    "target_crossed_at_fill": ("7fef748ca8ce574bba9663742fd1ea7461ea23a9ef3720b1d982d5f71da51d9b"),
+    "session_end": ("9ef8ac9df27b317922981bff426d4aa90cafeb818f5bcf61e6e7b2563bc1ec20"),
+    "data_gap": ("9ef8ac9df27b317922981bff426d4aa90cafeb818f5bcf61e6e7b2563bc1ec20"),
     "spread_slippage_cost_target": (
-        "bba6bd81862a47cc3d1396b6c8bf8fa0178542603f6fdd76247a05c8188bf6f6"
+        "9ef8ac9df27b317922981bff426d4aa90cafeb818f5bcf61e6e7b2563bc1ec20"
     ),
     "spread_slippage_cost_stop": (
-        "bba6bd81862a47cc3d1396b6c8bf8fa0178542603f6fdd76247a05c8188bf6f6"
+        "9ef8ac9df27b317922981bff426d4aa90cafeb818f5bcf61e6e7b2563bc1ec20"
     ),
     "long_stop_and_target_same_bar": (
-        "bba6bd81862a47cc3d1396b6c8bf8fa0178542603f6fdd76247a05c8188bf6f6"
+        "9ef8ac9df27b317922981bff426d4aa90cafeb818f5bcf61e6e7b2563bc1ec20"
     ),
     "short_stop_and_target_same_bar": (
-        "d6ed7b61baa2491cc277ff95f109dc994dc3a37abcb0f47c9f361fde33b3c927"
+        "b754b5bee7206daa0e08022ee00eaa3f642cae4480cc3a21706e0a008da87174"
     ),
 }
