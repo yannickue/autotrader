@@ -399,7 +399,11 @@ _BASELINE_NOT_FAST = (  # slow + integration entries (dirs, files, prefixes) of 
 
 # test files that did NOT exist at the baseline: they were never part of the FAST tier, so placing them in slow/integration
 # is not a "move" and needs no MOVED_OUT_OF_FAST entry
-_NEW_NON_FAST_TESTS = ("tests/unit/research_workbench/test_differential_e2e.py",)
+_NEW_NON_FAST_TESTS = (
+    "tests/unit/research_workbench/test_differential_e2e.py",
+    "tests/unit/research_workbench/test_workbench_fastrun.py",
+    "tests/unit/research_workbench/test_workbench_report_cli.py",
+)
 
 
 def _conftest():

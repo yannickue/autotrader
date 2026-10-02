@@ -20,11 +20,31 @@ Engine semantics that explain the known differences (measured / read from source
   bar OPEN timestamp.
 
 Unknown / unclassified differences => ``status == "FAIL"``; a scenario Nautilus cannot express =>
-``status == "BLOCKED"`` with the exact reason. Nothing is ever silently PASS.
+``status == "BLOCKED"`` with the exact reason; an unexpected exception in the harness / replay =>
+``status == "ERROR"`` (type + message in ``summary``). Nothing is ever silently PASS.
+
+SCOPE / WHAT THIS DOES *NOT* VALIDATE (read before citing a PASS)
+-----------------------------------------------------------------
+The replay is driven by the FAST trades: direction, stop, target, quantity and the signal
+timestamp are COPIED into the Nautilus candidates. Comparing them is therefore vacuous BY
+CONSTRUCTION; those FieldDiffs carry ``by_construction=True`` / reason ``BY_CONSTRUCTION (not
+independent)``, are listed in ``summary["by_construction_fields"]`` and are EXCLUDED from the
+matched-field statistics (``class_counts``, ``matched_fields``). The differential validates
+EXECUTION semantics (fill, bracket/stop/target priority, gaps, forced exits, slippage/spread
+handling, PnL accounting) on IDENTICAL candidates. It does NOT validate candidate generation or
+position sizing: sizing correctness of ``simulate_fast`` is asserted separately against hand
+calculated numbers (``research_workbench.golden`` expectations + an independent sizing oracle in
+the tests). The filled quantity is compared as a guard against fill/rounding defects only.
+
+Lookahead note: the replay submits entries at the decision-bar CLOSE, but the quantity (and a
+derived target) come from the FAST trade, i.e. they were computed with the next-bar open as
+fill price; forced exits for session end / data gaps are scheduled from the (known) market
+arrays exactly as FAST sees them. These are inherited FAST semantics, not new replay lookahead.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import math
 import tempfile
 from dataclasses import dataclass, field
@@ -87,6 +107,7 @@ class NormalizedTrade:
     mae_r: float | None
     costs: float
     holding_bars: int | None
+    qty: float | None = None  # filled quantity (lots)
 
 
 @dataclass(frozen=True)
@@ -99,12 +120,13 @@ class FieldDiff:
     diff_class: DiffClass
     reason: str
     leg: str = "JOINT"  # "ENTRY" | "EXIT" | "JOINT" | "TRADE"
+    by_construction: bool = False  # replay input echoed from FAST: NOT an independent check
 
 
 @dataclass(frozen=True)
 class DifferentialResult:
     scenario_id: str
-    status: str  # "PASS" | "FAIL" | "BLOCKED"
+    status: str  # "PASS" | "FAIL" | "BLOCKED" | "ERROR"
     fast_trade_count: int
     fidelity_trade_count: int
     field_diffs: tuple[FieldDiff, ...]
@@ -135,6 +157,7 @@ DEFAULT_TOLERANCES: dict[str, Tolerance] = {
     "fill_price": Tolerance(_HALF_TICK, _PRICE_J),
     "stop": Tolerance(_HALF_TICK, _PRICE_J),
     "target": Tolerance(_HALF_TICK, _PRICE_J),
+    "qty": Tolerance(1e-9, "lot-step grid (0.25); filled quantity must equal the sized quantity"),
     "exit_price": Tolerance(_HALF_TICK, _PRICE_J),
     "r_multiple": Tolerance(
         2e-3, "two half-tick price roundings divided by the minimum research risk of 5 points"
@@ -154,6 +177,7 @@ FIELD_LEG: dict[str, str] = {
     "fill_price": "ENTRY",
     "stop": "ENTRY",
     "target": "ENTRY",
+    "qty": "ENTRY",
     "exit_ts_ns": "EXIT",
     "exit_price": "EXIT",
     "exit_reason": "EXIT",
@@ -166,6 +190,15 @@ FIELD_LEG: dict[str, str] = {
     "holding_bars": "JOINT",
 }
 _COMPARE_ORDER = tuple(FIELD_LEG)
+# Replay inputs copied from the FAST trades: comparing them proves nothing about either engine.
+BY_CONSTRUCTION_FIELDS = ("signal_ts_ns", "direction", "stop", "target", "qty")
+BY_CONSTRUCTION_NOTE = "BY_CONSTRUCTION (not independent)"
+SCOPE_TEXT = (
+    "Validates EXECUTION semantics (fill, stop/target priority, gaps, forced exits, slippage and "
+    "spread handling, PnL accounting) on IDENTICAL candidates. Direction, stop, target, quantity "
+    "and signal timestamp are copied from FAST into the replay (BY_CONSTRUCTION, excluded from "
+    "matched-field statistics). Does NOT validate candidate generation or position sizing."
+)
 NOT_APPLICABLE_FIELDS = {
     "partial_exits": "FAST simulator produces no partial exits",
     "tp1": "FAST simulator has a single fixed target (no TP1)",
@@ -190,6 +223,7 @@ class Component:
 class PairContext:
     side: int = 1
     qty: float = 1.0
+    contract_size: float = 1.0
     components: dict[str, tuple[Component, ...]] = field(default_factory=dict)
     # (fast_reason, fidelity_reason) -> written reason (always EXPECTED_ABSTRACTION)
     reason_alternatives: dict[tuple[str, str], str] = field(default_factory=dict)
@@ -230,19 +264,71 @@ def _derived_components(
     d_exit = sum(c.amount for c in ctx.components.get("exit_price", ()))
     d_fill_b = sum(c.amount for c in ctx.components.get("fill_price", ()) if c.basis)
     d_exit_b = sum(c.amount for c in ctx.components.get("exit_price", ()) if c.basis)
-    s, q = ctx.side, ctx.qty
-    net_d = s * q * (d_exit - d_fill)
-    gross_d = s * q * (d_exit_b - d_fill_b)
+    s, q, cs = ctx.side, ctx.qty, ctx.contract_size
+    net_d = s * q * cs * (d_exit - d_fill)
+    gross_d = s * q * cs * (d_exit_b - d_fill_b)
     out: dict[str, tuple[Component, ...]] = {
         "net_pnl": (Component(net_d, cls, note),),
         "gross_pnl": (Component(gross_d, cls, note),),
         "costs": (Component(net_d * -1.0 + gross_d, cls, note),),
     }
-    risk = abs(fid.fill_price - fid.stop)
-    if risk > 0 and q > 0:
-        out["r_multiple"] = (
-            Component((fast.net_pnl + net_d) / (risk * q) - fast.r_multiple, cls, note),
+    # R expectation from PRICE primitives and the shared stop only (never FAST's own pnl / R):
+    # r = side * (exit - fill) / |fill - stop|  (commission is 0 here; qty and contract size cancel)
+    risk_f = abs(fast.fill_price - fast.stop)
+    risk_x = abs(fast.fill_price + d_fill - fast.stop)
+    if risk_f > 0 and risk_x > 0:
+        r_f = s * (fast.exit_price - fast.fill_price) / risk_f
+        r_x = s * ((fast.exit_price + d_exit) - (fast.fill_price + d_fill)) / risk_x
+        out["r_multiple"] = (Component(r_x - r_f, cls, note),)
+    return out
+
+
+def _accounting_diffs(
+    trade_index: int,
+    who: str,
+    t: NormalizedTrade,
+    ctx: PairContext,
+    tolerances: dict[str, Tolerance],
+) -> list[FieldDiff]:
+    """Is ONE engine's net / R internally consistent with ITS OWN fill, exit, qty, stop?
+
+    A coherently wrong accounting (e.g. net scaled by 1.1) can never be explained away by price
+    components: it is flagged here as BUG_SUSPECTED regardless of the other engine.
+    """
+    out: list[FieldDiff] = []
+    q = t.qty if t.qty is not None else ctx.qty
+    s, cs = t.direction, ctx.contract_size
+    tol_net = tolerances["net_pnl"].abs_tol * q
+    exp_net = s * q * cs * (t.exit_price - t.fill_price)
+    if abs(t.net_pnl - exp_net) > max(tol_net, EXACT_EPS):
+        out.append(
+            FieldDiff(
+                trade_index,
+                f"{who}_net_pnl_consistency",
+                t.net_pnl,
+                exp_net,
+                t.net_pnl - exp_net,
+                DiffClass.BUG_SUSPECTED,
+                f"{who} net_pnl inconsistent with its own fill/exit/qty",
+                "JOINT",
+            )
         )
+    risk = abs(t.fill_price - t.stop)
+    if risk > 0:
+        exp_r = s * (t.exit_price - t.fill_price) / risk
+        if abs(t.r_multiple - exp_r) > max(tolerances["r_multiple"].abs_tol, EXACT_EPS):
+            out.append(
+                FieldDiff(
+                    trade_index,
+                    f"{who}_r_multiple_consistency",
+                    t.r_multiple,
+                    exp_r,
+                    t.r_multiple - exp_r,
+                    DiffClass.BUG_SUSPECTED,
+                    f"{who} r_multiple inconsistent with its own fill/exit/stop",
+                    "JOINT",
+                )
+            )
     return out
 
 
@@ -257,11 +343,15 @@ def classify_pair(
     ctx = ctx or PairContext(side=fast.direction)
     derived = _derived_components(fast, fid, ctx)
     diffs: list[FieldDiff] = []
+    diffs.extend(_accounting_diffs(trade_index, "fast", fast, ctx, tolerances))
+    diffs.extend(_accounting_diffs(trade_index, "fidelity", fid, ctx, tolerances))
     for name in _COMPARE_ORDER:
         fv, xv = getattr(fast, name), getattr(fid, name)
         leg = FIELD_LEG[name]
         if name in ("mfe_r", "mae_r") and (fv is None or xv is None):
             continue  # not applicable (reported in the summary), never counted as a match
+        if name == "qty" and fv is None and xv is None:
+            continue  # quantity not provided (hand-built pairs)
         if name == "target" and fv is None and xv is None:
             diffs.append(FieldDiff(trade_index, name, fv, xv, 0.0, DiffClass.EXACT_MATCH, "", leg))
             continue
@@ -304,7 +394,14 @@ def classify_pair(
         else:
             cls, why = DiffClass.BUG_SUSPECTED, f"unexplained delta {delta!r} (tolerance {tol!r})"
         diffs.append(FieldDiff(trade_index, name, fv, xv, delta, cls, why, leg))
-    return diffs
+    return [_mark_by_construction(d) for d in diffs]
+
+
+def _mark_by_construction(d: FieldDiff) -> FieldDiff:
+    if d.field not in BY_CONSTRUCTION_FIELDS:
+        return d
+    reason = BY_CONSTRUCTION_NOTE + (f": {d.reason}" if d.reason else "")
+    return dataclasses.replace(d, reason=reason, by_construction=True)
 
 
 def trade_mismatch_leg(diffs: list[FieldDiff], *, strict: bool = False) -> str:
@@ -394,6 +491,7 @@ def normalize_fast(
                 mae_r=float(trades.mae_r[n]),
                 costs=float(trades.cost_eur[n]),
                 holding_bars=int(trades.holding_bars[n]),
+                qty=float(trades.qty[n]),
             )
         )
     return out
@@ -525,6 +623,7 @@ def normalize_replay(
                 mae_r=None,
                 costs=gross - net,
                 holding_bars=int((exit_.ts_ns - entry.ts_ns) // BAR_NS),
+                qty=float(qty),
             )
         )
     return trades
@@ -673,7 +772,32 @@ def _blocked(
         fidelity_trade_count=0,
         field_diffs=(),
         blocked_reason=reason,
-        summary={"not_applicable": dict(NOT_APPLICABLE_FIELDS), **(extra or {})},
+        summary={
+            "not_applicable": dict(NOT_APPLICABLE_FIELDS),
+            "by_construction_fields": list(BY_CONSTRUCTION_FIELDS),
+            "scope": SCOPE_TEXT,
+            **(extra or {}),
+        },
+    )
+
+
+def _error(scenario_id: str, fast_n: int, where: str, exc: BaseException) -> DifferentialResult:
+    """Unexpected harness / replay exception: NOT 'unsupported' (BLOCKED) but a defect."""
+    return DifferentialResult(
+        scenario_id=scenario_id,
+        status="ERROR",
+        fast_trade_count=fast_n,
+        fidelity_trade_count=0,
+        field_diffs=(),
+        blocked_reason=None,
+        summary={
+            "error_stage": where,
+            "error_type": type(exc).__name__,
+            "error_message": str(exc),
+            "not_applicable": dict(NOT_APPLICABLE_FIELDS),
+            "by_construction_fields": list(BY_CONSTRUCTION_FIELDS),
+            "scope": SCOPE_TEXT,
+        },
     )
 
 
@@ -689,6 +813,7 @@ def run_differential(
     tolerances: dict[str, Tolerance] = DEFAULT_TOLERANCES,
     catalog_dir: Path | str | None = None,
     instrument: Any = None,
+    _replay_mutator: Any = None,  # TEST HOOK: alters replay candidates only (non-vacuity tests)
 ) -> DifferentialResult:
     """Run FAST and the Nautilus candidate replay on the same bars/candidates and classify."""
     win = window if window is not None else SimWindow()
@@ -720,8 +845,8 @@ def run_differential(
     try:
         open_ts = bar_open_ts_ns(market)
         fast_norm = normalize_fast(market, candidates, trades)
-    except ValueError as exc:
-        return _blocked(scenario_id, n_fast, f"cannot build bar timestamps: {exc}")
+    except Exception as exc:  # malformed market (non-increasing day/minute) = input defect
+        return _error(scenario_id, n_fast, "timestamps/normalize_fast", exc)
 
     try:
         from nautilus_kernel.replay_backtest import ReplayCandidate, run_candidate_replay_backtest
@@ -730,6 +855,12 @@ def run_differential(
 
     try:
         inst = instrument if instrument is not None else _default_instrument()
+    except (FileNotFoundError, ImportError) as exc:
+        return _blocked(scenario_id, n_fast, f"instrument unavailable: {exc!r}")
+    except Exception as exc:
+        return _error(scenario_id, n_fast, "instrument", exc)
+
+    try:
         tick = float(inst.price_increment)
         replay_cands = [
             ReplayCandidate(
@@ -741,6 +872,8 @@ def run_differential(
             )
             for n, t in enumerate(fast_norm)
         ]
+        if _replay_mutator is not None:
+            replay_cands = _replay_mutator(replay_cands)
         forced: dict[int, str] = {}
         for n in range(n_fast):
             kb, why = forced_exit_for(market, win, int(trades.entry_idx[n]))
@@ -767,24 +900,28 @@ def run_differential(
                 tmp.cleanup()
         fid_norm = normalize_replay(replay, market, cost, tick, open_ts)
     except Exception as exc:
-        return _blocked(scenario_id, n_fast, f"Nautilus replay failed: {type(exc).__name__}: {exc}")
+        return _error(scenario_id, n_fast, "nautilus replay/normalize_replay", exc)
 
-    return compare_trade_lists(
-        scenario_id,
-        fast_norm,
-        fid_norm,
-        market=market,
-        cost=cost,
-        tick=tick,
-        open_ts=open_ts,
-        trades=trades,
-        tolerances=tolerances,
-        extra_summary={
-            "labels": list(replay.labels),
-            "fast_skips": trades.skips,
-            "nautilus_ignored_candidates": list(replay.ignored),
-        },
-    )
+    try:
+        return compare_trade_lists(
+            scenario_id,
+            fast_norm,
+            fid_norm,
+            market=market,
+            cost=cost,
+            tick=tick,
+            open_ts=open_ts,
+            trades=trades,
+            tolerances=tolerances,
+            contract_size=sizing.contract_size,
+            extra_summary={
+                "labels": list(replay.labels),
+                "fast_skips": trades.skips,
+                "nautilus_ignored_candidates": list(replay.ignored),
+            },
+        )
+    except Exception as exc:
+        return _error(scenario_id, n_fast, "compare_trade_lists", exc)
 
 
 def compare_trade_lists(
@@ -800,6 +937,7 @@ def compare_trade_lists(
     contexts: dict[int, PairContext] | None = None,
     tolerances: dict[str, Tolerance] = DEFAULT_TOLERANCES,
     extra_summary: dict[str, Any] | None = None,
+    contract_size: float = 1.0,
 ) -> DifferentialResult:
     """Match trades by signal timestamp, classify all fields, derive status + summary.
 
@@ -859,6 +997,7 @@ def compare_trade_lists(
                 int(trades.entry_idx[n]),
                 int(trades.decision_idx[n]),
             )
+            ctx = dataclasses.replace(ctx, contract_size=contract_size)
         pair = classify_pair(n, f, x, ctx, tolerances)
         diffs.extend(pair)
         per_trade_leg.append(trade_mismatch_leg(pair))
@@ -878,9 +1017,12 @@ def compare_trade_lists(
                 )
             )
 
+    # matched-field statistics only count INDEPENDENT checks (by-construction echoes excluded)
     class_counts = {c.value: 0 for c in DiffClass}
+    by_construction_counts = {c.value: 0 for c in DiffClass}
     for d in diffs:
-        class_counts[d.diff_class.value] += 1
+        (by_construction_counts if d.by_construction else class_counts)[d.diff_class.value] += 1
+    matched = class_counts["EXACT_MATCH"] + class_counts["TOLERANCE_MATCH"]
 
     def _legs(vals: list[str]) -> dict[str, int]:
         return {k: vals.count(k) for k in ("ENTRY_MISMATCH", "EXIT_MISMATCH", "BOTH", "NONE")}
@@ -889,6 +1031,10 @@ def compare_trade_lists(
     status = "FAIL" if unknown else "PASS"
     summary: dict[str, Any] = {
         "class_counts": class_counts,
+        "matched_fields": matched,
+        "by_construction_class_counts": by_construction_counts,
+        "by_construction_fields": list(BY_CONSTRUCTION_FIELDS),
+        "scope": SCOPE_TEXT,
         "mismatch_leg_counts": _legs(per_trade_leg),
         "mismatch_leg_counts_strict": _legs(per_trade_leg_strict),
         "per_trade_mismatch_leg": per_trade_leg,
