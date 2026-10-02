@@ -269,3 +269,79 @@ def test_plan_performs_no_simulation_and_no_writes(base, tmp_path, monkeypatch) 
     cold_plan = plan_experiment(replace(exp, artifact_root=str(cold_root)), gate=LOOSE_GATE)
     assert all(v["cache"] == "MISS" for v in cold_plan["markets"]["SYN_A"]["stages"].values())
     assert not cold_root.exists()
+
+
+def test_same_size_corruption_of_the_feature_cache_is_a_miss(base, tmp_path) -> None:
+    root, exp, _ = base
+    copy = _copy(root, tmp_path)
+    exp = replace(exp, artifact_root=str(copy))
+    store = dag.ArtifactStore(copy)
+    _, _, keys = fastrun._prepare(exp, "SYN_A", fastrun.METRIC_VERSION, LOOSE_GATE)
+    assert fastrun._features_lookup(store, "SYN_A", keys).hit
+    npz = next((copy / "features").glob("*/features.npz"))
+    data = bytearray(npz.read_bytes())
+    data[len(data) // 2] ^= 0xFF  # same size, different content
+    npz.write_bytes(bytes(data))
+    lookup = fastrun._features_lookup(store, "SYN_A", keys)
+    assert not lookup.hit and lookup.reason == "FEATURE_CACHE_CHANGED"
+
+
+def test_embargo_and_gap_bars_are_loaded_but_excluded_from_metrics(tmp_path) -> None:
+    from alpha.common.protocol import Partition, SplitPlan
+
+    split = SplitPlan(
+        Partition("TRAIN", "2024-03-04", "2024-03-15"),
+        Partition("VALIDATION", "2024-03-25", "2024-04-05"),
+        Partition("OOS", "2024-04-08", "2024-04-30"),
+        embargo_days=3,
+    )
+    exp = experiment(str(tmp_path), split=split)
+    record = run_market(exp, "SYN_A", gate=LOOSE_GATE)
+    scope = record["data_scope"]
+    assert scope["gap_or_embargo_bars"] > 0  # gap Mar16-24 + embargo Mar25-27 were loaded...
+    assert scope["bars_loaded_but_not_in_metrics"] >= scope["gap_or_embargo_bars"]
+    assert scope["partitions_feeding_metrics"] == ["TRAIN", "VALIDATION"]
+    assert "limitation" in scope["causality"].lower()
+    store = dag.ArtifactStore(tmp_path)
+    market = dag.load_npz(
+        store.stage_dir("SYN_A", "SIGNALS", record["keys"]["SIGNALS"]) / "market.npz"
+    )
+    trades = _trades(tmp_path, record)
+    entry_dates = market["date_days"][trades["entry_idx"]].astype("datetime64[D]")
+    in_train = split.mask(entry_dates, split.train)
+    in_val = split.mask(entry_dates, split.validation)  # excludes the 3 embargo days
+    outside = ~(in_train | in_val)
+    assert outside.any(), "test data must contain trades in gap/embargo days"
+    metrics = _metrics_file(tmp_path, record)
+    assert metrics["contract"]["trade_count"] == int((in_train | in_val).sum())
+    assert metrics["train"]["n_trades"] == int(in_train.sum())
+    assert metrics["validation"]["n_trades"] == int(in_val.sum())
+    assert metrics["contract"]["trade_count"] < len(trades["entry_idx"])
+
+
+def test_real_process_pool_jobs_one_equals_jobs_two(tmp_path) -> None:
+    from research_speed.parallel import available_memory_mb, clamp_jobs
+
+    free = available_memory_mb()
+    if free is None or free < 1500:
+        pytest.skip(f"real process pool needs >= 1.5 GB free RAM (free: {free} MB)")
+    try:
+        clamp_jobs(2, 2)
+    except Exception as exc:  # InsufficientMemoryError: reserve + worker not available
+        pytest.skip(f"RAM guard refuses 2 workers: {exc}")
+    tiny = DatasetRef(kind="synthetic", seed=3, days=12, start="2024-03-04")
+    results = {}
+    for jobs in (1, 2):
+        exp = experiment(str(tmp_path / f"p{jobs}"), markets=("SYN_A", "SYN_B"), dataset=tiny)
+        results[jobs] = run_fast(exp, jobs=jobs, gate=LOOSE_GATE)
+    assert results[2]["jobs_effective"] == 2
+    for market in ("SYN_A", "SYN_B"):
+        r1, r2 = results[1]["markets"][market], results[2]["markets"][market]
+        assert (r1["status"], r1["keys"], r1["dataset_hash"]) == (
+            r2["status"],
+            r2["keys"],
+            r2["dataset_hash"],
+        )
+        assert _metrics_file(tmp_path / "p1", r1, market) == _metrics_file(
+            tmp_path / "p2", r2, market
+        )

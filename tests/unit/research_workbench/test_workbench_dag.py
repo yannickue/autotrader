@@ -158,8 +158,36 @@ def test_code_hash_uses_import_closure_and_is_cacheable() -> None:
         assert len(value) == 64 and not value.startswith(dag.UNCACHEABLE), (entries, value)
 
 
+def test_signals_and_simulation_keys_include_the_adapter_code_hash(tmp_path, monkeypatch) -> None:
+    exp = experiment(str(tmp_path))
+    base = _keys(exp)
+    assert base.components["SIGNALS"]["adapter_code_hash"] == dag.code_hash(dag.ADAPTER_CODE)
+    monkeypatch.setitem(dag._CODE_CACHE, dag.ADAPTER_CODE, "changed-adapter-code")
+    changed = _keys(exp)
+    assert changed.features == base.features  # adapters do not produce the feature set
+    assert changed.signals != base.signals
+    assert changed.simulation != base.simulation
+    assert changed.metrics != base.metrics
+
+
 def test_fidelity_and_report_keys_depend_on_their_inputs() -> None:
-    a = dag.fidelity_key("s1", COST_SCENARIOS["BASE"], {"x": 1}, "1.0")
-    assert a != dag.fidelity_key("s2", COST_SCENARIOS["BASE"], {"x": 1}, "1.0")
-    assert a != dag.fidelity_key("s1", COST_SCENARIOS["BASE"], {"x": 1}, "1.1")
+    from alpha.common.sim import DEFAULT_RULES, DEFAULT_SIZING
+
+    def key(**kw):
+        args = {
+            "signals_key": "s1", "simulation_key": "m1", "cost": COST_SCENARIOS["BASE"],
+            "sizing": DEFAULT_SIZING, "rules": DEFAULT_RULES, "window": None,
+            "replay_config": {"x": 1}, "nautilus_version": "1.0", "diff_code_hash": "d",
+        }  # fmt: skip
+        args.update(kw)
+        return dag.fidelity_key(**args)
+
+    base = key()
+    for change in (
+        {"signals_key": "s2"}, {"simulation_key": "m2"}, {"cost": COST_SCENARIOS["SPREAD_STRESS"]},
+        {"replay_config": {"x": 2}}, {"nautilus_version": "1.1"}, {"diff_code_hash": "e"},
+        {"rules": replace(DEFAULT_RULES, max_trades_per_day=1)},
+        {"sizing": replace(DEFAULT_SIZING, risk_fraction=0.01)},
+    ):  # fmt: skip
+        assert key(**change) != base, change
     assert dag.report_key({"A": "1"}) != dag.report_key({"A": "2"})

@@ -402,6 +402,7 @@ _BASELINE_NOT_FAST = (  # slow + integration entries (dirs, files, prefixes) of 
 _NEW_NON_FAST_TESTS = (
     "tests/unit/research_workbench/test_differential_e2e.py",
     "tests/unit/research_workbench/test_differential_e2e_nonvacuity.py",
+    "tests/unit/research_workbench/test_workbench_compare_integration.py",
     "tests/unit/research_workbench/test_workbench_fastrun.py",
     "tests/unit/research_workbench/test_workbench_report_cli.py",
 )

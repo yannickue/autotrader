@@ -334,35 +334,43 @@ def _policy_right_tails(
             ),
         }
         if name != baseline:
-            both = [i for i in own_idx if base[i] is not None]
+            # PAIRED set: both policies applicable AND capture defined for both (no independent subsets)
+            both_applicable = [i for i in own_idx if base[i] is not None]
+            both = [
+                i
+                for i in both_applicable
+                if recs[i].get("capture_ratio") is not None
+                and base[i].get("capture_ratio") is not None
+            ]
+            n_excl_na = len(lab_rows) - len(both_applicable)
+            n_excl_cap = len(both_applicable) - len(both)
+            paired: dict[str, Any] = {
+                "basis": "paired entries (both policies applicable and capture defined)",
+                "n_pairs": len(both),
+                "n_excluded_not_both_applicable": n_excl_na,
+                "n_excluded_capture_undefined": n_excl_cap,
+            }
             if both:
                 tail_p = right_tail([recs[i]["r"] for i in both], mfe[both])
                 tail_b = right_tail([base[i]["r"] for i in both], mfe[both])
-                cap_p = [
-                    recs[i]["capture_ratio"]
-                    for i in both
-                    if recs[i].get("capture_ratio") is not None
-                ]
-                cap_b = [
-                    base[i]["capture_ratio"]
-                    for i in both
-                    if base[i].get("capture_ratio") is not None
-                ]
-                better_capture = bool(cap_p and cap_b and np.mean(cap_p) > np.mean(cap_b))
+                cap_p = float(np.mean([recs[i]["capture_ratio"] for i in both]))
+                cap_b = float(np.mean([base[i]["capture_ratio"] for i in both]))
                 lower_levels = [
                     lvl
                     for lvl, v in tail_p["levels"].items()
                     if (v["p_realized_ge"] or 0.0) < (tail_b["levels"][lvl]["p_realized_ge"] or 0.0)
                 ]
-                entry["paired_vs_baseline"] = {
-                    "n_pairs": len(both),
-                    "right_tail": tail_p,
-                    "baseline_right_tail": tail_b,
-                    "capture_mean": float(np.mean(cap_p)) if cap_p else None,
-                    "baseline_capture_mean": float(np.mean(cap_b)) if cap_b else None,
-                    "FLAG_higher_capture_lower_right_tail": bool(better_capture and lower_levels),
-                    "lower_tail_levels": lower_levels,
-                }
+                paired.update(
+                    right_tail=tail_p,
+                    baseline_right_tail=tail_b,
+                    capture_mean=cap_p,
+                    baseline_capture_mean=cap_b,
+                    FLAG_higher_capture_lower_right_tail=bool(cap_p > cap_b and lower_levels),
+                    lower_tail_levels=lower_levels,
+                )
+            else:
+                paired.update(FLAG_higher_capture_lower_right_tail=False, lower_tail_levels=[])
+            entry["paired_vs_baseline"] = paired
         out[name] = entry
     return out
 

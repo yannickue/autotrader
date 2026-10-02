@@ -124,7 +124,7 @@ def cmd_plan(args: argparse.Namespace) -> int:
     from research_workbench.fastrun import plan_experiment
 
     experiment = _load_experiment(args)
-    plan = plan_experiment(experiment, jobs=args.jobs)
+    plan = plan_experiment(experiment, jobs=args.jobs, gate=_gate(args))
     _print(plan, args.json)
     return EXIT_OK
 
@@ -137,7 +137,7 @@ def cmd_fast(args: argparse.Namespace) -> int:
     if refused is not None:
         return refused
     jobs = _harden(args.jobs)
-    result = run_fast(experiment, jobs=jobs, entry_exit=args.entry_exit)
+    result = run_fast(experiment, jobs=jobs, gate=_gate(args), entry_exit=args.entry_exit)
     if args.json:
         _print(result, True)
     else:
@@ -150,63 +150,54 @@ def cmd_fast(args: argparse.Namespace) -> int:
     return EXIT_FAILED if result["n_failed"] else EXIT_OK
 
 
+def _gate(args: argparse.Namespace):
+    from research_workbench.fastrun import FastGate
+
+    return FastGate(
+        min_train_trades=args.min_train_trades,
+        min_validation_trades=args.min_validation_trades,
+        require_positive_expectancy=not args.allow_negative_expectancy,
+    )
+
+
 def cmd_compare(args: argparse.Namespace) -> int:
     experiment = _load_experiment(args)
     refused = _guard(experiment, "compare", args.allow_light_only)
     if refused is not None:
         return refused
     try:
-        from research_workbench import differential
+        from research_workbench import differential  # noqa: F401  (availability check)
     except ImportError as exc:
         print(
             f"BLOCKED: research_workbench.differential is not available ({exc}).", file=sys.stderr
         )
         return EXIT_BLOCKED
-    from research_speed.segments import atomic_write_json
     from research_workbench import dag
-    from research_workbench.fastrun import (
-        candidates_from,
-        market_arrays,
-        run_market,
-    )
+    from research_workbench.compare import run_compare_market
+    from research_workbench.fastrun import run_market
 
     store = dag.ArtifactStore(experiment.artifact_root)
-    jobs = _harden(args.jobs)
-    del jobs
-    blocked = False
+    _harden(args.jobs)
+    not_ok = False
     for market in experiment.markets:
-        record = run_market(experiment, market, store=store)
+        record = run_market(experiment, market, gate=_gate(args), store=store)
         if record["status"] != "PROMOTE_TO_FIDELITY":
             print(
                 f"{market}: SKIPPED ({record['status']}; only PROMOTE_TO_FIDELITY markets are compared)"
             )
             continue
-        directory = store.stage_dir(market, "SIGNALS", record["keys"]["SIGNALS"])
-        candidates = candidates_from(dag.load_npz(directory / "candidates.npz"))
-        market_np = market_arrays(dag.load_npz(directory / "market.npz"))
-        scenario = f"{experiment.experiment_id}:{market}"
         try:
-            result = differential.run_differential(
-                market_np, candidates, experiment.cost_model, experiment.sizing, experiment.rules,
-                experiment.window, scenario_id=scenario,
-            )  # fmt: skip
-            status, reason = result.status, result.blocked_reason
-            summary = result.summary
-            n_diffs = len(result.field_diffs)
-        except (
-            Exception
-        ) as exc:  # incompatible/unavailable differential => BLOCKED, never a silent PASS
-            status, reason, summary, n_diffs = "BLOCKED", f"{type(exc).__name__}: {exc}", {}, 0
-        fidelity = {"PASS": "FIDELITY_PASS", "FAIL": "FIDELITY_MISMATCH"}.get(status, "BLOCKED")
-        key = dag.fidelity_key(record["keys"]["SIGNALS"], experiment.cost_model, {}, "unknown")
-        atomic_write_json(
-            store.run_dir(experiment.experiment_id) / f"{market}__differential.json",
-            {"status": status, "fidelity_status": fidelity, "blocked_reason": reason, "summary": summary,
-             "n_field_diffs": n_diffs, "fidelity_key": key, "scenario_id": scenario},
-        )  # fmt: skip
-        print(f"{market}: DIFFERENTIAL {status} {reason or ''}")
-        blocked = blocked or status != "PASS"
-    return EXIT_FAILED if blocked else EXIT_OK
+            result = run_compare_market(experiment, market, record, store)
+        except Exception as exc:  # never a silent PASS
+            print(f"{market}: BLOCKED compare failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+            not_ok = True
+            continue
+        print(
+            f"{market}: DIFFERENTIAL {result['status']} -> {result['promotion_status']}"
+            f"{' (cached)' if result.get('cached') else ''} {result.get('blocked_reason') or ''}"
+        )
+        not_ok = not_ok or result["status"] != "PASS"
+    return EXIT_FAILED if not_ok else EXIT_OK
 
 
 def cmd_report(args: argparse.Namespace) -> int:
@@ -264,6 +255,15 @@ def build_parser() -> argparse.ArgumentParser:
             "--allow-light-only",
             action="store_true",
             help="permit LIGHT work next to a live trader",
+        )
+        p.add_argument("--min-train-trades", type=int, default=30, help="fast gate (METRICS key)")
+        p.add_argument(
+            "--min-validation-trades", type=int, default=10, help="fast gate (METRICS key)"
+        )
+        p.add_argument(
+            "--allow-negative-expectancy",
+            action="store_true",
+            help="exploratory/test gate: no reject on negative expectancy (METRICS key)",
         )
         if name == "fast":
             p.add_argument(

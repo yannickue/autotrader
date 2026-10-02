@@ -70,6 +70,7 @@ SLOW_FILES = frozenset(
         # research workbench: real Nautilus BacktestEngine x ~12 scenarios (~250 MB each, ~40 s)
         "tests/unit/research_workbench/test_differential_e2e.py",
         "tests/unit/research_workbench/test_differential_e2e_nonvacuity.py",  # starts Nautilus engines
+        "tests/unit/research_workbench/test_workbench_compare_integration.py",  # compare through the real Nautilus engine (~17 s)
         "tests/unit/research_workbench/test_workbench_fastrun.py",  # real FeatureStore/numba/shadow-lab (~28 s)
         "tests/unit/research_workbench/test_workbench_report_cli.py",  # CLI smoke incl. fast run (~15 s)
     }

@@ -15,9 +15,10 @@ from typing import Any
 
 from alpha.fast.store import FEATURE_SCHEMA_VERSION, FEATURE_SET_VERSION
 
+from .compare import fidelity_view
 from .dag import ArtifactStore
 from .entry_exit_adapter import CAVEAT
-from .experiment import ExperimentSpec
+from .experiment import CAUSALITY_STATEMENT, ExperimentSpec
 
 REPORT_VERSION = "wb-report-1"
 _ENTRY_EXIT_STAGE = "ENTRY_EXIT"
@@ -31,14 +32,6 @@ def _read_artifact(store: ArtifactStore, market: str, stage: str, key: str, file
         return json.loads((store.stage_dir(market, stage, key) / file).read_text("utf-8"))
     except Exception as exc:
         return {"status": "NOT_AVAILABLE", "reason": f"{stage} unreadable: {type(exc).__name__}"}
-
-
-def _differential(store: ArtifactStore, experiment_id: str, market: str) -> dict[str, Any] | None:
-    path = store.run_dir(experiment_id) / f"{market}__differential.json"
-    try:
-        return json.loads(path.read_text("utf-8"))
-    except (OSError, ValueError):
-        return None
 
 
 def _entry_quality(entry_exit: dict[str, Any] | None) -> dict[str, Any]:
@@ -133,14 +126,17 @@ def build_report(
             entry_exit = _read_artifact(
                 store, market, _ENTRY_EXIT_STAGE, ee["key"], "entry_exit.json"
             )
-        diff = _differential(store, exp_id, market)
+        fid = fidelity_view(experiment, store, market, rec)
         markets[market] = {
             "DATASET_HASH": rec["dataset_hash"],
             "N_BARS": rec["n_bars"],
             "FAST_STATUS": metrics["status"],
             "FAST_REJECT_REASONS": metrics["reasons"],
-            "FIDELITY_STATUS": (diff or {}).get("fidelity_status", "NOT_RUN"),
-            "DIFFERENTIAL_STATUS": (diff or {}).get("status", "NOT_RUN"),
+            "PROMOTION_STATUS": fid.get("PROMOTION_STATUS", metrics["status"]),
+            "FIDELITY_STATUS": fid["FIDELITY_STATUS"],
+            "DIFFERENTIAL_STATUS": fid["DIFFERENTIAL_STATUS"],
+            "FIDELITY": fid,
+            "DATA_SCOPE": rec.get("data_scope"),
             "ROBUSTNESS_STATUS": "NOT_RUN",
             "OOS_STATUS": "READ" if metrics["partitions_read"].get("OOS") else "NOT_READ",
             "ARTIFACTS": {
@@ -172,6 +168,7 @@ def build_report(
         "SPLIT": experiment.split.to_dict(),
         "PARTITIONS_READ": experiment.partitions_actually_read(),
         "ENTRY_EXIT_DIAGNOSTIC_CAVEAT": CAVEAT,
+        "CAUSALITY_STATEMENT": CAUSALITY_STATEMENT,
     }  # fmt: skip
 
 
@@ -205,9 +202,12 @@ def render_markdown(report: dict[str, Any]) -> str:
         lines += [
             f"- DATASET_HASH: `{m['DATASET_HASH']}` ({m['N_BARS']} bars)",
             f"- FAST STATUS: **{m['FAST_STATUS']}** reasons={m['FAST_REJECT_REASONS']}",
+            f"- PROMOTION STATUS: {m['PROMOTION_STATUS']}",
             f"- FIDELITY STATUS: {m['FIDELITY_STATUS']}  DIFFERENTIAL STATUS: {m['DIFFERENTIAL_STATUS']}",
             f"- ROBUSTNESS STATUS: {m['ROBUSTNESS_STATUS']}  OOS STATUS: {m['OOS_STATUS']}",
             "- ARTIFACTS: " + "; ".join(f"{s}:{a['cache']}" for s, a in m["ARTIFACTS"].items()),
+            *_fidelity_lines(m["FIDELITY"]),
+            *_scope_lines(m.get("DATA_SCOPE")),
             "",
             "### ENTRY QUALITY",
             "",
@@ -243,12 +243,12 @@ def render_markdown(report: dict[str, Any]) -> str:
         sc = xq["same_entry_comparison"]
         if sc["status"] == "COMPLETE":
             lines += [
-                f"Same-entry exit-policy comparison on identical N={sc['n_entries']} entries (basis: {sc['basis']}):",
+                f"Same-entry exit-policy lab on N={sc['n_entries']} sampled entries (basis: {sc['basis']}). Per-policy rows use each policy's OWN applicable entries; every policy-vs-fixed_1_5r comparison and the capture/right-tail FLAG use PAIRED entries only (both policies applicable and capture defined):",
                 "",
             ]
             lines += [
-                "| policy | n | mean R | capture | right tail P(R>=2/3/5) |",
-                "|---|---|---|---|---|",
+                "| policy | own n | mean R | capture | right tail P(R>=2/3/5) | paired entries vs fixed_1_5r (excluded) | FLAG |",
+                "|---|---|---|---|---|---|---|",
             ]
             for name, p in sc["summary"]["policies"].items():
                 tail = (sc["right_tail_by_policy"].get(name) or {}).get("right_tail") or {}
@@ -256,13 +256,20 @@ def render_markdown(report: dict[str, Any]) -> str:
                     "/".join(_f(v["p_realized_ge"], 2) for v in (tail.get("levels") or {}).values())
                     or "-"
                 )
+                pv = (sc["right_tail_by_policy"].get(name) or {}).get("paired_vs_baseline") or {}
+                paired = (
+                    f"{pv['n_pairs']} ({pv['n_excluded_not_both_applicable'] + pv['n_excluded_capture_undefined']})"
+                    if pv
+                    else "-"
+                )
+                flag = "YES" if pv.get("FLAG_higher_capture_lower_right_tail") else "-"
                 lines.append(
-                    f"| {name} | {p['n_applicable']} | {_f(p['mean_r'])} | {_f(p['mean_capture_ratio'])} | {ps} |"
+                    f"| {name} | {p['n_applicable']} | {_f(p['mean_r'])} | {_f(p['mean_capture_ratio'])} | {ps} | {paired} | {flag} |"
                 )
             flagged = xq.get("flags_higher_capture_lower_right_tail") or []
             lines += [
                 "",
-                "FLAG higher capture but lower right tail vs fixed_1_5r: "
+                "FLAG higher capture but lower right tail vs fixed_1_5r (paired entries): "
                 + (", ".join(flagged) or "none"),
                 "",
             ]
@@ -286,6 +293,33 @@ def render_markdown(report: dict[str, Any]) -> str:
         ]
     lines += [f"> {report['ENTRY_EXIT_DIAGNOSTIC_CAVEAT']}", ""]
     return "\n".join(lines)
+
+
+def _fidelity_lines(fid: dict[str, Any]) -> list[str]:
+    out = []
+    if fid.get("note"):
+        out.append(f"- FIDELITY note: {fid['note']}")
+    if fid.get("scope"):
+        out += [
+            f"- DIFFERENTIAL SCOPE: {fid['scope']}",
+            f"- BY_CONSTRUCTION fields (copied from FAST, not independent): {fid.get('by_construction_fields')}",
+            f"- mismatch legs: {fid.get('mismatch_leg_counts')}; blocked/error reason: {fid.get('blocked_reason')}",
+            f"- trades fast/fidelity: {fid.get('fast_trade_count')}/{fid.get('fidelity_trade_count')}; nautilus {fid.get('nautilus_version')}",
+        ]
+    return out
+
+
+def _scope_lines(scope: dict[str, Any] | None) -> list[str]:
+    if not scope:
+        return []
+    bl = scope["bars_loaded"]
+    return [
+        f"- BARS LOADED: {bl['n_bars']} ({bl['first_date']}..{bl['last_date']}); warm-up before TRAIN {scope['warmup_before_train_bars']}, "
+        f"gap/embargo {scope['gap_or_embargo_bars']}; bars in partitions {scope['bars_in_partitions']}",
+        f"- PARTITIONS FEEDING METRICS: {scope['partitions_feeding_metrics']} ({scope['bars_feeding_metrics']} bars; "
+        f"{scope['bars_loaded_but_not_in_metrics']} loaded bars are NOT used by any metric)",
+        f"- CAUSALITY / LIMITATION: {scope['causality']}",
+    ]
 
 
 def _right_tail_lines(title: str, tail: dict[str, Any] | None) -> list[str]:

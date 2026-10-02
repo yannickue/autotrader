@@ -224,3 +224,31 @@ def test_entry_exit_artifact_is_cached(smoke, cli) -> None:
     rec = run_market(exp, "SYN_A", entry_exit=True)
     assert rec["entry_exit"]["cache"] == "HIT" and rec["entry_exit"]["computed"] is False
     assert np.isclose(1.0, 1.0) and dag.STAGES[4] == "ENTRY_EXIT"
+
+
+def test_policy_comparison_uses_paired_entries_with_unequal_applicability() -> None:
+    def rec(r, cap, applicable=True):
+        return {"applicable": applicable, "r": r, "capture_ratio": cap}
+
+    rows = [
+        # 0: paired (both applicable, capture defined)
+        {"lab": {"policies": {"fixed_1_5r": rec(3.0, 0.5), "pol": rec(1.0, 0.9)}}},
+        # 1: paired
+        {"lab": {"policies": {"fixed_1_5r": rec(3.5, 0.5), "pol": rec(1.2, 0.9)}}},
+        # 2: pol not applicable -> excluded (not both applicable)
+        {"lab": {"policies": {"fixed_1_5r": rec(9.0, 0.1), "pol": {"applicable": False}}}},
+        # 3: both applicable but pol capture undefined -> excluded (capture undefined)
+        {"lab": {"policies": {"fixed_1_5r": rec(8.0, 0.1), "pol": rec(0.1, None)}}},
+    ]
+    out = _policy_right_tails(rows, [3.5, 4.0, 9.5, 8.5])
+    paired = out["pol"]["paired_vs_baseline"]
+    assert paired["n_pairs"] == 2
+    assert paired["n_excluded_not_both_applicable"] == 1
+    assert paired["n_excluded_capture_undefined"] == 1
+    assert paired["capture_mean"] == pytest.approx(0.9)
+    assert paired["baseline_capture_mean"] == pytest.approx(
+        0.5
+    )  # only the paired entries, not 0.1-capture rows
+    assert paired["right_tail"]["n"] == 2 and paired["baseline_right_tail"]["n"] == 2
+    assert paired["FLAG_higher_capture_lower_right_tail"] is True
+    assert "paired entries" in paired["basis"]

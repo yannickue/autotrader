@@ -263,6 +263,48 @@ def load_market_frame(experiment: ExperimentSpec, market: str) -> pd.DataFrame:
     return frame.loc[keep].reset_index(drop=True)
 
 
+CAUSALITY_STATEMENT = (
+    "Features are computed over ALL loaded bars (including warm-up, gap and embargo bars) and are CAUSAL by the "
+    "existing FeatureStore guarantee: tests/test_alpha_fast_store.py::test_all_features_are_truncation_invariant "
+    "asserts that every feature array at bar t is unchanged when later bars are removed (so rolling windows, "
+    "percentiles and swings do not look ahead) and that higher-timeframe values change only on completed "
+    "boundaries. LIMITATION: that guarantee is verified by that test on one synthetic frame, not re-proven by the "
+    "workbench; it is not a proof for every possible dataset. Metrics and screens use ONLY bars/trades whose "
+    "entry date lies inside the declared partition masks (embargo days and inter-partition gaps are excluded)."
+)
+
+
+def data_scope(experiment: ExperimentSpec, frame: pd.DataFrame) -> dict[str, Any]:
+    """Truthful statement of which bars were LOADED and which partitions feed the metrics."""
+    dates = berlin_dates(frame["ts"])
+    split = experiment.split
+    parts = {"TRAIN": split.train, "VALIDATION": split.validation, "OOS": split.oos}
+    masks = {name: split.mask(dates, part) for name, part in parts.items()}
+    permitted = np.zeros(len(dates), dtype=bool)
+    for name in experiment.partitions_read:
+        permitted |= masks[name]
+    train_start = np.datetime64(split.train.start)
+    pre_train = dates < train_start
+    inside = np.zeros(len(dates), dtype=bool)
+    for mask in masks.values():
+        inside |= mask
+    gap = (~inside) & (~pre_train)
+    return {
+        "bars_loaded": {
+            "n_bars": len(frame),
+            "first_date": str(dates.min()) if len(dates) else None,
+            "last_date": str(dates.max()) if len(dates) else None,
+        },
+        "warmup_before_train_bars": int(pre_train.sum()),
+        "gap_or_embargo_bars": int(gap.sum()),
+        "bars_in_partitions": {name: int(m.sum()) for name, m in masks.items()},
+        "partitions_feeding_metrics": list(experiment.partitions_read),
+        "bars_feeding_metrics": int(permitted.sum()),
+        "bars_loaded_but_not_in_metrics": int(len(frame) - permitted.sum()),
+        "causality": CAUSALITY_STATEMENT,
+    }
+
+
 # ---- JSON loading ----
 def _cost(value: Any) -> CostScenario:
     if value is None:
@@ -354,11 +396,13 @@ def demo_synthetic_experiment(artifact_root: str | None = None) -> ExperimentSpe
 
 
 __all__ = (
+    "CAUSALITY_STATEMENT",
     "EXPERIMENT_VERSION",
     "PARTITIONS",
     "DatasetRef",
     "ExperimentSpec",
     "berlin_dates",
+    "data_scope",
     "dataset_hash",
     "default_split",
     "demo_synthetic_experiment",

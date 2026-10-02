@@ -30,7 +30,6 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-import pandas as pd
 
 from alpha.fast.screen import (
     RejectReason,
@@ -45,15 +44,27 @@ from demo.entry_exit_quality import capture_ratio
 from research_speed import importgraph
 from research_speed.parallel import available_memory_mb, clamp_jobs
 from research_speed.scheduler import Task, run_dag
+from research_speed.segments import file_sha256
 
 from . import dag
-from .dag import ArtifactStore, StageKeys, json_bytes, load_npz, npz_bytes
+from .dag import ArtifactStore, StageKeys
 from .entry_exit_adapter import right_tail
 from .experiment import (
     ExperimentSpec,
-    berlin_dates,
+    data_scope,
     dataset_hash,
     load_market_frame,
+)
+from .stage_adapters import (
+    _CAND_FIELDS,
+    _trade_fields,
+    candidates_from,
+    json_bytes,
+    load_npz,
+    market_arrays,
+    market_from_features,
+    npz_bytes,
+    trades_from,
 )
 from .status import PromotionStatus
 
@@ -105,53 +116,6 @@ def _code_digest() -> str:
     return "|".join(
         importgraph.content_digest(here / name) for name in ("fastrun.py", "entry_exit_adapter.py")
     )
-
-
-def market_from_features(features: Any) -> dict[str, np.ndarray]:
-    """Compact market arrays (GER40/Berlin basis, as ``simulate_fast`` defaults) from a FeatureSet."""
-    contig = np.asarray(features["contig"], dtype=bool)
-    contig_next = np.zeros(len(contig), dtype=bool)
-    contig_next[:-1] = contig[1:]
-    ts_ns = np.asarray(features["ts_ns"], dtype=np.int64)
-    date_days = berlin_dates(pd.DatetimeIndex(ts_ns, tz="UTC")).astype(np.int64)
-    return {
-        "o": np.asarray(features["o"], dtype=np.float64),
-        "h": np.asarray(features["h"], dtype=np.float64),
-        "l": np.asarray(features["l"], dtype=np.float64),
-        "c": np.asarray(features["c"], dtype=np.float64),
-        "spread": np.asarray(features["spread"], dtype=np.float64),
-        "minute": np.asarray(features["berlin_minute"], dtype=np.int64),
-        "day": np.asarray(features["berlin_day_id"], dtype=np.int64),
-        "contig_next": contig_next,
-        "ts_ns": ts_ns,
-        "date_days": date_days,
-        "atr": np.asarray(features["m5_atr14"], dtype=np.float64),
-    }
-
-
-def market_arrays(arrays: dict[str, np.ndarray]) -> MarketArrays:
-    return MarketArrays(
-        arrays["o"], arrays["h"], arrays["l"], arrays["c"], arrays["spread"],
-        arrays["minute"], arrays["day"], arrays["contig_next"],
-    )  # fmt: skip
-
-
-def candidates_from(arrays: dict[str, np.ndarray]) -> CandidateArrays:
-    return CandidateArrays(
-        arrays["decision_idx"], arrays["direction"], arrays["stop"], arrays["target"],
-        arrays["target_r"], arrays["exit_kind"],
-    )  # fmt: skip
-
-
-_CAND_FIELDS = ("decision_idx", "direction", "stop", "target", "target_r", "exit_kind")
-
-
-def _trade_fields() -> tuple[str, ...]:
-    return tuple(TradeArrays.__dataclass_fields__)
-
-
-def trades_from(arrays: dict[str, np.ndarray]) -> TradeArrays:
-    return TradeArrays(**{name: arrays[name] for name in _trade_fields()})
 
 
 def _permitted_mask(experiment: ExperimentSpec, dates: np.ndarray) -> np.ndarray:
@@ -303,6 +267,8 @@ def _features_lookup(store: ArtifactStore, market: str, keys: StageKeys) -> dag.
         npz = store.feature_cache_dir() / ref["store_key"] / "features.npz"
         if not npz.is_file() or npz.stat().st_size != ref["npz_size"]:
             return dag.Lookup(False, "FEATURE_CACHE_MISSING")
+        if file_sha256(npz) != ref["npz_sha256"]:  # same-size corruption must also be a MISS
+            return dag.Lookup(False, "FEATURE_CACHE_CHANGED")
     except Exception:
         return dag.Lookup(False, "FEATURE_CACHE_UNREADABLE")
     return lk
@@ -491,6 +457,7 @@ def run_market(
         "reasons": metrics["reasons"],
         "dataset_hash": dhash,
         "n_bars": len(frame),
+        "data_scope": data_scope(experiment, frame),
         "keys": keys.as_dict(),
         "stages": stages,
         "metric_version": metric_version,
@@ -628,6 +595,7 @@ def plan_experiment(
         markets[market] = {
             "n_bars": len(frame),
             "dataset_hash": dhash,
+            "data_scope": data_scope(experiment, frame),
             "cacheable": keys.cacheable,
             "stages": {
                 s: {

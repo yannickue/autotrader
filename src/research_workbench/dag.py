@@ -26,7 +26,6 @@ unprovable code closure) is a MISS with a reason; a lookup never raises and neve
 
 from __future__ import annotations
 
-import io
 import json
 import time
 import uuid
@@ -35,8 +34,6 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
-
-import numpy as np
 
 from alpha.fast.store import (
     CACHE_FORMAT_VERSION,
@@ -48,6 +45,7 @@ from research_speed.artifact import config_hash
 from research_speed.segments import Lookup, atomic_write_bytes, atomic_write_json, file_sha256
 
 from .experiment import ExperimentSpec
+from .stage_adapters import json_bytes, load_npz, npz_bytes
 
 STAGES = ("FEATURES", "SIGNALS", "SIMULATION", "METRICS", "ENTRY_EXIT", "FIDELITY", "REPORT")
 UNCACHEABLE = "UNCACHEABLE:"
@@ -101,6 +99,12 @@ SIGNAL_CODE = ("alpha/fast/spec.py",)
 SIM_CODE = ("alpha/fast/sim.py",)
 METRIC_CODE = ("alpha/fast/screen.py",)
 ENTRY_EXIT_CODE = ("research_workbench/entry_exit_adapter.py",)
+ADAPTER_CODE = ("research_workbench/stage_adapters.py",)
+DIFF_CODE = (
+    "research_workbench/differential.py",
+    "research_workbench/golden.py",
+    "nautilus_kernel/replay_backtest.py",
+)
 
 
 def _library_versions() -> dict[str, str]:
@@ -162,7 +166,8 @@ def compute_keys(
     scode = code_hash(SIGNAL_CODE)
     simcode = code_hash(SIM_CODE)
     mcode = code_hash(METRIC_CODE)
-    cacheable = not any(c.startswith(UNCACHEABLE) for c in (fcode, scode, simcode, mcode))
+    acode = code_hash(ADAPTER_CODE)
+    cacheable = not any(c.startswith(UNCACHEABLE) for c in (fcode, scode, simcode, mcode, acode))
     comp: dict[str, dict[str, Any]] = {}
     comp["FEATURES"] = {
         "market": market,
@@ -181,6 +186,7 @@ def compute_keys(
         "features_key": features,
         "strategy_spec_hash": experiment.strategy_spec.spec_hash(),
         "signal_code_hash": scode,
+        "adapter_code_hash": acode,
     }
     signals = config_hash(comp["SIGNALS"])
     comp["SIMULATION"] = {
@@ -190,6 +196,7 @@ def compute_keys(
         "rules": _plain(experiment.rules),
         "window": _plain(experiment.window),
         "sim_code_hash": simcode,
+        "adapter_code_hash": acode,
     }
     simulation = config_hash(comp["SIMULATION"])
     comp["METRICS"] = {
@@ -199,6 +206,7 @@ def compute_keys(
         "partitions_read": list(experiment.partitions_read),
         "gate": gate,
         "metric_code_hash": mcode,
+        "adapter_code_hash": acode,
         "fastrun_digest": fastrun_digest,
     }
     metrics = config_hash(comp["METRICS"])
@@ -211,35 +219,36 @@ def entry_exit_key(simulation_key: str, config: dict[str, Any]) -> str:
     )
 
 
-def fidelity_key(signals_key: str, cost: Any, replay_config: dict[str, Any], nautilus: str) -> str:
+def fidelity_key(
+    signals_key: str,
+    simulation_key: str,
+    cost: Any,
+    sizing: Any,
+    rules: Any,
+    window: Any,
+    replay_config: dict[str, Any],
+    nautilus_version: str,
+    diff_code_hash: str,
+) -> str:
+    """FIDELITY: signals + simulation keys, the full execution config, the replay config actually used, the real
+    nautilus version and the differential/golden/replay code closure hash."""
     return config_hash(
         {
             "signals_key": signals_key,
+            "simulation_key": simulation_key,
             "cost": _plain(cost),
+            "sizing": _plain(sizing),
+            "rules": _plain(rules),
+            "window": _plain(window),
             "replay_config": replay_config,
-            "nautilus_version": nautilus,
+            "nautilus_version": nautilus_version,
+            "diff_code_hash": diff_code_hash,
         }
     )
 
 
 def report_key(keys: dict[str, str]) -> str:
     return config_hash(keys)
-
-
-# ---- serialisation helpers ----
-def npz_bytes(arrays: dict[str, np.ndarray]) -> bytes:
-    buf = io.BytesIO()
-    np.savez(buf, **arrays)
-    return buf.getvalue()
-
-
-def load_npz(path: Path) -> dict[str, np.ndarray]:
-    with np.load(path, allow_pickle=False) as stored:
-        return {name: stored[name] for name in stored.files}
-
-
-def json_bytes(obj: Any) -> bytes:
-    return json.dumps(obj, indent=1, default=str, sort_keys=True).encode("utf-8")
 
 
 # ---- store ----
@@ -418,6 +427,8 @@ def new_tmp_name(prefix: str) -> str:
 
 
 __all__ = (
+    "ADAPTER_CODE",
+    "DIFF_CODE",
     "STAGES",
     "UNCACHEABLE",
     "ArtifactStore",
