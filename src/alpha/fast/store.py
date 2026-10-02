@@ -420,6 +420,33 @@ _REPLACE_ATTEMPTS = 6
 
 
 _ACQUIRE_GUARD = threading.Lock()  # serialises lock attempts/takeovers inside one process
+_DIR_LOCKS: dict[str, threading.Lock] = {}  # one in-process lock per cache directory
+_RELEASE_ATTEMPTS = 40
+
+
+def _dir_lock(target: Path) -> threading.Lock:
+    with _ACQUIRE_GUARD:
+        return _DIR_LOCKS.setdefault(str(target.resolve()), threading.Lock())
+
+
+def _release_lock_file(lock_path: Path, token: str, identity: tuple[int, int] | None) -> None:
+    """Remove the lock file if (and only if) it is ours; retry on Windows sharing violations.
+
+    Another thread polling the lock can hold it open for an instant, which makes the owner's
+    unlink fail with PermissionError; giving up there would leak the lock until it goes stale.
+    """
+    for attempt in range(_RELEASE_ATTEMPTS):
+        try:
+            content = lock_path.read_text(encoding="utf-8")
+            ours = content == token or (content == "" and _file_identity(lock_path) == identity)
+            if not ours:
+                return  # never drop someone else's lock
+            lock_path.unlink()
+            return
+        except FileNotFoundError:
+            return
+        except OSError:
+            time.sleep(min(0.005 * (attempt + 1), 0.05))
 
 
 def _file_identity(path: Path) -> tuple[int, int] | None:
@@ -468,11 +495,15 @@ def _publish_lock(target: Path):
     lock_path = target / ".publish.lock"
     token = f"{os.getpid()}:{uuid.uuid4().hex}"
     deadline = time.monotonic() + _LOCK_WAIT_SECONDS
+    # Same-process contenders queue on a per-directory threading lock first, so they never poll
+    # (and briefly hold open) the lock file the owner is about to delete.
+    local = _dir_lock(target)
+    have_local = local.acquire(timeout=_LOCK_WAIT_SECONDS)
     acquired = False
     identity: tuple[int, int] | None = None
     fd: int | None = None
     try:
-        while True:
+        while have_local:
             with _ACQUIRE_GUARD:
                 try:
                     fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
@@ -498,12 +529,12 @@ def _publish_lock(target: Path):
         if fd is not None:
             with contextlib.suppress(OSError):
                 os.close(fd)
-        if acquired:
-            with contextlib.suppress(OSError):
-                content = lock_path.read_text(encoding="utf-8")
-                ours = content == token or (content == "" and _file_identity(lock_path) == identity)
-                if ours:  # never drop someone else's lock
-                    lock_path.unlink()
+        try:
+            if acquired:
+                _release_lock_file(lock_path, token, identity)
+        finally:
+            if have_local:
+                local.release()
 
 
 def _replace_with_retry(source: str, destination: Path) -> None:

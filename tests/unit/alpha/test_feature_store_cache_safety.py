@@ -700,3 +700,63 @@ def test_empty_lock_left_by_our_own_failed_token_write_is_released(tmp_path, mon
         pass
     monkeypatch.undo()
     assert not (target / ".publish.lock").exists()
+
+
+def test_eight_threads_same_key_finish_fast_and_leave_no_lock(tmp_path, frame, fresh) -> None:
+    workers = 8
+    results: list = []
+    errors: list = []
+    barrier = threading.Barrier(workers)
+
+    def worker() -> None:
+        try:
+            barrier.wait()
+            results.append(FeatureStore.load_or_build(frame, CONFIG, tmp_path))
+        except BaseException as exc:
+            errors.append(exc)
+
+    started = time.monotonic()
+    threads = [threading.Thread(target=worker) for _ in range(workers)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    elapsed = time.monotonic() - started
+    assert not errors and len(results) == workers
+    assert all(_same(r, fresh) for r in results)
+    assert elapsed < 20, (
+        f"publishers waited on a leaked lock ({elapsed:.1f}s)"
+    )  # wait bound is 30 s
+    assert all("cache_write_skipped" not in r.metadata for r in results)
+    (target,) = _dirs(tmp_path)
+    assert sorted(p.name for p in target.iterdir()) == ["features.npz", "manifest.json"]
+
+
+def test_release_retries_unlink_on_permission_error(tmp_path, monkeypatch) -> None:
+    target = tmp_path / "entry"
+    target.mkdir()
+    real_unlink = Path.unlink
+    failures = {"n": 0}
+
+    def flaky_unlink(self, *args, **kwargs):
+        if self.name == ".publish.lock" and failures["n"] < 3:
+            failures["n"] += 1
+            raise PermissionError("held open by a poller")
+        return real_unlink(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", flaky_unlink)
+    with store_module._publish_lock(target) as locked:
+        assert locked
+    monkeypatch.undo()
+    assert failures["n"] == 3
+    assert not (target / ".publish.lock").exists()
+
+
+def test_release_never_drops_a_lock_it_does_not_own_even_with_retries(tmp_path) -> None:
+    target = tmp_path / "entry"
+    target.mkdir()
+    lock = target / ".publish.lock"
+    with store_module._publish_lock(target) as locked:
+        assert locked
+        lock.write_text("someone-else")  # simulates a takeover of our (stale) lock
+    assert lock.read_text() == "someone-else"
