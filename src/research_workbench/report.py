@@ -121,6 +121,10 @@ def build_report(
             }
             continue
         metrics = _read_artifact(store, market, "METRICS", rec["keys"]["METRICS"], "metrics.json")
+        if metrics.get("status") == "NOT_AVAILABLE" and rec.get("metrics_inline"):
+            metrics = rec[
+                "metrics_inline"
+            ]  # METRICS cache write was skipped: the run record carries the result
         if metrics.get("status") == "NOT_AVAILABLE":
             markets[market] = {"FAST_STATUS": "NOT_AVAILABLE", "reason": metrics["reason"]}
             continue
@@ -147,6 +151,12 @@ def build_report(
                 s: {
                     "key": v["key"],
                     "cache": v["cache"],
+                    "cache_write_skipped": v.get("cache_write_skipped"),
+                    "state": (
+                        f"COMPLETE (cache write skipped: {v['cache_write_skipped']})"
+                        if v.get("cache_write_skipped")
+                        else v["cache"]
+                    ),
                     "computed": v["computed"],
                     "runtime_s": v["runtime_s"],
                     "dir": str(store.stage_dir(market, s, v["key"])),
@@ -209,7 +219,7 @@ def render_markdown(report: dict[str, Any]) -> str:
             f"- PROMOTION STATUS: {m['PROMOTION_STATUS']}",
             f"- FIDELITY STATUS: {m['FIDELITY_STATUS']}  DIFFERENTIAL STATUS: {m['DIFFERENTIAL_STATUS']}",
             f"- ROBUSTNESS STATUS: {m['ROBUSTNESS_STATUS']}  OOS STATUS: {m['OOS_STATUS']}",
-            "- ARTIFACTS: " + "; ".join(f"{s}:{a['cache']}" for s, a in m["ARTIFACTS"].items()),
+            "- ARTIFACTS: " + "; ".join(f"{s}:{a['state']}" for s, a in m["ARTIFACTS"].items()),
             *_fidelity_lines(m["FIDELITY"]),
             *_scope_lines(m.get("DATA_SCOPE")),
             "",

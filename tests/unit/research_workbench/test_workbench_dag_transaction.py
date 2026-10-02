@@ -88,7 +88,7 @@ def test_interrupt_never_destroys_a_valid_previous_publication(tmp_path, monkeyp
     assert store.lookup("M", "SIGNALS", KEY).hit
 
 
-def test_invalid_existing_target_is_replaced_via_stale_aside(tmp_path) -> None:
+def test_invalid_existing_target_is_replaced_after_a_verified_move_aside(tmp_path) -> None:
     store = dag.ArtifactStore(tmp_path)
     _publish(store)
     _corrupt(store)
@@ -98,7 +98,9 @@ def test_invalid_existing_target_is_replaced_via_stale_aside(tmp_path) -> None:
     assert np.array_equal(
         dag.load_npz(store.stage_dir("M", "SIGNALS", KEY) / "payload.npz")["x"], np.arange(10)
     )
-    assert any(".stale." in n for n in _leftovers(store))  # moved aside, never deleted in place
+    assert not _leftovers(
+        store
+    )  # the verified-invalid aside copy is removed after the successful install
 
 
 def test_corrupt_then_recompute_flow_through_compute_and_publish(tmp_path) -> None:

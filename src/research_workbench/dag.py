@@ -57,6 +57,7 @@ import shutil
 import threading
 import time
 import uuid
+import weakref
 from dataclasses import asdict, dataclass, is_dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -293,7 +294,17 @@ def _owner_alive(pid: Any) -> bool:
         return False
 
 
-_THREAD_LOCKS: dict[str, threading.Lock] = {}
+class _PathLock:
+    """Weak-referenceable lock holder (a bare ``threading.Lock`` cannot be weakly referenced)."""
+
+    __slots__ = ("__weakref__", "lock")
+
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+
+
+# idle entries disappear automatically: the registry holds locks weakly, users hold them strongly while in use
+_THREAD_LOCKS: weakref.WeakValueDictionary[str, _PathLock] = weakref.WeakValueDictionary()
 _THREAD_LOCKS_GUARD = threading.Lock()
 
 
@@ -304,9 +315,14 @@ def _publisher_guard(parent: Path):
     contention: on Windows its unlink can lose against a sibling thread's open and then waits out its stale timeout.
     Neither lock is needed for correctness (``_install`` re-verifies)."""
     with _THREAD_LOCKS_GUARD:
-        lock = _THREAD_LOCKS.setdefault(str(parent), threading.Lock())
-    with lock, _publish_lock(parent):
-        yield
+        holder = _THREAD_LOCKS.get(str(parent))
+        if holder is None:
+            holder = _PathLock()
+            _THREAD_LOCKS[str(parent)] = holder
+    with holder.lock, _publish_lock(parent) as acquired:
+        yield bool(
+            acquired
+        )  # False: the file lock timed out; the caller must not touch an existing target
 
 
 class CacheWriteSkipped(RuntimeError):
@@ -437,11 +453,18 @@ class ArtifactStore:
             )  # commit marker LAST, inside the temp directory
             if not self._verify_dir(tmp, market, stage, key).hit:
                 raise RuntimeError(f"{stage}/{key[:12]}: temp publication failed verification")
-            (tmp / _OWNER_FILE).unlink(
-                missing_ok=True
-            )  # the marker must not become part of the publication
-            with _publisher_guard(parent):  # best-effort exclusion; _install re-verifies regardless
-                winner = self._install(tmp, final, market, stage, key)
+            # the marker should not become part of the publication; a concurrent cleanup may be reading it
+            # (Windows sharing violation), so retry and, as a last resort, leave the harmless extra file
+            for _attempt in range(10):
+                try:
+                    (tmp / _OWNER_FILE).unlink(missing_ok=True)
+                    break
+                except OSError:
+                    time.sleep(0.02)
+            with _publisher_guard(
+                parent
+            ) as locked:  # best-effort exclusion; _install compensates regardless
+                winner = self._install(tmp, final, market, stage, key, locked=locked)
             return winner if winner is not None else manifest
         finally:
             _rmtree_retry(tmp)
@@ -450,8 +473,11 @@ class ArtifactStore:
     def _before_move_aside(self, final: Path) -> None:
         """Test seam: runs between the 'target is invalid' check and the re-verification before moving it aside."""
 
+    def _before_move(self, final: Path) -> None:
+        """Test seam: runs AFTER the second verification and right before the target is moved aside."""
+
     def _install(
-        self, tmp: Path, final: Path, market: str, stage: str, key: str
+        self, tmp: Path, final: Path, market: str, stage: str, key: str, *, locked: bool = True
     ) -> dict[str, Any] | None:
         """Rename ``tmp`` to ``final``. Returns the winner's manifest if another valid publication exists.
 
@@ -474,9 +500,29 @@ class ArtifactStore:
                     )  # re-verify immediately before the move
                     if current.hit:
                         return current.manifest or {}
+                    if not locked:  # no exclusion: never move an existing target aside
+                        raise CacheWriteSkipped("lock_timeout")
+                    self._before_move(final)
                     aside = parent / f"{final.name}.stale.{uuid.uuid4().hex[:12]}"
                     os.replace(final, aside)
+                    # COMPENSATING check: a valid publication installed in the gap before the move must win
+                    moved = self._verify_dir(aside, market, stage, key)
+                    if moved.hit:
+                        restored = False
+                        if not final.exists():
+                            try:
+                                os.replace(aside, final)
+                                restored = True
+                            except OSError:
+                                restored = False
+                        if restored or final.exists():
+                            if not restored:
+                                _rmtree_retry(aside)  # another valid copy is in place; same content
+                            return moved.manifest or {}
+                        raise CacheWriteSkipped("could not restore a valid publication moved aside")
                 os.rename(tmp, final)
+                if aside is not None:
+                    _rmtree_retry(aside)  # the moved-aside copy was verified invalid
                 return None
             except OSError as exc:  # lost a race (target appeared) or a transient sharing violation
                 last_error = exc

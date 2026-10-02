@@ -456,6 +456,11 @@ def run_market(
         )  # fmt: skip
         stages["METRICS"].update(computed=True, runtime_s=runtime, cache="MISS")
 
+    for stage_name, stage_rec in stages.items():
+        if stage_rec["computed"]:
+            written = store.read_status(exp_id, market, stage_name) or {}
+            if written.get("cache_write_skipped"):
+                stage_rec["cache_write_skipped"] = written["cache_write_skipped"]
     entry_exit_record = None
     if entry_exit:
         entry_exit_record = _entry_exit_stage(
@@ -479,6 +484,8 @@ def run_market(
         "data_scope": data_scope(experiment, frame),
         "keys": keys.as_dict(),
         "stages": stages,
+        # a skipped METRICS cache write must not make the result unreadable: keep it inline in the run record
+        "metrics_inline": metrics if stages["METRICS"].get("cache_write_skipped") else None,
         "metric_version": metric_version,
         "entry_exit": entry_exit_record,
         "cacheable": cacheable,
@@ -623,6 +630,14 @@ def plan_experiment(
                     "reason": lookups[s].reason,
                 }
                 for s in ("FEATURES", "SIGNALS", "SIMULATION", "METRICS")
+            },
+            "cache_write_skipped": {
+                s: v["cache_write_skipped"]
+                for s, v in (
+                    (store.read_run_record(experiment.experiment_id, market) or {}).get("stages")
+                    or {}
+                ).items()
+                if v.get("cache_write_skipped")
             },
             "expected_segments": [
                 f"{market}/{s}"
