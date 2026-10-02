@@ -41,6 +41,9 @@ from nautilus_kernel.catalog import bar_type_strings, read_catalog
 from nautilus_kernel.instrument import VENUE
 from nautilus_kernel.queries import closed_position_lifecycles
 
+ALERT_DELAY_NS = (
+    1  # decisions run 1 ns after the bar close, i.e. after the exchange matched the bar
+)
 LABELS = ("TECHNICAL_BACKTEST", "NOT_YET_BROKER_CALIBRATED", "CANDIDATE_REPLAY")
 
 
@@ -99,6 +102,7 @@ class ReplayStrategy(Strategy):
         self._res = result
         self._instrument: Any = None
         self._pending: ReplayCandidate | None = None
+        self._forced_ts: int | None = None
 
     def on_start(self) -> None:
         self._instrument = self.cache.instrument(self._cfg.instrument_id)
@@ -113,24 +117,53 @@ class ReplayStrategy(Strategy):
         self.close_all_positions(self._cfg.instrument_id)
 
     def on_bar(self, bar: Bar) -> None:
+        """Schedule the bar-CLOSE decision for ``ts + ALERT_DELAY_NS``.
+
+        Measured (nautilus_trader 1.231): the data engine hands bar ``k`` to the strategy BEFORE the
+        simulated exchange has matched bar ``k``. Acting directly in ``on_bar`` therefore (a) fills
+        against the PREVIOUS bar's book and (b) cannot see a stop/target filled inside bar ``k``
+        (position still "open"). A time alert 1 ns later runs after the exchange processed bar
+        ``k``: market orders then fill against bar ``k``'s CLOSE book and the position state is
+        current (same-bar exit + re-entry works).
+        """
         if bar.bar_type != self._cfg.bid_bar_type:
             return
-        ts = bar.ts_event
+        ts = int(bar.ts_event)
+        if ts in self._forced:
+            self._alert(ts, "x", ALERT_DELAY_NS)
+        if ts in self._by_ts:
+            self._alert(ts, "e", 2 * ALERT_DELAY_NS if ts in self._forced else ALERT_DELAY_NS)
+
+    def _alert(self, ts: int, kind: str, delay_ns: int) -> None:
+        self.clock.set_time_alert_ns(
+            name=f"wb-{kind}-{ts}", alert_time_ns=ts + delay_ns, callback=self._on_alert
+        )
+
+    def _on_alert(self, event: Any) -> None:
+        _, kind, ts_s = str(event.name).split("-")
+        ts = int(ts_s)
         iid = self._cfg.instrument_id
         open_positions = self.cache.positions_open(instrument_id=iid)
-        reason = self._forced.get(ts)
-        if open_positions and reason is not None:
-            self.cancel_all_orders(iid)
-            self.close_position(open_positions[0], tags=[f"exit:{reason}"])
+        if kind == "x":
+            if open_positions:
+                self._forced_ts = ts
+                self.cancel_all_orders(iid)
+                self.close_position(open_positions[0], tags=[f"exit:{self._forced[ts]}"])
             return
-        cand = self._by_ts.get(ts)
-        if cand is None:
-            return
+        cand = self._by_ts[ts]
         if open_positions or self.cache.orders_inflight(instrument_id=iid):
-            self._res.ignored.append({"ts_ns": ts, "why": "position_or_order_active"})
+            self._res.ignored.append(
+                {
+                    "ts_ns": ts,
+                    "why": "position_or_order_active",
+                    "open_positions": len(open_positions),
+                    "orders_inflight": self.cache.orders_inflight_count(instrument_id=iid),
+                    "orders_open": self.cache.orders_open_count(instrument_id=iid),
+                }
+            )
             return
         self._pending = cand
-        self._res.decisions.append((cand, int(ts)))
+        self._res.decisions.append((cand, ts))
         order = self.order_factory.market(
             instrument_id=iid,
             order_side=OrderSide.BUY if cand.side > 0 else OrderSide.SELL,
@@ -144,9 +177,17 @@ class ReplayStrategy(Strategy):
         order = self.cache.order(event.client_order_id)
         tags = list(order.tags or []) if order is not None else []
         tag = tags[0] if tags else "unknown"
+        # Entry / forced-exit orders are submitted from a +1 ns alert: stamp them with the bar-close
+        # decision ts (the instant the book they filled against was current). STOP/TARGET fills
+        # happen inside the bar and carry the bar-close ts_event natively.
+        ts_fill = int(event.ts_event)
+        if tag == "entry" and self._pending is not None:
+            ts_fill = int(self._pending.decision_ts_ns)
+        elif tag.startswith("exit:") and tag not in ("exit:STOP", "exit:TARGET"):
+            ts_fill = self._forced_ts if self._forced_ts is not None else ts_fill
         self._res.fills.append(
             ReplayFill(
-                ts_ns=int(event.ts_event),
+                ts_ns=ts_fill,
                 side=event.order_side.name,
                 price=float(event.last_px),
                 qty=float(event.last_qty),

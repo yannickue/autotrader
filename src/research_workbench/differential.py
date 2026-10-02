@@ -432,6 +432,43 @@ def trade_mismatch_leg(diffs: list[FieldDiff], *, strict: bool = False) -> str:
 # ------------------------------------------------------------------------------------ timestamps
 
 
+def netting_report(trades: Any, candidates: CandidateArrays) -> dict[str, Any]:
+    """One-position-at-a-time (NETTING account) audit of the FAST output, independent of the sim.
+
+    ``simulate_fast`` admits a candidate only if ``decision_idx >= next_free`` (previous exit_idx)
+    (``alpha/fast/sim.py:343`` / ``:534``): a decision at the
+    CLOSE of the exit bar is allowed (the exit happened inside that bar or at its open, the new
+    entry fills at the NEXT open), a decision before the exit bar is silently dropped (not in
+    ``TradeArrays.skips``). So FAST is already one-position-at-a-time. This audit (a) re-verifies
+    that no FAST trade overlaps the previous one (``overlap_violations``; > 0 would mean FAST
+    admits positions a netting account cannot hold -> BUG_SUSPECTED ``FAST_ALLOWS_OVERLAP``) and
+    (b) counts the candidates FAST dropped because a position was open
+    (``candidates_blocked_by_open_position``), which is invisible in ``skips``.
+    """
+    n = len(trades.decision_idx)
+    dec = [int(x) for x in trades.decision_idx]
+    ent = [int(x) for x in trades.entry_idx]
+    ext = [int(x) for x in trades.exit_idx]
+    violations = [k for k in range(1, n) if dec[k] < ext[k - 1] or ent[k] <= ext[k - 1]]
+    traded = set(dec)
+    blocked = 0
+    for raw in candidates.decision_idx:
+        i = int(raw)
+        if i in traded:
+            continue
+        if any(dec[k] < i < ext[k] for k in range(n)):
+            blocked += 1
+    return {
+        "fast_trades": n,
+        "overlap_violations": len(violations),
+        "overlap_trade_indices": violations,
+        "same_bar_reentries": sum(1 for k in range(1, n) if dec[k] == ext[k - 1]),
+        "candidates_total": len(candidates.decision_idx),
+        "candidates_blocked_by_open_position": blocked,
+        "rule": "FAST admits decision_idx >= previous exit_idx (one position at a time)",
+    }
+
+
 def bar_open_ts_ns(market: MarketArrays) -> np.ndarray:
     """Synthetic increasing bar OPEN timestamps from ``(day, minute)`` (dense-ranked day)."""
     _, rank = np.unique(market.day, return_inverse=True)
@@ -762,6 +799,21 @@ def _build_context(
 # ------------------------------------------------------------------------------------ entry point
 
 
+def _netting_diffs(netting: dict[str, Any]) -> list[FieldDiff]:
+    if not netting["overlap_violations"]:
+        return []
+    return [
+        FieldDiff(
+            idx, "FAST_ALLOWS_OVERLAP", "overlapping entry", "one position (netting)", None,
+            DiffClass.BUG_SUSPECTED,
+            "FAST trade starts before the previous trade exited: a NETTING account (one "
+            "position per instrument) cannot hold it; counts and expectancy are not realisable",
+            "TRADE",
+        )
+        for idx in netting["overlap_trade_indices"]
+    ]  # fmt: skip
+
+
 def _blocked(
     scenario_id: str, fast_n: int, reason: str, extra: dict[str, Any] | None = None
 ) -> DifferentialResult:
@@ -848,6 +900,7 @@ def run_differential(
     except Exception as exc:  # malformed market (non-increasing day/minute) = input defect
         return _error(scenario_id, n_fast, "timestamps/normalize_fast", exc)
 
+    netting = netting_report(trades, candidates)
     try:
         from nautilus_kernel.replay_backtest import ReplayCandidate, run_candidate_replay_backtest
     except ImportError as exc:  # pragma: no cover - environment without nautilus_trader
@@ -918,7 +971,12 @@ def run_differential(
                 "labels": list(replay.labels),
                 "fast_skips": trades.skips,
                 "nautilus_ignored_candidates": list(replay.ignored),
+                "netting": {
+                    **netting,
+                    "replay_ignored_active_position": len(replay.ignored),
+                },
             },
+            extra_diffs=_netting_diffs(netting),
         )
     except Exception as exc:
         return _error(scenario_id, n_fast, "compare_trade_lists", exc)
@@ -938,6 +996,7 @@ def compare_trade_lists(
     tolerances: dict[str, Tolerance] = DEFAULT_TOLERANCES,
     extra_summary: dict[str, Any] | None = None,
     contract_size: float = 1.0,
+    extra_diffs: list[FieldDiff] | None = None,
 ) -> DifferentialResult:
     """Match trades by signal timestamp, classify all fields, derive status + summary.
 
@@ -960,6 +1019,7 @@ def compare_trade_lists(
             "TRADE",
         )
     )
+    diffs.extend(extra_diffs or [])
     per_trade_leg: list[str] = []
     per_trade_leg_strict: list[str] = []
     for n, f in enumerate(fast_norm):

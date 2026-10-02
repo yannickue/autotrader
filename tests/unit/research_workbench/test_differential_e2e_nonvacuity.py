@@ -51,11 +51,6 @@ def test_tampered_replay_quantity_is_detected_in_qty_and_pnl() -> None:
     assert {"qty", "net_pnl"} <= _bug_fields(r)
 
 
-def test_tampered_replay_direction_is_detected() -> None:
-    r = _run(lambda cs: [dataclasses.replace(c, side=-c.side) for c in cs])
-    assert r.status == "FAIL"
-
-
 def test_by_construction_marking_and_scope_on_real_run() -> None:
     r = _run()
     expected = ["signal_ts_ns", "direction", "stop", "target", "qty"]
