@@ -75,6 +75,7 @@ SLOW_FILES = frozenset(
         "tests/unit/research_workbench/test_workbench_compare_integration.py",  # compare through the real Nautilus engine (~17 s)
         "tests/unit/research_workbench/test_workbench_fastrun.py",  # real FeatureStore/numba/shadow-lab (~28 s)
         "tests/unit/research_workbench/test_workbench_report_cli.py",  # CLI smoke incl. fast run (~15 s)
+        "tests/unit/research_workbench/thesis/test_study.py",  # real MarketMapReplay + study end-to-end (~25 s)
     }
 )
 
