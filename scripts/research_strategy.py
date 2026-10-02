@@ -5,6 +5,7 @@
     python scripts/research_strategy.py fast    --spec exp.json [--jobs 2] [--entry-exit] [--allow-light-only]
     python scripts/research_strategy.py compare --spec exp.json            # FAST <-> Nautilus differential (HEAVY)
     python scripts/research_strategy.py report  --spec exp.json [--format md|json] [--out FILE]
+    python scripts/research_strategy.py coverage --db COPY.db [--phase DISCOVERY|FROZEN] [--now ISO] [--json]
 
 Experiment input: a small JSON file (schema in ``research_workbench.experiment``) or the built-in ``--demo-synthetic``.
 
@@ -15,6 +16,8 @@ Commands
 * ``fast``   features -> signals -> simulate_fast -> metrics -> REJECT_FAST | PROMOTE_TO_FIDELITY (cached per stage).
 * ``compare`` FAST <-> Nautilus differential for markets that were promoted (needs ``research_workbench.differential``).
 * ``report`` standard report (markdown or json) from the stored artifacts.
+* ``coverage`` READ-ONLY coverage audit of a demo DB COPY (sqlite mode=ro; paths under artifacts/demo_100k are refused
+             unless --allow-production-db-readonly). Exit 0 even when RED (the verdict is in the report).
 
 Resource policy: ``fast`` on real data (csv/parquet) and ``compare`` are HEAVY. While a live trader (``demo_trader.py`` /
 ``supervisor.py``) is running they are REFUSED (exit 3); LIGHT work (synthetic data) is only allowed next to it with
@@ -214,7 +217,16 @@ def cmd_report(args: argparse.Namespace) -> int:
     if not records:
         print("no run record found for this experiment: run `fast` first", file=sys.stderr)
         return EXIT_BAD_INPUT
-    report = build_report(experiment, store, records)
+    coverage = None
+    if args.coverage_db:
+        from research_workbench import coverage as cov
+
+        try:
+            coverage = cov.coverage_for_path(args.coverage_db)
+        except (cov.ProductionPathRefused, FileNotFoundError, ValueError) as exc:
+            print(f"coverage: {exc}", file=sys.stderr)
+            return EXIT_BAD_INPUT
+    report = build_report(experiment, store, records, coverage=coverage)
     text = (
         json.dumps(report, indent=1, default=str, sort_keys=True)
         if args.format == "json"
@@ -224,6 +236,30 @@ def cmd_report(args: argparse.Namespace) -> int:
         Path(args.out).write_text(text, encoding="utf-8")
     else:
         print(text)
+    return EXIT_OK
+
+
+def cmd_coverage(args: argparse.Namespace) -> int:
+    from research_workbench import coverage
+
+    try:
+        report = coverage.coverage_for_path(
+            args.db,
+            allow_production_readonly=args.allow_production_db_readonly,
+            phase=args.phase,
+            now=args.now,
+        )
+    except coverage.ProductionPathRefused as exc:
+        print(f"REFUSED: {exc}", file=sys.stderr)
+        return EXIT_REFUSED
+    except (FileNotFoundError, ValueError) as exc:
+        print(f"bad input: {exc}", file=sys.stderr)
+        return EXIT_BAD_INPUT
+    print(
+        json.dumps(report, indent=1, default=str, sort_keys=True)
+        if args.json
+        else coverage.render_markdown(report)
+    )
     return EXIT_OK
 
 
@@ -274,7 +310,24 @@ def build_parser() -> argparse.ArgumentParser:
         if name == "report":
             p.add_argument("--format", choices=("md", "json"), default="md")
             p.add_argument("--out")
+            p.add_argument(
+                "--coverage-db",
+                help="also attach a read-only coverage section from this demo DB COPY",
+            )
         p.set_defaults(handler=handler)
+    cov = sub.add_parser("coverage", help="read-only coverage audit of a demo DB copy")
+    cov.add_argument(
+        "--db", required=True, help="path to a COPY (or synthetic) demo DB; opened mode=ro"
+    )
+    cov.add_argument("--phase", choices=("DISCOVERY", "FROZEN"))
+    cov.add_argument("--now", help="ISO UTC 'now' (default: the current time)")
+    cov.add_argument("--json", action="store_true")
+    cov.add_argument(
+        "--allow-production-db-readonly",
+        action="store_true",
+        help="allow a path under artifacts/demo_100k (still opened mode=ro)",
+    )
+    cov.set_defaults(handler=cmd_coverage)
     return parser
 
 

@@ -76,3 +76,27 @@ insufficient match => INCONCLUSIVE, never loosen); ablations FULL minus {CONTEXT
 ## 8. Tests (mandatory)
 Prefix invariance (full history vs prefix to T) for MarketMap, main thesis, setup state, position thesis, geometry; batch == incremental replay; long/short mirror symmetry; state-machine legality
 (only declared transitions, terminal states absorbing); exit != reverse invariant; no look-ahead in level age/touch counts; determinism; contract hash sensitivity.
+
+## 9. REVISION after CODEX-2/3 (design gate) — these supersede earlier text above
+1. **SwingReplay is NOT an incremental authority** (it computes whole segments incl. bars after i and warns about stale caches). MarketMap calls the causal
+   `market_observer.swings.swing_state(bars, i, timeframe)` only. SwingReplay is out of the design.
+2. **MarketMap call contract (field -> call):** structure fields <- `swing_state` (M5, M15; `None` during warm-up); support/resistance/zones/role-reversal <-
+   `market_observer.levels.build_level_context(bars, i, config)` (+ `LevelRegistry.update` for incremental replay); balance_state <- `balance_features(bars, i, config)`;
+   acceptance_state <- `acceptance_features(bars, i, level, direction, config)` evaluated per (nearest level, direction) and stored as a dict keyed `"<LONG|SHORT>:<level_id>"`
+   (acceptance is level- and direction-specific, never one global state); participation_state <- `participation_features` (tick-activity PROXY); h1_context <- FeatureStore
+   `h1_*` arrays or the existing opportunity context builder (`demo/opportunity/snapshot.py` context) — only a missing field gets a minimal causal adapter; all warm-up gaps are `None`.
+3. **Timestamp convention:** `decision_ts = bars.decision_ts_ns(i)` (bar close). Every level confirmation, role event, baseline window and trigger timestamp must be <= decision_ts.
+4. **Geometry adapter:** `demo.structure.structural_geometry(direction, entry, bars: DataFrame, spread, atr, ...)` needs a prefix-only OHLC DataFrame through i and a proposed
+   entry + direction. Geometry is computed ONLY for a proposed entry (setup evaluation / position thesis), never as unconditional MarketMap state.
+5. **State machine:** the legal transition table and precedence are frozen in `thesis/contracts.py` (`SETUP_FORWARD_EDGES`, `legal_setup_transition`, `SETUP_PRECEDENCE`:
+   INVALIDATED > EXPIRED > forward progress; terminal states absorbing; several forward edges may chain on one bar, each stamped with the same decision ts; first-observed timestamps frozen).
+6. **Opposite-side facts:** the live stack rejects an opposite signal while a position is open (`live.py:1557`, `gates.R_OPPOSITE`, `gates.py:85`); funnel rows persist the reject code,
+   `otherwise_valid`, snapshot and decision (`store.py:1026`); counterfactual labels exist separately (`store.py:1312`). That reconstructs a rejected OPPOSING_EVENT. OPPOSING_SETUP and
+   THESIS_AT_RISK are NOT persisted: they are derived OFFLINE by replaying persisted opportunity facts + versioned bars + specs.
+7. **Exit variants A-D** are computed as shadow policies over ONE immutable entry cohort via `shadow_exit_lab.evaluate_shadow(entry, bars)` (existing signal-reversal exit: `exits/engine.py:230`);
+   entries are never regenerated per policy.
+8. **Reuse list (ban on parallel implementations):** matched controls + `incremental_ablation` (`coverage_analysis/observer_lab/enrichment.py`), persistent `HypothesisRegistry`
+   (`observer_lab/stats.py`), FeatureStore swing/H1 arrays (`alpha/fast/store.py`), alpha temporal armed/invalidation presets (`alpha/discovery/temporal_archetypes.py`), the opportunity
+   context builder (`demo/opportunity/snapshot.py`).
+9. **V1 scope discipline:** one fully evaluable spec (CONTINUATION_RETEST); the other archetypes are representable specs flagged `implemented=False` (NOT_EVALUATED, never silently zero);
+   position-thesis states are all representable, variants A-D are computed on the same cohort; no custom control/report layers.

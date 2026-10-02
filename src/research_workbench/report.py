@@ -108,7 +108,10 @@ def _joint(metrics: dict[str, Any]) -> dict[str, Any]:
 
 
 def build_report(
-    experiment: ExperimentSpec, store: ArtifactStore, records: dict[str, dict[str, Any]]
+    experiment: ExperimentSpec,
+    store: ArtifactStore,
+    records: dict[str, dict[str, Any]],
+    coverage: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     exp_id = experiment.experiment_id
     markets: dict[str, Any] = {}
@@ -169,7 +172,7 @@ def build_report(
             "SKIPS": metrics["skips"],
             "N_CANDIDATES": metrics["n_candidates"],
         }
-    return {
+    report = {
         "REPORT_VERSION": REPORT_VERSION,
         "EXPERIMENT_ID": exp_id,
         "EXPERIMENT_HASH": experiment.experiment_hash(),
@@ -184,6 +187,11 @@ def build_report(
         "ENTRY_EXIT_DIAGNOSTIC_CAVEAT": CAVEAT,
         "CAUSALITY_STATEMENT": CAUSALITY_STATEMENT,
     }  # fmt: skip
+    if (
+        coverage is not None
+    ):  # read-only coverage audit of a demo DB copy (research_workbench.coverage)
+        report["COVERAGE"] = coverage
+    return report
 
 
 def _f(value: Any, nd: int = 3) -> str:
@@ -307,6 +315,10 @@ def render_markdown(report: dict[str, Any]) -> str:
             "",
         ]
     lines += [f"> {report['ENTRY_EXIT_DIAGNOSTIC_CAVEAT']}", ""]
+    if report.get("COVERAGE") is not None:  # read-only coverage audit (research_workbench.coverage)
+        from .coverage import render_markdown as render_coverage
+
+        lines += ["---", "", render_coverage(report["COVERAGE"])]
     return "\n".join(lines)
 
 
