@@ -30,6 +30,7 @@ def _summary(**over):
         "hypothetical_exit_complete": 16,
         "pending": {"opposing_events": 0, "position_thesis_assessment": 0, "hypothetical_exit": 0},
         "unexpected_missing": 0,
+        "late_events_ignored": 0,
     }
     base.update(over)
     return base
@@ -79,7 +80,9 @@ def test_pending_is_not_a_failure_but_blocks_promotion(tmp_path, store):
     sec = rep["sections"]["position_thesis"]
     assert sec["status"] == C.GREEN  # pending is never a failure
     assert sec["no_promotion_claim"] is True and "position_thesis" in rep["section_no_promotion"]
-    assert not rep["no_promotion_claim"]  # committed RED-population semantics unchanged
+    assert (
+        rep["no_promotion_claim"] is True and rep["promotion_claim_allowed"] is False
+    )  # any section claim blocks promotion
 
 
 def test_unexpected_missing_influences_status(tmp_path, store):
@@ -149,3 +152,56 @@ def test_json_path_and_invalid_payload(tmp_path, store):
     )
     nope = _rep(tmp_path, store, str(tmp_path / "nope.json"))
     assert nope["sections"]["position_thesis"]["status"] == C.NOT_AVAILABLE
+
+
+def test_top_level_claim_follows_any_section_and_markdown_lists_reasons(tmp_path, store):
+    full = _rep(tmp_path, store, {"DISCOVERY": _summary()})
+    assert (
+        full["status"] == C.GREEN
+        and full["promotion_claim_allowed"] is True
+        and full["no_promotion_claim"] is False
+    )
+    assert "NO PROMOTION CLAIM: no" in C.render_markdown(full)
+    absent = _rep(tmp_path, store, None)
+    assert (
+        absent["status"] == C.GREEN
+        and absent["no_promotion_claim"] is True
+        and absent["promotion_claim_allowed"] is False
+    )
+    md = C.render_markdown(absent)
+    assert "NO PROMOTION CLAIM: YES" in md and "NOT_AVAILABLE (not zero)" in md
+    assert any("NOT_AVAILABLE" in r for r in absent["no_promotion_reasons"])
+    pend = _rep(
+        tmp_path,
+        store,
+        {
+            "DISCOVERY": _summary(
+                pending={
+                    "opposing_events": 1,
+                    "position_thesis_assessment": 0,
+                    "hypothetical_exit": 0,
+                }
+            )
+        },
+    )
+    assert pend["no_promotion_claim"] is True and "pending item" in C.render_markdown(pend)
+
+
+def test_late_events_ignored_is_surfaced():
+    from research_workbench.thesis.contracts import Direction as D
+    from research_workbench.thesis.contracts import OpposingEvent
+    from research_workbench.thesis.position_thesis import observe, summary
+
+    from .thesis._synth import mm
+
+    pt = open_position_thesis("p9", "EURUSD", D.LONG, 0, None, "STRUCT_RETEST", ())
+    late = OpposingEvent(
+        1, D.SHORT, "ROUND_REJECT", True, True
+    )  # stamped before T: not visible at T, ignored
+    out = observe(pt, mm(3), [late])
+    assert out.late_events_ignored == 1 and out.opposing_events == ()
+    assert summary([out])["late_events_ignored"] == 1
+    sec = C.assess_position_thesis(
+        summary([out]) | {"unexpected_missing": 0}, C.CoverageThresholds()
+    )
+    assert any("after their own decision bar" in r for r in sec[2])

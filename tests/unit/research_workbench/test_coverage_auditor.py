@@ -89,7 +89,7 @@ def test_horizon_open_is_pending_not_missing(tmp_path, store):
     }
     assert m["non_traded_eligible"] == 0 and m["counterfactual_unexpected_missing"] == 0
     assert m["eligible_coverage_pct"] is None
-    assert rep["status"] == C.GREEN and not rep["no_promotion_claim"]
+    assert rep["status"] == C.GREEN and rep["no_promotion_claim"] and list(rep["section_no_promotion"]) == ["position_thesis"]  # GREEN status != promotion permit: position_thesis NOT_AVAILABLE
     assert snap.opportunity_id
 
 
@@ -130,7 +130,7 @@ def test_waiting_for_bars_is_explained_pending(tmp_path, store):
     m = _opp(rep)
     assert m["counterfactual_pending"] == 1 and m["counterfactual_unexpected_missing"] == 0
     assert m["pending_by_cause"] == {C.WAITING_FOR_BARS: 1}
-    assert rep["status"] == C.AMBER and not rep["no_promotion_claim"]
+    assert rep["status"] == C.AMBER and rep["no_promotion_claim"]  # GREEN/AMBER status is not a promotion permit (position_thesis NOT_AVAILABLE)
 
 
 def test_waiting_for_bars_beyond_grace_becomes_unexpected(tmp_path, store):
@@ -569,7 +569,7 @@ def test_phases_are_never_pooled(tmp_path, store):
         assert r["sections"]["opportunities"]["metrics"]["total_opportunities"] == 1
     one = C.coverage_for_path(tmp_path / "d.db", now=iso(T0 + timedelta(days=5)), phase="FROZEN")
     assert one["sections"]["opportunities"]["metrics"]["total_opportunities"] == 1
-    assert not one["no_promotion_claim"]
+    assert one["no_promotion_claim"] and "position_thesis" in one["section_no_promotion"]
     assert "PER PHASE" in C.render_markdown(both)
 
 

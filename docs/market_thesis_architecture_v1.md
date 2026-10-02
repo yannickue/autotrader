@@ -100,3 +100,27 @@ Prefix invariance (full history vs prefix to T) for MarketMap, main thesis, setu
    context builder (`demo/opportunity/snapshot.py`).
 9. **V1 scope discipline:** one fully evaluable spec (CONTINUATION_RETEST); the other archetypes are representable specs flagged `implemented=False` (NOT_EVALUATED, never silently zero);
    position-thesis states are all representable, variants A-D are computed on the same cohort; no custom control/report layers.
+
+## 10. Thesis study adapter: limitations (CODEX-4/5 follow-up; `thesis/study.py`)
+
+The study adapter is **exploratory, never validation**. Every result carries these as `limitations`, plus `no_promotion_reasons`:
+
+1. **No end-to-end OOS / embargo validation.** The adapter reuses the observer-lab partitions, purge/embargo and controls, but it does not run
+   a pre-registered train / validation / OOS protocol; a result here can at most be a research candidate (`PROMOTE_TO_FIDELITY`).
+2. **Retrospective control matching.** `match_controls` picks control bars on BOTH sides of the event in time, and by default the volatility /
+   spread percentile ranks are partition-wide (they use later bars of the partition). `StudyConfig(causal_controls=True)` switches the ranks to
+   expanding past-only; the candidate pool remains two-sided.
+3. **Caller-supplied trigger events** (`STRUCT_RETEST_*`): not recomputed by the adapter.
+4. **Label risk** is `risk_atr_mult x ATR`, a study convention, not the thesis structural stop.
+5. **Exit variants A-D** are only descriptive vs CONTROL; each variant x contrast (mean R delta, whipsaw rate) is registered in the
+   `HypothesisRegistry` before it is computed, so `n_hypotheses` includes them.
+6. **Multiplicity scope.** Without a persistent `HypothesisRegistry(path=...)` the result is `multiplicity_scope="RUN_LOCAL_ONLY"` (warning +
+   no-promotion reason): hypotheses of other runs are not counted. The registry state at start is part of the cache key.
+7. **Cache key** (`THESIS_STUDY` stage of the existing ArtifactStore) covers bars, events, MarketMap content hashes (or replay-from-bars),
+   geometry (an override needs a `geometry_version` token, else caching is refused), partition, registry state and exit variants, besides the
+   semantic versions (`MARKETMAP_VERSION`, `MAIN_THESIS_VERSION`, `spec_hash`, ...). A cache hit replays the stored hypotheses into the
+   caller's registry.
+8. **Coverage:** the top-level coverage `no_promotion_claim` is true whenever ANY section claims it (position_thesis NOT_AVAILABLE / pending /
+   unexpected-missing / late events ignored); `promotion_claim_allowed` is true only when every section is complete. A GREEN status is not a
+   promotion permit.
+9. `PositionThesis` observation counts `late_events_ignored` (opposing events supplied after their own decision bar are not used, but visible).

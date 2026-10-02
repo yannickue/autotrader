@@ -914,6 +914,7 @@ POSITION_THESIS_FIELDS = (
     "hypothetical_exit_complete",
     "pending",
     "unexpected_missing",
+    "late_events_ignored",
 )
 _PT_NO_PROMOTION_UNAVAILABLE = "position_thesis: no offline position-thesis output supplied - NOT_AVAILABLE (not zero); no promotion claim"
 
@@ -962,6 +963,9 @@ def resolve_position_thesis_input(raw: Any, phase: str | None) -> tuple[Any, str
 def _pt_summary(payload: Any) -> tuple[dict[str, Any] | None, str]:
     if isinstance(payload, dict) and "open_positions_eligible" in payload:
         s = {k: payload[k] for k in POSITION_THESIS_FIELDS if k in payload}
+        s.setdefault(
+            "late_events_ignored", NOT_AVAILABLE
+        )  # older summaries predate the counter: explicit, never 0
         if set(s) != set(POSITION_THESIS_FIELDS):
             return None, f"summary dict lacks fields {sorted(set(POSITION_THESIS_FIELDS) - set(s))}"
         return s, "precomputed summary"
@@ -1000,6 +1004,11 @@ def assess_position_thesis(
             f"{status}: {miss} unexpected missing variant result(s) ({100 * frac:.1f}% of {pairs} eligible position x variant pairs)"
         )
         nop.append(f"position_thesis: {miss} unexpected missing variant result(s)")
+    late = fields.get("late_events_ignored", 0)
+    if isinstance(late, int) and late:
+        nop.append(
+            f"position_thesis: {late} opposing event(s) supplied after their own decision bar were ignored (late events are not used)"
+        )
     pending_total = sum(v for v in fields["pending"].values() if isinstance(v, int))
     if pending_total:
         nop.append(
@@ -1116,8 +1125,7 @@ def build_phase_coverage(
         r for sec in sections.values() for r in sec.get("reasons", []) if r.startswith("RED")
     ]
     ep = sections.get("epochs", {})
-    # sections with their own no-promotion claim (position_thesis NOT_AVAILABLE / pending / missing): kept visible; they do
-    # not flip the RED-population claim of the committed verdict semantics (RED sections do, via `red`)
+    # sections with their own no-promotion claim (position_thesis NOT_AVAILABLE / pending / missing)
     section_nop = {
         name: sec["no_promotion_reasons"]
         for name, sec in sections.items()
@@ -1130,8 +1138,12 @@ def build_phase_coverage(
         "now": when.isoformat(),
         "status": status,
         "populations": populations,
-        "no_promotion_claim": bool(red),
-        "no_promotion_reasons": reasons if red else [],
+        # a GREEN status is not a promotion permit: ANY section claim (RED population, position_thesis NOT_AVAILABLE /
+        # pending / missing, ...) blocks promotion claims; a report with every section complete allows them
+        "no_promotion_claim": bool(red) or bool(section_nop),
+        "promotion_claim_allowed": not (red or section_nop),
+        "no_promotion_reasons": (reasons if red else [])
+        + [r for rs in section_nop.values() for r in rs],
         "red_populations": red,
         "section_no_promotion": section_nop,
         "mixed_epochs": ep.get("mixed_epochs", False),
@@ -1172,8 +1184,10 @@ def render_markdown(report: dict[str, Any]) -> str:
         f"# Coverage audit ({report['phase']}) - {report['status']}",
         "",
         f"- DB `{report['db']}`  NOW {report['now']}  VERSION {report['coverage_version']}",
-        f"- NO PROMOTION CLAIM: {'YES - ' + ', '.join(report['red_populations']) if report['no_promotion_claim'] else 'no'}",
+        f"- NO PROMOTION CLAIM: {'YES - ' + ', '.join(report['red_populations']) if report['red_populations'] else 'YES - see section claims below' if report['no_promotion_claim'] else 'no (all sections complete)'}",
     ]
+    for sec_name, why in (report.get("section_no_promotion") or {}).items():
+        lines += [f"  - {sec_name}: {r}" for r in why]
     if report.get("epoch_pooling_warning"):
         lines.append(f"- EPOCHS: {report['epoch_pooling_warning']}")
     for note in report.get("notes", []):

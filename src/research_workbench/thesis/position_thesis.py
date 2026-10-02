@@ -80,6 +80,7 @@ class ObservedPositionThesis(PositionThesis):
     """A PositionThesis that also remembers the last decision time it was observed at (contracts.py stays untouched)."""
 
     last_observed_ns: int | None = None
+    late_events_ignored: int = 0  # opposing events supplied with ts < T (late: not visible at their own bar) and therefore ignored; counted per supplying call, future ts > T are not counted (prefix-invariant)
 
 
 def _as_observed(pt: PositionThesis) -> ObservedPositionThesis:
@@ -218,6 +219,7 @@ def observe(
     # visible then and is ignored (no retroactive exits); setups are recorded once as SETUP:* events
     seen = {_event_key(e) for e in pt.opposing_events}
     new_events: list[OpposingEvent] = []
+    late = sum(1 for e in opposing_events if e.direction is opp and e.ts_ns < t)
     for e in sorted(opposing_events, key=_event_key):
         if e.direction is opp and e.ts_ns == t and _event_key(e) not in seen:
             seen.add(_event_key(e))
@@ -303,6 +305,7 @@ def observe(
         opposing_events=pt.opposing_events + tuple(new_events),
         history=pt.history + tuple(transitions),
         last_observed_ns=t,
+        late_events_ignored=pt.late_events_ignored + late,
     )
 
 
@@ -745,6 +748,7 @@ def summary(
             "hypothetical_exit": 0,
         },
         "unexpected_missing": 0,
+        "late_events_ignored": sum(getattr(pt, "late_events_ignored", 0) for pt in position_theses),
     }
     if variants is not None:
         ids = {pt.position_id for pt in position_theses}

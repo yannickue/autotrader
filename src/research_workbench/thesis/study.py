@@ -24,6 +24,7 @@ A THIN adapter over existing parts; nothing here has trade authority and nothing
 
 from __future__ import annotations
 
+import hashlib
 import json
 import time
 from collections import deque
@@ -64,6 +65,7 @@ from research_workbench.thesis.marketmap import (
     geometry_for_entry,
     marketmap_definition_hash,
 )
+from research_workbench.thesis.position_thesis import HypotheticalExit, Variant, whipsaw
 from research_workbench.thesis.setup_engine import SetupReplayer
 from research_workbench.thesis.specs import CONTINUATION_RETEST
 
@@ -99,6 +101,7 @@ class StudyConfig:
     purpose: str = "fit"
     n_controls: int = 1
     bootstrap_B: int | None = None  # None = enrichment automatic choice
+    causal_controls: bool = False  # True: control percentile ranks are expanding PAST-ONLY (candidate pool stays two-sided)
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -109,6 +112,7 @@ class StudyConfig:
             "purpose": self.purpose,
             "n_controls": self.n_controls,
             "bootstrap_B": self.bootstrap_B,
+            "causal_controls": self.causal_controls,
             "main_thesis_history_bars": MAIN_THESIS_HISTORY_BARS,
             "label": LABEL,
         }
@@ -142,6 +146,7 @@ def thesis_study_key(
     config: StudyConfig | Mapping[str, Any] | None = None,
     *,
     mm_config: MarketMapConfig | None = None,
+    inputs: Mapping[str, Any] | None = None,
 ) -> str:
     """Stage key of the study: ``dag.entry_exit_key`` pattern (parent stage key + config + code closure) plus the semantic version hashes.
 
@@ -156,9 +161,132 @@ def thesis_study_key(
             "parent_key": parent_key,
             "versions": study_versions(spec, mm_config),
             "config": cfg,
+            "inputs": dict(inputs or {}),
             "code": dag.code_hash(THESIS_STUDY_CODE),
         }
     )
+
+
+# ------------------------------------------------------------------------------------------------ input digests (cache key)
+UNVERSIONED_GEOMETRY = "UNVERSIONED_OVERRIDE"
+
+
+def _sha(*chunks: bytes) -> str:
+    h = hashlib.sha256()
+    for c in chunks:
+        h.update(c)
+    return h.hexdigest()
+
+
+def bars_digest(bars: ObserverBars) -> str:
+    arrays = (
+        bars.ts_ns,
+        bars.o,
+        bars.h,
+        bars.l,
+        bars.c,
+        bars.tick_volume,
+        bars.spread,
+        bars.atr,
+        bars.segment_id,
+        bars.local_minute,
+        bars.local_day,
+    )
+    return _sha(
+        bars.market.encode(),
+        repr((bars.tick_size, bars.bar_seconds, bars.session)).encode(),
+        *(np.ascontiguousarray(a).tobytes() for a in arrays),
+    )
+
+
+def events_digest(events_by_ts: Mapping[int, Sequence[str]]) -> str:
+    return config_hash({str(k): list(v) for k, v in sorted(events_by_ts.items())})
+
+
+def maps_digest(maps: Sequence[MarketMap] | None) -> str:
+    return "REPLAY_FROM_BARS" if maps is None else config_hash([m.content_hash() for m in maps])
+
+
+def partition_digest(partition: Any) -> str:
+    if partition is None or isinstance(partition, str):
+        return f"literal:{partition}"
+    return _sha(np.asarray(partition, dtype=object).astype(str).tobytes())
+
+
+def registry_digest(reg: ST.HypothesisRegistry) -> dict[str, Any]:
+    """Identity + state AT START: the same inputs on a registry that already holds hypotheses is a different study (multiplicity differs)."""
+    return {
+        "name": reg.name,
+        "path": None if reg.path is None else str(reg.path),
+        "n_hypotheses": reg.n_hypotheses,
+        "n_families": reg.n_families,
+    }
+
+
+def exit_variants_digest(variants: Mapping[Variant, Sequence[HypotheticalExit]] | None) -> str:
+    if variants is None:
+        return "NONE"
+    return config_hash(
+        {
+            str(v): [
+                (r.entry_id, r.kind, bool(r.triggered), repr(r.r), bool(r.complete)) for r in rows
+            ]
+            for v, rows in sorted(variants.items(), key=lambda kv: str(kv[0]))
+        }
+    )
+
+
+def study_inputs(
+    bars: ObserverBars,
+    events_by_ts: Mapping[int, Sequence[str]],
+    *,
+    maps: Sequence[MarketMap] | None,
+    geometry_fn: Callable[[MarketMap, Direction], Any] | None,
+    geometry_version: str | None,
+    partition: Any,
+    registry: ST.HypothesisRegistry,
+    exit_variants: Mapping[Variant, Sequence[HypotheticalExit]] | None,
+) -> dict[str, Any]:
+    """Content digests of EVERY actual input of the study (part of the stage key)."""
+    if geometry_fn is None:
+        geo = "geometry_from_bars" if maps is None else "none"
+    else:
+        geo = f"override:{geometry_version}" if geometry_version else UNVERSIONED_GEOMETRY
+    return {
+        "bars": bars_digest(bars),
+        "events": events_digest(events_by_ts),
+        "maps": maps_digest(maps),
+        "geometry": geo,
+        "partition": partition_digest(partition),
+        "registry": registry_digest(registry),
+        "exit_variants": exit_variants_digest(exit_variants),
+    }
+
+
+LIMITATIONS = (
+    "EXPLORATORY ONLY: this adapter performs no end-to-end OOS / embargo validation; its output is never validation evidence",
+    "controls are matched retrospectively: candidate bars may lie on BOTH sides of the event in time, and unless causal_controls=True the volatility / spread percentile ranks are partition-wide (use later bars of the partition)",
+    "setup trigger events (e.g. STRUCT_RETEST_LONG) are caller-supplied; the adapter does not recompute them",
+    "label risk R = risk_atr_mult x ATR is a study convention, not the thesis structural stop",
+    "exit-variant contrasts are descriptive (no p-values); they are registered for multiplicity accounting only",
+)
+
+
+def _resolve_registry(
+    registry: ST.HypothesisRegistry | None, market: str
+) -> tuple[ST.HypothesisRegistry, str, list[str]]:
+    """Registry + multiplicity scope. A missing or in-memory registry is RUN_LOCAL_ONLY (multiplicity across runs is NOT counted)."""
+    notes: list[str] = []
+    if registry is None:
+        registry = ST.HypothesisRegistry(f"thesis-study-{market}")
+        notes.append(
+            "no registry supplied: a fresh in-memory registry was created; multiplicity counts THIS RUN only"
+        )
+    if registry.path is None:
+        if not notes:
+            notes.append("in-memory registry: multiplicity counts THIS RUN only")
+        return registry, "RUN_LOCAL_ONLY", notes
+    return registry, "PERSISTENT", notes
 
 
 # ------------------------------------------------------------------------------------------------ setup events
@@ -304,6 +432,7 @@ def build_frame(
         spec=MatchSpec(n_controls=cfg.n_controls),
         seed=cfg.seed,
         partition=partition,
+        rank_mode="causal" if cfg.causal_controls else "partition",
         exclude_idx=idx,
     )
     part = (
@@ -381,6 +510,14 @@ class StudyResult:
     no_promotion_claim: bool = True
     research_only: bool = True
     cached: bool = False
+    multiplicity_scope: str = "RUN_LOCAL_ONLY"
+    no_promotion_reasons: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+    limitations: list[str] = field(default_factory=lambda: list(LIMITATIONS))
+    exit_variants: list[dict[str, Any]] = field(default_factory=list)
+    registry_entries: list[list[str]] = field(
+        default_factory=list
+    )  # [hypothesis, family] registered by this run (re-registered on a cache hit)
 
     def to_dict(self) -> dict[str, Any]:
         d = {k: getattr(self, k) for k in self.__dataclass_fields__}
@@ -418,11 +555,29 @@ def run_study(
     partition: np.ndarray | Sequence[str] | str | None = "auto",
     parent_key: str = "-",
     mm_config: MarketMapConfig | None = None,
+    geometry_version: str | None = None,
+    exit_variants: Mapping[Variant, Sequence[HypotheticalExit]] | None = None,
 ) -> StudyResult:
-    """The whole study for one market. ``maps`` / ``geometry_fn`` default to the causal MarketMapReplay over ``bars``."""
+    """The whole study for one market. ``maps`` / ``geometry_fn`` default to the causal MarketMapReplay over ``bars``.
+
+    ``registry``: pass a PERSISTENT ``HypothesisRegistry(path=...)`` for cross-run multiplicity; without one the result is marked
+    ``multiplicity_scope="RUN_LOCAL_ONLY"`` with a visible warning and a no-promotion reason.
+    ``geometry_version``: version token of a ``geometry_fn`` override (part of the key; required for caching).
+    ``exit_variants``: optional ``run_variants`` output; every variant A-D x contrast vs CONTROL is registered."""
     cfg = config or StudyConfig()
-    reg = registry or ST.HypothesisRegistry(f"thesis-study-{bars.market}")
-    key = thesis_study_key(parent_key, spec, cfg, mm_config=mm_config)
+    reg, scope, scope_notes = _resolve_registry(registry, bars.market)
+    n_start = reg.n_hypotheses
+    inputs = study_inputs(
+        bars,
+        events_by_ts,
+        maps=maps,
+        geometry_fn=geometry_fn,
+        geometry_version=geometry_version,
+        partition=partition,
+        registry=reg,
+        exit_variants=exit_variants,
+    )
+    key = thesis_study_key(parent_key, spec, cfg, mm_config=mm_config, inputs=inputs)
     mlist = list(maps) if maps is not None else list(maps_from_bars(bars, mm_config))
     geo = (
         geometry_fn
@@ -457,18 +612,29 @@ def run_study(
         events={"full_spec": len(full.events), "no_level_spec": len(abl.events), "union": len(ordered),
                 "overlap_dropped_full": full.n_overlap_dropped, "overlap_dropped_no_level": abl.n_overlap_dropped, "maps": full.n_maps},
         arms=[], ablation=[], controls={}, multiplicity={}, promotion_status=str(PromotionStatus.REJECT_FAST),
+        multiplicity_scope=scope, warnings=list(scope_notes),
     )  # fmt: skip
+    out.no_promotion_reasons.append(
+        "exploratory adapter: no end-to-end OOS / embargo validation (see limitations)"
+    )
+    if scope != "PERSISTENT":
+        out.no_promotion_reasons.append(
+            "multiplicity scope RUN_LOCAL_ONLY: hypotheses tested in other runs are not counted"
+        )
     arm_names = [f"thesis_study|{key[:12]}|arm|{a}" for a, _ in ARMS]
-    reg.declare_family("thesis_study_arms", definition=json.dumps(arm_names))
-    reg.register_many(
-        arm_names, "thesis_study_arms"
-    )  # every tested variant counted BEFORE any result
+    arm_family = f"thesis_study_arms|{key[:12]}"
+    reg.declare_family(arm_family, definition=json.dumps(arm_names))
+    reg.register_many(arm_names, arm_family)  # every tested variant counted BEFORE any result
     n_arm = len(arm_names)
+    n_exit = 0
+    if exit_variants is not None:
+        out.exit_variants, n_exit = _exit_variant_stats(reg, key, exit_variants)
     if not rows:
         out.reasons.append(
             "no setup event in the sample: nothing to test (REJECT_FAST, not a negative finding)"
         )
-        out.multiplicity = _multiplicity(reg, n_arm, 0, cfg)
+        out.multiplicity = _multiplicity(reg, n_arm, 0, cfg, n_exit=n_exit, scope=scope)
+        _finish(out, reg, n_start)
         return out
     frame, info = build_frame(bars, rows, cfg, partition)
     out.controls = info
@@ -494,7 +660,10 @@ def run_study(
         {k: getattr(r, k) for k in ("group", "feature", "cell", "label", "n_event", "n_control", "delta", "base_delta", "ci_low", "ci_high", "adjusted_p", "status", "hypothesis", "family", "m_family")}
         for r in rep.results
     ]  # fmt: skip
-    out.multiplicity = _multiplicity(reg, n_arm, len(rep.results), cfg, rep.warnings)
+    out.multiplicity = _multiplicity(
+        reg, n_arm, len(rep.results), cfg, rep.warnings, n_exit=n_exit, scope=scope
+    )
+    out.warnings += list(rep.warnings)
     wins = [r for r in rep.results if r.status == ST.SIGNIFICANT_ADJUSTED and r.delta > 0]
     if wins:
         out.promotion_status = str(PromotionStatus.PROMOTE_TO_FIDELITY)
@@ -508,6 +677,7 @@ def run_study(
     assert (
         PromotionStatus(out.promotion_status) in _ALLOWED_STATUS
     )  # never above a research candidate
+    _finish(out, reg, n_start)
     return out
 
 
@@ -517,11 +687,74 @@ def _multiplicity(
     n_abl: int,
     cfg: StudyConfig,
     warnings: Sequence[str] = (),
+    *,
+    n_exit: int = 0,
+    scope: str = "RUN_LOCAL_ONLY",
 ) -> dict[str, Any]:
     return {
         "n_hypotheses": reg.n_hypotheses, "n_families": reg.n_families, "n_arm_hypotheses": n_arm, "n_ablation_hypotheses": n_abl,
+        "n_exit_variant_hypotheses": n_exit, "multiplicity_scope": scope,
         "adjust": EN.EnrichmentConfig().adjust, "registry": reg.name, "warnings": list(warnings), "seed": cfg.seed,
     }  # fmt: skip
+
+
+EXIT_CONTRASTS = ("mean_r_delta_vs_control", "whipsaw_rate")
+
+
+def _exit_variant_stats(
+    reg: ST.HypothesisRegistry, key: str, variants: Mapping[Variant, Sequence[HypotheticalExit]]
+) -> tuple[list[dict[str, Any]], int]:
+    """Register every exit variant A-D x contrast vs CONTROL BEFORE its result is computed; results are descriptive (no p-values).
+
+    Pending (incomplete) rows are excluded from the statistics and counted, never treated as losses."""
+    tested = [v for v in Variant if v is not Variant.CONTROL]
+    names = [
+        f"thesis_study|{key[:12]}|exit|{v.value}|{c}|vs_CONTROL"
+        for v in tested
+        for c in EXIT_CONTRASTS
+    ]
+    fam = f"thesis_study_exit_variants|{key[:12]}"
+    reg.declare_family(fam, definition=json.dumps(names))
+    reg.register_many(names, fam)
+    control = {r.entry_id: r for r in variants.get(Variant.CONTROL, ())}
+    rows: list[dict[str, Any]] = []
+    for v in tested:
+        pairs = [(r, control[r.entry_id]) for r in variants.get(v, ()) if r.entry_id in control]
+        done = [
+            (r, c)
+            for r, c in pairs
+            if r.complete and c.complete and np.isfinite(r.r) and np.isfinite(c.r)
+        ]
+        n_missing_control = sum(1 for r in variants.get(v, ()) if r.entry_id not in control)
+        rows.append({
+            "variant": v.value, "vs": "CONTROL", "n_pairs": len(pairs), "n_complete": len(done), "n_pending_excluded": len(pairs) - len(done),
+            "n_without_control": n_missing_control, "descriptive_only": True,
+            "mean_r_delta_vs_control": float(np.mean([r.r - c.r for r, c in done])) if done else None,
+            "whipsaw_rate": float(np.mean([whipsaw(r, c) for r, c in done])) if done else None,
+            "hypotheses": [f"thesis_study|{key[:12]}|exit|{v.value}|{c}|vs_CONTROL" for c in EXIT_CONTRASTS],
+        })  # fmt: skip
+    return rows, len(names)
+
+
+def _finish(out: StudyResult, reg: ST.HypothesisRegistry, n_start: int) -> None:
+    """Record what this run registered (replayed into the registry on a cache hit) and surface the scope warning."""
+    out.registry_entries = [[n, reg.family_of(n)] for n in reg._names[n_start:]]
+    if out.multiplicity_scope != "PERSISTENT":
+        out.warnings.append(
+            "MULTIPLICITY RUN_LOCAL_ONLY: pass a persistent HypothesisRegistry(path=...) to count hypotheses across runs"
+        )
+    out.no_promotion_claim = True
+
+
+def _replay_registration(reg: ST.HypothesisRegistry, res: StudyResult) -> None:
+    """Cache hit: put the stored run's hypotheses into the caller's registry so the multiplicity count stays honest."""
+    for fam in dict.fromkeys(f for _, f in res.registry_entries):
+        if fam not in reg._families:
+            reg.declare_family(fam)
+    if res.registry_entries:
+        reg.register_many(
+            [n for n, _ in res.registry_entries], [f for _, f in res.registry_entries]
+        )
 
 
 def run_study_cached(
@@ -533,11 +766,35 @@ def run_study_cached(
     parent_key: str,
     spec: SetupSpec = CONTINUATION_RETEST,
     config: StudyConfig | None = None,
-    **kw: Any,
+    registry: ST.HypothesisRegistry | None = None,
+    maps: Sequence[MarketMap] | None = None,
+    geometry_fn: Callable[[MarketMap, Direction], Any] | None = None,
+    geometry_version: str | None = None,
+    partition: Any = "auto",
+    mm_config: MarketMapConfig | None = None,
+    exit_variants: Mapping[Variant, Sequence[HypotheticalExit]] | None = None,
 ) -> StudyResult:
-    """``run_study`` under the existing artifact store (stage ``THESIS_STUDY``): HIT = the stored result, no recomputation."""
+    """``run_study`` under the existing artifact store (stage ``THESIS_STUDY``): HIT = the stored result, no recomputation.
+
+    The key covers ALL actual inputs (bars, events, maps content hashes, geometry version, partition, registry state at start,
+    exit variants). A ``geometry_fn`` override needs a ``geometry_version`` token, otherwise caching is refused (ValueError)."""
+    if geometry_fn is not None and not geometry_version:
+        raise ValueError(
+            "a geometry_fn override cannot be cached without a geometry_version token (un-hashable input)"
+        )
     cfg = config or StudyConfig()
-    key = thesis_study_key(parent_key, spec, cfg, mm_config=kw.get("mm_config"))
+    reg, _, _ = _resolve_registry(registry, bars.market)
+    inputs = study_inputs(
+        bars,
+        events_by_ts,
+        maps=maps,
+        geometry_fn=geometry_fn,
+        geometry_version=geometry_version,
+        partition=partition,
+        registry=reg,
+        exit_variants=exit_variants,
+    )
+    key = thesis_study_key(parent_key, spec, cfg, mm_config=mm_config, inputs=inputs)
     cacheable = not key.startswith(dag.UNCACHEABLE) and not dag.code_hash(
         THESIS_STUDY_CODE
     ).startswith(dag.UNCACHEABLE)
@@ -549,10 +806,15 @@ def run_study_cached(
             )
         )
         res = StudyResult(**data)
+        _replay_registration(reg, res)
         res.cached = True
         return res
     t0 = time.perf_counter()
-    res = run_study(bars, events_by_ts, spec=spec, config=cfg, parent_key=parent_key, **kw)
+    res = run_study(
+        bars, events_by_ts, spec=spec, config=cfg, registry=registry, maps=maps, geometry_fn=geometry_fn, geometry_version=geometry_version,
+        partition=partition, parent_key=parent_key, mm_config=mm_config, exit_variants=exit_variants,
+    )  # fmt: skip
+    assert res.key == key
     if cacheable:
         store.publish(
             bars.market, THESIS_STUDY_STAGE, key, {"study.json": json.dumps(res.to_dict(), indent=1, sort_keys=True).encode("utf-8")},
@@ -562,6 +824,7 @@ def run_study_cached(
 
 
 __all__ = [
+    "LIMITATIONS",
     "RESEARCH_CEILING",
     "STUDY_VERSION",
     "THESIS_STUDY_CODE",
@@ -576,6 +839,7 @@ __all__ = [
     "replay_setup_events",
     "run_study",
     "run_study_cached",
+    "study_inputs",
     "study_versions",
     "thesis_study_key",
     "without_level_behaviour",
