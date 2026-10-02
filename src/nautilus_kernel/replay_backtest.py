@@ -60,11 +60,12 @@ class ReplayCandidate:
 
 @dataclass(frozen=True, slots=True)
 class ReplayFill:
-    ts_ns: int
+    ts_ns: int  # MODELED ts: decision / forced-exit bar close (what the comparison uses)
     side: str  # "BUY" | "SELL"
     price: float
     qty: float
     tag: str  # "entry" | "exit:STOP" | "exit:TARGET" | "exit:<FORCED REASON>"
+    engine_ts_ns: int = 0  # the ACTUAL OrderFilled.ts_event (modeled ts + 1/2 ns for alert orders)
 
 
 @dataclass(slots=True)
@@ -188,6 +189,7 @@ class ReplayStrategy(Strategy):
         self._res.fills.append(
             ReplayFill(
                 ts_ns=ts_fill,
+                engine_ts_ns=int(event.ts_event),
                 side=event.order_side.name,
                 price=float(event.last_px),
                 qty=float(event.last_qty),

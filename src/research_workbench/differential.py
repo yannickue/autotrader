@@ -108,6 +108,11 @@ class NormalizedTrade:
     costs: float
     holding_bars: int | None
     qty: float | None = None  # filled quantity (lots)
+    # Audit-only (never compared): the engine's real event timestamps. For the Nautilus replay the
+    # modeled ts above is the decision / forced-exit bar close, the engine ts is +1 ns (alert
+    # orders) or +2 ns (re-entry on the same ts as a forced exit); None for FAST.
+    engine_entry_ts_ns: int | None = None
+    engine_exit_ts_ns: int | None = None
 
 
 @dataclass(frozen=True)
@@ -449,15 +454,30 @@ def netting_report(trades: Any, candidates: CandidateArrays) -> dict[str, Any]:
     dec = [int(x) for x in trades.decision_idx]
     ent = [int(x) for x in trades.entry_idx]
     ext = [int(x) for x in trades.exit_idx]
-    violations = [k for k in range(1, n) if dec[k] < ext[k - 1] or ent[k] <= ext[k - 1]]
-    traded = set(dec)
+    # All execution intervals independently: sort by entry, track the max exit seen so far, so
+    # unsorted output and NESTED intervals are caught (not just adjacent pairs).
+    order = sorted(range(n), key=lambda k: (ent[k], dec[k]))
+    violations: list[int] = []
+    max_exit = None
+    for k in order:
+        if max_exit is not None and (dec[k] < max_exit or ent[k] <= max_exit):
+            violations.append(k)
+        max_exit = ext[k] if max_exit is None else max(max_exit, ext[k])
+    violations.sort()
+    # Candidate identity by multiplicity: a candidate index shared by several candidates is only
+    # "traded" as many times as trades exist with that decision index.
+    from collections import Counter
+
+    cand_n = Counter(int(x) for x in candidates.decision_idx)
+    exec_n = Counter(dec)
     blocked = 0
-    for raw in candidates.decision_idx:
-        i = int(raw)
-        if i in traded:
-            continue
-        if any(dec[k] < i < ext[k] for k in range(n)):
-            blocked += 1
+    other_unfilled = 0
+    for i, m in cand_n.items():
+        for _ in range(m - exec_n.get(i, 0)):
+            if any(dec[k] < i < ext[k] for k in range(n)):
+                blocked += 1
+            else:
+                other_unfilled += 1
     return {
         "fast_trades": n,
         "overlap_violations": len(violations),
@@ -465,6 +485,8 @@ def netting_report(trades: Any, candidates: CandidateArrays) -> dict[str, Any]:
         "same_bar_reentries": sum(1 for k in range(1, n) if dec[k] == ext[k - 1]),
         "candidates_total": len(candidates.decision_idx),
         "candidates_blocked_by_open_position": blocked,
+        "candidates_unfilled_other": other_unfilled,
+        "duplicate_decision_indices": sum(1 for m in cand_n.values() if m > 1),
         "rule": "FAST admits decision_idx >= previous exit_idx (one position at a time)",
     }
 
@@ -661,6 +683,8 @@ def normalize_replay(
                 costs=gross - net,
                 holding_bars=int((exit_.ts_ns - entry.ts_ns) // BAR_NS),
                 qty=float(qty),
+                engine_entry_ts_ns=int(entry.engine_ts_ns),
+                engine_exit_ts_ns=int(exit_.engine_ts_ns),
             )
         )
     return trades
@@ -869,6 +893,13 @@ def run_differential(
 ) -> DifferentialResult:
     """Run FAST and the Nautilus candidate replay on the same bars/candidates and classify."""
     win = window if window is not None else SimWindow()
+    if len(np.unique(candidates.decision_idx)) != len(candidates.decision_idx):
+        return _blocked(
+            scenario_id,
+            0,
+            "duplicate candidate decision indices: the replay identifies candidates by decision "
+            "timestamp, so duplicates cannot be replayed faithfully",
+        )
     trades = simulate_fast(market, candidates, cost, sizing, rules, window)
     n_fast = len(trades)
 
@@ -1020,6 +1051,7 @@ def compare_trade_lists(
         )
     )
     diffs.extend(extra_diffs or [])
+    engine_timing: list[dict[str, Any]] = []
     per_trade_leg: list[str] = []
     per_trade_leg_strict: list[str] = []
     for n, f in enumerate(fast_norm):
@@ -1061,6 +1093,14 @@ def compare_trade_lists(
         pair = classify_pair(n, f, x, ctx, tolerances)
         diffs.extend(pair)
         per_trade_leg.append(trade_mismatch_leg(pair))
+        engine_timing.append(
+            {
+                "signal_ts_ns": f.signal_ts_ns,
+                "modeled_exit_ts_ns": x.exit_ts_ns,
+                "engine_entry_ts_ns": x.engine_entry_ts_ns,
+                "engine_exit_ts_ns": x.engine_exit_ts_ns,
+            }
+        )
         per_trade_leg_strict.append(trade_mismatch_leg(pair, strict=True))
     for n, x in enumerate(fid_norm):
         if x.signal_ts_ns not in fast_by_sig:
@@ -1098,6 +1138,7 @@ def compare_trade_lists(
         "mismatch_leg_counts": _legs(per_trade_leg),
         "mismatch_leg_counts_strict": _legs(per_trade_leg_strict),
         "per_trade_mismatch_leg": per_trade_leg,
+        "engine_timing": engine_timing,
         "not_applicable": dict(NOT_APPLICABLE_FIELDS),
         "bug_suspected_fields": sorted({d.field for d in unknown}),
         "tolerances": {k: {"abs_tol": v.abs_tol, "scale": v.scale} for k, v in tolerances.items()},

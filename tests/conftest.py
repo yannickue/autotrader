@@ -71,6 +71,7 @@ SLOW_FILES = frozenset(
         "tests/unit/research_workbench/test_differential_e2e.py",
         "tests/unit/research_workbench/test_differential_e2e_nonvacuity.py",  # starts Nautilus engines
         "tests/unit/research_workbench/test_netting_e2e.py",  # same-bar re-entry / trending scenarios through Nautilus
+        "tests/unit/research_workbench/test_netting_e2e_regression.py",  # original 10-ignored-candidates regression (Nautilus)
         "tests/unit/research_workbench/test_workbench_compare_integration.py",  # compare through the real Nautilus engine (~17 s)
         "tests/unit/research_workbench/test_workbench_fastrun.py",  # real FeatureStore/numba/shadow-lab (~28 s)
         "tests/unit/research_workbench/test_workbench_report_cli.py",  # CLI smoke incl. fast run (~15 s)
