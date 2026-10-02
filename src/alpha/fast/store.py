@@ -486,29 +486,63 @@ def _file_identity(path: Path) -> tuple[int, int] | None:
     return (st.st_dev, st.st_ino)
 
 
+def _lock_snapshot(lock_path: Path) -> tuple[str, tuple[int, int, int]]:
+    stat = lock_path.stat()
+    payload = lock_path.read_text(encoding="utf-8")
+    return payload, (stat.st_dev, stat.st_ino, stat.st_mtime_ns)
+
+
 def _takeover_stale_lock(lock_path: Path) -> bool:
     """Try to clear a stale lock; True means "re-loop and try to acquire normally".
 
-    The stale file is renamed atomically to a unique name and deleted only if its payload is the
-    one that was judged stale. If it differs (a new owner replaced it meanwhile) the takeover is
-    abandoned: the renamed file is left alone (never restored, never deleted) and the caller
-    simply re-loops. Only the process whose rename succeeded does anything with the file.
+    The stale file is judged stale (age), re-checked immediately before the rename (same payload,
+    same file identity and mtime), then renamed atomically to a unique name and deleted only if
+    its payload is the one judged stale. If the payload differs, a new live owner slipped in
+    between the re-check and the rename and we moved ITS lock: it is put back without overwriting
+    anything (``os.link`` fails if a lock exists again, in which case the displaced file is dropped
+    because the lock file now belongs to someone else) and the takeover is abandoned.
+
+    Residual window: between the final re-check and the rename a live owner's lock can be moved for
+    the few microseconds until it is restored, so cross-process mutual exclusion is best-effort.
+    Cache correctness never depends on it: temp files are unique, ``os.replace`` is atomic and
+    readers verify size/sha256/array contract.
     """
     try:
-        stat = lock_path.stat()
-        payload = lock_path.read_text(encoding="utf-8")
+        payload, identity = _lock_snapshot(lock_path)
+        age = time.time() - identity[2] / 1e9
     except OSError:
         return True  # vanished: just retry acquiring
-    if time.time() - stat.st_mtime <= _LOCK_STALE_SECONDS:
+    if age <= _LOCK_STALE_SECONDS:
         return False  # live lock: wait
+    try:
+        if _lock_snapshot(lock_path) != (payload, identity):
+            return True  # replaced since we looked: not the lock we judged stale
+    except OSError:
+        return True
     grave = lock_path.with_name(f"{lock_path.name}.stale.{uuid.uuid4().hex}")
     try:
         os.replace(lock_path, grave)
     except OSError:
         return True  # someone else took it first
-    with contextlib.suppress(OSError):
-        if grave.read_text(encoding="utf-8") == payload:
+    try:
+        moved = grave.read_text(encoding="utf-8")
+    except OSError:
+        return True
+    if moved == payload:
+        with contextlib.suppress(OSError):
             grave.unlink()  # verified stale
+        return True
+    # We displaced a live owner's lock: restore it without overwriting anything.
+    try:
+        os.link(grave, lock_path)
+    except FileExistsError:
+        pass  # a newer lock already stands; the displaced file is obsolete
+    except OSError:
+        if not lock_path.exists():  # no hard links on this filesystem: best-effort rename back
+            with contextlib.suppress(OSError):
+                os.replace(grave, lock_path)
+    with contextlib.suppress(OSError):
+        grave.unlink()
     return True
 
 

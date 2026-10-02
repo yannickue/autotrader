@@ -649,31 +649,86 @@ def test_contenders_racing_on_a_stale_lock_one_at_a_time_and_nobody_deletes_new_
     assert [p.name for p in target.iterdir()] == []  # stale lock removed, no leftovers
 
 
-def test_stale_takeover_abandons_when_new_owner_replaced_the_lock(tmp_path) -> None:
-    target = tmp_path / "entry"
+def _stale_lock(target: Path) -> Path:
     target.mkdir()
     lock = target / ".publish.lock"
     lock.write_text("dead-writer")
     old = lock.stat().st_mtime - 10_000
     os.utime(lock, (old, old))
-    real_replace = os.replace
-    swapped = {"done": False}
+    return lock
 
-    def swap_in_new_owner_then_replace(src, dst):
-        if not swapped["done"] and str(src).endswith(".publish.lock"):
-            swapped["done"] = True
-            Path(src).write_text("new-owner-token")  # a new owner took over before our rename
+
+def test_takeover_restores_live_owner_created_between_check_and_rename(
+    tmp_path, monkeypatch
+) -> None:
+    lock = _stale_lock(tmp_path / "entry")
+    real_replace = os.replace
+    seam = {"done": False}
+
+    def live_owner_appears_then_replace(src, dst):
+        if not seam["done"] and str(src).endswith(".publish.lock"):
+            seam["done"] = True
+            Path(src).unlink()
+            Path(src).write_text("live-owner-token")  # brand-new lock (new inode, fresh mtime)
         return real_replace(src, dst)
 
-    store_module.os.replace = swap_in_new_owner_then_replace
-    try:
-        assert store_module._takeover_stale_lock(lock) is True
-    finally:
-        store_module.os.replace = real_replace
-    graves = [p for p in target.iterdir() if ".stale." in p.name]
-    assert (
-        len(graves) == 1 and graves[0].read_text() == "new-owner-token"
-    )  # not deleted, not restored
+    monkeypatch.setattr(store_module.os, "replace", live_owner_appears_then_replace)
+    assert store_module._takeover_stale_lock(lock) is True
+    monkeypatch.undo()
+    assert lock.read_text() == "live-owner-token"  # live owner's lock is back in place
+    assert [p.name for p in lock.parent.iterdir()] == [".publish.lock"]  # no grave left
+    # takeover abandoned: a fresh lock is simply waited for, not taken
+    assert store_module._takeover_stale_lock(lock) is False
+
+
+def test_takeover_drops_displaced_file_when_a_newer_lock_already_stands(
+    tmp_path, monkeypatch
+) -> None:
+    lock = _stale_lock(tmp_path / "entry")
+    real_replace = os.replace
+    seam = {"done": False}
+
+    def two_new_owners(src, dst):
+        if not seam["done"] and str(src).endswith(".publish.lock"):
+            seam["done"] = True
+            Path(src).unlink()
+            Path(src).write_text("live-owner-1")
+            real_replace(src, dst)  # we move owner-1's lock away ...
+            lock.write_text("owner-2")  # ... and owner-2 grabs the free name before the restore
+            return None
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(store_module.os, "replace", two_new_owners)
+    assert store_module._takeover_stale_lock(lock) is True
+    monkeypatch.undo()
+    assert lock.read_text() == "owner-2"  # never overwritten by the restore
+    assert [p.name for p in lock.parent.iterdir()] == [".publish.lock"]
+
+
+def test_takeover_rechecks_before_rename_and_skips_a_replaced_lock(tmp_path, monkeypatch) -> None:
+    lock = _stale_lock(tmp_path / "entry")
+    real_snapshot = store_module._lock_snapshot
+    calls = {"n": 0}
+
+    def snapshot_then_swap(path):
+        result = real_snapshot(path)
+        calls["n"] += 1
+        if calls["n"] == 1:  # between the stale read and the re-check a new owner replaces it
+            path.unlink()
+            path.write_text("fresh-owner")
+        return result
+
+    monkeypatch.setattr(store_module, "_lock_snapshot", snapshot_then_swap)
+    assert store_module._takeover_stale_lock(lock) is True
+    monkeypatch.undo()
+    assert lock.read_text() == "fresh-owner"  # never even renamed
+    assert [p.name for p in lock.parent.iterdir()] == [".publish.lock"]
+
+
+def test_takeover_of_a_truly_stale_lock_still_works(tmp_path) -> None:
+    lock = _stale_lock(tmp_path / "entry")
+    assert store_module._takeover_stale_lock(lock) is True
+    assert list(lock.parent.iterdir()) == []
 
 
 def test_lock_released_when_write_fails_and_interrupt_in_body(tmp_path) -> None:
