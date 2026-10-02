@@ -313,6 +313,16 @@ def test_cached_run_hits_replays_registration_and_parent_key_misses(tmp_path, st
     assert (
         reg2.n_hypotheses == reg1.n_hypotheses
     )  # a hit puts the stored hypotheses into the callers registry
+    # the COMPLETE registry effect is replayed: a HIT leaves the registry in exactly the state the fresh run left (the digest used in the key)
+    assert reg1._p, "the fixture must record p-values, otherwise this check is vacuous"
+    assert S.registry_digest(reg2) == S.registry_digest(reg1)
+    assert reg2._p == reg1._p and len(reg2._p) == len(reg1._p) > 0
+    assert {f: v["definition"] for f, v in reg2._families.items()} == {
+        f: v["definition"] for f, v in reg1._families.items()
+    }
+    assert {f: v["n_results_recorded_at_declaration"] for f, v in reg2._families.items()} == {
+        f: v["n_results_recorded_at_declaration"] for f, v in reg1._families.items()
+    }
     c = S.run_study_cached(
         store,
         "exp",
@@ -550,3 +560,17 @@ def test_cache_hit_into_an_incompatible_registry_is_a_miss(tmp_path):
     clash = ST.HypothesisRegistry("r")
     clash.register(a.registry_entries[0][0], a.registry_entries[0][1])
     assert not S._registry_compatible(clash, a, a.registry_state_at_start)
+
+
+def test_hit_without_stored_registry_effect_is_a_miss():
+    res = S.StudyResult(
+        **{**_minimal_result(), "registry_state_at_start": "x", "registry_effect": {}}
+    )
+    assert not S._registry_compatible(ST.HypothesisRegistry("r"), res, "x")
+
+
+def _minimal_result():
+    return {
+        "market": "SYN", "key": "k", "versions": {}, "config": {}, "events": {}, "arms": [], "ablation": [], "controls": {},
+        "multiplicity": {}, "promotion_status": "REJECT_FAST",
+    }  # fmt: skip

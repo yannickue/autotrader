@@ -525,6 +525,9 @@ class StudyResult:
     registry_state_at_start: str = (
         ""  # digest of the registry (names, families, results) the run started from
     )
+    registry_effect: dict[str, Any] = field(
+        default_factory=dict
+    )  # complete registry effect (families, registrations, recorded p-values)
     registry_entries: list[list[str]] = field(
         default_factory=list
     )  # [hypothesis, family] registered by this run (re-registered on a cache hit)
@@ -576,7 +579,7 @@ def run_study(
     ``exit_variants``: optional ``run_variants`` output; every variant A-D x contrast vs CONTROL is registered."""
     cfg = config or StudyConfig()
     reg, scope, scope_notes = _resolve_registry(registry, bars.market)
-    n_start = reg.n_hypotheses
+    n_start = (reg.n_hypotheses, len(reg._families))
     inputs = study_inputs(
         bars,
         events_by_ts,
@@ -746,9 +749,18 @@ def _exit_variant_stats(
     return rows, len(names)
 
 
-def _finish(out: StudyResult, reg: ST.HypothesisRegistry, n_start: int) -> None:
+def _finish(out: StudyResult, reg: ST.HypothesisRegistry, n_start: tuple[int, int]) -> None:
     """Record what this run registered (replayed into the registry on a cache hit) and surface the scope warning."""
-    out.registry_entries = [[n, reg.family_of(n)] for n in reg._names[n_start:]]
+    n_hyp, n_fam = n_start
+    out.registry_entries = [[n, reg.family_of(n)] for n in reg._names[n_hyp:]]
+    # the COMPLETE registry effect of this run (replayed exactly on a cache hit): family declarations incl. definition and the number
+    # of results recorded at declaration, and every new hypothesis with its recorded p-value
+    out.registry_effect = {
+        "families": {f: dict(reg._families[f]) for f in list(reg._families)[n_fam:]},
+        "hypotheses": [
+            [n, reg.family_of(n), n in reg._p, reg._p.get(n)] for n in reg._names[n_hyp:]
+        ],
+    }
     if out.multiplicity_scope != "PERSISTENT":
         out.warnings.append(
             "MULTIPLICITY RUN_LOCAL_ONLY: pass a persistent HypothesisRegistry(path=...) to count hypotheses across runs"
@@ -758,20 +770,25 @@ def _finish(out: StudyResult, reg: ST.HypothesisRegistry, n_start: int) -> None:
 
 def _registry_compatible(reg: ST.HypothesisRegistry, res: StudyResult, state: str) -> bool:
     """A stored result may be restored only into a registry in the SAME state it started from, with none of its names present."""
-    return res.registry_state_at_start == state and not any(
-        n in reg._family for n, _ in res.registry_entries
+    return (
+        bool(res.registry_effect)
+        and res.registry_state_at_start == state
+        and not any(n in reg._family for n, _ in res.registry_entries)
     )
 
 
 def _replay_registration(reg: ST.HypothesisRegistry, res: StudyResult) -> None:
-    """Cache hit: put the stored run's hypotheses into the caller's registry so the multiplicity count stays honest."""
-    for fam in dict.fromkeys(f for _, f in res.registry_entries):
-        if fam not in reg._families:
-            reg.declare_family(fam)
-    if res.registry_entries:
-        reg.register_many(
-            [n for n, _ in res.registry_entries], [f for _, f in res.registry_entries]
-        )
+    """Cache hit: leave the registry exactly as the fresh run left it (family declarations with their definition and recorded-count,
+    registrations in order, recorded p-values) and flush it, so state hashes / later keys / registry-wide adjustments are identical."""
+    eff = res.registry_effect
+    for fam, info in eff.get("families", {}).items():
+        reg._families[fam] = dict(info)
+    for name, fam, recorded, p in eff.get("hypotheses", []):
+        reg._names.append(name)
+        reg._family[name] = fam
+        if recorded:
+            reg._p[name] = p
+    reg.flush()
 
 
 def run_study_cached(
