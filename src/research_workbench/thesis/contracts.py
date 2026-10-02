@@ -1,3 +1,4 @@
+# ruff: noqa: E501, SIM103
 """Thesis / setup / position-thesis CONTRACTS (RESEARCH / OFFLINE ONLY).
 
 Frozen data contracts + the legal transition tables. Nothing here has trade authority and nothing in this package may be imported by
@@ -109,7 +110,9 @@ class ResearchClass(StrEnum):
 
 
 # ------------------------------------------------------------------------------------------------ legal transitions
-TERMINAL_SETUP_STATES = frozenset({SetupState.TRIGGERED, SetupState.INVALIDATED, SetupState.EXPIRED})
+TERMINAL_SETUP_STATES = frozenset(
+    {SetupState.TRIGGERED, SetupState.INVALIDATED, SetupState.EXPIRED}
+)
 # the ONLY legal forward edges (besides INVALIDATED / EXPIRED from any non-terminal state). A single bar may chain several edges in
 # order (all stamped with the same decision ts); skipping an edge is illegal.
 SETUP_FORWARD_EDGES: dict[SetupState, SetupState] = {
@@ -196,7 +199,9 @@ class MarketMap:
     active_resistance_zone: tuple[float, float] | None
     role_reversal_zones: tuple[tuple[float, float], ...]
     balance_state: str | None
-    acceptance_state: dict[str, str | None] = field(default_factory=dict)  # acceptance is level- and direction-specific
+    acceptance_state: dict[str, str | None] = field(
+        default_factory=dict
+    )  # acceptance is level- and direction-specific
     participation_state: str | None = None  # MT5 tick-activity PROXY, not exchange volume
     volatility_context: str | None = None
     provenance: dict[str, Provenance] = field(default_factory=dict)
@@ -227,12 +232,16 @@ class SetupSpec:
     archetype: str
     spec_version: str
     allowed_market_phases: tuple[MarketPhase, ...]
-    requirements: dict[EvidenceClass, tuple[str, ...]]  # named predicates over MarketMap fields (resolved by the engine's registry)
+    requirements: dict[
+        EvidenceClass, tuple[str, ...]
+    ]  # named predicates over MarketMap fields (resolved by the engine's registry)
     optional_evidence: tuple[str, ...] = ()
     invalidation: tuple[str, ...] = ()
     expiry_bars: int = 0  # 0 = no time expiry
     semantic_exit_profile: str | None = None  # reference only
-    params: dict[str, Any] = field(default_factory=dict)  # frozen thresholds (no tuning before a result exists)
+    params: dict[str, Any] = field(
+        default_factory=dict
+    )  # frozen thresholds (no tuning before a result exists)
     implemented: bool = True  # False => representable but NOT_EVALUATED
 
     @property
@@ -286,7 +295,9 @@ class OpposingEvent:
     ts_ns: int  # decision time
     direction: Direction  # the OPPOSING direction
     source: str  # Family event name or setup archetype
-    rejected_by_stack_gate: bool | None  # OPPOSITE_SIDE_WHILE_OPEN_NOT_SUPPORTED_V1 (None = unknown)
+    rejected_by_stack_gate: (
+        bool | None
+    )  # OPPOSITE_SIDE_WHILE_OPEN_NOT_SUPPORTED_V1 (None = unknown)
     future_path_complete: bool  # False => PENDING (never "missing")
 
 
@@ -308,7 +319,9 @@ class PositionThesis:
     entry_ts_ns: int
     setup_thesis: SetupThesis | None  # None when the entry came from a bare Family trigger
     family_trigger: str | None
-    premise: tuple[Condition, ...]  # the causal premise of the trade (e.g. FLIPPED_TO_SUPPORT holds)
+    premise: tuple[
+        Condition, ...
+    ]  # the causal premise of the trade (e.g. FLIPPED_TO_SUPPORT holds)
     state: PositionThesisState = PositionThesisState.HEALTHY
     worst_state: PositionThesisState = PositionThesisState.HEALTHY
     opposing_events: tuple[OpposingEvent, ...] = ()
