@@ -1,8 +1,9 @@
 """Independent causality check of EVERY FeatureStore feature (research workbench leakage guard).
 
-For several truncation points (day boundary, mid-session, mid-hour, last bars) on frames that span the spring and the autumn
-DST change, the features of the truncated frame must equal the prefix of the features of the full frame: a feature at bar t
-that depends on data after t would change when the future bars are removed. Complements the single-cut test in
+For several truncation points (day boundary, mid-session, mid-hour, last bars) on frames that
+span the spring and the autumn DST change, the features of the truncated frame must equal the
+prefix of the features of the full frame: a feature at bar t that depends on data after t would
+change when the future bars are removed. Complements the single-cut test in
 tests/test_alpha_fast_store.py.
 """
 
