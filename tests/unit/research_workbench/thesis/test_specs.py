@@ -129,3 +129,24 @@ def test_geometry_predicates_mirror():
         assert GEOMETRY_PREDICATES["structural_stop_known"](None, d, {}) is None
     wrong_side = {**g, "structural_stop": 100.5}  # inside the entry zone -> not protective
     assert GEOMETRY_PREDICATES["structural_stop_known"](wrong_side, LONG, {}) is False
+
+
+def test_accepted_values_match_position_thesis():
+    from research_workbench.thesis import position_thesis, specs
+
+    assert (
+        specs.ACCEPTED_VALUES
+        == position_thesis.ACCEPTED_VALUES
+        == frozenset({"ACCEPTED", "RETEST_HELD"})
+    )
+
+
+@pytest.mark.parametrize("val", ["ACCEPTED", "RETEST_HELD"])
+def test_opposing_established_acceptance_blocks_and_invalidates(val):
+    m = mm(0, acceptance_state={"SHORT:a": val})
+    assert PREDICATES["no_acceptance_against"](m, LONG, {}) is False
+    assert PREDICATES["acceptance_against"](m, LONG, {}) is True
+    assert PREDICATES["no_acceptance_against"](mirror_map(m), SHORT, {}) is False
+    for weak in ("BROKEN", "RECLAIMED", None):
+        w = mm(0, acceptance_state={"SHORT:a": weak})
+        assert PREDICATES["acceptance_against"](w, LONG, {}) is False

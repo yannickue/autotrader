@@ -19,12 +19,12 @@ Predicate -> MarketMap field mapping (every predicate takes a Direction; ``own``
                              "ACCEPTED" or "RETEST_HELD" (break -> acceptance observed). Pullback depth is NOT a MarketMap fact; being back at the
                              zone (LOCATION) after an accepted break is the pullback/retest context.
   LEVEL_BEHAVIOUR  (started tier = no_acceptance_against; confirmed tier = retest_confirmed)
-    no_acceptance_against    False iff an acceptance_state key "<OPPOSITE>:<level_id>" has value "ACCEPTED"
+    no_acceptance_against    False iff an acceptance_state key "<OPPOSITE>:<level_id>" has a value in ACCEPTED_VALUES (ACCEPTED | RETEST_HELD)
     retest_confirmed         True iff a "<DIR>:*" key is "RETEST_HELD" (hold / rejection of the zone) OR (at_active_zone AND m5_structure is the
                              own sequence = reclaim / rejection by M5 structure); None if neither and m5_structure is None
   INVALIDATION
     structural_break_against m15_structure == opposite sequence (None if m15_structure None)
-    acceptance_against       an opposite-direction key has value "ACCEPTED"
+    acceptance_against       an opposite-direction key has a value in ACCEPTED_VALUES
     (+ time expiry: expiry_bars)
   GEOMETRY (caller-supplied geometry, engine registry GEOMETRY_PREDICATES)
     structural_stop_known    geometry.structural_stop not None (and on the protective side of entry_zone when entry_zone is given)
@@ -59,6 +59,9 @@ from research_workbench.thesis.setup_engine import (
 
 EC = EvidenceClass
 MP = MarketPhase
+
+# established acceptance in the MarketMap vocabulary (marketmap-1); mirrors position_thesis.ACCEPTED_VALUES (pinned by a test)
+ACCEPTED_VALUES = frozenset({"ACCEPTED", "RETEST_HELD"})
 
 _UP, _DOWN = "UP_SEQUENCE", "DOWN_SEQUENCE"
 
@@ -108,11 +111,11 @@ def at_active_zone(mm: MarketMap, d: Direction, params: Mapping[str, Any]) -> bo
 def break_accepted_with_direction(
     mm: MarketMap, d: Direction, params: Mapping[str, Any]
 ) -> bool | None:
-    return any(v in ("ACCEPTED", "RETEST_HELD") for v in _acc_values(mm, d))
+    return any(v in ACCEPTED_VALUES for v in _acc_values(mm, d))
 
 
 def no_acceptance_against(mm: MarketMap, d: Direction, params: Mapping[str, Any]) -> bool | None:
-    return not any(v == "ACCEPTED" for v in _acc_values(mm, d.opposite()))
+    return not any(v in ACCEPTED_VALUES for v in _acc_values(mm, d.opposite()))
 
 
 def retest_confirmed(mm: MarketMap, d: Direction, params: Mapping[str, Any]) -> bool | None:
@@ -130,7 +133,7 @@ def structural_break_against(mm: MarketMap, d: Direction, params: Mapping[str, A
 
 
 def acceptance_against(mm: MarketMap, d: Direction, params: Mapping[str, Any]) -> bool | None:
-    return any(v == "ACCEPTED" for v in _acc_values(mm, d.opposite()))
+    return any(v in ACCEPTED_VALUES for v in _acc_values(mm, d.opposite()))
 
 
 def flipped_zone_overlap(mm: MarketMap, d: Direction, params: Mapping[str, Any]) -> bool | None:

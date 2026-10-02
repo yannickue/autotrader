@@ -369,3 +369,28 @@ def test_phase_gate_for_creation():
         advance(None, mm(0, market_phase=MarketPhase.UNDEFINED), (), SPEC, LONG).status
         is EvaluationStatus.NO_SETUP
     )
+
+
+def test_opposing_retest_held_invalidates_in_engine():
+    prev = advance(None, mm(0), (), SPEC, LONG).thesis
+    bar = _full_bar(1, acceptance_state={"LONG:L1": "ACCEPTED", "SHORT:L2": "RETEST_HELD"})
+    r = advance(prev, bar, (LONG_TRIG,), SPEC, LONG, geometry=GEO_LONG)
+    assert r.thesis.state is SetupState.INVALIDATED
+
+
+def test_edge_without_predicates_fails_closed_and_spec_invalid():
+    bad = replace(
+        SPEC,
+        requirements={
+            k: v for k, v in SPEC.requirements.items() if k is not EvidenceClass.LOCATION
+        },
+    )
+    with pytest.raises(ValueError, match="no evidence predicate"):
+        eng.validate_spec(bad)
+    with pytest.raises(ValueError, match="no evidence predicate"):
+        advance(None, mm(0), (), bad, LONG)
+    # the helper itself never treats an empty edge as satisfied
+    assert eng._all_true({}, []) is False
+    empty_trigger = replace(SPEC, requirements={**SPEC.requirements, EvidenceClass.TRIGGER: ()})
+    with pytest.raises(ValueError, match="no evidence predicate"):
+        eng.validate_spec(empty_trigger)

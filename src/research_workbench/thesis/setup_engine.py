@@ -181,6 +181,11 @@ def validate_spec(spec: SetupSpec) -> None:
         raise ValueError(
             f"{spec.archetype}: level_behaviour_started must be a subset of the LEVEL_BEHAVIOUR requirements"
         )
+    for src, dst in EDGE_EVIDENCE:
+        if not _edge_names(spec, src, dst):
+            raise ValueError(
+                f"{spec.archetype}: edge {src.value} -> {dst.value} has no evidence predicate (fail closed)"
+            )
 
 
 # ------------------------------------------------------------------------------------------------ helpers
@@ -258,7 +263,9 @@ def _all_true(
     values: Mapping[tuple[EvidenceClass, str], bool | None],
     keys: Sequence[tuple[EvidenceClass, str]],
 ) -> bool:
-    return all(values.get(k) is True for k in keys)
+    return bool(keys) and all(
+        values.get(k) is True for k in keys
+    )  # empty edge = NOT satisfied (fail closed)
 
 
 def _build_conditions(
