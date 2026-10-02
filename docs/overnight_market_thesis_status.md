@@ -2,15 +2,15 @@
 
 Maintained continuously. Newest reality overrides older entries.
 
-- CURRENT_PHASE: PHASE 0 (Workbench closeout) -> PHASE 1 (Coverage) starting
+- CURRENT_PHASE: PHASE 4-6 (thesis stack committed fb50467; CODEX review of thesis + builder for position-thesis coverage and Workbench integration running) [updated 02.10. ~04:30]
 - LAST_GREEN_COMMIT: 831a8dd (research/workbench-v1)
 - OVERNIGHT_SCOPE_DONE: FALSE
 - RUNNER_START_ALLOWED: FALSE (needs OVERNIGHT_SCOPE_DONE AND PRODUCTION_PREFLIGHT=GREEN AND time >= 08:30 Europe/Berlin)
 - PRODUCTION: sprint1/integration @ 11c6aec, tree clean, STOP set, runner OFF; no research merge
 - WORKBENCH_STATUS: all builder lanes A/B/C/D/F committed; T3: FAST TIMEOUT_INCOMPLETE (600 s, ~78 %, no failure observed), INTEGRATION 1122 passed/1 skipped, SLOW 830 passed/2 skipped, SAFETY running; final CODEX-0 pending
-- COVERAGE_STATUS: NOT_STARTED
-- THESIS_STATUS: NOT_STARTED
-- POSITION_MONITOR_STATUS: NOT_STARTED
+- COVERAGE_STATUS: implemented + CODEX-1 findings (3 High, 1 Medium, 1 Low) fixed in 5350ac9; position-thesis section pending
+- THESIS_STATUS: MarketMap, main thesis, setup engine, CONTINUATION_RETEST committed (fb50467, 243 tests); CODEX implementation review running
+- POSITION_MONITOR_STATUS: implemented (states, exit!=reverse, variants A-D), committed fb50467; review running
 - TEST_STATUS: see WORKBENCH_STATUS
 - CODEX_STATUS: 12 rounds, all Critical/High closed; CODEX-0 (post-fix verification of DAG compensation / lock fixes) pending
 - DEPLOY_GATE: REVOKED_FOR_OVERNIGHT_WORK (explicit user authorization 03:25; executed `deploy_gate.py --revoke`; verified: `--check` rc=30 NOT_APPROVED, `deploy_approved.json` absent; production HEAD 11c6aec, tree clean, STOP present)
