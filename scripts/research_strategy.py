@@ -222,7 +222,7 @@ def cmd_report(args: argparse.Namespace) -> int:
         from research_workbench import coverage as cov
 
         try:
-            coverage = cov.coverage_for_path(args.coverage_db)
+            coverage = cov.coverage_for_path(args.coverage_db, phase=args.coverage_phase)
         except (cov.ProductionPathRefused, FileNotFoundError, ValueError) as exc:
             print(f"coverage: {exc}", file=sys.stderr)
             return EXIT_BAD_INPUT
@@ -314,12 +314,21 @@ def build_parser() -> argparse.ArgumentParser:
                 "--coverage-db",
                 help="also attach a read-only coverage section from this demo DB COPY",
             )
+            p.add_argument(
+                "--coverage-phase",
+                choices=("DISCOVERY", "FROZEN"),
+                help="phase of the coverage section (omitted: each phase reported separately, never pooled, no promotion claim)",
+            )
         p.set_defaults(handler=handler)
     cov = sub.add_parser("coverage", help="read-only coverage audit of a demo DB copy")
     cov.add_argument(
         "--db", required=True, help="path to a COPY (or synthetic) demo DB; opened mode=ro"
     )
-    cov.add_argument("--phase", choices=("DISCOVERY", "FROZEN"))
+    cov.add_argument(
+        "--phase",
+        choices=("DISCOVERY", "FROZEN"),
+        help="omitted: each phase is reported separately (never pooled) and no_promotion_claim is set",
+    )
     cov.add_argument("--now", help="ISO UTC 'now' (default: the current time)")
     cov.add_argument("--json", action="store_true")
     cov.add_argument(

@@ -23,7 +23,10 @@ from demo_factories import (
     drive_full_trade,
     iso,
     make_decision,
+    make_exec,
+    make_intent,
     make_label,
+    make_risk,
     make_snapshot,
 )
 
@@ -59,7 +62,9 @@ def parse(s):
 
 def _report(tmp_path, store, now, **kw):
     store.close()
-    return C.coverage_for_path(tmp_path / "d.db", now=iso(now), **kw)
+    return C.coverage_for_path(
+        tmp_path / "d.db", now=iso(now), phase=kw.pop("phase", "DISCOVERY"), **kw
+    )
 
 
 @pytest.fixture
@@ -175,7 +180,10 @@ def test_diagnostic_bars_provider_distinguishes_causes(tmp_path, store):
         return []
 
     rep = C.coverage_for_path(
-        tmp_path / "d.db", now=iso(T0 + timedelta(days=3)), bars_provider=provider
+        tmp_path / "d.db",
+        now=iso(T0 + timedelta(days=3)),
+        bars_provider=provider,
+        phase="DISCOVERY",
     )
     causes = _opp(rep)["unexpected_missing_by_cause"]
     assert causes == {C.WAITING_FOR_BARS: 1, C.BAR_PROVIDER_ERROR: 1}
@@ -210,13 +218,16 @@ def test_accepted_without_intent_young_is_not_eligible(tmp_path, store):
         tmp_path, store, HORIZON_END + timedelta(seconds=2)
     )  # decided 5 s after T0, horizon long over, age > 600 s
     assert _opp(rep)["non_traded_eligible"] == 1
-    young = C.coverage_for_path(tmp_path / "d.db", now=iso(T0 + timedelta(seconds=100)))
+    young = C.coverage_for_path(
+        tmp_path / "d.db", now=iso(T0 + timedelta(seconds=100)), phase="DISCOVERY"
+    )
     assert _opp(young)["horizon_open_by_cause"] == {C.PENDING_INTENT_WINDOW: 1}
 
 
 def test_status_green_amber_red_matrix(tmp_path):
     th = C.CoverageThresholds()
     base = {
+        "traded_and_counterfactual": 0,
         "undecided": 0,
         "unexplained_missing": 0,
         "non_traded_eligible": 10,
@@ -330,7 +341,7 @@ def test_closed_trade_missing_analytics_is_a_visible_gap(tmp_path, store):
     rep = _report(tmp_path, store, T0 + timedelta(days=60))
     ta = rep["sections"]["trade_analytics"]
     m = ta["metrics"]
-    assert m["closed_trades"] == 3 and m["outcome_complete"] == 3
+    assert m["closed_trades"] == 3 and m["outcome_complete"]["complete"] == 3
     assert m["outcome_extra_complete"] == {
         **m["outcome_extra_complete"],
         "complete": 2,
@@ -361,10 +372,15 @@ def test_lab_pending_until_flat_deadline_and_never_run(tmp_path, store):
     rep = _report(tmp_path, store, before)
     lab = rep["sections"]["shadow_exit_lab"]["metrics"]["closed_trades"]
     assert lab["pending"] >= 1 and lab["unexpected_missing"] == 0
-    rep2 = C.coverage_for_path(tmp_path / "d.db", now=iso(T0 + timedelta(days=60)))
+    rep2 = C.coverage_for_path(
+        tmp_path / "d.db", now=iso(T0 + timedelta(days=60)), phase="DISCOVERY"
+    )
     tb = rep2["sections"]["shadow_exit_lab"]["metrics"]["closed_trades"]
-    assert tb["complete"] == 0 and tb["unexpected_missing"] == 0 and tb["not_run_or_disabled"] == 2
-    assert rep2["sections"]["shadow_exit_lab"]["status"] == C.AMBER
+    assert tb["complete"] == 0 and tb["unexpected_missing"] == 2 and tb["lab_absent"] is True
+    assert (
+        rep2["sections"]["shadow_exit_lab"]["status"] == C.RED
+        and rep2["no_promotion_claim"] is True
+    )
 
 
 def test_non_strategy_trades_are_not_expected_to_carry_analytics(tmp_path, store):
@@ -412,7 +428,7 @@ def test_position_thesis_placeholder_and_registry(tmp_path, store):
     C.register_section("custom_probe", lambda ctx: {"status": C.RED, "reasons": ["RED: probe"]})
     try:
         s2 = C.open_readonly(tmp_path / "d.db")
-        rep2 = C.build_coverage(s2, now=iso(T0))
+        rep2 = C.build_coverage(s2, now=iso(T0), phase="DISCOVERY")
         s2.close()
         assert rep2["sections"]["custom_probe"]["status"] == C.RED and rep2["status"] == C.RED
     finally:
@@ -446,7 +462,7 @@ def test_production_path_refused_unless_allowed(tmp_path):
     with pytest.raises(C.ProductionPathRefused):
         C.open_readonly(prod / "x.db")
     with pytest.raises(C.ProductionPathRefused):
-        C.coverage_for_path(prod / "x.db")
+        C.coverage_for_path(prod / "x.db", phase="DISCOVERY")
     ro = C.open_readonly(
         prod / "x.db", allow_production_readonly=True
     )  # explicit override: still mode=ro
@@ -517,3 +533,126 @@ def test_report_attaches_coverage_section(tmp_path, store):
     assert "Coverage audit" in render_markdown(rep) and "Coverage audit" not in render_markdown(
         plain
     )
+
+
+def test_closed_intent_without_outcome_row_is_visible_and_red(tmp_path, store):
+    snap = make_snapshot(i=0)
+    store.record_snapshot(snap)
+    store.record_decision(make_decision(snap, accepted=True))
+    it = make_intent(snap)
+    store.record_intent(it)
+    for st in ("RISK_APPROVED", "SENT", "FILLED", "PROTECTED", "CLOSED"):
+        if st == "RISK_APPROVED":
+            store.record_risk(it.intent_id, make_risk())
+        if st == "FILLED":
+            store.record_execution(it.intent_id, make_exec())
+        store.transition(it.intent_id, st)  # crash window: CLOSED, no record_outcome
+    rep = _report(tmp_path, store, T0 + timedelta(days=5))
+    m = rep["sections"]["trade_analytics"]["metrics"]
+    assert m["closed_trades"] == 1
+    assert m["outcome_complete"]["complete"] == 0 and m["outcome_complete"]["missing"] == 1
+    assert rep["sections"]["trade_analytics"]["status"] == C.RED and rep["no_promotion_claim"]
+    gap = rep["sections"]["trade_analytics"]["gap_sample"][0]
+    assert "outcome_complete" in gap["missing"]
+
+
+def test_phases_are_never_pooled(tmp_path, store):
+    _label(store, _reject(store, 0, phase="DISCOVERY"))
+    _label(store, _reject(store, 1, phase="FROZEN"))
+    store.close()
+    both = C.coverage_for_path(tmp_path / "d.db", now=iso(T0 + timedelta(days=5)))
+    assert both["phase"] == "PER_PHASE" and both["no_promotion_claim"] is True
+    assert both["pooled_warning"]
+    assert set(both["per_phase"]) == {"DISCOVERY", "FROZEN"}
+    for ph, r in both["per_phase"].items():
+        assert r["phase"] == ph
+        assert r["sections"]["opportunities"]["metrics"]["total_opportunities"] == 1
+    one = C.coverage_for_path(tmp_path / "d.db", now=iso(T0 + timedelta(days=5)), phase="FROZEN")
+    assert one["sections"]["opportunities"]["metrics"]["total_opportunities"] == 1
+    assert not one["no_promotion_claim"]
+    assert "PER PHASE" in C.render_markdown(both)
+
+
+def test_traded_state_takes_precedence_over_counterfactual(tmp_path, store):
+    snap = make_snapshot(i=0)
+    store.record_snapshot(snap)
+    store.record_decision(make_decision(snap, accepted=True))  # accepted, no intent yet
+    store.record_counterfactual(  # labelled after the 10 min window (as the labeller does) ...
+        make_label(snap),
+        source="ACCEPTED_NO_INTENT",
+        gate_code="ACCEPTED_NO_INTENT",
+        gate_class="OPERATIONAL",
+        gate_codes=["ACCEPTED_NO_INTENT"],
+    )
+    it = make_intent(snap)  # ... then an intent + fill arrives late
+    store.record_intent(it)
+    store.record_risk(it.intent_id, make_risk())
+    for st in ("RISK_APPROVED", "SENT", "FILLED"):
+        if st == "FILLED":
+            store.record_execution(it.intent_id, make_exec())
+        store.transition(it.intent_id, st)
+    other = _reject(store, 1)
+    _label(store, other)
+    rep = _report(tmp_path, store, T0 + timedelta(days=5))
+    m = _opp(rep)
+    assert m["traded"] == 1 and m["traded_and_counterfactual"] == 1
+    assert m["counterfactual_labelled"] == 1 and m["non_traded_eligible"] == 1
+    assert m["non_traded"] == m["non_traded_pending_horizon"] + m["non_traded_eligible"]
+    assert m["non_traded_eligible"] == (
+        m["counterfactual_labelled"]
+        + m["counterfactual_pending"]
+        + m["counterfactual_unexpected_missing"]
+    )
+    assert rep["sections"]["opportunities"]["status"] == C.RED and rep["no_promotion_claim"]
+
+
+def _tree(path):
+    return {p.name: (p.stat().st_size, p.stat().st_mtime_ns) for p in path.iterdir()}
+
+
+def test_audit_leaves_the_db_directory_untouched(tmp_path, store):
+    _label(store, _reject(store, 0))
+    store.close()
+    for sidecar in ("d.db-wal", "d.db-shm", "d.db-journal"):
+        (tmp_path / sidecar).unlink(missing_ok=True)
+    before = _tree(tmp_path)
+    C.coverage_for_path(tmp_path / "d.db", now=iso(T0 + timedelta(days=3)), phase="DISCOVERY")
+    C.coverage_for_path(tmp_path / "d.db", now=iso(T0 + timedelta(days=3)))
+    assert _tree(tmp_path) == before
+    assert not any(n.endswith(("-wal", "-shm", "-journal")) for n in _tree(tmp_path))
+
+
+def test_not_available_is_never_rendered_or_summed_as_zero(tmp_path, store):
+    one, two = _closed_trades(store, 2)
+    for it in (one, two):
+        store.record_outcome_extra(it.intent_id, {"final_gross_r": 1.0, "entry_exit": {"x": 1}})
+    rep = _report(tmp_path, store, T0 + timedelta(days=60))
+    lab = rep["sections"]["shadow_exit_lab"]["metrics"]
+    assert lab["failed"] == C.NOT_AVAILABLE and lab["closed_trades"]["failed"] == C.NOT_AVAILABLE
+    assert rep["sections"]["epochs"]["meta"]["observer_definition_hash"].startswith(C.NOT_AVAILABLE)
+    assert _opp(rep)["label_error"].startswith(C.NOT_AVAILABLE)
+    md = C.render_markdown(rep)
+    assert "'failed': 'NOT_AVAILABLE'" in md and "'failed': 0" not in md
+
+
+def test_cli_production_override_still_opens_read_only(tmp_path, cli, capsys):
+    prod = tmp_path / "artifacts" / "demo_100k"
+    prod.mkdir(parents=True)
+    s = DemoStore(prod / "x.db")
+    s.close()
+    for sidecar in ("x.db-wal", "x.db-shm"):
+        (prod / sidecar).unlink(missing_ok=True)
+    before = _tree(prod)
+    assert cli.main(["coverage", "--db", str(prod / "x.db")]) == cli.EXIT_REFUSED
+    argv = [
+        "coverage",
+        "--db",
+        str(prod / "x.db"),
+        "--allow-production-db-readonly",
+        "--phase",
+        "FROZEN",
+        "--json",
+    ]
+    assert cli.main(argv) == 0
+    assert json.loads(capsys.readouterr().out)["phase"] == "FROZEN"
+    assert _tree(prod) == before

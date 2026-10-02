@@ -51,7 +51,9 @@ from __future__ import annotations
 import inspect
 import json
 import math
+import shutil
 import sqlite3
+import tempfile
 import threading
 from collections import Counter, defaultdict
 from collections.abc import Callable, Sequence
@@ -61,6 +63,7 @@ from pathlib import Path
 from typing import Any
 
 from demo import labeling as L
+from demo.contracts import PHASES
 from demo.funnel import TRADED_STATES, UNCLASSIFIED
 from demo.store import DemoStore, parse_utc
 
@@ -106,6 +109,9 @@ PRODUCTION_DIR_PARTS = ("artifacts", "demo_100k")
 _NON_ENGINE_SOURCES = frozenset(
     {L.SRC_STACK, L.SRC_CANCELLED, L.SRC_SEND_FAILED, L.SRC_SHADOW, L.SRC_NO_INTENT}
 )
+_NON_TRADED_TERMINAL = frozenset(
+    {"RISK_REJECTED", "SEND_FAILED", "CANCELLED"}
+)  # intent states that are NON-trades
 _LAB_DELAY_AFTER_FLAT = timedelta(
     minutes=5
 )  # runner: the lab runs only once now >= forced_flat + one M5 bar
@@ -143,18 +149,49 @@ def refuse_production_path(path: str | Path, *, allow: bool = False) -> None:
             )
 
 
+class _SnapshotStore(DemoStore):
+    """Read-only store over a private temp COPY of the DB (+ its WAL): opening a WAL database, even ``mode=ro``,
+    creates ``-wal`` / ``-shm`` sidecars next to it, so the original directory is never opened directly.  The
+    temp copy is deleted on ``close()``."""
+
+    _tmpdir: str | None = None
+
+    def close(self) -> None:
+        try:
+            super().close()
+        finally:
+            if self._tmpdir is not None:
+                shutil.rmtree(self._tmpdir, ignore_errors=True)
+                self._tmpdir = None
+
+
 def open_readonly(path: str | Path, *, allow_production_readonly: bool = False) -> DemoStore:
-    """A ``DemoStore`` whose connection is SQLite ``mode=ro`` (+ ``query_only``): the store's own read API works, any
-    write raises ``sqlite3.OperationalError``.  The constructor is bypassed on purpose (it creates tables / sets WAL)."""
+    """A ``DemoStore`` over a read-only (SQLite ``mode=ro`` + ``query_only``) connection to a private copy of the DB
+    (and its ``-wal`` when present, so committed-but-uncheckpointed rows are seen): the store's own read API works,
+    any write raises ``sqlite3.OperationalError``, and the source directory is never modified (no sidecar files, no
+    mtime change).  The constructor is bypassed on purpose (it creates tables / sets WAL)."""
     refuse_production_path(path, allow=allow_production_readonly)
     p = Path(path).resolve()
     if not p.is_file():
         raise FileNotFoundError(str(p))
-    conn = sqlite3.connect(f"{p.as_uri()}?mode=ro", uri=True, timeout=30.0, check_same_thread=False)
+    tmp = tempfile.mkdtemp(prefix="coverage_ro_")
+    try:
+        shutil.copyfile(p, Path(tmp) / p.name)
+        wal = p.with_name(p.name + "-wal")
+        if wal.is_file():
+            shutil.copyfile(wal, Path(tmp) / wal.name)
+        copy = Path(tmp) / p.name
+        conn = sqlite3.connect(
+            f"{copy.as_uri()}?mode=ro", uri=True, timeout=30.0, check_same_thread=False
+        )
+    except BaseException:
+        shutil.rmtree(tmp, ignore_errors=True)
+        raise
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA query_only = ON")
-    store = DemoStore.__new__(DemoStore)
+    store = _SnapshotStore.__new__(_SnapshotStore)
     store.path = p
+    store._tmpdir = tmp
     store._clock = lambda: datetime.now(UTC).isoformat()
     store._lock = threading.RLock()
     store._conn = conn
@@ -365,9 +402,21 @@ def collect_opportunities(ctx: CoverageContext) -> list[dict[str, Any]]:
             "classification": None,
             "cause": None,
             "note": None,
+            "traded_and_counterfactual": False,
         }
         gate_src = None
-        if oid in cf:
+        state = f["state"]
+        if state is not None and state not in _NON_TRADED_TERMINAL:
+            # precedence: an intent that is traded / in flight is NEVER a counterfactual, even when a label exists
+            # (e.g. accepted-without-intent labelled after 10 min, intent + fill arrived later): flagged as contamination
+            traded = state in TRADED_STATES
+            rec.update(
+                classification=TRADED if traded else IN_FLIGHT,
+                cause=None if traded else "IN_FLIGHT_INTENT",
+                source="TRADED" if traded else f"INTENT_{state}",
+                traded_and_counterfactual=oid in cf,
+            )
+        elif oid in cf:
             c = cf[oid]
             rec.update(classification=COUNTERFACTUAL_COMPLETE, cause=None)
             gate_src = (c["source"], c["gate_code"], c["gate_class"])
@@ -378,12 +427,6 @@ def collect_opportunities(ctx: CoverageContext) -> list[dict[str, Any]]:
             gate_src = (gate.source, gate.code, gate.gate_class)
         elif f["accepted"] is None:
             rec.update(classification=UNDECIDED, cause=UNKNOWN)
-        elif f["state"] in TRADED_STATES:
-            rec.update(classification=TRADED, source="TRADED")
-        elif f["state"] is not None:
-            rec.update(
-                classification=IN_FLIGHT, cause="IN_FLIGHT_INTENT", source=f"INTENT_{f['state']}"
-            )
         else:
             rec.update(
                 classification=UNDECIDED,
@@ -417,6 +460,7 @@ def opportunity_metrics(opps: Sequence[dict[str, Any]]) -> dict[str, Any]:
         "traded": n[TRADED],
         "in_flight": n[IN_FLIGHT],
         "undecided": n[UNDECIDED],
+        "traded_and_counterfactual": sum(1 for o in opps if o.get("traded_and_counterfactual")),
         "non_traded": pending_h + eligible,
         "non_traded_pending_horizon": pending_h,
         "non_traded_eligible": eligible,
@@ -493,6 +537,11 @@ def assess_opportunities(
             status = level
         reasons.append(f"{level}: {why}")
 
+    if m["traded_and_counterfactual"]:
+        bump(
+            RED,
+            f"{m['traded_and_counterfactual']} traded/in-flight opportunity(ies) also carry a counterfactual label (contamination; excluded from the CF counts)",
+        )
     if m["undecided"]:
         bump(AMBER, f"{m['undecided']} snapshot(s) without a classifiable decision/intent")
     if unexplained:
@@ -578,7 +627,17 @@ def collect_trades(ctx: CoverageContext) -> list[dict[str, Any]]:
         return ctx.cache["trades"]
     st, phase = ctx.store, ctx.phase
     epochs = _epochs(ctx)
-    outcomes = ctx.safe("outcomes", lambda: st.list_outcomes(phase, kind="all"), [])
+    # start from the CLOSED intents (not from persisted outcomes): a CLOSED intent without an outcome row (the
+    # transition -> record_outcome crash window) must stay visible
+    sql = "SELECT i.intent_id AS iid, i.opportunity_id AS oid, (SELECT COUNT(*) FROM outcomes o WHERE o.intent_id=i.intent_id) AS n_out FROM intents i WHERE i.state='CLOSED'"
+    closed = ctx.safe(
+        "closed_intents",
+        lambda: st._q(
+            sql + (" AND i.phase=?" if phase else "") + " ORDER BY i.intent_id",
+            (phase,) if phase else (),
+        ),
+        [],
+    )
     strategy_ids = {
         iid
         for iid, _o, _oc in ctx.safe(
@@ -590,7 +649,8 @@ def collect_trades(ctx: CoverageContext) -> list[dict[str, Any]]:
         for t in ctx.safe("tca_records", lambda: st.list_tca(phase), [])
     }
     out = []
-    for iid, oid, _oc in outcomes:
+    for row in closed:
+        iid, oid, has_outcome = row["iid"], row["oid"], row["n_out"] > 0
         tag = st.get_trade_tag(iid) or {}
         ttype, source = tag.get("trade_type", "STRATEGY"), tag.get("source")
         expected = (
@@ -612,6 +672,7 @@ def collect_trades(ctx: CoverageContext) -> list[dict[str, Any]]:
                 "trade_type": ttype,
                 "source": source,
                 "expected_analytics": expected,
+                "has_outcome": has_outcome,
                 "lab_population": iid in strategy_ids,
                 "outcome_extra": extra is not None and extra.get("final_gross_r") is not None,
                 "entry_exit": bool(extra and extra.get("entry_exit")),
@@ -627,6 +688,11 @@ def collect_trades(ctx: CoverageContext) -> list[dict[str, Any]]:
 
 
 _ANALYTICS = (
+    (
+        "outcome_complete",
+        "has_outcome",
+        "outcomes row of the CLOSED intent (cause OUTCOME_ROW_MISSING)",
+    ),
     ("outcome_extra_complete", "outcome_extra", "outcome_extra row with final_gross_r"),
     ("entry_tca_complete", "entry_tca", "tca_records stage ENTRY"),
     ("exit_tca_complete", "exit_tca", "tca_records stage EXIT"),
@@ -644,9 +710,6 @@ def trade_metrics(trades: Sequence[dict[str, Any]]) -> dict[str, Any]:
         "closed_trades": len(trades),
         "closed_trades_expected_analytics": len(exp),
         "closed_excluded_non_strategy_or_external": len(trades) - len(exp),
-        "outcome_complete": len(
-            trades
-        ),  # a CLOSED intent without an outcome is not a closed trade (closed_without_outcome())
     }
     for name, key, what in _ANALYTICS:
         done = sum(1 for t in exp if t[key])
@@ -667,6 +730,10 @@ def assess_trades(m: dict[str, Any], th: CoverageThresholds) -> tuple[str, list[
         if a["missing"]:
             frac = a["missing"] / a["expected"]
             level = RED if (a["missing"] >= 2 and frac > th.analytics_red_frac) else AMBER
+            if (
+                name == "outcome_complete"
+            ):  # integrity: a CLOSED trade without an outcome is silently excluded from every alpha metric
+                level = RED
             if _RANK[level] > _RANK[status]:
                 status = level
             reasons.append(
@@ -726,13 +793,13 @@ def lab_metrics(
         "failed": NOT_AVAILABLE,
         "failed_reason": "a failed evaluation is only counted in memory (LabStats); nothing is persisted",
         "unexpected_missing": unexpected,
-        "not_run_or_disabled": 0,
+        "lab_absent": False,
     }
     if eligible and not complete and unexpected:
+        # a completely absent required lab stays UNEXPECTED_MISSING (never rewritten to 0): it blocks promotion claims
         trade_block.update(
-            not_run_or_disabled=unexpected,
-            unexpected_missing=0,
-            note="no closed trade has a lab result: the lab looks disabled / never ran (cannot be proven from the DB)",
+            lab_absent=True,
+            note="no closed trade has a lab result: the lab looks disabled / never ran (cannot be proven from the DB); still unexpected_missing",
         )
     cf_complete = sum(1 for lab in cf_labels if lab.shadow_exit_lab is not None)
     cf_block: dict[str, Any] = {
@@ -767,10 +834,10 @@ def section_shadow_exit_lab(ctx: CoverageContext) -> dict[str, Any]:
         reasons.append(
             f"{status}: shadow lab missing for {tb['unexpected_missing']}/{tb['eligible']} eligible closed trades"
         )
-    if tb["not_run_or_disabled"]:
-        status = AMBER if status == GREEN else status
+    if tb["lab_absent"]:
+        status = RED
         reasons.append(
-            "AMBER: shadow lab produced no result for any closed trade (disabled / never ran)"
+            "RED: shadow lab produced no result for any eligible closed trade (disabled / never ran): required lab absent, blocks promotion claims"
         )
     return {"status": status, "reasons": reasons, "metrics": m}
 
@@ -866,7 +933,35 @@ register_section("position_thesis", section_position_thesis)
 # ---------------------------------------------------------------------------------------------------------------
 # report
 # ---------------------------------------------------------------------------------------------------------------
-def build_coverage(
+def build_coverage(store: DemoStore, *, phase: str | None = None, **kw: Any) -> dict[str, Any]:
+    """Coverage report.  DISCOVERY and FROZEN are never pooled: with ``phase=None`` each phase is reported separately
+    (``per_phase``), no pooled verdict is computed and ``no_promotion_claim`` is True with an explicit warning.
+    Never writes."""
+    if phase is not None:
+        return build_phase_coverage(store, phase=phase, **kw)
+    per = {p: build_phase_coverage(store, phase=p, **kw) for p in PHASES}
+    worst = max((r["status"] for r in per.values()), key=lambda s: _RANK[s])
+    warning = (
+        "phase not given: DISCOVERY and FROZEN are NOT poolable; reported separately, no pooled verdict. "
+        "Re-run with an explicit phase for a promotion decision."
+    )
+    return {
+        "coverage_version": COVERAGE_VERSION,
+        "db": str(store.path),
+        "phase": "PER_PHASE",
+        "now": next(iter(per.values()))["now"],
+        "status": worst,
+        "no_promotion_claim": True,
+        "no_promotion_reasons": [warning],
+        "red_populations": [f"{p}:{s}" for p, r in per.items() for s in r["red_populations"]],
+        "pooled_warning": warning,
+        "per_phase": per,
+        "sections": {},
+        "notes": [],
+    }
+
+
+def build_phase_coverage(
     store: DemoStore,
     *,
     phase: str | None = None,
@@ -913,7 +1008,7 @@ def build_coverage(
     return {
         "coverage_version": COVERAGE_VERSION,
         "db": str(store.path),
-        "phase": phase or "ALL",
+        "phase": phase,
         "now": when.isoformat(),
         "status": status,
         "populations": populations,
@@ -943,6 +1038,17 @@ def _f(v: Any) -> str:
 
 
 def render_markdown(report: dict[str, Any]) -> str:
+    if "per_phase" in report:
+        head = [
+            f"# Coverage audit (PER PHASE, not pooled) - {report['status']}",
+            "",
+            f"- NO PROMOTION CLAIM: YES - {report['pooled_warning']}",
+            "",
+        ]
+        return "\n".join(head) + "\n".join(
+            render_markdown(r).replace("# Coverage audit", "## Coverage audit", 1)
+            for r in report["per_phase"].values()
+        )
     lines = [
         f"# Coverage audit ({report['phase']}) - {report['status']}",
         "",
@@ -982,7 +1088,7 @@ def render_markdown(report: dict[str, Any]) -> str:
         elif name == "trade_analytics":
             m = sec["metrics"]
             lines += [
-                f"- closed_trades: {m['closed_trades']} (analytics expected for {m['closed_trades_expected_analytics']}); outcome_complete: {m['outcome_complete']}"
+                f"- closed_trades: {m['closed_trades']} (analytics expected for {m['closed_trades_expected_analytics']}); outcome_complete: {m['outcome_complete']['complete']}/{m['outcome_complete']['expected']}"
             ]
             lines += [
                 f"- {n}: {m[n]['complete']}/{m[n]['expected']} ({_f(m[n]['pct'])})"
